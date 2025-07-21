@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}사용자 정보 수정 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block content %}
+<div class="min-h-screen">
+    <!-- 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div>
+                    <h1>사용자 정보 수정</h1>
+                    <p>{{ user.username }} 사용자의 정보를 수정하세요</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
+                    <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                    돌아가기
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container py-8">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} mb-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                {% if category == 'error' %}
+                                    <svg class="h-5 w-5 text-error" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                                    </svg>
+                                {% else %}
+                                    <svg class="h-5 w-5 text-success" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                    </svg>
+                                {% endif %}
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm">
+                                    {{ message }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 사용자 정보 수정 폼 -->
+        <div class="card">
+            <div class="p-6">
+                <h3 class="text-lg leading-6 font-medium text-primary mb-6">사용자 정보</h3>
+                
+                <form method="POST" class="space-y-6">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    
+                    <!-- 사용자명 -->
+                    <div class="form-group">
+                        <label for="username" class="form-label">사용자명</label>
+                        <div class="mt-1">
+                            <input type="text" name="username" id="username" value="{{ user.username }}" required
+                                   class="form-input">
+                        </div>
+                    </div>
+
+                    <!-- 이메일 -->
+                    <div class="form-group">
+                        <label for="email" class="form-label">이메일</label>
+                        <div class="mt-1">
+                            <input type="email" name="email" id="email" value="{{ user.email or '' }}"
+                                   class="form-input">
+                        </div>
+                    </div>
+
+                    <!-- 계정 상태 -->
+                    <div class="form-group">
+                        <label class="form-label">계정 상태</label>
+                        <div class="mt-2 space-y-2">
+                            <div class="flex items-center">
+                                <input type="checkbox" name="is_active" id="is_active" {{ 'checked' if user.is_active }}
+                                       class="h-4 w-4 text-accent focus:ring-accent border-color rounded">
+                                <label for="is_active" class="ml-2 block text-sm text-primary">
+                                    계정 활성화
+                                </label>
+                            </div>
+                            <div class="flex items-center">
+                                <input type="checkbox" name="is_admin" id="is_admin" {{ 'checked' if user.is_admin }}
+                                       class="h-4 w-4 text-accent focus:ring-accent border-color rounded">
+                                <label for="is_admin" class="ml-2 block text-sm text-primary">
+                                    관리자 권한
+                                </label>
+                            </div>
+                            <div class="flex items-center">
+                                <input type="checkbox" name="must_change_password" id="must_change_password" {{ 'checked' if user.must_change_password }}
+                                       class="h-4 w-4 text-accent focus:ring-accent border-color rounded">
+                                <label for="must_change_password" class="ml-2 block text-sm text-primary">
+                                    다음 로그인 시 비밀번호 변경 강제
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 버튼 -->
+                    <div class="flex justify-end space-x-3">
+                        <a href="{{ url_for('admin.users') }}" 
+                           class="btn btn-secondary">
+                            취소
+                        </a>
+                        <button type="submit" 
+                                class="btn btn-primary">
+                            저장
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 추가 작업 -->
+        <div class="mt-6 card">
+            <div class="p-6">
+                <h3 class="text-lg leading-6 font-medium text-primary mb-4">추가 작업</h3>
+                <div class="flex space-x-4">
+                    <a href="{{ url_for('admin.change_user_password', user_id=user.id) }}" 
+                       class="btn btn-primary">
+                        <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2m-2-2h-6m6 0v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2h2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v2"></path>
+                        </svg>
+                        비밀번호 변경
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

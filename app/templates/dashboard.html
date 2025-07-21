@@ -1,0 +1,958 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"></path>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>대시보드</h1>
+                    <p>{{ current_user.username }}님, 환영합니다!</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="theme-toggle">
+                    <svg class="theme-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span id="last-update"></span>
+                </div>
+                <button onclick="refreshDashboard()" class="btn btn-primary">
+                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    새로고침
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 통계 개요 -->
+    <div class="stats-grid">
+        <!-- 총 자본 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>총 자본 (Total Capital)</h3>
+                    <p id="total-capital" class="stats-value text-primary">$0.00</p>
+                    <p class="stats-subtitle">전체 할당 자본</p>
+                </div>
+                <div class="stats-icon bg-blue-100 text-blue-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 총 손익 (실현 손익만) -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>총 손익 (Total PnL)</h3>
+                    <p id="total-pnl" class="stats-value">$0.00</p>
+                    <p class="stats-subtitle">실현된 총 손익</p>
+                </div>
+                <div class="stats-icon bg-green-100 text-green-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 누적 수익률 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>누적 수익률 (Cumulative Return)</h3>
+                    <p id="cumulative-return" class="stats-value">0.00%</p>
+                    <p class="stats-subtitle">실현 손익 기준 수익률</p>
+                </div>
+                <div class="stats-icon bg-purple-100 text-purple-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 승률 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>전체 승률 (Win Rate)</h3>
+                    <p id="overall-win-rate" class="stats-value text-primary">0.00%</p>
+                    <p class="stats-subtitle">청산 거래 기준 승률</p>
+                </div>
+                <div class="stats-icon bg-teal-100 text-teal-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 전략 관리 섹션 -->
+    <div class="section-container">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-primary">활성 전략</h2>
+            <a href="{{ url_for('main.strategies') }}" class="btn btn-secondary">
+                전략 관리
+                <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+            </a>
+        </div>
+        <div id="strategies-container" class="strategy-grid">
+            <!-- 전략 카드들이 JavaScript로 동적 생성됩니다 -->
+        </div>
+    </div>
+
+    <!-- 최근 거래 내역 -->
+    <div class="section-container">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-primary">최근 거래 내역</h2>
+            <a href="#" class="btn btn-secondary">
+                전체 보기
+                <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+            </a>
+        </div>
+        <div class="card rounded-xl">
+            <div id="recent-trades-container">
+                <!-- 거래 내역이 JavaScript로 동적 생성됩니다 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 전략 상세 모달 -->
+<div id="strategy-detail-modal" class="modal-overlay hidden">
+    <div class="modal-content max-w-6xl">
+        <div class="modal-header">
+            <h2 id="modal-strategy-name" class="text-xl font-bold text-primary">전략 상세 정보</h2>
+            <button onclick="closeStrategyModal()" class="modal-close">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <!-- 탭 네비게이션 -->
+            <div class="flex space-x-1 mb-6 border-b border-color">
+                <button onclick="showModalTab('overview')" class="tab-button overview-tab active">
+                    종합 성과
+                </button>
+                <button onclick="showModalTab('accounts')" class="tab-button accounts-tab text-secondary">
+                    계좌별 성과
+                </button>
+            </div>
+
+            <!-- 종합 성과 탭 -->
+            <div id="modal-overview-tab" class="modal-tab-content">
+                <!-- 주요 지표 -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">총 손익 (Total PnL)</p>
+                        <p id="modal-total-pnl" class="mt-1 text-3xl font-semibold text-success">$0.00</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">수익률 (ROI)</p>
+                        <p id="modal-total-roi" class="mt-1 text-3xl font-semibold text-success">0.00%</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">최대 낙폭 (MDD)</p>
+                        <p id="modal-mdd" class="mt-1 text-3xl font-semibold text-error">0.00%</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">Profit Factor</p>
+                        <p id="modal-profit-factor" class="mt-1 text-3xl font-semibold text-primary">0.00</p>
+                    </div>
+                </div>
+
+                <!-- 차트 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold text-primary mb-4">수익 곡선 (Equity Curve)</h3>
+                    <div class="bg-secondary rounded-lg p-4" style="height: 300px;">
+                        <canvas id="modal-equity-curve-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 상세 지표 테이블 -->
+                <div>
+                    <h3 class="text-lg font-semibold text-primary mb-4">상세 지표</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table">
+                            <tbody id="modal-metrics-table">
+                                <!-- 지표들이 JavaScript로 동적 생성됩니다 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 계좌별 성과 탭 -->
+            <div id="modal-accounts-tab" class="modal-tab-content hidden">
+                <div id="modal-accounts-container" class="space-y-4">
+                    <!-- 계좌별 데이터가 JavaScript로 동적 생성됩니다 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 토스트 알림 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<script>
+// 전역 변수
+let dashboardData = null;
+let currentStrategyData = null;
+let sparklineCharts = {};
+let modalChart = null;
+
+// 토스트 알림 함수
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        const container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'fixed top-4 right-4 z-50 space-y-2';
+        document.body.appendChild(container);
+    }
+    
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-500',
+        error: 'bg-red-500',
+        warning: 'bg-yellow-500',
+        info: 'bg-blue-500'
+    };
+    
+    toast.className = `${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full opacity-0`;
+    toast.innerHTML = `
+        <div class="flex items-center space-x-2">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()" class="ml-2 text-white hover:text-gray-200">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    document.getElementById('toast-container').appendChild(toast);
+    
+    setTimeout(() => {
+        toast.classList.remove('translate-x-full', 'opacity-0');
+    }, 100);
+    
+    setTimeout(() => {
+        toast.classList.add('translate-x-full', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+}
+
+// 숫자 포맷팅 함수들
+function formatNumber(num, decimals = 2) {
+    if (num === null || num === undefined) return '0';
+    return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    }).format(num);
+}
+
+function formatCurrency(num) {
+    if (num === null || num === undefined) return '$0.00';
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD'
+    }).format(num);
+}
+
+function formatPercent(num) {
+    if (num === null || num === undefined) return '0.00%';
+    return `${num >= 0 ? '+' : ''}${formatNumber(num)}%`;
+}
+
+function formatMDD(num) {
+    if (num === null || num === undefined) return '0.00%';
+    return `${formatNumber(Math.abs(num))}%`;
+}
+
+// 전략 토글 함수 (Input 기반 - 새로운 방식)
+async function toggleStrategyInput(strategyId, isChecked) {
+    try {
+        // 토글 요소와 상태 텍스트 찾기
+        const toggleInput = document.querySelector(`input[data-strategy-id="${strategyId}"]`);
+        const statusText = document.getElementById(`status-text-${strategyId}`);
+        
+        // 즉시 시각적 피드백 제공
+        if (toggleInput) {
+            toggleInput.disabled = true;
+            toggleInput.style.opacity = '0.7';
+        }
+        
+        const response = await fetch(`/api/strategies/${strategyId}/toggle`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // 성공 시 상태 텍스트만 업데이트 (토글은 이미 체크됨)
+            if (statusText) {
+                statusText.textContent = data.is_active ? '활성' : '비활성';
+            }
+            
+            showToast(data.message, 'success');
+            
+            // 전체 새로고침 제거 - 토글 상태만 업데이트하여 부드러운 UX 제공
+            // setTimeout(() => loadDashboardData(), 500);
+        } else {
+            // 실패 시 토글 상태 되돌리기
+            if (toggleInput) {
+                toggleInput.checked = !isChecked;
+            }
+            showToast(data.error || '전략 상태 변경에 실패했습니다.', 'error');
+        }
+    } catch (error) {
+        console.error('전략 토글 오류:', error);
+        // 오류 시 토글 상태 되돌리기
+        const toggleInput = document.querySelector(`input[data-strategy-id="${strategyId}"]`);
+        if (toggleInput) {
+            toggleInput.checked = !isChecked;
+        }
+        showToast('네트워크 오류가 발생했습니다.', 'error');
+    } finally {
+        // 토글 요소 복원
+        const toggleInput = document.querySelector(`input[data-strategy-id="${strategyId}"]`);
+        if (toggleInput) {
+            toggleInput.disabled = false;
+            toggleInput.style.opacity = '1';
+        }
+    }
+}
+
+// 전략 토글 함수 (기존 div 기반 - 호환성 유지)
+async function toggleStrategy(strategyId, currentStatus) {
+    try {
+        // 토글 요소 찾기
+        const strategyCard = document.querySelector(`[data-strategy-id="${strategyId}"]`);
+        const toggleElement = strategyCard?.querySelector('.toggle-switch');
+        const statusText = strategyCard?.querySelector('.text-xs.text-muted');
+        
+        // 즉시 시각적 피드백 제공
+        if (toggleElement) {
+            toggleElement.style.opacity = '0.7';
+            toggleElement.style.pointerEvents = 'none';
+        }
+        
+        const response = await fetch(`/api/strategies/${strategyId}/toggle`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // 성공 시 즉시 UI 업데이트
+            if (toggleElement && statusText) {
+                const newStatus = !currentStatus;
+                toggleElement.classList.toggle('active', newStatus);
+                statusText.textContent = newStatus ? '활성' : '비활성';
+                
+                // onclick 이벤트 업데이트
+                toggleElement.setAttribute('onclick', `toggleStrategy(${strategyId}, ${newStatus})`);
+            }
+            
+            showToast(data.message, 'success');
+            
+            // 백그라운드에서 전체 데이터 새로고침 (더 부드러운 UX)
+            // setTimeout(() => loadDashboardData(), 500);
+        } else {
+            showToast(data.error || '전략 상태 변경에 실패했습니다.', 'error');
+        }
+    } catch (error) {
+        console.error('전략 토글 오류:', error);
+        showToast('네트워크 오류가 발생했습니다.', 'error');
+    } finally {
+        // 토글 요소 복원
+        const strategyCard = document.querySelector(`[data-strategy-id="${strategyId}"]`);
+        const toggleElement = strategyCard?.querySelector('.toggle-switch');
+        if (toggleElement) {
+            toggleElement.style.opacity = '1';
+            toggleElement.style.pointerEvents = 'auto';
+        }
+    }
+}
+
+// 새로운 전략 카드 생성 함수 (30일 성과 데이터 사용)
+function createStrategyCard(strategy) {
+    const isActive = strategy.is_active;
+    // 30일 성과 데이터 사용
+    const pnlColor = strategy.pnl_30d >= 0 ? 'text-success' : 'text-error';
+    const roiColor = strategy.roi_30d >= 0 ? 'text-success' : 'text-error';
+    const mddColor = 'text-error';
+    
+    return `
+        <div class="card rounded-xl p-6 fade-in strategy-card" data-strategy-id="${strategy.id}">
+            <!-- 헤더 -->
+            <div class="flex justify-between items-center mb-6">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                        <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                        </div>
+                        <div>
+                        <h3 class="text-lg font-semibold text-primary">${strategy.name}</h3>
+                        <p class="text-xs text-muted">${strategy.group_name}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                    <span class="text-xs text-muted" id="status-text-${strategy.id}">${isActive ? '활성' : '비활성'}</span>
+                    <label class="toggle-switch-container" title="전략 활성화/비활성화">
+                        <input type="checkbox" class="strategy-toggle sr-only" 
+                               data-strategy-id="${strategy.id}" 
+                               ${isActive ? 'checked' : ''}
+                               onchange="toggleStrategyInput(${strategy.id}, this.checked)">
+                        <div class="toggle-switch"></div>
+                    </label>
+                    </div>
+                        </div>
+                        
+            <!-- 30일 손익 (중앙 표시) -->
+            <div class="mb-6 text-center">
+                <p class="text-sm text-muted mb-1">30일 손익 (30D PnL)</p>
+                <p class="text-4xl font-bold ${pnlColor} tabular-nums">${formatCurrency(strategy.pnl_30d)}</p>
+                <div class="mt-3 sparkline-container" id="sparkline-${strategy.id}">
+                    <canvas width="200" height="40"></canvas>
+                        </div>
+                        </div>
+                        
+            <!-- 30일 ROI와 MDD 카드 -->
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="card p-4 rounded-lg text-center bg-secondary">
+                    <p class="text-xs text-muted mb-1 flex items-center justify-center">
+                        30D ROI
+                        <svg class="w-4 h-4 ml-1 ${roiColor}" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="${strategy.roi_30d >= 0 ? 
+                                'M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z' : 
+                                'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l2.293-2.293a1 1 0 011.414 0z'
+                            }" clip-rule="evenodd"></path>
+                        </svg>
+                    </p>
+                    <p class="text-xl font-semibold ${roiColor} tabular-nums">${formatPercent(strategy.roi_30d)}</p>
+                        </div>
+                <div class="card p-4 rounded-lg text-center bg-secondary">
+                    <p class="text-xs text-muted mb-1 flex items-center justify-center">
+                        30D MDD
+                        <svg class="w-4 h-4 ml-1 text-error" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                    </p>
+                    <p class="text-xl font-semibold text-error tabular-nums">${formatMDD(strategy.mdd_30d)}</p>
+                    </div>
+                </div>
+                
+            <!-- 상세 정보 -->
+            <div class="space-y-3">
+                <div class="flex justify-between items-center text-sm">
+                    <div class="flex items-center text-muted">
+                        <svg class="w-5 h-5 mr-2 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span>할당 자본</span>
+                    </div>
+                    <span class="font-medium text-primary tabular-nums">${formatCurrency(strategy.allocated_capital)}</span>
+                    </div>
+                <div class="flex justify-between items-center text-sm">
+                    <div class="flex items-center text-muted">
+                        <svg class="w-5 h-5 mr-2 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                        <span>활성 포지션</span>
+                    </div>
+                    <span class="font-medium text-primary tabular-nums">${strategy.position_count}</span>
+                            </div>
+                <div class="flex justify-between items-center text-sm">
+                    <div class="flex items-center text-muted">
+                        <svg class="w-5 h-5 mr-2 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
+                            </svg>
+                        <span>30D Sharpe</span>
+                            </div>
+                    <span class="font-medium text-primary tabular-nums">${formatNumber(strategy.sharpe_ratio_30d, 2)}</span>
+                        </div>
+                    </div>
+                    
+            <!-- 상세 보기 버튼 -->
+            <div class="mt-8 pt-4 border-t border-color text-right">
+                <button onclick="openStrategyModal(${strategy.id})" class="text-sm text-accent hover:text-accent font-medium transition-colors">
+                    전략 상세 보기 &rarr;
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// 스파크라인 차트 생성
+function createSparklineChart(containerId, data) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    const canvas = container.querySelector('canvas');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map((_, i) => i),
+            datasets: [{
+                data: data,
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.1,
+                pointRadius: 0,
+                pointHoverRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false },
+                y: { display: false }
+            },
+            elements: { point: { radius: 0 } },
+            interaction: { intersect: false }
+        }
+    });
+    
+    sparklineCharts[containerId] = chart;
+}
+
+// 전략 상세 모달 관련 함수들
+function openStrategyModal(strategyId) {
+    const strategy = dashboardData.strategies_detail.find(s => s.id === strategyId);
+    if (!strategy) return;
+    
+    currentStrategyData = strategy;
+    
+    // 모달 헤더 업데이트
+    document.getElementById('modal-strategy-name').textContent = `${strategy.name} 상세 정보`;
+    
+    // 종합 성과 데이터 업데이트
+    updateModalOverviewTab(strategy);
+    
+    // 계좌별 성과 데이터 업데이트
+    updateModalAccountsTab(strategy);
+    
+    // 모달 표시
+    document.getElementById('strategy-detail-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    
+    // 첫 번째 탭 활성화
+    showModalTab('overview');
+}
+
+function closeStrategyModal() {
+    document.getElementById('strategy-detail-modal').classList.add('hidden');
+    document.body.style.overflow = 'auto';
+    
+    // 차트 정리
+    if (modalChart) {
+        modalChart.destroy();
+        modalChart = null;
+    }
+}
+
+function showModalTab(tabName) {
+    // 탭 버튼 업데이트
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+        btn.classList.add('text-secondary');
+    });
+    document.querySelector(`.${tabName}-tab`).classList.add('active');
+    document.querySelector(`.${tabName}-tab`).classList.remove('text-secondary');
+    
+    // 탭 컨텐츠 업데이트
+    document.querySelectorAll('.modal-tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    document.getElementById(`modal-${tabName}-tab`).classList.remove('hidden');
+    
+    // 차트 생성 (종합 성과 탭일 때)
+    if (tabName === 'overview' && currentStrategyData) {
+        setTimeout(() => createModalChart(currentStrategyData), 100);
+    }
+}
+
+function updateModalOverviewTab(strategy) {
+    // 전체 누적 성과 지표 업데이트
+    document.getElementById('modal-total-pnl').textContent = formatCurrency(strategy.current_pnl);
+    document.getElementById('modal-total-pnl').className = `mt-1 text-3xl font-semibold ${strategy.current_pnl >= 0 ? 'text-success' : 'text-error'}`;
+    
+    document.getElementById('modal-total-roi').textContent = formatPercent(strategy.cumulative_return);
+    document.getElementById('modal-total-roi').className = `mt-1 text-3xl font-semibold ${strategy.cumulative_return >= 0 ? 'text-success' : 'text-error'}`;
+    
+    document.getElementById('modal-mdd').textContent = formatMDD(strategy.mdd);
+    
+    document.getElementById('modal-profit-factor').textContent = formatNumber(strategy.profit_factor, 2);
+    
+    // 상세 지표 테이블 업데이트 (전체 누적 성과)
+    const metricsTable = document.getElementById('modal-metrics-table');
+    const metrics = [
+        ['승률 (Win Rate)', formatPercent(strategy.win_rate), 'text-success'],
+        ['총 거래 횟수 (청산 기준)', strategy.total_trades, 'text-primary'],
+        ['승리 거래 수 (청산 기준)', `${strategy.total_winning_trades} 회`, 'text-success'],
+        ['패배 거래 수 (청산 기준)', `${strategy.total_losing_trades} 회`, 'text-error'],
+        ['실현 손익 (Realized PnL)', formatCurrency(strategy.realized_pnl), strategy.realized_pnl >= 0 ? 'text-success' : 'text-error'],
+        ['미실현 손익 (Unrealized PnL)', formatCurrency(strategy.unrealized_pnl), strategy.unrealized_pnl >= 0 ? 'text-success' : 'text-error'],
+        ['30D Sharpe Ratio', formatNumber(strategy.sharpe_ratio_30d, 2), 'text-primary'],
+        ['Sortino Ratio', formatNumber(strategy.sortino_ratio, 2), 'text-primary'],
+        ['평균 수익 거래', formatCurrency(strategy.avg_win_trade), 'text-success'],
+        ['평균 손실 거래', formatCurrency(strategy.avg_loss_trade), 'text-error'],
+        ['최대 연속 수익', `${strategy.max_consecutive_wins}회`, 'text-primary'],
+        ['최대 연속 손실', `${strategy.max_consecutive_losses}회`, 'text-primary']
+    ];
+    
+    metricsTable.innerHTML = metrics.map(([label, value, colorClass]) => `
+        <tr class="hover:bg-card-hover">
+            <td class="px-4 py-3 text-sm text-muted">${label}</td>
+            <td class="px-4 py-3 text-sm ${colorClass} text-right font-medium">${value}</td>
+        </tr>
+    `).join('');
+}
+
+function updateModalAccountsTab(strategy) {
+    const container = document.getElementById('modal-accounts-container');
+    
+    if (!strategy.accounts_detail || strategy.accounts_detail.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-12">
+                <div class="mx-auto w-12 h-12 bg-secondary rounded-xl flex items-center justify-center mb-4">
+                    <svg class="w-6 h-6 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg font-medium text-primary mb-2">거래 내역이 없습니다</h3>
+                <p class="text-sm text-muted">트레이딩 전략이 실행되면 거래 내역이 표시됩니다.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = strategy.accounts_detail.map(account => createAccountCard(account)).join('');
+}
+
+function createAccountCard(account) {
+    return `
+        <div class="card p-5 rounded-lg">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h4 class="text-lg font-semibold text-accent">${account.name} (${account.exchange.toUpperCase()})</h4>
+                    <span class="text-xs ${account.is_active ? 'text-success bg-green-900/20' : 'text-muted bg-secondary'} px-2 py-0.5 rounded-full">
+                        ${account.is_active ? '● 활성' : '○ 비활성'}
+                    </span>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                    <p class="text-xs text-muted">할당 자본</p>
+                    <p class="text-lg font-medium text-primary">${formatCurrency(account.allocated_capital)}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-muted">총 손익 (PnL)</p>
+                    <p class="text-lg font-medium ${account.current_pnl >= 0 ? 'text-success' : 'text-error'}">${formatCurrency(account.current_pnl)}</p>
+            </div>
+                <div>
+                    <p class="text-xs text-muted">수익률 (ROI)</p>
+                    <p class="text-lg font-medium ${account.cumulative_return >= 0 ? 'text-success' : 'text-error'}">${formatPercent(account.cumulative_return)}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-muted">최대 낙폭 (MDD)</p>
+                    <p class="text-lg font-medium text-error">${formatMDD(account.mdd_30d)}</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function createModalChart(strategy) {
+    if (modalChart) {
+        modalChart.destroy();
+    }
+    
+    const ctx = document.getElementById('modal-equity-curve-chart');
+    if (!ctx || !strategy.chart_data) return;
+    
+    modalChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: strategy.chart_data.dates,
+            datasets: [{
+                label: '누적 수익 ($)',
+                data: strategy.chart_data.pnl_values,
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                tension: 0.1,
+                fill: true,
+                pointRadius: 2,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    ticks: { 
+                        color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted'),
+                        callback: function(value) { return formatCurrency(value); }
+                    },
+                    grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border-color') }
+                },
+                x: {
+                    ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted') },
+                    grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border-color') }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-primary') }
+                }
+            }
+        }
+    });
+}
+
+// 대시보드 데이터 로드 및 업데이트 함수들
+async function loadDashboardData() {
+    try {
+        const statsResponse = await fetch('/api/dashboard/stats');
+        const statsData = await statsResponse.json();
+        
+        if (statsData.success) {
+            dashboardData = statsData.stats;
+            updateDashboardStats(dashboardData);
+            updateStrategiesDisplay(dashboardData.strategies_detail || []);
+        }
+        
+        const tradesResponse = await fetch('/api/dashboard/recent-trades?limit=5');
+        const tradesData = await tradesResponse.json();
+        
+        if (tradesData.success) {
+            updateRecentTrades(tradesData.trades || []);
+        }
+        
+    } catch (error) {
+        console.error('대시보드 데이터 로드 오류:', error);
+        showToast('데이터를 불러오는 중 오류가 발생했습니다.', 'error');
+    }
+}
+
+function updateDashboardStats(stats) {
+    document.getElementById('total-capital').textContent = formatCurrency(stats.total_capital);
+    
+    const totalPnlElement = document.getElementById('total-pnl');
+    totalPnlElement.textContent = formatCurrency(stats.total_pnl);
+    totalPnlElement.className = `text-3xl font-bold ${stats.total_pnl >= 0 ? 'text-success' : 'text-error'}`;
+    
+    const cumulativeReturnElement = document.getElementById('cumulative-return');
+    cumulativeReturnElement.textContent = formatPercent(stats.cumulative_return);
+    cumulativeReturnElement.className = `text-3xl font-bold ${stats.cumulative_return >= 0 ? 'text-success' : 'text-error'}`;
+    
+    const overallWinRateElement = document.getElementById('overall-win-rate');
+    overallWinRateElement.textContent = formatPercent(stats.overall_win_rate);
+}
+
+function updateStrategiesDisplay(strategies) {
+    const container = document.getElementById('strategies-container');
+    
+    if (strategies.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-12 col-span-full">
+                <div class="mx-auto w-16 h-16 bg-secondary rounded-full flex items-center justify-center mb-4">
+                    <svg class="w-8 h-8 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2H9zm2 12h6m-6 0h6"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg font-medium text-primary mb-2">등록된 전략이 없습니다</h3>
+                <p class="text-sm text-muted">새로운 트레이딩 전략을 추가해보세요.</p>
+            </div>
+        `;
+    } else {
+        container.innerHTML = strategies.map(createStrategyCard).join('');
+        
+        // 스파크라인 차트 생성
+        strategies.forEach(strategy => {
+            if (strategy.sparkline_data && strategy.sparkline_data.length > 0) {
+                setTimeout(() => {
+                    createSparklineChart(`sparkline-${strategy.id}`, strategy.sparkline_data);
+                }, 100);
+            }
+        });
+    }
+}
+
+function updateRecentTrades(trades) {
+    const container = document.getElementById('recent-trades-container');
+    
+    if (trades.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-12">
+                <div class="mx-auto w-16 h-16 bg-secondary rounded-xl flex items-center justify-center mb-4">
+                    <svg class="w-8 h-8 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg font-medium text-primary mb-2">거래 내역이 없습니다</h3>
+                <p class="text-sm text-muted">트레이딩 전략이 실행되면 거래 내역이 표시됩니다.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-color">
+                <thead class="bg-secondary">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">시간</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">전략</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">계좌</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">심볼</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">사이드</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-muted uppercase tracking-wider">가격</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-muted uppercase tracking-wider">수량</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-muted uppercase tracking-wider">손익</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-color">
+                    ${trades.map(trade => createTradeRow(trade)).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function createTradeRow(trade) {
+    const sideColor = trade.side === 'buy' ? 'text-success' : 'text-error';
+    const pnlColor = trade.pnl > 0 ? 'text-success' : trade.pnl < 0 ? 'text-error' : 'text-muted';
+    const exchangeBadge = trade.exchange ? trade.exchange.toUpperCase() : '';
+    
+    return `
+        <tr class="hover:bg-card-hover transition-colors">
+            <td class="px-4 py-3 text-sm text-primary">
+                ${new Date(trade.timestamp).toLocaleString('ko-KR', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })}
+            </td>
+            <td class="px-4 py-3 text-sm">
+                <div class="text-primary font-medium">${trade.strategy_name}</div>
+            </td>
+            <td class="px-4 py-3 text-sm">
+                <div class="text-primary">${trade.name}</div>
+                <div class="text-xs text-muted">${exchangeBadge}</div>
+            </td>
+            <td class="px-4 py-3 text-sm">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-primary">
+                    ${trade.symbol}
+                </span>
+            </td>
+            <td class="px-4 py-3 text-sm">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${trade.side === 'buy' ? 'bg-green-900/20 text-success' : 'bg-red-900/20 text-error'}">
+                    ${trade.side.toUpperCase()}
+                </span>
+            </td>
+            <td class="px-4 py-3 text-sm text-right text-primary font-mono">
+                ${formatCurrency(trade.price)}
+            </td>
+            <td class="px-4 py-3 text-sm text-right text-primary font-mono">
+                ${formatNumber(trade.quantity, 4)}
+            </td>
+            <td class="px-4 py-3 text-sm text-right font-mono">
+                <span class="${pnlColor} font-medium">
+                    ${trade.pnl !== null ? formatCurrency(trade.pnl) : '-'}
+                </span>
+            </td>
+        </tr>
+    `;
+}
+
+async function refreshDashboard() {
+    showToast('대시보드를 새로고침하는 중...', 'info');
+    await loadDashboardData();
+    updateLastUpdate();
+    showToast('대시보드가 업데이트되었습니다.', 'success');
+}
+
+function updateLastUpdate() {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('ko-KR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    document.getElementById('last-update').textContent = `마지막 업데이트: ${timeString}`;
+}
+
+// 페이지 로드 시 초기화
+document.addEventListener('DOMContentLoaded', function() {
+    updateLastUpdate();
+    loadDashboardData();
+    
+    // ESC 키로 모달 닫기
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeStrategyModal();
+        }
+    });
+    
+    // 모달 배경 클릭으로 닫기
+    document.getElementById('strategy-detail-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeStrategyModal();
+        }
+    });
+});
+
+// 자동 새로고침
+setInterval(updateLastUpdate, 30000);
+setInterval(loadDashboardData, 300000);
+</script>
+{% endblock %} 

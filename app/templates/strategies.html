@@ -1,0 +1,1014 @@
+{% extends "base.html" %}
+
+{% block title %}전략 관리 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>전략 관리</h1>
+                    <p>트레이딩 전략을 효율적으로 생성, 수정하고 자본을 배분하세요.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button onclick="openAddStrategyModal()" 
+                        class="btn btn-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    새 전략 추가
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 플래시 메시지 -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">
+                    <div class="flex justify-between items-center">
+                        <span>{{ message }}</span>
+                        <button onclick="this.parentElement.parentElement.remove()" class="alert-close">&times;</button>
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <!-- 전략 목록 섹션 -->
+    <section>
+        <h2 class="text-2xl font-semibold strategy-title mb-6">등록된 전략 목록</h2>
+        
+        {% if strategies %}
+            <div class="space-y-8">
+                {% for strategy in strategies %}
+                <div class="strategy-card-new" id="strategy-card-{{ strategy.id }}">
+                    <!-- 전략 카드 헤더 -->
+                    <div class="strategy-card-header">
+                        <div class="strategy-title-section">
+                            <div class="strategy-title-row">
+                                <h3>{{ strategy.name }}</h3>
+                                <div class="strategy-badges">
+                                    <!-- 활성 상태 배지 -->
+                                    {% if strategy.is_active %}
+                                        <span class="status-badge active" id="status-badge-{{ strategy.id }}">
+                                            <div class="status-dot active"></div>
+                                            활성
+                                        </span>
+                                    {% else %}
+                                        <span class="status-badge inactive" id="status-badge-{{ strategy.id }}">
+                                            <div class="status-dot inactive"></div>
+                                            비활성
+                                        </span>
+                                    {% endif %}
+                                    
+                                    <!-- 마켓 타입 배지 -->
+                                    {% if strategy.market_type == 'futures' %}
+                                        <span class="market-type-badge futures">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                                            </svg>
+                                            선물
+                                        </span>
+                                    {% else %}
+                                        <span class="market-type-badge spot">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                            </svg>
+                                            현물
+                                        </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <p>{{ strategy.description or '단기 변동성 추종 전략 (예시 설명)' }}</p>
+                        </div>
+                        <div class="strategy-actions-section">
+                            <!-- 토글 스위치 -->
+                            <label class="toggle-switch-container" title="전략 활성화/비활성화">
+                                <input type="checkbox" class="strategy-toggle sr-only" 
+                                       data-strategy-id="{{ strategy.id }}" 
+                                       {% if strategy.is_active %}checked{% endif %}>
+                                <div class="toggle-switch"></div>
+                            </label>
+                            
+                            <!-- 액션 버튼들 -->
+                            <button data-strategy-id="{{ strategy.id }}" onclick="editStrategy(this.dataset.strategyId)" 
+                                    class="btn-action btn-action-secondary" title="전략 수정">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+                                    <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <button data-strategy-id="{{ strategy.id }}" onclick="deleteStrategy(this.dataset.strategyId)" 
+                                    class="btn-action btn-action-danger" title="전략 삭제">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 전략 정보 그리드 -->
+                    <div class="strategy-grid-layout">
+                        <!-- 전략 요약 -->
+                        <div class="strategy-summary-card">
+                            <div class="summary-header">
+                                <h4>전략 요약</h4>
+                            </div>
+                            
+                            <!-- 주요 지표 -->
+                            <div class="summary-main-metrics">
+                                <div class="main-metric">
+                                    <p class="amount tabular-nums">${{ "%.2f"|format(strategy.total_allocated_capital) }}</p>
+                                    <p class="amount-label">총 할당 자본</p>
+                                </div>
+                                <div class="metric-grid">
+                                    <div class="metric-item">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="metric-icon">
+                                            <path d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"/>
+                                        </svg>
+                                        <div>
+                                            <span class="metric-value">{{ strategy.connected_accounts|length }}</span>
+                                            <span class="metric-label">연결 계좌</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="metric-item">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="metric-icon">
+                                            <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                        </svg>
+                                        <div>
+                                            <span class="metric-value">{{ strategy.position_count or 0 }}</span>
+                                            <span class="metric-label">포지션</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 빠른 액션 -->
+                            <div class="summary-quick-actions">
+                                <a href="{{ url_for('main.strategy_positions', strategy_id=strategy.id) }}" 
+                                   class="quick-action-btn quick-action-view">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                                        <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+                                    </svg>
+                                    포지션 보기
+                                </a>
+                                
+                                <button onclick="openAccountModal('{{ strategy.id }}')" 
+                                        class="quick-action-btn quick-action-add" 
+                                        title="계좌 설정">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+                                    </svg>
+                                    계좌 설정
+                                </button>
+                                
+                                {% if strategy.connected_accounts %}
+                                <button onclick="openCapitalModal('{{ strategy.id }}')" 
+                                        class="quick-action-btn quick-action-manage" 
+                                        title="자본 관리">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.51-1.31c-.562-.649-1.413-1.076-2.353-1.253V5z" clip-rule="evenodd"/>
+                                    </svg>
+                                    자본 관리
+                                </button>
+                                {% else %}
+                                <div class="empty-state-hint">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="hint-icon">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <span>계좌를 연결하여 자동매매를 시작하세요</span>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- 연결된 계좌 및 자본 배분 -->
+                        <div class="strategy-accounts-section">
+                            <h4>연결된 계좌 및 자본 배분</h4>
+                            <div class="strategy-accounts-list" id="strategy-accounts-{{ strategy.id }}">
+                                {% if strategy.connected_accounts %}
+                                    {% for account in strategy.connected_accounts %}
+                                    <div class="strategy-account-item">
+                                        <div class="strategy-account-info">
+                                            <p>{{ account.exchange.title() }} - {{ account.name }}</p>
+                                            <p>가중치: {{ account.weight }} | {% if account.max_symbols %}최대: {{ account.max_symbols }}개{% else %}최대: -{% endif %} | 레버리지: {{ account.leverage }}x</p>
+                                        </div>
+                                        <div class="strategy-account-amount">
+                                            <p class="amount tabular-nums">${{ "%.2f"|format(account.allocated_capital) }}</p>
+                                            <p class="currency">USDT{% if account.exchange == 'upbit' %} 환산{% endif %}</p>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="text-center py-8 text-muted">
+                                        <p>연결된 계좌가 없습니다</p>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="text-center py-16">
+                <div class="mx-auto w-24 h-24 bg-gradient-to-r from-purple-100 to-blue-100 rounded-full flex items-center justify-center mb-6">
+                    <svg class="w-12 h-12 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-semibold text-primary mb-2">등록된 전략이 없습니다</h3>
+                <p class="text-muted mb-6">첫 번째 트레이딩 전략을 추가하여 시작하세요.</p>
+                <button onclick="openAddStrategyModal()" 
+                        class="btn btn-primary">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                    </svg>
+                    첫 번째 전략 추가
+                </button>
+            </div>
+        {% endif %}
+    </section>
+</div>
+
+<!-- 토스트 컨테이너 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<!-- 전략 추가/수정 모달 -->
+<div id="strategyModal" class="modal-overlay hidden">
+    <div class="modal-content max-w-2xl">
+        <div class="modal-header">
+            <div class="flex items-center">
+                <div class="bg-accent rounded-full p-2 mr-3">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <h3 id="strategyModalTitle" class="text-lg font-semibold text-primary">전략 추가</h3>
+            </div>
+            <button onclick="closeStrategyModal()" class="modal-close">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="modal-body">
+            <form id="strategyForm" onsubmit="submitStrategy(event)">
+                <input type="hidden" id="strategyId" name="strategy_id">
+                
+                <div class="space-y-4">
+                    <div class="form-group">
+                        <label for="name" class="form-label">전략명</label>
+                        <input type="text" id="name" name="name" required class="form-input" placeholder="예: RSI 역추세 전략">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description" class="form-label">설명</label>
+                        <textarea id="description" name="description" rows="3" class="form-textarea" placeholder="전략에 대한 설명을 입력하세요"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="group_name" class="form-label">그룹명</label>
+                        <input type="text" id="group_name" name="group_name" class="form-input" placeholder="예: 역추세 전략군">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="market_type" class="form-label">마켓 타입</label>
+                        <select id="market_type" name="market_type" required class="form-select">
+                            <option value="">선택하세요</option>
+                            <option value="spot">현물</option>
+                            <option value="futures">선물</option>
+                        </select>
+                    </div>
+                    
+                    <div class="flex items-center">
+                        <input type="checkbox" id="is_active" name="is_active" 
+                               class="rounded border-color text-accent shadow-sm focus:border-accent focus:ring focus:ring-accent focus:ring-opacity-50">
+                        <label for="is_active" class="ml-2 text-sm text-primary">전략 활성화</label>
+                    </div>
+                </div>
+                
+                <div class="flex space-x-3 mt-6">
+                    <button type="button" onclick="closeStrategyModal()" 
+                            class="btn btn-secondary flex-1">
+                        취소
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary flex-1">
+                        저장
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 계좌 연결 모달 -->
+<div id="accountModal" class="modal-overlay hidden">
+    <div class="modal-content max-w-4xl">
+        <div class="modal-header">
+            <div class="flex items-center">
+                <div class="bg-accent rounded-full p-2 mr-3">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg font-semibold text-primary">계좌 연결 관리</h3>
+            </div>
+            <button onclick="closeAccountModal()" class="modal-close">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="modal-body">
+            <div id="accountModalContent">
+                <!-- 동적으로 로드됩니다 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 자본 배분 모달 -->
+<div id="capitalModal" class="modal-overlay hidden">
+    <div class="modal-content max-w-3xl">
+        <div class="modal-header">
+            <div class="flex items-center">
+                <div class="bg-success rounded-full p-2 mr-3">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"></path>
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.51-1.31c-.562-.649-1.413-1.076-2.353-1.253V5z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg font-semibold text-primary">자본 배분 관리</h3>
+            </div>
+            <button onclick="closeCapitalModal()" class="modal-close">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="modal-body">
+            <div id="capitalModalContent">
+                <!-- 동적으로 로드됩니다 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Toast 함수들
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container') || createToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    toast.innerHTML = `
+        <div class="toast-content">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()" class="toast-close">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'fixed top-4 right-4 z-50 space-y-2';
+    document.body.appendChild(container);
+    return container;
+}
+
+// CSRF 토큰
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+}
+
+// 전략 관련 함수들
+function openAddStrategyModal() {
+    document.getElementById('strategyModalTitle').textContent = '전략 추가';
+    document.getElementById('strategyForm').reset();
+    document.getElementById('strategyId').value = '';
+    document.getElementById('strategyModal').classList.remove('hidden');
+}
+
+function closeStrategyModal() {
+    document.getElementById('strategyModal').classList.add('hidden');
+}
+
+function editStrategy(strategyId) {
+    // 전략 정보 로드
+    fetch(`/api/strategies/${strategyId}`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const strategy = data.strategy;
+            
+            document.getElementById('strategyModalTitle').textContent = '전략 수정';
+            document.getElementById('strategyId').value = strategy.id;
+            document.getElementById('name').value = strategy.name || '';
+            document.getElementById('description').value = strategy.description || '';
+            document.getElementById('group_name').value = strategy.group_name || '';
+            document.getElementById('market_type').value = strategy.market_type || '';
+            document.getElementById('is_active').checked = strategy.is_active || false;
+            
+            document.getElementById('strategyModal').classList.remove('hidden');
+        } else {
+            showToast('전략 정보를 불러오는데 실패했습니다: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        showToast('전략 정보를 불러오는 중 오류가 발생했습니다: ' + error.message, 'error');
+    });
+}
+
+function deleteStrategy(strategyId) {
+    if (confirm('정말로 이 전략을 삭제하시겠습니까? 연결된 계좌와 포지션이 있는 경우 삭제할 수 없습니다.')) {
+        fetch(`/api/strategies/${strategyId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('전략이 성공적으로 삭제되었습니다.', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast('전략 삭제 실패: ' + data.error, 'error');
+            }
+        })
+        .catch(error => {
+            showToast('전략 삭제 중 오류가 발생했습니다: ' + error.message, 'error');
+        });
+    }
+}
+
+function submitStrategy(event) {
+    event.preventDefault();
+    
+    const form = document.getElementById('strategyForm');
+    const formData = new FormData(form);
+    const strategyId = document.getElementById('strategyId').value;
+    
+    const data = {
+        name: formData.get('name'),
+        description: formData.get('description'),
+        group_name: formData.get('group_name'),
+        market_type: formData.get('market_type'),
+        is_active: formData.get('is_active') === 'on'
+    };
+    
+    const url = strategyId ? `/api/strategies/${strategyId}` : '/api/strategies';
+    const method = strategyId ? 'PUT' : 'POST';
+    
+    const submitButton = form.querySelector('button[type="submit"]');
+    const originalText = submitButton.innerHTML;
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<div class="loading-spinner"></div>저장 중...';
+    
+    fetch(url, {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast(strategyId ? '전략이 성공적으로 수정되었습니다.' : '전략이 성공적으로 생성되었습니다.', 'success');
+            closeStrategyModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast('저장 실패: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        showToast('저장 중 오류가 발생했습니다: ' + error.message, 'error');
+    })
+    .finally(() => {
+        submitButton.disabled = false;
+        submitButton.innerHTML = originalText;
+    });
+}
+
+function openAccountModal(strategyId) {
+    document.getElementById('accountModal').classList.remove('hidden');
+    loadStrategyAccountModal(strategyId);
+}
+
+function closeAccountModal() {
+    document.getElementById('accountModal').classList.add('hidden');
+}
+
+function loadStrategyAccountModal(strategyId) {
+    const modalContent = document.getElementById('accountModalContent');
+    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
+    
+    // 사용자의 모든 계좌와 전략의 연결된 계좌 정보 조회
+    Promise.all([
+        fetch('/api/accounts', {
+            headers: { 'X-CSRFToken': getCSRFToken() }
+        }).then(r => r.json()),
+        fetch(`/api/strategies/${strategyId}/accounts`, {
+            headers: { 'X-CSRFToken': getCSRFToken() }
+        }).then(r => r.json())
+    ])
+    .then(([accountsResult, strategyAccountsResult]) => {
+        if (accountsResult.success && strategyAccountsResult.success) {
+            renderAccountModal(strategyId, accountsResult.accounts || [], strategyAccountsResult.accounts || []);
+        } else {
+            modalContent.innerHTML = '<div class="text-center py-8 text-error">데이터를 불러오는데 실패했습니다.</div>';
+        }
+    })
+    .catch(error => {
+        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다: ' + error.message + '</div>';
+    });
+}
+
+function renderAccountModal(strategyId, allAccounts, connectedAccounts) {
+    const modalContent = document.getElementById('accountModalContent');
+    
+    const connectedAccountIds = new Set(connectedAccounts.map(acc => acc.id));
+    
+    let html = `
+        <div class="space-y-6">
+            <div>
+                <h4 class="text-lg font-medium text-primary mb-4">사용 가능한 계좌</h4>
+                <div class="space-y-3">
+    `;
+    
+    if (allAccounts.length === 0) {
+        html += '<div class="text-center py-8 text-muted">등록된 계좌가 없습니다.</div>';
+    } else {
+        allAccounts.forEach(account => {
+            const isConnected = connectedAccountIds.has(account.id);
+            const connectedAccount = connectedAccounts.find(ca => ca.id === account.id);
+            
+            html += `
+                <div class="account-item ${isConnected ? 'border-accent' : ''}">
+                    <div class="flex items-center space-x-3 flex-1">
+                        <div class="w-8 h-8 bg-accent bg-opacity-20 rounded-full flex items-center justify-center">
+                            <span class="text-sm font-bold text-accent">${account.exchange.toUpperCase().charAt(0)}</span>
+                        </div>
+                        <div class="flex-1">
+                            <div class="font-medium text-primary">${account.exchange.charAt(0).toUpperCase() + account.exchange.slice(1)} - ${account.name}</div>
+                            <div class="text-sm text-muted">${account.is_active ? '활성' : '비활성'}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        ${isConnected ? `
+                            <span class="badge badge-success">연결됨</span>
+                            <button onclick="disconnectAccount(${strategyId}, ${account.id})" class="btn btn-error btn-sm">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                                연결 해제
+                            </button>
+                            <button onclick="editConnection(${strategyId}, ${account.id})" 
+                                    data-weight="${connectedAccount ? connectedAccount.weight : 1.0}"
+                                    data-leverage="${connectedAccount ? connectedAccount.leverage : 1.0}"
+                                    data-max-symbols="${connectedAccount ? connectedAccount.max_symbols || '' : ''}"
+                                    class="btn btn-secondary btn-sm">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                </svg>
+                                설정
+                            </button>
+                        ` : `
+                            <button onclick="connectAccount(${strategyId}, ${account.id})" class="btn btn-primary btn-sm">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                </svg>
+                                연결
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    html += `
+                </div>
+            </div>
+        </div>
+    `;
+    
+    modalContent.innerHTML = html;
+}
+
+function connectAccount(strategyId, accountId) {
+    // 연결 설정 폼 표시
+    showConnectionForm(strategyId, accountId, 'connect');
+}
+
+function editConnection(strategyId, accountId) {
+    // 기존 연결 설정 편집 폼 표시
+    const button = event.target.closest('button');
+    const existingData = {
+        weight: parseFloat(button.dataset.weight),
+        leverage: parseFloat(button.dataset.leverage),
+        max_symbols: button.dataset.maxSymbols || null
+    };
+    showConnectionForm(strategyId, accountId, 'edit', existingData);
+}
+
+function showConnectionForm(strategyId, accountId, mode, existingData = null) {
+    const modalContent = document.getElementById('accountModalContent');
+    
+    const weight = existingData?.weight || 1.0;
+    const leverage = existingData?.leverage || 1.0;
+    const maxSymbols = existingData?.max_symbols || '';
+    
+    modalContent.innerHTML = `
+        <div class="space-y-6">
+            <div class="flex items-center space-x-3">
+                <button onclick="loadStrategyAccountModal(${strategyId})" class="btn btn-secondary btn-sm">
+                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                    돌아가기
+                </button>
+                <h4 class="text-lg font-medium text-primary">${mode === 'edit' ? '연결 설정 수정' : '계좌 연결'}</h4>
+            </div>
+            
+            <form id="connectionForm" onsubmit="submitConnection(event, ${strategyId}, ${accountId}, '${mode}')">
+                <div class="space-y-4">
+                    <div class="form-group">
+                        <label class="form-label">가중치</label>
+                        <input type="number" step="0.1" min="0.1" max="10" value="${weight}" name="weight" required class="form-input" placeholder="1.0">
+                        <p class="text-sm text-muted mt-1">전체 자본 대비 이 계좌에 할당할 비율 (1.0 = 100%)</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">레버리지</label>
+                        <input type="number" step="0.1" min="1" max="100" value="${leverage}" name="leverage" required class="form-input" placeholder="1.0">
+                        <p class="text-sm text-muted mt-1">사용할 레버리지 배수</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">최대 보유 심볼 수 (선택사항)</label>
+                        <input type="number" min="1" max="100" value="${maxSymbols}" name="max_symbols" class="form-input" placeholder="예: 10">
+                        <p class="text-sm text-muted mt-1">이 계좌에서 동시에 보유할 수 있는 최대 심볼 수</p>
+                    </div>
+                </div>
+                
+                <div class="flex space-x-3 mt-6">
+                    <button type="button" onclick="loadStrategyAccountModal(${strategyId})" class="btn btn-secondary flex-1">
+                        취소
+                    </button>
+                    <button type="submit" class="btn btn-primary flex-1">
+                        ${mode === 'edit' ? '수정' : '연결'}
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+}
+
+function submitConnection(event, strategyId, accountId, mode) {
+    event.preventDefault();
+    
+    const form = document.getElementById('connectionForm');
+    const formData = new FormData(form);
+    
+    const data = {
+        account_id: accountId,
+        weight: parseFloat(formData.get('weight')),
+        leverage: parseFloat(formData.get('leverage'))
+    };
+    
+    const maxSymbols = formData.get('max_symbols');
+    if (maxSymbols && maxSymbols.trim() !== '') {
+        data.max_symbols = parseInt(maxSymbols);
+    }
+    
+    const url = mode === 'edit' 
+        ? `/api/strategies/${strategyId}/accounts/${accountId}`
+        : `/api/strategies/${strategyId}/accounts`;
+    const method = mode === 'edit' ? 'PUT' : 'POST';
+    
+    const submitButton = form.querySelector('button[type="submit"]');
+    const originalText = submitButton.innerHTML;
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<div class="loading-spinner"></div>처리 중...';
+    
+    fetch(url, {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast(mode === 'edit' ? '연결 설정이 성공적으로 수정되었습니다.' : '계좌가 성공적으로 연결되었습니다.', 'success');
+            loadStrategyAccountModal(strategyId);
+            
+            // 전략 카드의 계좌 정보 업데이트
+            if (data.updated_strategy) {
+                updateStrategyCard(data.updated_strategy);
+            }
+        } else {
+            showToast('처리 실패: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        showToast('처리 중 오류가 발생했습니다: ' + error.message, 'error');
+    })
+    .finally(() => {
+        submitButton.disabled = false;
+        submitButton.innerHTML = originalText;
+    });
+}
+
+function disconnectAccount(strategyId, accountId) {
+    if (confirm('정말로 이 계좌와의 연결을 해제하시겠습니까?')) {
+        fetch(`/api/strategies/${strategyId}/accounts/${accountId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('계좌 연결이 성공적으로 해제되었습니다.', 'success');
+                loadStrategyAccountModal(strategyId);
+                
+                // 전략 카드의 계좌 정보 업데이트
+                if (data.updated_strategy) {
+                    updateStrategyCard(data.updated_strategy);
+                }
+            } else {
+                showToast('연결 해제 실패: ' + data.error, 'error');
+            }
+        })
+        .catch(error => {
+            showToast('연결 해제 중 오류가 발생했습니다: ' + error.message, 'error');
+        });
+    }
+}
+
+function openCapitalModal(strategyId) {
+    document.getElementById('capitalModal').classList.remove('hidden');
+    loadCapitalModal(strategyId);
+}
+
+function closeCapitalModal() {
+    document.getElementById('capitalModal').classList.add('hidden');
+}
+
+function loadCapitalModal(strategyId) {
+    const modalContent = document.getElementById('capitalModalContent');
+    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
+    
+    fetch(`/api/strategies/${strategyId}/accounts`, {
+        headers: { 'X-CSRFToken': getCSRFToken() }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            renderCapitalModal(strategyId, data.accounts || []);
+        } else {
+            modalContent.innerHTML = '<div class="text-center py-8 text-error">데이터를 불러오는데 실패했습니다.</div>';
+        }
+    })
+    .catch(error => {
+        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다: ' + error.message + '</div>';
+    });
+}
+
+function renderCapitalModal(strategyId, accounts) {
+    const modalContent = document.getElementById('capitalModalContent');
+    
+    let html = `
+        <div class="space-y-6">
+            <div class="bg-info bg-opacity-10 border border-info rounded-lg p-4">
+                <div class="flex items-start">
+                    <svg class="h-5 w-5 text-info mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 100-16 8 8 0 000 16zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                    </svg>
+                    <div>
+                        <h4 class="text-sm font-medium text-info">자본 배분 안내</h4>
+                        <p class="text-sm text-info mt-1">자본 배분은 계좌 연결 시 자동으로 설정됩니다. 수동 조정은 향후 업데이트에서 지원될 예정입니다.</p>
+                    </div>
+                </div>
+            </div>
+    `;
+    
+    if (accounts.length === 0) {
+        html += '<div class="text-center py-8 text-muted">연결된 계좌가 없습니다.</div>';
+    } else {
+        html += '<div class="space-y-4">';
+        
+        accounts.forEach(account => {
+            html += `
+                <div class="card-inner">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-8 h-8 bg-accent bg-opacity-20 rounded-full flex items-center justify-center">
+                                <span class="text-sm font-bold text-accent">${account.exchange.toUpperCase().charAt(0)}</span>
+                            </div>
+                            <div>
+                                <div class="font-medium text-primary">${account.exchange.charAt(0).toUpperCase() + account.exchange.slice(1)} - ${account.name}</div>
+                                <div class="text-sm text-muted">가중치: ${account.weight} | 레버리지: ${account.leverage}x</div>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="badge badge-success">$${account.allocated_capital.toFixed(2)}</div>
+                            <div class="text-sm text-muted mt-1">할당된 자본</div>
+                        </div>
+                    </div>
+                    
+                    ${account.current_pnl !== 0 ? `
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-muted">현재 PnL</span>
+                            <span class="badge ${account.current_pnl >= 0 ? 'badge-success' : 'badge-error'}">
+                                ${account.current_pnl >= 0 ? '+' : ''}$${account.current_pnl.toFixed(2)}
+                            </span>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        
+        // 총 할당 자본 표시
+        const totalAllocated = accounts.reduce((sum, acc) => sum + acc.allocated_capital, 0);
+        const totalPnl = accounts.reduce((sum, acc) => sum + acc.current_pnl, 0);
+        
+        html += `
+            <div class="border-t border-color pt-4">
+                <div class="flex items-center justify-between">
+                    <span class="font-medium text-primary">총 할당 자본</span>
+                    <span class="badge badge-info">$${totalAllocated.toFixed(2)}</span>
+                </div>
+                ${totalPnl !== 0 ? `
+                    <div class="flex items-center justify-between mt-2">
+                        <span class="font-medium text-primary">총 PnL</span>
+                        <span class="badge ${totalPnl >= 0 ? 'badge-success' : 'badge-error'}">
+                            ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}
+                        </span>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    modalContent.innerHTML = html;
+}
+
+function updateStrategyCard(strategy) {
+    // 전략 카드의 계좌 정보 업데이트
+    const accountsContainer = document.getElementById(`strategy-accounts-${strategy.id}`);
+    
+    if (accountsContainer) {
+        if (strategy.connected_accounts && strategy.connected_accounts.length > 0) {
+            let accountsHtml = '';
+            strategy.connected_accounts.forEach(account => {
+                accountsHtml += `
+                    <div class="strategy-account-item">
+                        <div class="strategy-account-info">
+                            <p>${account.exchange.charAt(0).toUpperCase() + account.exchange.slice(1)} - ${account.name}</p>
+                            <p>가중치: ${account.weight} | ${account.max_symbols ? `최대: ${account.max_symbols}개` : '최대: -'} | 레버리지: ${account.leverage}x</p>
+                        </div>
+                        <div class="strategy-account-amount">
+                            <p class="amount tabular-nums">$${account.allocated_capital.toFixed(2)}</p>
+                            <p class="currency">USDT${account.exchange === 'upbit' ? ' 환산' : ''}</p>
+                        </div>
+                    </div>
+                `;
+            });
+            accountsContainer.innerHTML = accountsHtml;
+        } else {
+            accountsContainer.innerHTML = `
+                <div class="text-center py-8 text-muted">
+                    <p>연결된 계좌가 없습니다</p>
+                </div>
+            `;
+        }
+    }
+
+    // 전략 요약 정보 업데이트
+    const strategyCard = document.getElementById(`strategy-card-${strategy.id}`);
+    if (strategyCard) {
+        const summaryAmount = strategyCard.querySelector('.strategy-summary-card .amount');
+        const accountCount = strategyCard.querySelector('.account-count .highlight');
+        
+        if (summaryAmount) {
+            summaryAmount.textContent = `$${strategy.total_allocated_capital.toFixed(2)}`;
+        }
+        if (accountCount) {
+            accountCount.textContent = `${strategy.connected_accounts.length}개`;
+        }
+    }
+}
+
+// 전략 토글 이벤트
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.strategy-toggle').forEach(toggle => {
+        toggle.addEventListener('change', function() {
+            const strategyId = this.dataset.strategyId;
+            const isActive = this.checked;
+            
+            fetch(`/api/strategies/${strategyId}/toggle`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast(data.message, 'success');
+                    
+                    // 상태 배지 업데이트
+                    const strategyCard = document.getElementById(`strategy-card-${strategyId}`);
+                    if (strategyCard) {
+                        const statusBadge = strategyCard.querySelector('.status-badge');
+                        const statusDot = statusBadge.querySelector('.status-dot');
+                        
+                        if (data.is_active) {
+                            statusBadge.className = 'status-badge active';
+                            statusBadge.innerHTML = '<div class="status-dot active"></div>활성';
+                        } else {
+                            statusBadge.className = 'status-badge inactive';
+                            statusBadge.innerHTML = '<div class="status-dot inactive"></div>비활성';
+                        }
+                    }
+                } else {
+                    showToast('상태 변경 실패: ' + data.error, 'error');
+                    // 토글 상태 되돌리기
+                    this.checked = !isActive;
+                }
+            })
+            .catch(error => {
+                showToast('상태 변경 중 오류가 발생했습니다: ' + error.message, 'error');
+                // 토글 상태 되돌리기
+                this.checked = !isActive;
+            });
+        });
+    });
+
+    // 모달 외부 클릭 시 닫기
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) {
+                this.classList.add('hidden');
+            }
+        });
+    });
+    
+    // ESC 키로 모달 닫기
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal-overlay').forEach(modal => {
+                modal.classList.add('hidden');
+            });
+        }
+    });
+});
+</script>
+{% endblock %} 

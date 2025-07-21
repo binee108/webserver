@@ -21,7 +21,7 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 ### 설치
 ```bash
 # 프로젝트 클론
-git clone https://github.com/your-repo/crypto-trading-system.git
+git clone https://github.com/binee108/crypto-trading-web-service.git
 cd crypto-trading-system
 
 # 가상환경 설정

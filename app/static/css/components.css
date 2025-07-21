@@ -1,0 +1,1385 @@
+/* ===== CARD COMPONENTS ===== */
+.card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow);
+    transition: all 0.3s ease;
+    border-radius: 0.75rem;
+}
+
+.card:hover {
+    background-color: var(--bg-card-hover);
+    box-shadow: var(--shadow-lg);
+}
+
+.card-gradient {
+    border: none;
+    color: white;
+}
+
+.card-gradient.gradient-blue {
+    background: var(--gradient-blue);
+}
+
+.card-gradient.gradient-purple {
+    background: var(--gradient-purple);
+}
+
+.card-gradient.gradient-green {
+    background: var(--gradient-green);
+}
+
+/* ===== NEW STRATEGY CARD COMPONENTS ===== */
+.strategy-card-new {
+    background-color: var(--strategy-card-bg);
+    border: 1px solid var(--strategy-card-border);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    box-shadow: var(--shadow-lg);
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.strategy-card-new:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
+}
+
+.strategy-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.strategy-title-section {
+    flex: 1;
+    margin-right: 1rem;
+}
+
+.strategy-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.strategy-title-section h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.strategy-badges {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.strategy-title-section p {
+    font-size: 0.875rem;
+    color: var(--strategy-subtitle-text);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.strategy-actions-section {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* ===== MARKET TYPE BADGES ===== */
+.market-type-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.market-type-badge svg {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
+.market-type-badge.futures {
+    background-color: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.market-type-badge.spot {
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+/* ===== RESPONSIVE DESIGN FOR STRATEGY HEADER ===== */
+@media (max-width: 768px) {
+    .strategy-card-header {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .strategy-title-section {
+        margin-right: 0;
+    }
+    
+    .strategy-title-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    
+    .strategy-badges {
+        gap: 0.375rem;
+    }
+    
+    .strategy-actions-section {
+        align-self: flex-end;
+    }
+}
+
+.strategy-grid-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+@media (min-width: 768px) {
+    .strategy-grid-layout {
+        grid-template-columns: 1fr 2fr;
+    }
+}
+
+.strategy-summary-card {
+    background-color: var(--strategy-account-bg);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.strategy-summary-card h4 {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--strategy-subtitle-text);
+    margin: 0;
+}
+
+.strategy-id-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    background-color: var(--accent-primary);
+    color: white;
+    opacity: 0.8;
+}
+
+.summary-main-metrics {
+    flex: 1;
+}
+
+.main-metric {
+    margin-bottom: 1rem;
+}
+
+.strategy-summary-card .amount {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--strategy-header-text);
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.strategy-summary-card .amount-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0 0;
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.metric-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background-color: var(--bg-card);
+    border-radius: 0.375rem;
+    border: 1px solid var(--border-color);
+}
+
+.metric-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--accent-primary);
+    flex-shrink: 0;
+}
+
+.metric-value {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--strategy-header-text);
+    display: block;
+    font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    display: block;
+}
+
+.summary-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.info-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.info-icon {
+    width: 1rem;
+    height: 1rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.info-label {
+    color: var(--text-muted);
+    font-weight: 500;
+    min-width: 4rem;
+}
+
+.info-value {
+    color: var(--strategy-header-text);
+    font-weight: 500;
+}
+
+.summary-quick-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: auto;
+}
+
+.quick-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.quick-action-btn svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.quick-action-add {
+    background-color: var(--accent-primary);
+    color: white;
+}
+
+.quick-action-add:hover {
+    background-color: var(--accent-secondary);
+    transform: translateY(-1px);
+}
+
+.quick-action-manage {
+    background-color: var(--success);
+    color: white;
+}
+
+.quick-action-manage:hover {
+    background-color: #059669;
+    transform: translateY(-1px);
+}
+
+.quick-action-view {
+    background-color: var(--info);
+    color: white;
+}
+
+.quick-action-view:hover {
+    background-color: #1d4ed8;
+    transform: translateY(-1px);
+}
+
+.empty-state-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background-color: rgba(59, 130, 246, 0.1);
+    border: 1px dashed rgba(59, 130, 246, 0.3);
+    border-radius: 0.375rem;
+    color: var(--info);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.hint-icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+}
+
+.strategy-accounts-section h4 {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--strategy-subtitle-text);
+    margin: 0 0 0.5rem 0;
+}
+
+.strategy-accounts-list {
+    max-height: 12rem;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.strategy-account-item {
+    background-color: var(--strategy-account-bg);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.strategy-account-info p:first-child {
+    font-weight: 600;
+    color: var(--strategy-header-text);
+    margin: 0 0 0.25rem 0;
+}
+
+.strategy-account-info p:last-child {
+    font-size: 0.75rem;
+    color: var(--strategy-subtitle-text);
+    margin: 0;
+}
+
+.strategy-account-amount {
+    text-align: right;
+}
+
+.strategy-account-amount .amount {
+    font-weight: 600;
+    font-size: 1.125rem;
+    color: var(--strategy-amount-text);
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.strategy-account-amount .currency {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0 0;
+}
+
+.strategy-card-footer {
+    border-top: 1px solid var(--strategy-card-border);
+    padding-top: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* ===== STATUS BADGES ===== */
+.status-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.status-badge.active {
+    background-color: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.status-badge.running {
+    background-color: rgba(14, 165, 233, 0.2);
+    color: #0ea5e9;
+}
+
+.status-badge.inactive {
+    background-color: rgba(107, 114, 128, 0.2);
+    color: #6b7280;
+}
+
+.status-dot {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+}
+
+.status-dot.active {
+    background-color: #10b981;
+}
+
+.status-dot.running {
+    background-color: #0ea5e9;
+}
+
+.status-dot.inactive {
+    background-color: #6b7280;
+}
+
+/* ===== ACTION BUTTONS ===== */
+.btn-action {
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    text-decoration: none;
+}
+
+.btn-action-secondary {
+    background-color: var(--strategy-button-secondary);
+    color: var(--strategy-button-secondary-text);
+}
+
+.btn-action-secondary:hover {
+    background-color: var(--strategy-button-secondary-hover);
+}
+
+.btn-action-primary {
+    background-color: var(--accent-primary);
+    color: white;
+}
+
+.btn-action-primary:hover {
+    background-color: var(--accent-secondary);
+}
+
+.btn-action-danger {
+    background-color: var(--error);
+    color: white;
+}
+
+.btn-action-danger:hover {
+    background-color: #dc2626;
+}
+
+.btn-action svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* ===== STRATEGY PAGE HEADER ===== */
+.strategy-page-header-new {
+    background: var(--strategy-page-header-gradient);
+    color: white;
+    padding: 2rem;
+    border-radius: 0.75rem;
+    margin-bottom: 2.5rem;
+    box-shadow: var(--shadow-lg);
+}
+
+.strategy-page-header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.strategy-page-header-content h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+.strategy-page-header-content p {
+    margin: 0.5rem 0 0 0;
+    font-size: 1.125rem;
+    color: rgb(196 181 253); /* purple-200 equivalent */
+}
+
+.btn-header-action {
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    transition: all 0.15s ease;
+    background-color: white;
+    color: #7c3aed;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-header-action:hover {
+    background-color: rgb(196 181 253);
+}
+
+.btn-header-action svg {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+@media (max-width: 768px) {
+    .strategy-page-header-content {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+    }
+    
+    .strategy-page-header-content h1 {
+        font-size: 1.875rem;
+    }
+    
+    .strategy-page-header-content p {
+        font-size: 1rem;
+    }
+    
+    .strategy-card-footer {
+        justify-content: stretch;
+    }
+    
+    .strategy-card-footer .btn-action {
+        flex: 1;
+        justify-content: center;
+    }
+}
+
+/* ===== TOGGLE SWITCH - UNIFIED APPROACH ===== */
+.toggle-switch-container {
+    position: relative;
+    display: inline-block;
+    cursor: pointer;
+    align-self: center;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 2.75rem;
+    height: 1.5rem;
+    background: var(--bg-secondary);
+    border-radius: 9999px;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== INPUT-BASED TOGGLE (Strategies Page) ===== */
+/* Default ::after for input-based toggles */
+.toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    z-index: 1;
+}
+
+/* Checked state for input-based toggles */
+.strategy-toggle:checked + .toggle-switch {
+    background: var(--success) !important;
+    border-color: var(--success) !important;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3), inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.strategy-toggle:checked + .toggle-switch::after {
+    transform: translateX(1.25rem);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.strategy-toggle:focus + .toggle-switch {
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3);
+}
+
+/* ===== DIV-BASED TOGGLE (Dashboard Page) ===== */
+/* Hide ::after for div-based toggles and use .toggle-circle instead */
+.toggle-switch .toggle-circle {
+    position: absolute;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.2);
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    z-index: 2;
+}
+
+/* Ensure ::after is behind the circle for div-based toggles */
+.toggle-switch::after {
+    z-index: 1;
+}
+
+/* Completely hide ::after for div-based toggles (when .toggle-circle is present) */
+.toggle-switch:has(.toggle-circle)::after {
+    display: none !important;
+}
+
+/* Fallback for browsers that don't support :has() */
+.toggle-switch.div-based::after {
+    display: none !important;
+}
+
+.toggle-switch .toggle-circle::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: var(--bg-secondary);
+    border-radius: 50%;
+    z-index: -1;
+}
+
+/* Active state for div-based toggle */
+.toggle-switch.active {
+    background: var(--success) !important;
+    border-color: var(--success) !important;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3), inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Active state for toggle circle */
+.toggle-switch.active .toggle-circle {
+    transform: translateY(-50%) translateX(1.25rem);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== SPARKLINE COMPONENTS ===== */
+.sparkline-container {
+    height: 40px;
+    background-color: var(--bg-secondary);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+}
+
+/* ===== BUTTON COMPONENTS ===== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background-color: var(--accent-primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--accent-secondary);
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+    background-color: var(--bg-card-hover);
+}
+
+.btn-success {
+    background-color: var(--success);
+    color: white;
+}
+
+.btn-warning {
+    background-color: var(--warning);
+    color: white;
+}
+
+.btn-error {
+    background-color: var(--error);
+    color: white;
+}
+
+.btn-icon {
+    padding: 0.5rem;
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+/* ===== TAB COMPONENTS ===== */
+.tab-button {
+    transition: all 0.3s ease;
+    border-bottom: 2px solid transparent;
+    padding: 0.75rem 1rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.tab-button.active {
+    border-bottom-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background-color: var(--bg-card);
+}
+
+.tab-button:hover:not(.active) {
+    color: var(--text-secondary);
+    border-bottom-color: var(--border-color);
+}
+
+.tab-content {
+    padding: 1.5rem;
+}
+
+.tab-content.hidden {
+    display: none;
+}
+
+/* ===== MODAL COMPONENTS ===== */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal-content {
+    background-color: var(--bg-card);
+    border-radius: 0.75rem;
+    max-width: 72rem;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: between;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-close {
+    color: var(--text-secondary);
+    transition: color 0.2s ease;
+    cursor: pointer;
+}
+
+.modal-close:hover {
+    color: var(--text-primary);
+}
+
+/* ===== TABLE COMPONENTS ===== */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th {
+    background-color: var(--bg-secondary);
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.table tr:hover {
+    background-color: var(--bg-card-hover);
+}
+
+/* Table action buttons styling */
+.table .table-actions {
+    white-space: nowrap;
+    width: 1%;
+    padding-right: 1rem;
+}
+
+.table .table-actions .flex {
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+
+.table .table-actions .btn-sm {
+    padding: 0.375rem 0.625rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.table .table-actions .btn-sm svg {
+    width: 0.875rem;
+    height: 0.875rem;
+    margin-right: 0.25rem;
+}
+
+/* Responsive table actions */
+@media (max-width: 768px) {
+    .table .table-actions .flex {
+        flex-wrap: wrap;
+        gap: 0.375rem;
+    }
+    
+    .table .table-actions .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+    
+    .table .table-actions .btn-sm svg {
+        width: 0.75rem;
+        height: 0.75rem;
+    }
+}
+
+/* ===== BADGE COMPONENTS ===== */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.badge-success {
+    background-color: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+}
+
+.badge-error {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: var(--error);
+}
+
+.badge-warning {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+}
+
+.badge-info {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: var(--info);
+}
+
+.badge-secondary {
+    background-color: var(--bg-secondary);
+    color: var(--text-muted);
+}
+
+.badge-accent {
+    background-color: rgba(139, 92, 246, 0.1);
+    color: var(--accent-primary);
+}
+
+/* ===== QUICK ACTION CARDS ===== */
+.quick-action-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    color: white;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+
+.quick-action-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.quick-action-card .content {
+    flex-grow: 1;
+    text-align: left;
+    z-index: 2;
+    position: relative;
+}
+
+.quick-action-card .title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: white;
+}
+
+.quick-action-card .description {
+    font-size: 0.875rem;
+    opacity: 0.9;
+    color: white;
+}
+
+.quick-action-card .icon-container {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    margin-left: 1rem;
+    flex-shrink: 0;
+    z-index: 2;
+    position: relative;
+}
+
+.quick-action-card .icon-container svg {
+    color: white;
+}
+
+/* ===== GRID LAYOUTS ===== */
+.strategy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .strategy-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+}
+
+/* ===== ANIMATIONS ===== */
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(20px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+.slide-down {
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from { 
+        max-height: 0; 
+        opacity: 0; 
+    }
+    to { 
+        max-height: 1000px; 
+        opacity: 1; 
+    }
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { 
+        transform: rotate(0deg); 
+    }
+    to { 
+        transform: rotate(360deg); 
+    }
+}
+
+.pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { 
+        opacity: 1; 
+    }
+    50% { 
+        opacity: 0.5; 
+    }
+}
+
+/* ===== LOADING COMPONENTS ===== */
+.loading-spinner {
+    display: inline-block;
+    width: 3rem;
+    height: 3rem;
+    border: 2px solid var(--border-color);
+    border-radius: 50%;
+    border-top-color: var(--accent-primary);
+    animation: spin 1s ease-in-out infinite;
+}
+
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    text-align: center;
+}
+
+.loading-text {
+    margin-top: 1rem;
+    color: var(--text-secondary);
+}
+
+/* ===== TOAST NOTIFICATIONS ===== */
+.toast {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 60;
+    max-width: 400px;
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    color: white;
+    box-shadow: var(--shadow-lg);
+    transition: all 0.3s ease;
+}
+
+.toast.success {
+    background-color: var(--success);
+}
+
+.toast.error {
+    background-color: var(--error);
+}
+
+.toast.warning {
+    background-color: var(--warning);
+}
+
+.toast.info {
+    background-color: var(--info);
+}
+
+.toast .toast-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.toast .toast-close {
+    margin-left: 1rem;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.toast .toast-close:hover {
+    opacity: 1;
+}
+
+/* ===== STRATEGY COMPONENTS ===== */
+.strategy-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    border: 1px solid var(--border-color);
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow);
+}
+
+.strategy-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+}
+
+.account-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+    gap: 0.75rem;
+}
+
+.account-item:hover {
+    background: var(--bg-card-hover);
+}
+
+.card-inner {
+    background: var(--bg-card);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+}
+
+/* ===== LOADING & HOVER STATES ===== */
+/* Loading state for both toggle types */
+.toggle-switch[style*="opacity: 0.7"] {
+    pointer-events: none !important;
+}
+
+/* Loading animation for input-based toggles */
+.toggle-switch[style*="opacity: 0.7"]::after {
+    animation: toggle-pulse-inactive 1.5s ease-in-out infinite;
+}
+
+.strategy-toggle:checked + .toggle-switch[style*="opacity: 0.7"]::after {
+    animation: toggle-pulse-active-input 1.5s ease-in-out infinite;
+}
+
+/* Loading animation for div-based toggles */
+.toggle-switch[style*="opacity: 0.7"] .toggle-circle {
+    animation: toggle-pulse-inactive 1.5s ease-in-out infinite;
+}
+
+.toggle-switch.active[style*="opacity: 0.7"] .toggle-circle {
+    animation: toggle-pulse-active 1.5s ease-in-out infinite;
+}
+
+@keyframes toggle-pulse-inactive {
+    0%, 100% {
+        transform: translateY(-50%) scale(1);
+    }
+    50% {
+        transform: translateY(-50%) scale(1.05);
+    }
+}
+
+@keyframes toggle-pulse-active {
+    0%, 100% {
+        transform: translateY(-50%) translateX(1.25rem) scale(1);
+    }
+    50% {
+        transform: translateY(-50%) translateX(1.25rem) scale(1.05);
+    }
+}
+
+@keyframes toggle-pulse-active-input {
+    0%, 100% {
+        transform: translateX(1.25rem) scale(1);
+    }
+    50% {
+        transform: translateX(1.25rem) scale(1.05);
+    }
+}
+
+/* Hover effects */
+.toggle-switch-container:hover .toggle-switch:not([style*="opacity: 0.7"]) {
+    background: var(--bg-card-hover);
+    transform: scale(1.02);
+}
+
+/* Hover effect for active div-based toggle */
+.toggle-switch.active:hover:not([style*="opacity: 0.7"]) {
+    background: #059669 !important; /* darker green on hover */
+    transform: scale(1.02);
+}
+
+/* Hover effect for active input-based toggle */
+.strategy-toggle:checked + .toggle-switch:hover:not([style*="opacity: 0.7"]) {
+    background: #059669 !important; /* darker green on hover */
+    transform: scale(1.02);
+}
+
+/* Button size variants */
+.btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.125rem;
+}
+
+.btn-accent {
+    background-color: var(--accent-primary);
+    color: white;
+}
+
+.btn-accent:hover {
+    background-color: var(--accent-secondary);
+}
+
+/* ===== STATS GRID ===== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+}
+
+.stats-grid.md\:grid-cols-3 {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+@media (min-width: 768px) {
+    .stats-grid.md\:grid-cols-3 {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* ===== UTILITY CLASSES ===== */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.peer {
+    /* Peer selector utility */
+}
+
+.truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.whitespace-nowrap {
+    white-space: nowrap;
+}
+
+/* ===== DARK THEME ADJUSTMENTS ===== */
+[data-theme="dark"] .strategy-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(139, 92, 246, 0.05) 100%);
+}
+
+[data-theme="dark"] .account-item {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .account-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .card-inner {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .toggle-switch {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="dark"] .toast {
+    background: var(--bg-card);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 768px) {
+    .strategy-card {
+        padding: 1rem;
+    }
+    
+    .account-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    
+    .account-item .flex.items-center.space-x-2:last-child {
+        flex-wrap: wrap;
+    }
+    
+    .toast {
+        max-width: calc(100vw - 2rem);
+    }
+}
+
+@media (max-width: 640px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+} 

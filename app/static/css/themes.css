@@ -1,0 +1,202 @@
+/* ===== THEME VARIABLES ===== */
+:root {
+    /* Light Theme (Default) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f1f5f9;
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --border-color: #e2e8f0;
+    --accent-primary: #8b5cf6;
+    --accent-secondary: #a78bfa;
+    --success: #10b981;
+    --error: #ef4444;
+    --warning: #f59e0b;
+    --info: #3b82f6;
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    
+    /* New strategy page specific colors */
+    --strategy-card-bg: #ffffff;
+    --strategy-card-border: #e2e8f0;
+    --strategy-header-text: #1e293b;
+    --strategy-subtitle-text: #64748b;
+    --strategy-account-bg: #f8fafc;
+    --strategy-amount-text: #7c3aed;
+    --strategy-button-secondary: #f1f5f9;
+    --strategy-button-secondary-hover: #e2e8f0;
+    --strategy-button-secondary-text: #475569;
+    
+    /* Gradient Colors */
+    --gradient-blue: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    --gradient-purple: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    --gradient-green: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    --gradient-main: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    
+    /* Header Gradient - Light mode */
+    --header-gradient: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    --strategy-page-header-gradient: linear-gradient(to right, #4f46e5, #7c3aed);
+}
+
+/* Dark Theme */
+[data-theme="dark"] {
+    --bg-primary: #0f172a;
+    --bg-secondary: #0f172a;
+    --bg-card: #1e293b;
+    --bg-card-hover: #334155;
+    --text-primary: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --border-color: #334155;
+    --accent-primary: #8b5cf6;
+    --accent-secondary: #a78bfa;
+    --success: #10b981;
+    --error: #ef4444;
+    --warning: #f59e0b;
+    --info: #3b82f6;
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3);
+    
+    /* Dark theme strategy page specific colors */
+    --strategy-card-bg: #1e293b;
+    --strategy-card-border: #334155;
+    --strategy-header-text: #e2e8f0;
+    --strategy-subtitle-text: #94a3b8;
+    --strategy-account-bg: rgba(51, 65, 85, 0.7);
+    --strategy-amount-text: #c084fc;
+    --strategy-button-secondary: #475569;
+    --strategy-button-secondary-hover: #64748b;
+    --strategy-button-secondary-text: #cbd5e1;
+    
+    /* Dark Theme Header Gradient */
+    --header-gradient: linear-gradient(135deg, #1e293b 0%, #374151 50%, #4c1d95 100%);
+    --strategy-page-header-gradient: linear-gradient(to right, #4f46e5, #7c3aed);
+}
+
+/* ===== THEME UTILITIES ===== */
+body {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    font-feature-settings: 'tnum';
+}
+
+/* Text Colors */
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-muted { color: var(--text-muted); }
+.text-success { color: var(--success); }
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+.text-info { color: var(--info); }
+.text-accent { color: var(--accent-primary); }
+
+/* Strategy specific text colors */
+.strategy-title { color: var(--accent-primary); }
+.strategy-subtitle { color: var(--strategy-subtitle-text); }
+.strategy-amount { color: var(--strategy-amount-text); }
+
+/* Background Colors */
+.bg-accent { background-color: var(--accent-primary); }
+.bg-primary { background-color: var(--bg-primary); }
+.bg-secondary { background-color: var(--bg-secondary); }
+.bg-card { background-color: var(--bg-card); }
+
+/* Light Background Colors for States */
+.bg-success-light { background-color: rgba(16, 185, 129, 0.1); }
+.bg-error-light { background-color: rgba(239, 68, 68, 0.1); }
+.bg-warning-light { background-color: rgba(245, 158, 11, 0.1); }
+.bg-info-light { background-color: rgba(59, 130, 246, 0.1); }
+.bg-accent-light { background-color: rgba(139, 92, 246, 0.1); }
+
+/* Border Colors */
+.border-color { border-color: var(--border-color); }
+
+/* Theme Gradients */
+.gradient-bg {
+    background: var(--gradient-main);
+}
+
+.gradient-blue {
+    background: var(--gradient-blue);
+}
+
+.gradient-purple {
+    background: var(--gradient-purple);
+}
+
+.gradient-green {
+    background: var(--gradient-green);
+}
+
+/* Strategy page header gradient */
+.strategy-page-header {
+    background: var(--strategy-page-header-gradient);
+}
+
+/* ===== THEME TOGGLE COMPONENT ===== */
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    border: none;
+}
+
+.theme-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.theme-icon {
+    width: 1rem;
+    height: 1rem;
+}
+
+.theme-icon.hidden {
+    display: none;
+}
+
+/* ===== SCROLLBAR STYLING ===== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-card);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+    background: #1e293b;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #475569;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+
+/* ===== TABULAR NUMBERS ===== */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+} 

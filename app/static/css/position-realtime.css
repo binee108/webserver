@@ -1,0 +1,390 @@
+/* Position Real-time CSS Styles */
+
+/* Price change animation keyframes */
+@keyframes price-flash-up {
+    0% {
+        background-color: rgba(34, 197, 94, 0.1);
+        box-shadow: 0 0 0 rgba(34, 197, 94, 0.3);
+    }
+    50% {
+        background-color: rgba(34, 197, 94, 0.3);
+        box-shadow: 0 0 15px rgba(34, 197, 94, 0.6);
+    }
+    100% {
+        background-color: rgba(34, 197, 94, 0.1);
+        box-shadow: 0 0 0 rgba(34, 197, 94, 0.3);
+    }
+}
+
+@keyframes price-flash-down {
+    0% {
+        background-color: rgba(239, 68, 68, 0.1);
+        box-shadow: 0 0 0 rgba(239, 68, 68, 0.3);
+    }
+    50% {
+        background-color: rgba(239, 68, 68, 0.3);
+        box-shadow: 0 0 15px rgba(239, 68, 68, 0.6);
+    }
+    100% {
+        background-color: rgba(239, 68, 68, 0.1);
+        box-shadow: 0 0 0 rgba(239, 68, 68, 0.3);
+    }
+}
+
+/* Price change animation styles */
+.price-up {
+    animation: price-flash-up 0.6s ease-in-out;
+    transition: background-color 0.3s ease;
+}
+
+.price-down {
+    animation: price-flash-down 0.6s ease-in-out;
+    transition: background-color 0.3s ease;
+}
+
+.price-neutral {
+    background-color: transparent !important;
+    transition: background-color 0.3s ease;
+}
+
+/* Connection status overlay */
+.connection-status {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    background: rgba(15, 23, 42, 0.95);
+    color: white;
+    padding: 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    max-width: 320px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    margin-bottom: 20px;
+}
+
+.connection-status h4 {
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+/* Connection indicator dots */
+.connection-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.connection-indicator.connected {
+    background: #22c55e;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.6);
+}
+
+.connection-indicator.disconnected {
+    background: #ef4444;
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.6);
+}
+
+/* Pulse animation for connection indicators */
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    }
+}
+
+/* Real-time indicator styles */
+.realtime-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+}
+
+.realtime-indicator::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0.3; }
+}
+
+.realtime-indicator.badge-success::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    background: #22c55e;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+.realtime-indicator.badge-warning::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    background: #f59e0b;
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+}
+
+/* Animation control utilities */
+.price-animating {
+    pointer-events: none; /* Prevent interactions during animation */
+}
+
+.price-animation-complete {
+    animation: none !important;
+}
+
+/* Enhanced table row hover effects for real-time data */
+.position-row {
+    transition: all 0.2s ease;
+}
+
+.position-row:hover {
+    background-color: rgba(51, 65, 85, 0.1);
+}
+
+/* Price display enhancements */
+.current-price {
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.pnl-positive {
+    color: #059669;
+    font-weight: 600;
+}
+
+.pnl-negative {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+.pnl-neutral {
+    color: #6b7280;
+}
+
+/* Connection status button styles */
+.connection-status-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.connection-status-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #10b981;
+    transform: translateY(-50%);
+    animation: pulse 2s infinite;
+}
+
+.connection-status-btn.disconnected::after {
+    background-color: #ef4444;
+    animation: none;
+}
+
+/* Loading states */
+.loading-price {
+    background: linear-gradient(90deg, transparent, rgba(71, 85, 105, 0.3), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 4px;
+    padding: 2px 8px;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+/* Responsive design for mobile */
+@media (max-width: 768px) {
+    .connection-status {
+        top: 10px;
+        right: 10px;
+        left: 10px;
+        max-width: none;
+        font-size: 11px;
+    }
+    
+    .position-row:hover {
+        transform: none;
+        box-shadow: none;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    /* Dark mode keyframes for price animations */
+    @keyframes price-flash-up-dark {
+        0% {
+            background-color: rgba(34, 197, 94, 0.1);
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0.4);
+        }
+        50% {
+            background-color: rgba(34, 197, 94, 0.25);
+            box-shadow: 0 0 12px rgba(34, 197, 94, 0.7);
+        }
+        100% {
+            background-color: rgba(34, 197, 94, 0.1);
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0.4);
+        }
+    }
+    
+    @keyframes price-flash-down-dark {
+        0% {
+            background-color: rgba(239, 68, 68, 0.1);
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0.4);
+        }
+        50% {
+            background-color: rgba(239, 68, 68, 0.25);
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.7);
+        }
+        100% {
+            background-color: rgba(239, 68, 68, 0.1);
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0.4);
+        }
+    }
+    
+    .price-up {
+        animation: price-flash-up-dark 0.6s ease-in-out;
+    }
+    
+    .price-down {
+        animation: price-flash-down-dark 0.6s ease-in-out;
+    }
+    
+    .price-neutral {
+        background-color: transparent !important;
+    }
+    
+    .position-row:hover {
+        background-color: rgba(148, 163, 184, 0.05);
+    }
+}
+
+/* Real-time update animations */
+.realtime-updated {
+    background-color: rgba(34, 197, 94, 0.2) !important;
+    transition: background-color 1s ease-out;
+}
+
+.realtime-removed {
+    background-color: rgba(239, 68, 68, 0.2) !important;
+    opacity: 0.7;
+    transition: all 1.5s ease-out;
+}
+
+/* Real-time price update animations */
+.price-updated {
+    background-color: rgba(34, 197, 94, 0.3) !important;
+    transition: background-color 0.5s ease-out;
+}
+
+.price-increase {
+    color: #22c55e !important;
+    font-weight: 600;
+}
+
+.price-decrease {
+    color: #ef4444 !important;
+    font-weight: 600;
+}
+
+/* Notification toast styles (if not already defined) */
+.toast-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    min-width: 300px;
+    max-width: 500px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    color: white;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: slideInRight 0.3s ease-out;
+}
+
+.toast-notification.info {
+    background: #3b82f6;
+}
+
+.toast-notification.success {
+    background: #22c55e;
+}
+
+.toast-notification.warning {
+    background: #f59e0b;
+}
+
+.toast-notification.error {
+    background: #ef4444;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Table row hover effects for real-time updates */
+.order-row:hover {
+    background-color: rgba(51, 65, 85, 0.1);
+}
+
+/* Status badges with animations */
+.badge.realtime-status {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+} 
