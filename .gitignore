@@ -165,7 +165,8 @@ node_modules/
 # Migration files backup
 migrations/versions/*.py.bak
 
-# .claude
+# claude
+CLAUDE.md
 .claude/
 
 # .cursor
