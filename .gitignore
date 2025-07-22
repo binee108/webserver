@@ -175,3 +175,9 @@ CLAUDE.md
 # .env
 .env
 
+# SSL certificates
+certs/
+*.pem
+*.crt
+*.key
+
