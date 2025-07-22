@@ -9,6 +9,15 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///trading_system.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
+    # PostgreSQL 커넥션 풀링 설정
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 10,
+        'pool_timeout': 20,
+        'pool_recycle': -1,
+        'max_overflow': 0,
+        'pool_pre_ping': True
+    }
+    
     # 텔레그램 봇 설정
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
     TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')

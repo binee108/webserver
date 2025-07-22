@@ -12,17 +12,55 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 - 📱 **Telegram 알림**: 거래 실행 및 일일 리포트 알림
 - 🔒 **보안**: API 키 암호화, CSRF 보호, 안전한 인증
 
-## 빠른 시작
+## 빠른 시작 (Docker 사용 - 권장)
+
+### 요구사항
+- Docker & Docker Compose
+- Git
+
+### 간편 설치 및 실행
+
+#### Linux/Mac 사용자:
+```bash
+# 프로젝트 클론
+git clone https://github.com/binee108/crypto-trading-web-service.git
+cd webserver
+
+# 원클릭 실행
+./start.sh
+
+# 웹 브라우저에서 접속 (HTTPS)
+# https://localhost
+```
+
+#### Windows 사용자:
+```cmd
+# 프로젝트 클론
+git clone https://github.com/binee108/crypto-trading-web-service.git
+cd webserver
+
+# 원클릭 실행
+start.bat
+
+# 웹 브라우저에서 접속 (HTTPS)
+# https://localhost
+```
+
+### 시스템 중지
+- Linux/Mac: `./stop.sh`
+- Windows: `stop.bat`
+
+## 수동 설치 (Python 환경)
 
 ### 요구사항
 - Python 3.8+
-- SQLite (개발) / PostgreSQL (프로덕션)
+- PostgreSQL (권장) 또는 SQLite
 
 ### 설치
 ```bash
 # 프로젝트 클론
 git clone https://github.com/binee108/crypto-trading-web-service.git
-cd crypto-trading-system
+cd webserver
 
 # 가상환경 설정
 python3 -m venv venv
@@ -49,17 +87,57 @@ ENABLE_SSL=false python app.py
 
 ### 접속 방법
 - **HTTPS (기본)**: https://localhost (또는 https://서버IP)
-- **HTTP (비활성화시)**: http://localhost:5001
+- **HTTP (SSL 비활성화시)**: http://localhost:5001
 
 ### 기본 로그인 정보
 - Username: `admin`
 - Password: `admin123`
 - ⚠️ **첫 로그인 후 반드시 비밀번호를 변경하세요!**
 
+## Docker 환경의 장점
+
+### 🎯 간편함
+- **원클릭 실행**: `./start.sh` 하나로 전체 시스템 시작
+- **환경 통일**: 개발/운영 환경 차이 없음
+- **의존성 자동 관리**: Python, PostgreSQL 자동 설치
+
+### 🔒 안정성
+- **격리된 환경**: 호스트 시스템에 영향 없음
+- **데이터 영속성**: Docker 볼륨으로 데이터베이스 보존
+- **동시성 문제 해결**: SQLite → PostgreSQL 전환으로 락 문제 해결
+- **HTTPS 보안**: 자체 서명 SSL 인증서 자동 생성
+
+### 📊 모니터링
+```bash
+# 로그 실시간 확인
+docker-compose logs -f
+
+# 특정 서비스 로그만 확인
+docker-compose logs -f app
+docker-compose logs -f postgres
+
+# 컨테이너 상태 확인
+docker-compose ps
+```
+
+## 문제 해결
+
+### Docker 관련 문제
+- **포트 충돌**: 443/5432 포트가 사용 중인 경우 `docker-compose.yml`에서 포트 변경
+- **권한 문제**: Linux에서 443 포트 사용을 위해 `privileged: true` 설정 적용됨
+- **메모리 부족**: Docker Desktop 메모리 할당량 증가 (최소 4GB 권장)
+
 ### SSL 인증서 관련
-- 자체 서명 인증서를 자동으로 생성합니다
-- 브라우저에서 보안 경고가 나타나면 "고급" → "안전하지 않음을 승인하고 계속 진행" 클릭
-- 인증서는 `certs/` 디렉토리에 저장됩니다
+- **브라우저 경고**: 자체 서명 인증서로 인한 정상적인 경고
+- **경고 해결**: Chrome에서 "고급" → "안전하지 않음" → "계속 진행" 클릭
+- **인증서 위치**: 컨테이너 내 `/app/certs/` 디렉토리에 자동 생성
+
+### 데이터베이스 초기화
+```bash
+# 모든 데이터 삭제 후 재시작
+docker-compose down -v
+./start.sh
+```
 
 ## 프로젝트 구조
 

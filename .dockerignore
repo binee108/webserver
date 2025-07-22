@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+.env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+instance/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Logs
+logs/*.log
+
+# Documentation
+docs/
+README.md
+*.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Scripts
+start.sh
+stop.sh
+start.bat
+stop.bat
+
+# SSL certificates (will be generated in container)
+certs/
