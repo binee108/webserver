@@ -25,6 +25,15 @@ class Config:
     # 보안 설정
     WTF_CSRF_ENABLED = True
     WTF_CSRF_TIME_LIMIT = None
+    
+    # SSL/HTTPS 설정
+    ENABLE_SSL = os.environ.get('ENABLE_SSL', 'true').lower() in ['true', '1', 'yes', 'on']
+    SSL_CERT_DIR = os.environ.get('SSL_CERT_DIR', 'certs')
+    SSL_DOMAIN = os.environ.get('SSL_DOMAIN', 'localhost')
+    
+    # HTTPS 보안 헤더
+    FORCE_HTTPS = os.environ.get('FORCE_HTTPS', 'true').lower() in ['true', '1', 'yes', 'on']
+    HSTS_MAX_AGE = int(os.environ.get('HSTS_MAX_AGE', '31536000'))  # 1년
 
 class DevelopmentConfig(Config):
     """개발 환경 설정"""

@@ -40,13 +40,26 @@ flask db upgrade
 python init_db.py
 
 # 서버 실행
+# HTTPS 서비스 (443 포트, 기본값)
 python app.py
+
+# HTTP 서비스로 실행하려면
+ENABLE_SSL=false python app.py
 ```
+
+### 접속 방법
+- **HTTPS (기본)**: https://localhost (또는 https://서버IP)
+- **HTTP (비활성화시)**: http://localhost:5001
 
 ### 기본 로그인 정보
 - Username: `admin`
 - Password: `admin123`
 - ⚠️ **첫 로그인 후 반드시 비밀번호를 변경하세요!**
+
+### SSL 인증서 관련
+- 자체 서명 인증서를 자동으로 생성합니다
+- 브라우저에서 보안 경고가 나타나면 "고급" → "안전하지 않음을 승인하고 계속 진행" 클릭
+- 인증서는 `certs/` 디렉토리에 저장됩니다
 
 ## 프로젝트 구조
 

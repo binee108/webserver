@@ -45,6 +45,34 @@ def create_app(config_name=None):
         from app.models import User
         return User.query.get(int(user_id))
     
+    # HTTPS 보안 미들웨어
+    @app.before_request
+    def force_https():
+        """HTTPS로 리다이렉트 (설정에 따라)"""
+        if app.config.get('FORCE_HTTPS') and not request.is_secure:
+            # 로컬호스트나 개발 환경에서는 건너뛰기
+            if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
+                return
+            
+            # HTTPS로 리다이렉트
+            return redirect(request.url.replace('http://', 'https://'), code=301)
+    
+    @app.after_request
+    def add_security_headers(response):
+        """보안 헤더 추가"""
+        if app.config.get('ENABLE_SSL'):
+            # HSTS (HTTP Strict Transport Security)
+            max_age = app.config.get('HSTS_MAX_AGE', 31536000)
+            response.headers['Strict-Transport-Security'] = f'max-age={max_age}; includeSubDomains'
+            
+            # 기타 보안 헤더
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+            response.headers['X-XSS-Protection'] = '1; mode=block'
+            response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        
+        return response
+    
     # 비밀번호 변경 강제 미들웨어
     @app.before_request
     def check_password_change_required():
