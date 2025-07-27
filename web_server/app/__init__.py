@@ -5,17 +5,73 @@ from flask import Flask, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 import atexit
-from config import config
-from flask_migrate import Migrate
+import sys
+
+# config 모듈 import를 더 안정적으로 처리
+def setup_config_path():
+    """config 경로 설정 및 import"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(current_dir, '..', '..', 'config')
+    
+    if os.path.exists(config_path):
+        sys.path.insert(0, os.path.abspath(config_path))
+        try:
+            from config import config
+            return config
+        except ImportError as e:
+            print(f"Error importing config: {e}")
+            # 기본 설정으로 fallback
+            return None
+    else:
+        print(f"Warning: config path not found at {config_path}")
+        return None
+
+# config import 시도
+config = setup_config_path()
+if config is None:
+    # 기본 설정 사용
+    print("Using fallback config...")
+    class DefaultConfig:
+        SECRET_KEY = 'dev-secret-key-change-in-production'
+        SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///trading_system.db')
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            'pool_size': 10,
+            'pool_timeout': 20,
+            'pool_recycle': -1,
+            'max_overflow': 0,
+            'pool_pre_ping': True
+        }
+        LOG_LEVEL = 'INFO'
+        LOG_FILE = 'logs/app.log'
+        BACKGROUND_LOG_LEVEL = 'WARNING'
+        SCHEDULER_API_ENABLED = True
+        WTF_CSRF_ENABLED = True
+        WTF_CSRF_TIME_LIMIT = None
+        # SSL은 Nginx에서 처리
+        ENABLE_SSL = False
+        FORCE_HTTPS = False
+        # 프록시 환경 설정
+        PREFERRED_URL_SCHEME = 'https'
+        SERVER_NAME = None
+        DEBUG = True
+        APPLICATION_ROOT = '/'
+    
+    config = {
+        'development': DefaultConfig,
+        'production': DefaultConfig,
+        'testing': DefaultConfig,
+        'default': DefaultConfig
+    }
 from datetime import datetime
 
 # 전역 확장 객체들
 db = SQLAlchemy()
-migrate = Migrate()
 login_manager = LoginManager()
 csrf = CSRFProtect()
 scheduler = BackgroundScheduler()
@@ -28,9 +84,20 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
+    # URL 라우팅 설정
+    app.url_map.strict_slashes = False
+    
+    # ProxyFix 설정 (Nginx 리버스 프록시용)
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=1,
+        x_proto=1,
+        x_host=1,
+        x_prefix=1
+    )
+    
     # 확장 초기화
     db.init_app(app)
-    migrate.init_app(app, db)
     login_manager.init_app(app)
     csrf.init_app(app)
     
@@ -44,34 +111,6 @@ def create_app(config_name=None):
     def load_user(user_id):
         from app.models import User
         return User.query.get(int(user_id))
-    
-    # HTTPS 보안 미들웨어
-    @app.before_request
-    def force_https():
-        """HTTPS로 리다이렉트 (설정에 따라)"""
-        if app.config.get('FORCE_HTTPS') and not request.is_secure:
-            # 로컬호스트나 개발 환경에서는 건너뛰기
-            if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
-                return
-            
-            # HTTPS로 리다이렉트
-            return redirect(request.url.replace('http://', 'https://'), code=301)
-    
-    @app.after_request
-    def add_security_headers(response):
-        """보안 헤더 추가"""
-        if app.config.get('ENABLE_SSL'):
-            # HSTS (HTTP Strict Transport Security)
-            max_age = app.config.get('HSTS_MAX_AGE', 31536000)
-            response.headers['Strict-Transport-Security'] = f'max-age={max_age}; includeSubDomains'
-            
-            # 기타 보안 헤더
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-            response.headers['X-XSS-Protection'] = '1; mode=block'
-            response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        
-        return response
     
     # 비밀번호 변경 강제 미들웨어
     @app.before_request
@@ -102,6 +141,12 @@ def create_app(config_name=None):
     # 블루프린트 등록
     from app.routes import register_blueprints
     register_blueprints(app)
+    
+    # 등록된 라우트 디버그 출력 (개발환경에서만)
+    if app.debug:
+        app.logger.info("등록된 라우트들:")
+        for rule in app.url_map.iter_rules():
+            app.logger.info(f"  {rule.rule} -> {rule.endpoint}")
     
     # 로깅 설정
     if not os.path.exists('logs'):
@@ -140,30 +185,54 @@ def create_app(config_name=None):
     
     app.logger.info('Trading System startup')
     
-    # 데이터베이스 테이블 생성
-    with app.app_context():
-        db.create_all()
-        
-        # 기본 관리자 계정 생성
-        from app.models import User
-        admin_user = User.query.filter_by(username='admin').first()
-        if not admin_user:
-            admin_user = User(
-                username='admin',
-                email='admin@example.com',
-                telegram_id=None,
-                is_admin=True,
-                is_active=True,
-                must_change_password=True  # 최초 로그인 시 비밀번호 변경 강제
-            )
-            admin_user.set_password('admin123')  # 기본 비밀번호
-            db.session.add(admin_user)
-            db.session.commit()
-            app.logger.info('기본 관리자 계정이 생성되었습니다. (username: admin, password: admin123)')
-            app.logger.info('최초 로그인 시 비밀번호 변경이 필요합니다.')
-        
-        # APScheduler 초기화 및 백그라운드 작업 등록
-        init_scheduler(app)
+    # Flask CLI 명령어 실행 중인지 확인
+    import sys
+    is_cli_command = len(sys.argv) > 1 and sys.argv[1] in ['--help'] or 'flask' in sys.argv[0]
+    
+    # CLI 명령어가 아닐 때만 데이터베이스 초기화 및 스케줄러 시작
+    if not is_cli_command:
+        # 데이터베이스 테이블 생성
+        with app.app_context():
+            try:
+                # alembic_version 테이블이 있으면 제거 (마이그레이션 히스토리 제거)
+                from sqlalchemy import text
+                if db.engine.dialect.has_table(db.engine.connect(), 'alembic_version'):
+                    with db.engine.connect() as conn:
+                        conn.execute(text('DROP TABLE alembic_version'))
+                        conn.commit()
+                    app.logger.info('마이그레이션 히스토리 테이블 제거 완료')
+                
+                # 모든 테이블 생성 (이미 존재하는 테이블은 무시됨)
+                db.create_all()
+                app.logger.info('데이터베이스 테이블 생성 완료')
+            except Exception as e:
+                app.logger.error(f'데이터베이스 테이블 생성 실패: {str(e)}')
+            
+            # 기본 관리자 계정 생성
+            try:
+                from app.models import User
+                admin_user = User.query.filter_by(username='admin').first()
+                if not admin_user:
+                    admin_user = User(
+                        username='admin',
+                        email='admin@example.com',
+                        telegram_id=None,
+                        is_admin=True,
+                        is_active=True,
+                        must_change_password=True  # 최초 로그인 시 비밀번호 변경 강제
+                    )
+                    admin_user.set_password('admin123')  # 기본 비밀번호
+                    db.session.add(admin_user)
+                    db.session.commit()
+                    app.logger.info('기본 관리자 계정이 생성되었습니다. (username: admin, password: admin123)')
+                    app.logger.info('최초 로그인 시 비밀번호 변경이 필요합니다.')
+            except Exception as e:
+                app.logger.warning(f'관리자 계정 생성 실패: {str(e)}')
+            
+            # APScheduler 초기화 및 백그라운드 작업 등록
+            init_scheduler(app)
+    else:
+        app.logger.info('Flask CLI 명령어 실행 중 - 데이터베이스 초기화 및 스케줄러 건너뜀')
     
     return app
 
@@ -250,9 +319,12 @@ def init_scheduler(app):
         # 텔레그램 시스템 시작 알림
         try:
             from app.services.telegram_service import telegram_service
-            telegram_service.send_system_status('startup', 'APScheduler 백그라운드 작업 시스템이 시작되었습니다.')
+            if telegram_service.is_enabled():
+                telegram_service.send_system_status('startup', 'APScheduler 백그라운드 작업 시스템이 시작되었습니다.')
+            else:
+                app.logger.debug('텔레그램이 비활성화되어 있어 시작 알림을 건너뜁니다.')
         except Exception as e:
-            app.logger.warning(f'텔레그램 시작 알림 전송 실패: {str(e)}')
+            app.logger.debug(f'텔레그램 시작 알림 전송 실패: {str(e)}')
             
     except Exception as e:
         app.logger.error(f'APScheduler 초기화 실패: {str(e)}')
@@ -399,12 +471,13 @@ def update_open_orders_with_context(app):
             app.logger.error(f'미체결 주문 상태 업데이트 실패: {str(e)}')
             try:
                 from app.services.telegram_service import telegram_service
-                telegram_service.send_error_alert(
-                    "백그라운드 작업 오류",
-                    f"미체결 주문 상태 업데이트 실패: {str(e)}"
-                )
-            except:
-                pass
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"미체결 주문 상태 업데이트 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
 
 def calculate_unrealized_pnl_with_context(app):
     """Flask 앱 컨텍스트 내에서 미실현 손익 계산"""
@@ -417,12 +490,13 @@ def calculate_unrealized_pnl_with_context(app):
             app.logger.error(f'미실현 손익 계산 실패: {str(e)}')
             try:
                 from app.services.telegram_service import telegram_service
-                telegram_service.send_error_alert(
-                    "백그라운드 작업 오류",
-                    f"미실현 손익 계산 실패: {str(e)}"
-                )
-            except:
-                pass
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"미실현 손익 계산 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
 
 def send_daily_summary_with_context(app):
     """Flask 앱 컨텍스트 내에서 일일 요약 보고서 전송"""
@@ -449,9 +523,10 @@ def send_daily_summary_with_context(app):
             app.logger.error(f'일일 요약 보고서 전송 실패: {str(e)}')
             try:
                 from app.services.telegram_service import telegram_service
-                telegram_service.send_error_alert(
-                    "백그라운드 작업 오류",
-                    f"일일 요약 보고서 전송 실패: {str(e)}"
-                )
-            except:
-                pass 
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"일일 요약 보고서 전송 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시 

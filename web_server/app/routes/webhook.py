@@ -55,8 +55,12 @@ def webhook():
     except WebhookError as e:
         current_app.logger.error(f'❌ 웹훅 처리 오류: {str(e)}')
         
-        # 텔레그램 오류 알림 전송
-        telegram_service.send_webhook_error(data if 'data' in locals() else {}, str(e))
+        # 텔레그램 오류 알림 전송 (비활성화 상태면 조용히 무시)
+        try:
+            if telegram_service.is_enabled():
+                telegram_service.send_webhook_error(data if 'data' in locals() else {}, str(e))
+        except Exception:
+            pass  # 텔레그램 알림 실패는 조용히 무시
         
         return jsonify({
             'success': False,
@@ -66,12 +70,16 @@ def webhook():
     except Exception as e:
         current_app.logger.error(f'💥 웹훅 처리 중 예상치 못한 오류: {str(e)}')
         
-        # 텔레그램 오류 알림 전송
-        telegram_service.send_error_alert(
-            "웹훅 처리 시스템 오류", 
-            str(e), 
-            {"요청 데이터": str(data) if 'data' in locals() else "파싱 실패"}
-        )
+        # 텔레그램 오류 알림 전송 (비활성화 상태면 조용히 무시)
+        try:
+            if telegram_service.is_enabled():
+                telegram_service.send_error_alert(
+                    "웹훅 처리 시스템 오류", 
+                    str(e), 
+                    {"요청 데이터": str(data) if 'data' in locals() else "파싱 실패"}
+                )
+        except Exception:
+            pass  # 텔레그램 알림 실패는 조용히 무시
         
         return jsonify({
             'success': False,

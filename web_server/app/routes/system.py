@@ -10,7 +10,8 @@ def health_check():
     """시스템 헬스 체크 엔드포인트"""
     try:
         # 데이터베이스 연결 확인
-        db.session.execute('SELECT 1')
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
         db_status = 'healthy'
     except Exception as e:
         current_app.logger.error(f'데이터베이스 연결 오류: {str(e)}')

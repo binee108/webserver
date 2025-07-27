@@ -24,16 +24,18 @@ class TelegramService:
         if self.bot_token:
             self.bot = Bot(token=self.bot_token)
         else:
-            logger.warning("텔레그램 봇 토큰이 설정되지 않았습니다. 알림 기능이 비활성화됩니다.")
+            logger.debug("텔레그램 봇 토큰이 설정되지 않았습니다. 알림 기능이 비활성화됩니다.")
     
     def is_enabled(self) -> bool:
         """텔레그램 알림이 활성화되어 있는지 확인"""
-        return self.bot is not None and self.chat_id is not None
+        return (self.bot is not None and 
+                self.chat_id is not None and 
+                self.chat_id.strip() != "")
     
     async def send_message_async(self, message: str, parse_mode: str = 'HTML') -> bool:
         """비동기 메시지 전송"""
         if not self.is_enabled():
-            logger.warning("텔레그램 알림이 비활성화되어 있습니다.")
+            logger.debug("텔레그램 알림이 비활성화되어 있습니다.")
             return False
         
         try:

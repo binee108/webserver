@@ -16,6 +16,7 @@ def register_blueprints(app):
     from .dashboard import bp as dashboard_bp
     from .system import bp as system_bp
     from .positions import bp as positions_bp
+    from .health import health_bp
     
     # Blueprint 등록
     app.register_blueprint(main_bp)
@@ -27,4 +28,5 @@ def register_blueprints(app):
     app.register_blueprint(capital_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(system_bp)
-    app.register_blueprint(positions_bp) 
+    app.register_blueprint(positions_bp)
+    app.register_blueprint(health_bp) 

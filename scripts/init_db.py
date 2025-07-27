@@ -3,8 +3,37 @@
 데이터베이스 초기화 및 기본 관리자 계정 생성 스크립트
 """
 
-from app import create_app, db
-from app.models import User
+import sys
+import os
+
+# 경로 설정을 더 안정적으로 처리
+def setup_python_path():
+    """Python 경로 설정"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    web_server_path = os.path.join(script_dir, '..', 'web_server')
+    config_path = os.path.join(script_dir, '..', 'config')
+    
+    if os.path.exists(web_server_path):
+        sys.path.insert(0, os.path.abspath(web_server_path))
+    else:
+        print(f"Error: web_server path not found at {web_server_path}")
+        sys.exit(1)
+    
+    if os.path.exists(config_path):
+        sys.path.insert(0, os.path.abspath(config_path))
+
+# 경로 설정 실행
+setup_python_path()
+
+try:
+    from app import create_app, db
+    from app.models import User
+except ImportError as e:
+    print(f"Error importing modules: {e}")
+    print("Current Python path:")
+    for path in sys.path:
+        print(f"  - {path}")
+    sys.exit(1)
 from werkzeug.security import generate_password_hash
 
 def init_database():

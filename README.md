@@ -12,43 +12,39 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 - 📱 **Telegram 알림**: 거래 실행 및 일일 리포트 알림
 - 🔒 **보안**: API 키 암호화, CSRF 보호, 안전한 인증
 
-## 빠른 시작 (Docker 사용 - 권장)
+## 빠른 시작 (통합 실행 스크립트 - 권장)
 
 ### 요구사항
+- Python 3.8+
 - Docker & Docker Compose
 - Git
 
 ### 간편 설치 및 실행
 
-#### Linux/Mac 사용자:
+#### 모든 운영체제 (Windows/Mac/Linux):
 ```bash
 # 프로젝트 클론
 git clone https://github.com/binee108/crypto-trading-web-service.git
 cd webserver
 
-# 원클릭 실행
-./start.sh
+# 통합 실행 스크립트 사용
+python run.py start    # 시스템 시작
+python run.py stop     # 시스템 중지
+python run.py restart  # 재시작
+python run.py status   # 상태 확인
+python run.py logs     # 로그 확인
+python run.py clean    # 데이터 완전 삭제
 
-# 웹 브라우저에서 접속 (HTTPS)
-# https://localhost
+# 웹 브라우저에서 접속 (자동으로 열림)
+# https://localhost (HTTPS - 기본)
+# http://localhost:5001 (HTTP - 대안)
 ```
 
-#### Windows 사용자:
-```cmd
-# 프로젝트 클론
-git clone https://github.com/binee108/crypto-trading-web-service.git
-cd webserver
-
-# 원클릭 실행
-start.bat
-
-# 웹 브라우저에서 접속 (HTTPS)
-# https://localhost
-```
-
-### 시스템 중지
-- Linux/Mac: `./stop.sh`
-- Windows: `stop.bat`
+### 주요 명령어
+- `python run.py start` - 시스템 시작 (PostgreSQL + Flask)
+- `python run.py stop` - 시스템 중지 (데이터 보존)
+- `python run.py logs -f` - 실시간 로그 확인
+- `python run.py clean` - 모든 데이터 삭제 후 재시작
 
 ## 수동 설치 (Python 환경)
 
@@ -139,20 +135,41 @@ docker-compose down -v
 ./start.sh
 ```
 
-## 프로젝트 구조
+## 프로젝트 구조 (새로운 깔끔한 구조)
 
 ```
-webserver/
-├── app/                    # 애플리케이션 코드
-│   ├── routes/            # API 엔드포인트
-│   ├── services/          # 비즈니스 로직
-│   ├── static/            # CSS, JS, 이미지
-│   └── templates/         # HTML 템플릿
-├── docs/                  # 프로젝트 문서
-├── migrations/            # 데이터베이스 마이그레이션
-├── requirements.txt       # Python 의존성
-└── config.py             # 애플리케이션 설정
+webserver/                 # 프로젝트 루트
+├── run.py                 # 🚀 통합 실행 스크립트 (크로스 플랫폼)
+├── docker-compose.yml     # Docker 구성
+├── README.md              # 메인 문서
+├── config/                # ⚙️ 설정 파일들
+│   ├── config.py         # 애플리케이션 설정
+│   ├── env.example       # 환경 변수 템플릿
+│   └── Dockerfile        # Docker 이미지 빌드
+├── scripts/               # 📜 실행 스크립트들
+│   ├── app.py            # Flask 앱 실행
+│   ├── init_db.py        # DB 초기화
+│   ├── start.sh          # Linux/Mac 시작 (레거시)
+│   └── stop.sh           # Linux/Mac 중지 (레거시)
+└── web_server/            # 🌐 메인 웹서버 코드
+    ├── app/              # Flask 애플리케이션
+    │   ├── routes/       # API 엔드포인트
+    │   ├── services/     # 비즈니스 로직
+    │   ├── static/       # CSS, JS, 이미지
+    │   └── templates/    # HTML 템플릿
+    ├── docs/             # 프로젝트 문서
+    ├── migrations/       # DB 마이그레이션
+    ├── requirements.txt  # Python 의존성
+    ├── certs/           # SSL 인증서
+    ├── logs/            # 로그 파일
+    └── instance/        # SQLite DB (개발용)
 ```
+
+### 새로운 구조의 장점
+- 🎯 **극도로 깔끔한 루트**: 실행 스크립트와 필수 파일만
+- 📁 **논리적 분리**: 설정, 스크립트, 웹서버 코드 독립
+- 🚀 **통합 관리**: 하나의 run.py로 모든 OS 지원
+- 🔧 **유지보수 용이**: 기능별 디렉토리 분리
 
 ## 문서
 
