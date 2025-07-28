@@ -65,5 +65,6 @@ if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
         port=port,
-        debug=debug_mode
+        debug=debug_mode,
+        threaded=True  # 멀티스레드 모드 활성화로 블로킹 문제 해결
     ) 
