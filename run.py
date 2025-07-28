@@ -11,6 +11,8 @@ import subprocess
 import platform
 import webbrowser
 import argparse
+import socket
+import urllib.request
 from pathlib import Path
 
 class Colors:
@@ -47,7 +49,7 @@ class TradingSystemManager:
         
     def print_banner(self):
         """시스템 배너 출력"""
-        print(f"\n{Colors.CYAN}{Colors.BOLD}=" * 60)
+        print("=" * 60 + f"{Colors.RESET}\n")
         print("🚀 암호화폐 트레이딩 시스템")
         print("   Cryptocurrency Trading System")
         print("=" * 60 + f"{Colors.RESET}\n")
@@ -64,6 +66,36 @@ class TradingSystemManager:
             print(f"{Colors.BLUE}ℹ️  {message}{Colors.RESET}")
         else:
             print(f"📝 {message}")
+    
+    def get_local_ip(self):
+        """로컬 네트워크 IP 주소 가져오기"""
+        try:
+            # 임시 소켓을 만들어서 로컬 IP 확인
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except Exception:
+            return None
+    
+    def get_external_ip(self):
+        """외부 IP 주소 가져오기"""
+        try:
+            # 여러 서비스를 시도해서 외부 IP 확인
+            services = [
+                "https://api.ipify.org",
+                "https://icanhazip.com",
+                "https://checkip.amazonaws.com"
+            ]
+            
+            for service in services:
+                try:
+                    with urllib.request.urlopen(service, timeout=5) as response:
+                        return response.read().decode().strip()
+                except:
+                    continue
+            return None
+        except Exception:
+            return None
     
     def check_requirements(self):
         """시스템 요구사항 확인"""
@@ -162,7 +194,7 @@ class TradingSystemManager:
                 from cryptography.x509.oid import NameOID
                 from cryptography.hazmat.primitives import hashes, serialization
                 from cryptography.hazmat.primitives.asymmetric import rsa
-                from datetime import datetime, timedelta
+                from datetime import datetime, timedelta, timezone
                 import ipaddress
             except ImportError as e:
                 self.print_status("cryptography 라이브러리가 설치되지 않았습니다.", "error")
@@ -179,7 +211,7 @@ class TradingSystemManager:
                         cert = x509.load_pem_x509_certificate(f.read())
                     
                     # 인증서 만료일 확인 (30일 이상 남았으면 유효)
-                    if cert.not_valid_after > datetime.utcnow() + timedelta(days=30):
+                    if cert.not_valid_after > datetime.now(timezone.utc) + timedelta(days=30):
                         self.print_status("유효한 SSL 인증서가 이미 존재합니다", "success")
                         return True
                 except Exception:
@@ -212,9 +244,9 @@ class TradingSystemManager:
             ).serial_number(
                 x509.random_serial_number()
             ).not_valid_before(
-                datetime.utcnow()
+                datetime.now(timezone.utc)
             ).not_valid_after(
-                datetime.utcnow() + timedelta(days=365)
+                datetime.now(timezone.utc) + timedelta(days=365)
             ).add_extension(
                 x509.SubjectAlternativeName([
                     x509.DNSName("localhost"),
@@ -291,11 +323,27 @@ class TradingSystemManager:
             self.print_status("Nginx 리버스 프록시 시작 중...", "info")
             self.run_command("docker-compose up -d nginx", cwd=self.root_dir)
             
+            # 네트워크 정보 수집
+            local_ip = self.get_local_ip()
+            external_ip = self.get_external_ip()
+            
             # 시작 완료 메시지
             print(f"\n{Colors.GREEN}{Colors.BOLD}✅ 트레이딩 시스템이 성공적으로 시작되었습니다!{Colors.RESET}\n")
             
-            print(f"{Colors.CYAN}🌐 웹 인터페이스 (HTTPS): https://localhost{Colors.RESET}")
-            print(f"{Colors.BLUE}🔧 내부 HTTP 접근: http://localhost:5001 (직접 Flask 접근){Colors.RESET}")
+            print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소:{Colors.RESET}")
+            print(f"   로컬: https://localhost")
+            if local_ip and local_ip != "127.0.0.1":
+                print(f"   네트워크: https://{local_ip}")
+            if external_ip:
+                print(f"   외부: https://{external_ip}")
+            print()
+            
+            print(f"{Colors.BLUE}🔧 내부 HTTP 접근:{Colors.RESET}")
+            print(f"   로컬: http://localhost:5001 (직접 Flask 접근)")
+            if local_ip and local_ip != "127.0.0.1":
+                print(f"   네트워크: http://{local_ip}:5001")
+            print()
+            
             print(f"{Colors.RED}🚫 외부 HTTP: http://localhost → HTTPS로 리다이렉트{Colors.RESET}")
             print(f"{Colors.MAGENTA}🐘 PostgreSQL: localhost:5432{Colors.RESET}\n")
             
@@ -308,8 +356,11 @@ class TradingSystemManager:
             print("   비밀번호: admin123\n")
             
             print(f"{Colors.GREEN}🔗 웹훅 접근:{Colors.RESET}")
-            print("   HTTPS: https://localhost/api/webhook")
-            print("   HTTP (내부): http://localhost:5001/api/webhook\n")
+            print("   HTTPS (로컬): https://localhost/api/webhook")
+            if external_ip:
+                print(f"   HTTPS (외부): https://{external_ip}/api/webhook")
+            print("   HTTP (내부): http://localhost:5001/api/webhook")
+            print()
             
             print(f"{Colors.CYAN}📋 유용한 명령어:{Colors.RESET}")
             print("   python run.py stop     - 시스템 중지")
