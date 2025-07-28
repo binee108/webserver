@@ -39,7 +39,7 @@ SYMBOL = "BTCUSDT"              # 테스트할 심볼
 EXCHANGE = "BINANCE"            # 거래소
 MARKET = "FUTURE"                 # 시장 타입 (SPOT/FUTURE)  
 CURRENCY = "USDT"               # 결제 통화
-TEST_QUANTITY_PERCENT = 5       # 테스트용 수량 비율 (%)
+TEST_QUANTITY_PERCENT = 10       # 테스트용 수량 비율 (%)
 REQUEST_TIMEOUT = 30            # 요청 타임아웃 (초)
 
 # ==================== 로깅 설정 ====================
@@ -68,6 +68,11 @@ class WebhookTester:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.session.verify = False
+        
+        # Connection pooling 비활성화
+        adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1)
+        self.session.mount('https://', adapter)
+        self.session.mount('http://', adapter)
         
         self.test_results = []
         
@@ -331,14 +336,6 @@ def main():
         return
     
     try:
-        # 1. 기본 시장가 주문 테스트
-        logger.info(f"\n🔥 1단계: 기본 시장가 주문 테스트")
-        time.sleep(1)
-        tester.test_market_buy(TEST_QUANTITY_PERCENT)
-        time.sleep(2)  # 주문간 간격
-        
-        # 2. 지정가 주문 테스트 (현재가 기준으로 적절한 가격 설정 필요)
-        logger.info(f"\n🎯 2단계: 지정가 주문 테스트")
         # 실제 시세에서 +/-5% 정도로 설정 (사용자가 수동으로 조정 필요)
         btc_buy_price = 114039.5000   # 현재가보다 낮은 가격
         btc_sell_price = 120039.5000  # 현재가보다 높은 가격
@@ -346,32 +343,34 @@ def main():
         logger.info(f"💡 지정가 주문 가격을 현재 시세에 맞게 조정하세요!")
         logger.info(f"현재 설정: 매수 ${btc_buy_price}, 매도 ${btc_sell_price}")
         
+        # 1. 지정가 매수 테스트
+        logger.info(f"\n🎯 1단계: 지정가 매수 테스트")
         time.sleep(1)
         tester.test_limit_buy(btc_buy_price, TEST_QUANTITY_PERCENT)
-        time.sleep(2)
+        time.sleep(2)  # 주문간 간격
         
+        # 2. 지정가 매도 테스트
+        logger.info(f"\n🎯 2단계: 지정가 매도 테스트")
+        time.sleep(1)
         tester.test_limit_sell(btc_sell_price, TEST_QUANTITY_PERCENT)
         time.sleep(2)
         
-        # 3. 주문 취소 테스트
-        logger.info(f"\n🔄 3단계: 주문 취소 테스트")
+        # 3. 열린 주문 모두 취소 테스트
+        logger.info(f"\n🔄 3단계: 열린 주문 모두 취소 테스트")
         time.sleep(1)
         tester.test_cancel_all_orders(SYMBOL)
         time.sleep(2)
         
-        # 4. 오류 시나리오 테스트
-        logger.info(f"\n🚨 4단계: 오류 시나리오 테스트")
+        # 4. 시장가 매수 테스트
+        logger.info(f"\n🔥 4단계: 시장가 매수 테스트")
         time.sleep(1)
-        tester.test_invalid_request()
-        time.sleep(1)
-        tester.test_nonexistent_strategy()
-        
-        # 5. 추가 시장가 테스트 (다양한 수량)
-        logger.info(f"\n📊 5단계: 다양한 수량 테스트")
-        time.sleep(1)
-        tester.test_market_buy(10)  # 10%
+        tester.test_market_buy(TEST_QUANTITY_PERCENT)
         time.sleep(2)
-        tester.test_market_sell(5)   # 5%
+        
+        # 5. 시장가 매도 테스트
+        logger.info(f"\n🔥 5단계: 시장가 매도 테스트")
+        time.sleep(1)
+        tester.test_market_sell(-1)
         
     except KeyboardInterrupt:
         logger.info(f"\n⏹️  사용자에 의해 테스트가 중단되었습니다.")
