@@ -143,6 +143,9 @@ class EventService:
                 logger.debug(f"연결 메시지 내용: {connection_msg.strip()}")
                 yield connection_msg
                 
+                # 🔧 즉시 추가 데이터 전송하여 연결 안정화
+                yield ": keepalive\n\n"  # SSE 주석 (브라우저에서 무시됨)
+                
                 # 최근 이벤트 전송 (있는 경우)
                 with self.lock:
                     recent_events = list(self.event_queues.get(user_id, []))
@@ -184,16 +187,21 @@ class EventService:
                 # 클라이언트 제거
                 self.remove_client(user_id, client_queue)
         
-        return Response(
+        response = Response(
             event_generator(),
             mimetype='text/event-stream',
             headers={
-                'Cache-Control': 'no-cache',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
                 'Connection': 'keep-alive',
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Cache-Control'
+                'Access-Control-Allow-Headers': 'Cache-Control',
+                'X-Accel-Buffering': 'no'  # Nginx 버퍼링 비활성화
             }
         )
+        response.timeout = None  # 타임아웃 비활성화
+        return response
     
     def _format_sse_message(self, data: Dict[str, Any]) -> str:
         """SSE 메시지 포맷팅"""

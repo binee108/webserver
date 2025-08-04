@@ -252,6 +252,7 @@ class TradingSystemManager:
                     x509.DNSName("localhost"),
                     x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
                     x509.IPAddress(ipaddress.IPv6Address("::1")),
+                    x509.IPAddress(ipaddress.IPv4Address("220.127.44.59")),
                 ]),
                 critical=False,
             ).sign(private_key, hashes.SHA256())

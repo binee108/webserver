@@ -84,6 +84,12 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
+    # 🔧 세션 쿠키 설정 - localhost와 외부 IP 모두에서 작동하도록 
+    app.config['SESSION_COOKIE_DOMAIN'] = None  # 도메인 제한 없음
+    app.config['SESSION_COOKIE_SECURE'] = True  # HTTPS에서만 쿠키 전송
+    app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScript 접근 방지
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF 보호
+    
     # URL 라우팅 설정
     app.url_map.strict_slashes = False
     

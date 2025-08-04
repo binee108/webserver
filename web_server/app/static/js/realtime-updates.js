@@ -55,13 +55,40 @@ class RealtimeUpdatesManager {
         
         try {
             this.logger.info('SSE 연결 시작...');
-            this.logger.debug('SSE URL: /api/events/stream');
             
-            this.eventSource = new EventSource('/api/events/stream');
+            // 🔧 프로토콜 독립적 SSE URL 생성
+            const sseUrl = this.buildSSEUrl();
+            this.logger.info('SSE URL:', sseUrl);
+            
+            this.eventSource = new EventSource(sseUrl);
             
             // 🔧 EventSource 생성 직후 상태 확인
-            this.logger.debug('EventSource 생성됨 - readyState:', this.eventSource.readyState);
-            this.logger.debug('EventSource URL:', this.eventSource.url);
+            this.logger.info('EventSource 생성됨 - readyState:', this.eventSource.readyState);
+            this.logger.info('EventSource 실제 URL:', this.eventSource.url);
+            
+            // 🔧 강화된 디버깅: EventSource 상태 모니터링
+            const checkConnectionStatus = () => {
+                const states = {
+                    [EventSource.CONNECTING]: 'CONNECTING',
+                    [EventSource.OPEN]: 'OPEN', 
+                    [EventSource.CLOSED]: 'CLOSED'
+                };
+                this.logger.info(`EventSource 상태: ${states[this.eventSource.readyState]} (${this.eventSource.readyState})`);
+            };
+            
+            // 2초 후 상태 확인
+            setTimeout(checkConnectionStatus, 2000);
+            // 5초 후 상태 확인
+            setTimeout(checkConnectionStatus, 5000);
+            
+            // 🔧 연결 타임아웃 감지 - 10초 후에도 CONNECTING 상태면 강제 재연결
+            setTimeout(() => {
+                if (this.eventSource && this.eventSource.readyState === EventSource.CONNECTING) {
+                    this.logger.warn('🚨 SSE 연결 타임아웃 감지 - 강제 재연결 시도');
+                    this.eventSource.close();
+                    this.scheduleReconnect();
+                }
+            }, 10000);
             
             // 연결 성공
             this.eventSource.onopen = (event) => {
@@ -91,8 +118,19 @@ class RealtimeUpdatesManager {
             // 연결 오류
             this.eventSource.onerror = (event) => {
                 this.logger.error('🔴 SSE 연결 오류:', event);
-                this.logger.debug('EventSource readyState:', this.eventSource.readyState);
-                this.logger.debug('EventSource url:', this.eventSource.url);
+                this.logger.error('EventSource readyState:', this.eventSource.readyState);
+                this.logger.error('EventSource url:', this.eventSource.url);
+                this.logger.error('Event type:', event.type);
+                this.logger.error('Event target:', event.target);
+                
+                // 🔧 추가 디버깅 정보
+                const states = {
+                    [EventSource.CONNECTING]: 'CONNECTING',
+                    [EventSource.OPEN]: 'OPEN', 
+                    [EventSource.CLOSED]: 'CLOSED'
+                };
+                this.logger.error(`현재 연결 상태: ${states[this.eventSource.readyState]} (${this.eventSource.readyState})`);
+                
                 this.isConnected = false;
                 this.updateConnectionStatus(false);
                 
@@ -299,6 +337,9 @@ class RealtimeUpdatesManager {
             return;
         }
         
+        // 🔧 포지션이 업데이트되면 빈 상태 메시지 제거
+        this.removeEmptyPositionsState();
+        
         // 수량 업데이트
         const quantityCell = row.querySelector('.position-quantity');
         if (quantityCell) {
@@ -388,12 +429,60 @@ class RealtimeUpdatesManager {
     checkEmptyPositions() {
         const positionRows = document.querySelectorAll('tr[data-position-id]');
         if (positionRows.length === 0) {
-            // 포지션이 모두 없어진 경우 페이지 새로고침 또는 빈 상태 표시
-            setTimeout(() => {
-                if (typeof refreshPositions === 'function') {
-                    refreshPositions();
-                }
-            }, 1000);
+            this.logger.info('📭 모든 포지션이 청산되었습니다.');
+            
+            // 🔧 무한 새로고침 방지: 빈 상태 UI 표시만 하고 새로고침하지 않음
+            this.showEmptyPositionsState();
+            
+            // 알림 표시
+            this.showNotification('모든 포지션이 청산되었습니다.', 'success');
+        }
+    }
+    
+    /**
+     * 빈 포지션 상태 UI 표시
+     */
+    showEmptyPositionsState() {
+        // 포지션 테이블이 있는 컨테이너 찾기
+        const positionTable = document.querySelector('#positions-table tbody') || 
+                             document.querySelector('.positions-table tbody') ||
+                             document.querySelector('table tbody');
+        
+        if (positionTable) {
+            // 기존 빈 상태 메시지가 있으면 제거
+            const existingEmptyRow = positionTable.querySelector('.empty-positions-row');
+            if (existingEmptyRow) {
+                existingEmptyRow.remove();
+            }
+            
+            // 새로운 빈 상태 행 추가
+            const emptyRow = document.createElement('tr');
+            emptyRow.className = 'empty-positions-row';
+            emptyRow.innerHTML = `
+                <td colspan="100%" class="text-center py-8 text-gray-500">
+                    <div class="flex flex-col items-center space-y-2">
+                        <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <div class="text-lg font-medium">보유 포지션이 없습니다</div>
+                        <div class="text-sm">모든 포지션이 성공적으로 청산되었습니다</div>
+                    </div>
+                </td>
+            `;
+            
+            positionTable.appendChild(emptyRow);
+            this.logger.debug('📭 빈 포지션 상태 UI 표시 완료');
+        }
+    }
+    
+    /**
+     * 빈 포지션 상태 UI 제거
+     */
+    removeEmptyPositionsState() {
+        const emptyRow = document.querySelector('.empty-positions-row');
+        if (emptyRow) {
+            emptyRow.remove();
+            this.logger.debug('📭 빈 포지션 상태 UI 제거 완료');
         }
     }
     
@@ -477,13 +566,52 @@ class RealtimeUpdatesManager {
     }
     
     /**
+     * SSE URL 생성 (프로토콜 독립적)
+     */
+    buildSSEUrl() {
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        
+        // 🔧 HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
+        if (protocol === 'https:') {
+            // HTTPS 접속: Nginx 프록시를 통한 SSE 연결
+            const port = window.location.port ? `:${window.location.port}` : '';
+            return `${protocol}//${hostname}${port}/api/events/stream`;
+        } else {
+            // HTTP 접속: 직접 Flask 서버 연결 (개발용)
+            return `${protocol}//${hostname}:5001/api/events/stream`;
+        }
+    }
+    
+    /**
+     * API URL 생성 (프로토콜 독립적)
+     */
+    buildApiUrl(endpoint) {
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        
+        // 🔧 HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
+        if (protocol === 'https:') {
+            // HTTPS 접속: Nginx 프록시를 통한 API 호출
+            const port = window.location.port ? `:${window.location.port}` : '';
+            return `${protocol}//${hostname}${port}${endpoint}`;
+        } else {
+            // HTTP 접속: 직접 Flask 서버 호출 (개발용)
+            return `${protocol}//${hostname}:5001${endpoint}`;
+        }
+    }
+    
+    /**
      * 로그인 상태 확인 (서버 API 호출)
      */
     async checkLoginStatus() {
         this.logger.info('🔍 checkLoginStatus() 함수 진입');
         try {
-            this.logger.info('🔍 /api/auth/check API 호출 시작...');
-            const response = await fetch('/api/auth/check', {
+            // 🔧 동적 API URL 생성
+            const apiUrl = this.buildApiUrl('/api/auth/check');
+            this.logger.info('🔍 API 호출 시작:', apiUrl);
+            
+            const response = await fetch(apiUrl, {
                 method: 'GET',
                 credentials: 'same-origin' // 쿠키 포함
             });
