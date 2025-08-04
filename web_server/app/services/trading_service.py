@@ -591,6 +591,8 @@ class TradingService:
             'account_id': account.id,
             'account_name': account.name,
             'exchange': account.exchange,
+            'user_id': account.user_id,  # 🔧 SSE 이벤트를 위한 user_id 추가
+            'strategy_id': strategy.id,  # 🔧 SSE 이벤트를 위한 strategy_id 추가
             'order_id': order_id,
             'symbol': symbol,
             'side': side,

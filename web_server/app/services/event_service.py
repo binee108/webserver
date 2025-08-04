@@ -106,7 +106,7 @@ class EventService:
             
             for client in self.clients.get(user_id, set()):
                 try:
-                    client.put(event_data)
+                    client.put(event_data, timeout=1.0)  # 1초 타임아웃 추가
                 except:
                     dead_clients.add(client)
             
@@ -119,45 +119,59 @@ class EventService:
         """SSE 이벤트 스트림 생성"""
         from queue import Queue, Empty
         
+        logger.info(f"🚀 SSE 스트림 생성 시작 - 사용자: {user_id}")
         client_queue = Queue(maxsize=50)
         
         def event_generator():
             try:
+                logger.info(f"📡 SSE 이벤트 제너레이터 시작 - 사용자: {user_id}")
+                
                 # 클라이언트 등록
                 self.add_client(user_id, client_queue)
                 
                 # 연결 확인 이벤트 전송
-                yield self._format_sse_message({
+                connection_message = {
                     'type': 'connection',
                     'data': {
                         'status': 'connected',
                         'timestamp': datetime.utcnow().isoformat(),
                         'user_id': user_id
                     }
-                })
+                }
+                logger.info(f"📤 연결 확인 메시지 전송 - 사용자: {user_id}")
+                connection_msg = self._format_sse_message(connection_message)
+                logger.debug(f"연결 메시지 내용: {connection_msg.strip()}")
+                yield connection_msg
                 
                 # 최근 이벤트 전송 (있는 경우)
                 with self.lock:
                     recent_events = list(self.event_queues.get(user_id, []))
                 
                 for event in recent_events[-10:]:  # 최근 10개 이벤트만
+                    logger.debug(f"📤 최근 이벤트 전송 - 사용자: {user_id}, 타입: {event.get('type')}")
                     yield self._format_sse_message(event)
                 
                 # 실시간 이벤트 처리
                 while True:
                     try:
-                        # 30초 타임아웃으로 이벤트 대기
-                        event = client_queue.get(timeout=30)
-                        yield self._format_sse_message(event)
+                        # 10초 타임아웃으로 이벤트 대기 (응답성 향상)
+                        event = client_queue.get(timeout=10)
+                        logger.info(f"📤 실시간 이벤트 전송 - 사용자: {user_id}, 타입: {event.get('type')}")
+                        event_msg = self._format_sse_message(event)
+                        logger.debug(f"이벤트 메시지 내용: {event_msg.strip()}")
+                        yield event_msg
                         
                     except Empty:
                         # 타임아웃 시 keep-alive 메시지 전송
-                        yield self._format_sse_message({
+                        heartbeat_message = {
                             'type': 'heartbeat',
                             'data': {
                                 'timestamp': datetime.utcnow().isoformat()
                             }
-                        })
+                        }
+                        logger.debug(f"💓 하트비트 전송 - 사용자: {user_id}")
+                        heartbeat_msg = self._format_sse_message(heartbeat_message)
+                        yield heartbeat_msg
                         
                         # 주기적 정리
                         self._periodic_cleanup()

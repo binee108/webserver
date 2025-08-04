@@ -31,11 +31,13 @@ class OrderService:
     def _emit_order_event(self, order: OpenOrder, event_type: str):
         """주문 이벤트 발송 헬퍼"""
         try:
+            logger.info(f"🚀 주문 이벤트 발송 시작 - 주문ID: {order.id}, 타입: {event_type}")
             from app.services.event_service import event_service, OrderEvent
             
             # Strategy 정보 조회
             strategy_account = self.session.get(StrategyAccount, order.strategy_account_id)
             if not strategy_account or not strategy_account.strategy:
+                logger.warning(f"⚠️ 전략 정보 없음 - 전략계좌ID: {order.strategy_account_id}")
                 return
             
             strategy = strategy_account.strategy
@@ -55,7 +57,7 @@ class OrderService:
             )
             
             event_service.emit_order_event(order_event)
-            logger.debug(f"주문 이벤트 발송: {event_type} - {order.symbol}")
+            logger.info(f"✅ 주문 이벤트 발송 완료: {event_type} - {order.symbol}, 사용자: {strategy.user_id}")
             
         except Exception as e:
             logger.warning(f"주문 이벤트 발송 실패: {str(e)}")

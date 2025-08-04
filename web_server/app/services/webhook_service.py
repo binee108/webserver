@@ -59,6 +59,9 @@ class WebhookService:
             webhook_log.message = str(result)
             self.session.commit()
             
+            # 🆕 SSE 이벤트 발송 추가
+            self._emit_webhook_events(result, normalized_data)
+            
             return result
             
         except Exception as e:
@@ -123,6 +126,111 @@ class WebhookService:
                 
         except Exception as e:
             logger.error(f"거래 결과 분석 중 오류: {str(e)}")
+    
+    def _emit_webhook_events(self, result: Dict[str, Any], webhook_data: Dict[str, Any]):
+        """웹훅 처리 결과를 바탕으로 SSE 이벤트 발송"""
+        try:
+            from app.services.event_service import event_service, OrderEvent, PositionEvent
+            from datetime import datetime
+            
+            action = result.get('action', '')
+            strategy = result.get('strategy', 'UNKNOWN')
+            results = result.get('results', [])
+            
+            logger.debug(f"SSE 이벤트 발송 시작 - 액션: {action}, 전략: {strategy}, 결과 수: {len(results)}")
+            
+            # 거래 신호 처리 결과에서 이벤트 생성
+            if action == 'trading_signal':
+                for result_item in results:
+                    if result_item.get('success', False):
+                        # trading_service 결과에서 user_id 직접 추출 (수정됨)
+                        user_id = result_item.get('user_id')
+                        if not user_id:
+                            # user_id가 없는 경우, strategy_id로부터 추출
+                            strategy_id = result_item.get('strategy_id')
+                            if strategy_id:
+                                from app.models import Strategy
+                                strategy = Strategy.query.get(strategy_id)
+                                if strategy:
+                                    user_id = strategy.user_id
+                        
+                        if not user_id:
+                            logger.warning(f"⚠️ 사용자 ID를 찾을 수 없음 - 결과: {result_item}")
+                            continue
+                            
+                        # 주문 이벤트 생성
+                        order_event = OrderEvent(
+                            event_type='order_created',
+                            order_id=result_item.get('order_id', 'webhook_generated'),
+                            symbol=result_item.get('symbol', ''),
+                            strategy_id=result_item.get('strategy_id', 0),
+                            user_id=user_id,
+                            side=result_item.get('side', ''),
+                            quantity=float(result_item.get('quantity', 0)),
+                            price=float(result_item.get('price', 0)),
+                            status='filled' if result_item.get('filled') else 'created',
+                            timestamp=datetime.utcnow().isoformat()
+                        )
+                        
+                        event_service.emit_order_event(order_event)
+                        logger.info(f"📤 주문 SSE 이벤트 발송: 사용자 {user_id}, 심볼 {result_item.get('symbol')}")
+                        
+                        # 포지션 변경이 있는 경우 포지션 이벤트도 생성
+                        if result_item.get('position_updated'):
+                            position_event = PositionEvent(
+                                event_type='position_updated',
+                                position_id=result_item.get('position_id', 0),
+                                symbol=result_item.get('symbol', ''),
+                                strategy_id=result_item.get('strategy_id', 0),
+                                user_id=user_id,
+                                quantity=float(result_item.get('position_quantity', 0)),
+                                entry_price=float(result_item.get('entry_price', 0)),
+                                timestamp=datetime.utcnow().isoformat()
+                            )
+                            
+                            event_service.emit_position_event(position_event)
+                            logger.info(f"📤 포지션 SSE 이벤트 발송: 사용자 {user_id}, 심볼 {result_item.get('symbol')}")
+            
+            elif action == 'cancel_all_orders':
+                # 주문 취소 이벤트 처리
+                for result_item in results:
+                    if result_item.get('success', False):
+                        user_id = result_item.get('user_id')
+                        if not user_id:
+                            # strategy_id로부터 user_id 추출
+                            strategy_id = result_item.get('strategy_id')  
+                            if strategy_id:
+                                from app.models import Strategy
+                                strategy = Strategy.query.get(strategy_id)
+                                if strategy:
+                                    user_id = strategy.user_id
+                        
+                        if not user_id:
+                            logger.warning(f"⚠️ 주문 취소 이벤트: 사용자 ID를 찾을 수 없음")
+                            continue
+                            
+                        cancelled_orders = result_item.get('cancelled_order_details', [])
+                        for cancelled_order in cancelled_orders:
+                            order_event = OrderEvent(
+                                event_type='order_cancelled',
+                                order_id=cancelled_order.get('order_id', 'webhook_cancelled'),
+                                symbol=cancelled_order.get('symbol', ''),
+                                strategy_id=result_item.get('strategy_id', 0),
+                                user_id=user_id,
+                                side=cancelled_order.get('side', ''),
+                                quantity=float(cancelled_order.get('quantity', 0)),
+                                price=float(cancelled_order.get('price', 0)),
+                                status='cancelled',
+                                timestamp=datetime.utcnow().isoformat()
+                            )
+                            
+                            event_service.emit_order_event(order_event)
+                            logger.info(f"📤 주문 취소 SSE 이벤트 발송: 사용자 {user_id}, 주문ID {cancelled_order.get('order_id')}")
+            
+            logger.info(f"✅ 웹훅 SSE 이벤트 발송 완료 - 전략: {strategy}, 액션: {action}")
+            
+        except Exception as e:
+            logger.error(f"웹훅 SSE 이벤트 발송 실패: {str(e)}")
     
     def process_cancel_all_orders(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """모든 주문 취소 처리 - order_service를 통해 처리"""

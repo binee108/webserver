@@ -22,8 +22,15 @@
 <div class="space-y-8">
     <!-- Connection Status Display (hidden by default) -->
     <div id="connection-status" class="connection-status" style="display: none;">
-        <div class="font-semibold mb-2">WebSocket 연결 상태</div>
+        <div class="font-semibold mb-2">연결 상태</div>
         <div id="connection-list"></div>
+        <div class="mt-4">
+            <div class="font-semibold mb-2">실시간 업데이트 (SSE)</div>
+            <div class="flex items-center space-x-2">
+                <span class="text-sm">상태:</span>
+                <span id="sse-connection-status" class="status-disconnected">연결 중...</span>
+            </div>
+        </div>
     </div>
 
     <!-- 페이지 헤더 -->
@@ -871,6 +878,189 @@ window.addEventListener('beforeunload', function() {
     // Disconnect real-time updates
     disconnectRealtimeUpdates();
 });
+
+// 실시간 업데이트 관리자 인스턴스
+let realtimeUpdatesManager = null;
+
+// 실시간 업데이트 초기화
+function initializeRealtimeUpdates() {
+    try {
+        if (typeof RealtimeUpdatesManager === 'undefined') {
+            console.error('RealtimeUpdatesManager가 로드되지 않았습니다.');
+            return;
+        }
+        
+        console.info('실시간 업데이트 초기화 시작...');
+        
+        realtimeUpdatesManager = new RealtimeUpdatesManager({
+            maxReconnectAttempts: 5,
+            reconnectInterval: 3000
+        });
+        
+        // 포지션 업데이트 이벤트 핸들러
+        realtimeUpdatesManager.on('position_update', (data) => {
+            console.info('📈 포지션 업데이트 수신:', data);
+            handlePositionUpdate(data);
+        });
+        
+        // 주문 업데이트 이벤트 핸들러
+        realtimeUpdatesManager.on('order_update', (data) => {
+            console.info('📊 주문 업데이트 수신:', data);
+            handleOrderUpdate(data);
+        });
+        
+        // 연결 상태 이벤트 핸들러
+        realtimeUpdatesManager.on('connection', (data) => {
+            console.log('SSE 연결 상태:', data);
+            updateSSEConnectionStatus(data.status === 'connected');
+        });
+        
+        // 오류 이벤트 핸들러
+        realtimeUpdatesManager.on('error', (data) => {
+            console.error('SSE 오류:', data);
+            showToast('실시간 업데이트 연결에 문제가 발생했습니다.', 'error');
+        });
+        
+        // SSE 연결 시도 전 URL 확인
+        console.info('SSE URL:', '/api/events/stream');
+        
+        // SSE 연결 시작
+        realtimeUpdatesManager.connect();
+        
+        console.info('실시간 업데이트 초기화 완료');
+        
+    } catch (error) {
+        console.error('실시간 업데이트 초기화 실패:', error);
+    }
+}
+
+// 실시간 업데이트 연결 해제
+function disconnectRealtimeUpdates() {
+    if (realtimeUpdatesManager) {
+        realtimeUpdatesManager.disconnect();
+        realtimeUpdatesManager = null;
+        console.info('실시간 업데이트 연결 해제 완료');
+    }
+}
+
+// 포지션 업데이트 처리
+function handlePositionUpdate(data) {
+    try {
+        // 포지션 테이블 업데이트
+        updatePositionRow(data);
+        
+        // 토스트 알림
+        const eventTypeText = data.event_type === 'position_closed' ? '포지션 청산' : '포지션 업데이트';
+        showToast(`${eventTypeText}: ${data.symbol} (${data.quantity})`, 'success', 2000);
+        
+    } catch (error) {
+        console.error('포지션 업데이트 처리 실패:', error);
+    }
+}
+
+// 주문 업데이트 처리
+function handleOrderUpdate(data) {
+    try {
+        // 주문 목록 새로고침
+        loadOpenOrders();
+        
+        // 토스트 알림
+        const eventTypeMap = {
+            'order_created': '주문 생성',
+            'order_filled': '주문 체결',
+            'order_cancelled': '주문 취소'
+        };
+        
+        const eventTypeText = eventTypeMap[data.event_type] || '주문 업데이트';
+        showToast(`${eventTypeText}: ${data.symbol} ${data.side.toUpperCase()} ${data.quantity}`, 'info', 2000);
+        
+    } catch (error) {
+        console.error('주문 업데이트 처리 실패:', error);
+    }
+}
+
+// 포지션 행 업데이트
+function updatePositionRow(positionData) {
+    const positionRow = document.querySelector(`tr[data-position-id="${positionData.position_id}"]`);
+    if (!positionRow) {
+        // 새 포지션인 경우 페이지 새로고침
+        setTimeout(() => window.location.reload(), 1000);
+        return;
+    }
+    
+    // 포지션이 청산된 경우 행 제거
+    if (positionData.event_type === 'position_closed') {
+        positionRow.style.opacity = '0.5';
+        setTimeout(() => {
+            positionRow.remove();
+            showToast(`포지션 청산 완료: ${positionData.symbol}`, 'success');
+        }, 1000);
+        return;
+    }
+    
+    // 수량 업데이트
+    const quantityCell = positionRow.querySelector('.position-quantity');
+    if (quantityCell) {
+        quantityCell.textContent = parseFloat(positionData.quantity).toFixed(8);
+        quantityCell.parentElement.classList.add('highlight-update');
+        setTimeout(() => quantityCell.parentElement.classList.remove('highlight-update'), 2000);
+    }
+}
+
+// SSE 연결 상태 업데이트
+function updateSSEConnectionStatus(isConnected) {
+    const statusElement = document.getElementById('sse-connection-status');
+    if (statusElement) {
+        statusElement.textContent = isConnected ? '연결됨' : '연결 끊김';
+        statusElement.className = isConnected ? 'status-connected' : 'status-disconnected';
+    }
+}
+
+// SSE 디버깅 함수
+function debugSSEConnection() {
+    if (realtimeUpdatesManager && realtimeUpdatesManager.eventSource) {
+        const eventSource = realtimeUpdatesManager.eventSource;
+        console.log('🔍 SSE 연결 상태:');
+        console.log('- URL:', eventSource.url);
+        console.log('- readyState:', eventSource.readyState);
+        console.log('- readyState 의미:', {
+            0: 'CONNECTING (연결 중)',
+            1: 'OPEN (연결됨)',
+            2: 'CLOSED (종료됨)'
+        }[eventSource.readyState]);
+        console.log('- isConnected:', realtimeUpdatesManager.isConnected);
+        return eventSource;
+    } else {
+        console.log('❌ SSE 매니저 또는 EventSource가 초기화되지 않음');
+        return null;
+    }
+}
+
+// 전역에서 접근 가능하도록 함수 등록
+window.debugSSE = debugSSEConnection;
+
+// SSE 테스트 함수
+function testSSEConnection() {
+    if (realtimeUpdatesManager) {
+        console.log('🧪 SSE 연결 테스트 중...');
+        
+        // 연결 상태 확인
+        debugSSEConnection();
+        
+        // 임시 테스트 이벤트 핸들러 추가
+        realtimeUpdatesManager.on('test', (data) => {
+            console.log('🎉 테스트 이벤트 수신:', data);
+            showToast('SSE 테스트 이벤트 수신 성공!', 'success');
+        });
+        
+        return realtimeUpdatesManager;
+    } else {
+        console.log('❌ SSE 매니저가 초기화되지 않음');
+        return null;
+    }
+}
+
+window.testSSE = testSSEConnection;
 
 // 토스트 알림 기능
 function showToast(message, type = 'info', duration = 3000) {

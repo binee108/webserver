@@ -47,6 +47,62 @@
     transition: background-color 0.3s ease;
 }
 
+/* SSE 연결 상태 스타일 */
+.status-connected {
+    color: #22c55e;
+    font-weight: 600;
+}
+
+.status-disconnected {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+/* 업데이트 하이라이트 효과 */
+.highlight-update {
+    background-color: rgba(59, 130, 246, 0.2) !important;
+    transition: background-color 2s ease-out;
+}
+
+/* 토스트 알림 스타일 */
+.toast-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: toast-slide-in 0.3s ease-out;
+}
+
+.toast-notification.success {
+    background-color: #22c55e;
+    color: white;
+}
+
+.toast-notification.error {
+    background-color: #ef4444;
+    color: white;
+}
+
+.toast-notification.info {
+    background-color: #3b82f6;
+    color: white;
+}
+
+@keyframes toast-slide-in {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
 /* Connection status overlay */
 .connection-status {
     position: fixed;

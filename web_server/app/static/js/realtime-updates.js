@@ -30,20 +30,44 @@ class RealtimeUpdatesManager {
     /**
      * SSE 연결 시작
      */
-    connect() {
+    async connect() {
         if (this.eventSource && this.eventSource.readyState !== EventSource.CLOSED) {
-            this.logger.warn('이미 연결되어 있거나 연결 중입니다.');
+            this.logger.warn(`이미 연결되어 있거나 연결 중입니다. readyState: ${this.eventSource.readyState} (CONNECTING: ${EventSource.CONNECTING}, OPEN: ${EventSource.OPEN})`);
+            return;
+        }
+        
+        // 🔧 로그인 상태 확인
+        this.logger.info('🔍 로그인 상태 확인 시작...');
+        try {
+            const isLoggedIn = await this.checkLoginStatus();
+            this.logger.info('🔍 로그인 상태 확인 완료:', isLoggedIn);
+            
+            if (!isLoggedIn) {
+                this.logger.error('🚫 로그인이 필요합니다. SSE 연결을 시작할 수 없습니다.');
+                this.showNotification('실시간 업데이트를 위해 로그인이 필요합니다.', 'error');
+                return;
+            }
+        } catch (error) {
+            this.logger.error('🚫 로그인 상태 확인 중 오류:', error);
+            this.showNotification('로그인 상태 확인 실패', 'error');
             return;
         }
         
         try {
             this.logger.info('SSE 연결 시작...');
+            this.logger.debug('SSE URL: /api/events/stream');
             
             this.eventSource = new EventSource('/api/events/stream');
             
+            // 🔧 EventSource 생성 직후 상태 확인
+            this.logger.debug('EventSource 생성됨 - readyState:', this.eventSource.readyState);
+            this.logger.debug('EventSource URL:', this.eventSource.url);
+            
             // 연결 성공
             this.eventSource.onopen = (event) => {
-                this.logger.success('SSE 연결 성공');
+                this.logger.info('🟢 SSE 연결 성공!');
+                this.logger.info('EventSource readyState:', this.eventSource.readyState);
+                this.logger.info('EventSource URL:', this.eventSource.url);
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
                 this.clearReconnectTimer();
@@ -53,21 +77,30 @@ class RealtimeUpdatesManager {
             // 메시지 수신
             this.eventSource.onmessage = (event) => {
                 try {
+                    this.logger.debug('📨 SSE 원시 메시지 수신:', event.data);
                     const data = JSON.parse(event.data);
+                    this.logger.info('🎯 SSE 이벤트 처리:', data.type, data);
                     this.handleEvent(data);
                 } catch (error) {
-                    this.logger.error('이벤트 데이터 파싱 실패:', error);
+                    this.logger.error('❌ 이벤트 데이터 파싱 실패:', error);
+                    this.logger.error('❌ Raw data:', event.data);
+                    this.logger.error('❌ Event object:', event);
                 }
             };
             
             // 연결 오류
             this.eventSource.onerror = (event) => {
-                this.logger.error('SSE 연결 오류:', event);
+                this.logger.error('🔴 SSE 연결 오류:', event);
+                this.logger.debug('EventSource readyState:', this.eventSource.readyState);
+                this.logger.debug('EventSource url:', this.eventSource.url);
                 this.isConnected = false;
                 this.updateConnectionStatus(false);
                 
                 if (this.eventSource.readyState === EventSource.CLOSED) {
+                    this.logger.warn('🔄 SSE 연결이 종료됨, 재연결 예약...');
                     this.scheduleReconnect();
+                } else if (this.eventSource.readyState === EventSource.CONNECTING) {
+                    this.logger.info('🟡 SSE 연결 중...');
                 }
             };
             
@@ -241,8 +274,8 @@ class RealtimeUpdatesManager {
         this.reconnectAttempts++;
         this.logger.info(`${this.reconnectInterval/1000}초 후 재연결 시도 (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
         
-        this.reconnectTimer = setTimeout(() => {
-            this.connect();
+        this.reconnectTimer = setTimeout(async () => {
+            await this.connect();
         }, this.reconnectInterval);
     }
     
@@ -444,6 +477,62 @@ class RealtimeUpdatesManager {
     }
     
     /**
+     * 로그인 상태 확인 (서버 API 호출)
+     */
+    async checkLoginStatus() {
+        this.logger.info('🔍 checkLoginStatus() 함수 진입');
+        try {
+            this.logger.info('🔍 /api/auth/check API 호출 시작...');
+            const response = await fetch('/api/auth/check', {
+                method: 'GET',
+                credentials: 'same-origin' // 쿠키 포함
+            });
+            this.logger.info('🔍 API 응답 받음:', response.status, response.statusText);
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.authenticated) {
+                    this.logger.debug(`로그인 확인됨 - 사용자: ${data.username} (ID: ${data.user_id})`);
+                    return true;
+                } else {
+                    this.logger.warn('서버 응답: 인증되지 않음');
+                    return false;
+                }
+            } else {
+                this.logger.warn(`인증 확인 실패: ${response.status} ${response.statusText}`);
+                return false;
+            }
+            
+        } catch (error) {
+            this.logger.error('로그인 상태 확인 중 오류:', error);
+            
+            // 🔧 API 호출 실패 시 fallback 로직
+            // 1. 현재 페이지가 로그인 페이지인지 확인
+            if (window.location.pathname.includes('/auth/login')) {
+                return false;
+            }
+            
+            // 2. 포지션 페이지에 있다면 로그인된 것으로 가정
+            if (window.location.pathname.includes('/positions')) {
+                this.logger.debug('포지션 페이지에 접근 - 로그인 상태로 가정 (fallback)');
+                return true;
+            }
+            
+            // 3. 세션 쿠키 확인
+            const hasCookie = document.cookie.split(';').some(cookie => 
+                cookie.trim().startsWith('session=')
+            );
+            
+            if (hasCookie) {
+                this.logger.debug('세션 쿠키 발견 - 로그인 상태로 가정 (fallback)');
+                return true;
+            }
+            
+            return false;
+        }
+    }
+    
+    /**
      * 연결 상태 조회
      */
     getConnectionStatus() {
@@ -461,7 +550,7 @@ let realtimeUpdates = null;
 /**
  * 실시간 업데이트 초기화
  */
-function initializeRealtimeUpdates() {
+async function initializeRealtimeUpdates() {
     if (realtimeUpdates) {
         realtimeUpdates.disconnect();
     }
@@ -472,7 +561,7 @@ function initializeRealtimeUpdates() {
     });
     
     // 연결 시작
-    realtimeUpdates.connect();
+    await realtimeUpdates.connect();
     
     return realtimeUpdates;
 }

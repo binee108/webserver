@@ -220,12 +220,14 @@ def trigger_order_status_update():
 def event_stream():
     """실시간 포지션/주문 업데이트 이벤트 스트림 (SSE)"""
     try:
+        current_app.logger.info(f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, URL: /api/events/stream')
+        
         from app.services.event_service import event_service
         
-        current_app.logger.info(f'사용자 {current_user.id} 이벤트 스트림 연결 요청')
-        
         # SSE 스트림 반환
-        return event_service.get_event_stream(current_user.id)
+        response = event_service.get_event_stream(current_user.id)
+        current_app.logger.info(f'✅ SSE 스트림 생성 완료 - 사용자: {current_user.id}')
+        return response
         
     except Exception as e:
         current_app.logger.error(f'이벤트 스트림 생성 실패 - 사용자: {current_user.id}, 오류: {str(e)}')
@@ -235,6 +237,30 @@ def event_stream():
             f"data: {{'type': 'error', 'message': '{str(e)}'}}\n\n",
             mimetype='text/event-stream'
         )
+
+@bp.route('/auth/check')
+def check_auth():
+    """로그인 상태 확인 API (SSE 연결 전 체크용)"""
+    try:
+        from flask_login import current_user
+        
+        if current_user.is_authenticated:
+            return jsonify({
+                'authenticated': True,
+                'user_id': current_user.id,
+                'username': current_user.username
+            })
+        else:
+            return jsonify({
+                'authenticated': False
+            }), 401
+            
+    except Exception as e:
+        current_app.logger.error(f'인증 상태 확인 실패: {str(e)}')
+        return jsonify({
+            'authenticated': False,
+            'error': str(e)
+        }), 500
 
 @bp.route('/events/stats')
 @login_required
