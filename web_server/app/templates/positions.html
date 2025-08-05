@@ -340,9 +340,77 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 }
 
-// 포지션 새로고침
+// 포지션 새로고침 - API를 통한 동적 업데이트
 function refreshPositions() {
-    location.reload();
+    loadPositionsData();
+}
+
+// 포지션 데이터 로드
+async function loadPositionsData() {
+    try {
+        const strategyId = getStrategyIdFromUrl();
+        if (!strategyId) {
+            console.error('전략 ID를 찾을 수 없습니다.');
+            return;
+        }
+        
+        const response = await fetch(`/api/strategies/${strategyId}/positions`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+            updatePositionTable(data.positions);
+            console.info('포지션 데이터 로드 완료:', data.positions.length + '개');
+        } else {
+            throw new Error(data.error || '포지션 데이터 로드 실패');
+        }
+        
+    } catch (error) {
+        console.error('포지션 데이터 로드 실패:', error);
+        showToast('포지션 데이터를 불러오는데 실패했습니다.', 'error');
+    }
+}
+
+// URL에서 전략 ID 추출
+function getStrategyIdFromUrl() {
+    const pathParts = window.location.pathname.split('/');
+    const strategiesIndex = pathParts.indexOf('strategies');
+    if (strategiesIndex !== -1 && pathParts[strategiesIndex + 1]) {
+        return parseInt(pathParts[strategiesIndex + 1]);
+    }
+    return null;
+}
+
+// 포지션 테이블 업데이트
+function updatePositionTable(positions) {
+    const positionTable = document.querySelector('table tbody');
+    if (!positionTable) return;
+    
+    // 기존 포지션 행들 제거 (빈 상태 행 제외)
+    const existingRows = positionTable.querySelectorAll('tr[data-position-id]');
+    existingRows.forEach(row => row.remove());
+    
+    if (!positions || positions.length === 0) {
+        showEmptyPositionsState();
+        updatePositionStats();
+        return;
+    }
+    
+    // 빈 상태 제거
+    removeEmptyPositionsState();
+    
+    // 새 포지션 행들 추가  
+    positions.forEach(position => {
+        const row = createPositionRow(position);
+        positionTable.appendChild(row);
+    });
+    
+    // 통계 업데이트
+    updatePositionStats();
+    
+    console.info('포지션 테이블 업데이트 완료:', positions.length + '개');
 }
 
 // 열린 주문 새로고침
@@ -370,10 +438,214 @@ async function loadOpenOrders() {
 
 // 열린 주문 개수 업데이트
 function updateOpenOrdersCount(count) {
+    // count가 제공되지 않으면 현재 테이블에서 계산
+    if (count === undefined) {
+        const orderRows = document.querySelectorAll('tr[data-order-id]');
+        count = orderRows.length;
+    }
+    
     const countElement = document.getElementById('open-orders-count');
     if (countElement) {
         countElement.textContent = count + '개';
         countElement.className = count > 0 ? 'ml-2 badge badge-warning' : 'ml-2 badge badge-secondary';
+    }
+}
+
+// 새 주문 행 추가
+function addNewOrderRow(orderData) {
+    const orderContainer = document.getElementById('open-orders-content');
+    if (!orderContainer) return;
+    
+    // 기존 "주문이 없습니다" 메시지 제거
+    const emptyMessage = orderContainer.querySelector('.text-center');
+    if (emptyMessage && emptyMessage.textContent.includes('열린 주문이 없습니다')) {
+        orderContainer.innerHTML = '';
+    }
+    
+    // 테이블이 없으면 생성
+    let orderTable = orderContainer.querySelector('table tbody');
+    if (!orderTable) {
+        createOrderTable(orderContainer);
+        orderTable = orderContainer.querySelector('table tbody');
+    }
+    
+    // 이미 존재하는지 확인
+    const existingRow = document.querySelector(`tr[data-order-id="${orderData.order_id}"]`);
+    if (existingRow) {
+        console.warn('이미 존재하는 주문 행:', orderData.order_id);
+        return;
+    }
+    
+    // 새 주문 행 생성
+    const newRow = createOrderRow(orderData);
+    orderTable.appendChild(newRow);
+    
+    // 애니메이션 효과
+    newRow.style.opacity = '0';
+    newRow.style.transform = 'translateY(-10px)';
+    
+    setTimeout(() => {
+        newRow.style.transition = 'all 0.3s ease-out';
+        newRow.style.opacity = '1';
+        newRow.style.transform = 'translateY(0)';
+    }, 100);
+    
+    console.info('새 주문 행 추가됨:', orderData.order_id);
+}
+
+// 주문 행 제거
+function removeOrderRow(orderId) {
+    const orderRow = document.querySelector(`tr[data-order-id="${orderId}"]`);
+    if (!orderRow) {
+        console.warn('제거할 주문 행을 찾을 수 없음:', orderId);
+        return;
+    }
+    
+    // 제거 애니메이션
+    orderRow.style.transition = 'all 0.3s ease-out';
+    orderRow.style.opacity = '0.5';
+    orderRow.style.transform = 'translateX(-10px)';
+    
+    setTimeout(() => {
+        orderRow.remove();
+        
+        // 모든 주문이 제거되었는지 확인
+        const remainingOrders = document.querySelectorAll('tr[data-order-id]');
+        if (remainingOrders.length === 0) {
+            showEmptyOrdersState();
+        }
+        
+        console.info('주문 행 제거됨:', orderId);
+    }, 300);
+}
+
+// 주문 테이블 생성
+function createOrderTable(container) {
+    const tableHtml = `
+        <div class="overflow-x-auto">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>계좌</th>
+                        <th>심볼</th>
+                        <th>주문유형</th>
+                        <th>수량</th>
+                        <th>가격</th>
+                        <th>체결수량</th>
+                        <th>상태</th>
+                        <th>생성시간</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+    `;
+    container.innerHTML = tableHtml;
+}
+
+// 주문 행 생성
+function createOrderRow(orderData) {
+    const row = document.createElement('tr');
+    row.className = 'order-row';
+    row.setAttribute('data-order-id', orderData.order_id);
+    
+    const isBuy = orderData.side.toLowerCase() === 'buy';
+    const quantity = Math.abs(parseFloat(orderData.quantity || 0));
+    const price = parseFloat(orderData.price || 0);
+    const filledQuantity = parseFloat(orderData.filled_quantity || 0);
+    
+    // 계좌 정보 (기본값 설정)
+    const accountName = orderData.account?.name || 'Unknown';
+    const exchange = orderData.account?.exchange || 'unknown';
+    const exchangeInitial = exchange.toUpperCase().charAt(0);
+    
+    // 생성 시간 포맷팅
+    const createdAt = orderData.created_at ? new Date(orderData.created_at).toLocaleString() : '방금 전';
+    
+    row.innerHTML = `
+        <td>
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-8 w-8">
+                    <div class="h-8 w-8 bg-yellow-100 rounded-full flex items-center justify-center">
+                        <span class="text-xs font-bold text-warning">${exchangeInitial}</span>
+                    </div>
+                </div>
+                <div class="ml-3">
+                    <div class="text-sm font-medium text-primary">${accountName}</div>
+                    <div class="text-sm text-muted">${exchange.toUpperCase()}</div>
+                </div>
+            </div>
+        </td>
+        <td>
+            <div class="text-sm font-medium text-primary">${orderData.symbol}</div>
+        </td>
+        <td>
+            <span class="badge ${isBuy ? 'badge-success' : 'badge-error'}">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="${isBuy
+                        ? 'M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z'
+                        : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z'
+                    }" clip-rule="evenodd"></path>
+                </svg>
+                ${orderData.side.toUpperCase()}
+            </span>
+        </td>
+        <td class="text-sm text-primary">
+            ${quantity.toLocaleString()}
+        </td>
+        <td class="text-sm text-primary">
+            $${price.toLocaleString()}
+        </td>
+        <td class="text-sm text-primary">
+            ${filledQuantity.toLocaleString()}
+        </td>
+        <td>
+            <span class="badge badge-warning realtime-status">${orderData.status || 'NEW'}</span>
+        </td>
+        <td class="text-sm text-muted">
+            ${createdAt}
+        </td>
+        <td>
+            <button data-order-id="${orderData.order_id}" data-symbol="${orderData.symbol}" 
+                    class="cancel-order-btn btn btn-warning btn-sm">
+                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+                취소
+            </button>
+        </td>
+    `;
+    
+    // 취소 버튼 이벤트 리스너 추가
+    const cancelBtn = row.querySelector('.cancel-order-btn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            const orderId = this.getAttribute('data-order-id');
+            const symbol = this.getAttribute('data-symbol');
+            cancelOpenOrder(orderId, symbol);
+        });
+    }
+    
+    return row;
+}
+
+// 빈 주문 상태 표시
+function showEmptyOrdersState() {
+    const container = document.getElementById('open-orders-content');
+    if (container) {
+        container.innerHTML = `
+            <div class="text-center py-16">
+                <div class="mx-auto w-24 h-24 bg-gradient-to-r from-yellow-100 to-orange-100 rounded-full flex items-center justify-center mb-6">
+                    <svg class="w-12 h-12 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-semibold text-primary mb-2">열린 주문이 없습니다</h3>
+                <p class="text-muted">현재 대기 중인 주문이 없습니다.</p>
+            </div>
+        `;
     }
 }
 
@@ -518,13 +790,13 @@ async function cancelOpenOrder(orderId, symbol) {
         const data = await response.json();
         
         if (data.success) {
-            alert('주문이 성공적으로 취소되었습니다.');
-            await loadOpenOrders();
+            showToast('주문이 성공적으로 취소되었습니다.', 'success');
+            // SSE를 통해 자동으로 업데이트될 예정이므로 loadOpenOrders 호출하지 않음
         } else {
-            alert('주문 취소 실패: ' + data.error);
+            showToast('주문 취소 실패: ' + data.error, 'error');
         }
     } catch (error) {
-        alert('주문 취소 중 오류가 발생했습니다: ' + error.message);
+        showToast('주문 취소 중 오류가 발생했습니다: ' + error.message, 'error');
     }
 }
 
@@ -548,13 +820,13 @@ async function cancelAllOpenOrders() {
         if (data.success) {
             const successCount = data.cancelled_orders ? data.cancelled_orders.length : 0;
             const failedCount = data.failed_orders ? data.failed_orders.length : 0;
-            alert(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`);
-            await loadOpenOrders();
+            showToast(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`, 'success');
+            // SSE를 통해 자동으로 업데이트될 예정이므로 loadOpenOrders 호출하지 않음
         } else {
-            alert('일괄 취소 실패: ' + data.error);
+            showToast('일괄 취소 실패: ' + data.error, 'error');
         }
     } catch (error) {
-        alert('일괄 취소 중 오류가 발생했습니다: ' + error.message);
+        showToast('일괄 취소 중 오류가 발생했습니다: ' + error.message, 'error');
     }
 }
 
@@ -571,14 +843,14 @@ function closePosition(positionId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('포지션 청산 요청이 전송되었습니다.');
-                location.reload();
+                showToast('포지션 청산 요청이 전송되었습니다.', 'success');
+                // SSE를 통해 자동으로 업데이트될 예정이므로 새로고침하지 않음
             } else {
-                alert('포지션 청산 중 오류가 발생했습니다: ' + data.error);
+                showToast('포지션 청산 중 오류가 발생했습니다: ' + data.error, 'error');
             }
         })
         .catch(error => {
-            alert('포지션 청산 중 오류가 발생했습니다: ' + error.message);
+            showToast('포지션 청산 중 오류가 발생했습니다: ' + error.message, 'error');
         });
     }
 }
@@ -919,6 +1191,15 @@ function initializeRealtimeUpdates() {
         realtimeUpdatesManager.on('error', (data) => {
             console.error('SSE 오류:', data);
             showToast('실시간 업데이트 연결에 문제가 발생했습니다.', 'error');
+            
+            // 연결 실패 시 주기적으로 수동 새로고침 실행
+            setTimeout(() => {
+                if (!realtimeUpdatesManager.isConnected) {
+                    console.warn('SSE 연결이 여전히 끊어져 있음. 수동 새로고침 실행');
+                    loadOpenOrders();  // 주문 목록 새로고침
+                    loadPositionsData(); // 포지션 목록 새로고침
+                }
+            }, 10000); // 10초 후 확인
         });
         
         // SSE 연결 시도 전 URL 확인
@@ -946,12 +1227,34 @@ function disconnectRealtimeUpdates() {
 // 포지션 업데이트 처리
 function handlePositionUpdate(data) {
     try {
-        // 포지션 테이블 업데이트
-        updatePositionRow(data);
+        console.info('포지션 업데이트 처리:', data);
+        
+        // 이벤트 타입에 따른 처리
+        switch (data.event_type) {
+            case 'position_created':
+                addNewPositionRow(data);
+                break;
+            case 'position_updated':
+                updateExistingPositionRow(data);
+                break;
+            case 'position_closed':
+                removePositionRow(data.position_id);
+                break;
+            default:
+                console.warn('알 수 없는 포지션 이벤트 타입:', data.event_type);
+        }
+        
+        // 통계 정보 업데이트
+        updatePositionStats();
         
         // 토스트 알림
-        const eventTypeText = data.event_type === 'position_closed' ? '포지션 청산' : '포지션 업데이트';
-        showToast(`${eventTypeText}: ${data.symbol} (${data.quantity})`, 'success', 2000);
+        const eventTypeText = {
+            'position_created': '새 포지션',
+            'position_updated': '포지션 업데이트', 
+            'position_closed': '포지션 청산'
+        }[data.event_type] || '포지션 변경';
+        
+        showToast(`${eventTypeText}: ${data.symbol} (${Math.abs(data.quantity)})`, 'success', 2000);
         
     } catch (error) {
         console.error('포지션 업데이트 처리 실패:', error);
@@ -961,60 +1264,153 @@ function handlePositionUpdate(data) {
 // 주문 업데이트 처리
 function handleOrderUpdate(data) {
     try {
-        // 주문 목록 새로고침
-        loadOpenOrders();
+        console.info('주문 업데이트 처리:', data);
+        
+        // 이벤트 타입에 따른 처리
+        switch (data.event_type) {
+            case 'order_created':
+                addNewOrderRow(data);
+                break;
+            case 'order_filled':
+                removeOrderRow(data.order_id);
+                break;
+            case 'order_cancelled':
+                removeOrderRow(data.order_id);
+                break;
+            default:
+                console.warn('알 수 없는 주문 이벤트 타입:', data.event_type);
+                // 알 수 없는 이벤트의 경우 주문 목록 전체 새로고침
+                loadOpenOrders();
+        }
+        
+        // 주문 개수 업데이트
+        updateOpenOrdersCount();
         
         // 토스트 알림
         const eventTypeMap = {
-            'order_created': '주문 생성',
+            'order_created': '새 주문',
             'order_filled': '주문 체결',
             'order_cancelled': '주문 취소'
         };
         
         const eventTypeText = eventTypeMap[data.event_type] || '주문 업데이트';
-        showToast(`${eventTypeText}: ${data.symbol} ${data.side.toUpperCase()} ${data.quantity}`, 'info', 2000);
+        const toastType = data.event_type === 'order_filled' ? 'success' : 
+                         data.event_type === 'order_cancelled' ? 'warning' : 'info';
+        
+        showToast(`${eventTypeText}: ${data.symbol} ${data.side.toUpperCase()} ${Math.abs(data.quantity)}`, toastType, 2000);
         
     } catch (error) {
         console.error('주문 업데이트 처리 실패:', error);
+        // 오류 발생 시 fallback으로 전체 새로고침
+        loadOpenOrders();
     }
 }
 
-// 포지션 행 업데이트
-function updatePositionRow(positionData) {
-    const positionRow = document.querySelector(`tr[data-position-id="${positionData.position_id}"]`);
+// 새 포지션 행 추가
+function addNewPositionRow(positionData) {
+    const positionTable = document.querySelector('table tbody');
+    if (!positionTable) return;
     
-    // 무한 새로고침 방지: 청산된 포지션에 대한 업데이트인 경우 처리하지 않음
-    if (!positionRow) {
-        if (positionData.event_type === 'position_closed') {
-            // 이미 청산된 포지션에 대한 업데이트 - 무시
-            return;
-        }
-        
-        // 새 포지션이 생성된 경우만 페이지 새로고침
-        if (positionData.event_type === 'position_created' || positionData.event_type === 'position_updated') {
-            setTimeout(() => window.location.reload(), 1000);
-        }
+    // 이미 존재하는지 확인
+    const existingRow = document.querySelector(`tr[data-position-id="${positionData.position_id}"]`);
+    if (existingRow) {
+        console.warn('이미 존재하는 포지션 행:', positionData.position_id);
         return;
     }
     
-    // 포지션이 청산된 경우 행 제거
-    if (positionData.event_type === 'position_closed') {
-        positionRow.style.opacity = '0.5';
-        setTimeout(() => {
-            positionRow.remove();
-            showToast(`포지션 청산 완료: ${positionData.symbol}`, 'success');
-            checkEmptyPositions();
-        }, 1000);
+    // 빈 포지션 상태 제거
+    removeEmptyPositionsState();
+    
+    // 새 행 생성
+    const newRow = createPositionRow(positionData);
+    positionTable.appendChild(newRow);
+    
+    // 애니메이션 효과
+    newRow.style.opacity = '0';
+    newRow.style.transform = 'translateY(-10px)';
+    
+    setTimeout(() => {
+        newRow.style.transition = 'all 0.3s ease-out';
+        newRow.style.opacity = '1';
+        newRow.style.transform = 'translateY(0)';
+    }, 100);
+    
+    console.info('새 포지션 행 추가됨:', positionData.position_id);
+}
+
+// 기존 포지션 행 업데이트
+function updateExistingPositionRow(positionData) {
+    const positionRow = document.querySelector(`tr[data-position-id="${positionData.position_id}"]`);
+    if (!positionRow) {
+        console.warn('포지션 행을 찾을 수 없음, 새로 추가:', positionData.position_id);
+        addNewPositionRow(positionData);
         return;
     }
     
     // 수량 업데이트
     const quantityCell = positionRow.querySelector('.position-quantity');
     if (quantityCell) {
-        quantityCell.textContent = parseFloat(positionData.quantity).toFixed(8);
-        quantityCell.parentElement.classList.add('highlight-update');
-        setTimeout(() => quantityCell.parentElement.classList.remove('highlight-update'), 2000);
+        const newQuantity = Math.abs(parseFloat(positionData.quantity)).toFixed(8);
+        quantityCell.textContent = newQuantity;
+        highlightCell(quantityCell, 'updated');
     }
+    
+    // 진입가격 업데이트
+    const entryPriceCell = positionRow.querySelector('.entry-price');
+    if (entryPriceCell && positionData.entry_price) {
+        entryPriceCell.textContent = `$${parseFloat(positionData.entry_price).toFixed(4)}`;
+        highlightCell(entryPriceCell, 'updated');
+    }
+    
+    // 포지션 방향 업데이트
+    const directionCell = positionRow.querySelector('.position-direction');
+    if (directionCell) {
+        const isLong = parseFloat(positionData.quantity) > 0;
+        const badgeClass = isLong ? 'badge-success' : 'badge-error';
+        const directionText = isLong ? '롱' : '숏';
+        const iconPath = isLong 
+            ? 'M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z'
+            : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z';
+        
+        directionCell.innerHTML = `
+            <span class="badge ${badgeClass}">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="${iconPath}" clip-rule="evenodd"></path>
+                </svg>
+                ${directionText}
+            </span>
+        `;
+        highlightCell(directionCell, 'updated');
+    }
+    
+    // 업데이트 시간 표시
+    const updateTimeCell = positionRow.querySelector('#last-update-' + positionData.position_id);
+    if (updateTimeCell) {
+        updateTimeCell.textContent = '방금 전';
+        highlightCell(updateTimeCell, 'updated');
+    }
+    
+    console.info('포지션 행 업데이트됨:', positionData.position_id);
+}
+
+// 포지션 행 제거
+function removePositionRow(positionId) {
+    const positionRow = document.querySelector(`tr[data-position-id="${positionId}"]`);
+    if (!positionRow) {
+        console.warn('제거할 포지션 행을 찾을 수 없음:', positionId);
+        return;
+    }
+    
+    // 제거 애니메이션
+    positionRow.style.transition = 'all 0.3s ease-out';
+    positionRow.style.opacity = '0.5';
+    positionRow.style.transform = 'translateX(-10px)';
+    
+    setTimeout(() => {
+        positionRow.remove();
+        checkEmptyPositions();
+        console.info('포지션 행 제거됨:', positionId);
+    }, 300);
 }
 
 // 빈 포지션 상태 확인
@@ -1052,6 +1448,140 @@ function showEmptyPositionsState() {
         `;
         positionTable.appendChild(emptyRow);
     }
+}
+
+// 빈 포지션 상태 UI 제거
+function removeEmptyPositionsState() {
+    const emptyRow = document.querySelector('.empty-positions-row');
+    if (emptyRow) {
+        emptyRow.remove();
+    }
+}
+
+// 포지션 행 생성
+function createPositionRow(positionData) {
+    const row = document.createElement('tr');
+    row.className = 'position-row';
+    row.setAttribute('data-position-id', positionData.position_id);
+    
+    const isLong = parseFloat(positionData.quantity) > 0;
+    const quantity = Math.abs(parseFloat(positionData.quantity));
+    const entryPrice = parseFloat(positionData.entry_price || 0);
+    
+    // 계좌 정보 (기본값 설정)
+    const accountName = positionData.account?.name || 'Unknown';
+    const exchange = positionData.account?.exchange || 'unknown';
+    const exchangeInitial = exchange.toUpperCase().charAt(0);
+    
+    row.innerHTML = `
+        <td>
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-8 w-8">
+                    <div class="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span class="text-xs font-bold text-info">${exchangeInitial}</span>
+                    </div>
+                </div>
+                <div class="ml-3">
+                    <div class="text-sm font-medium text-primary">${accountName}</div>
+                    <div class="text-sm text-muted">${exchange.charAt(0).toUpperCase() + exchange.slice(1)}</div>
+                </div>
+            </div>
+        </td>
+        <td>
+            <div class="text-sm font-medium text-primary">${positionData.symbol}</div>
+        </td>
+        <td class="position-direction">
+            <span class="badge ${isLong ? 'badge-success' : 'badge-error'}">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="${isLong 
+                        ? 'M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z'
+                        : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z'
+                    }" clip-rule="evenodd"></path>
+                </svg>
+                ${isLong ? '롱' : '숏'}
+            </span>
+        </td>
+        <td class="text-sm text-primary position-quantity">
+            ${quantity.toFixed(8)}
+        </td>
+        <td class="text-sm text-primary entry-price">
+            $${entryPrice.toFixed(4)}
+        </td>
+        <td class="text-sm text-primary current-price" id="current-price-${positionData.position_id}">
+            <span class="text-muted loading-price">연결 중...</span>
+        </td>
+        <td class="text-sm" id="pnl-${positionData.position_id}">
+            <span class="text-muted">계산 중...</span>
+        </td>
+        <td class="text-sm text-muted">
+            <span id="last-update-${positionData.position_id}">방금 전</span>
+        </td>
+        <td>
+            ${quantity !== 0 ? `
+                <button data-position-id="${positionData.position_id}" class="close-position-btn btn btn-error btn-sm">
+                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    청산
+                </button>
+            ` : '<span class="text-muted text-xs">-</span>'}
+        </td>
+    `;
+    
+    // 청산 버튼 이벤트 리스너 추가
+    const closeBtn = row.querySelector('.close-position-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            const positionId = this.getAttribute('data-position-id');
+            closePosition(positionId);
+        });
+    }
+    
+    return row;
+}
+
+// 셀 하이라이트 효과
+function highlightCell(cell, type = 'updated') {
+    const className = type === 'updated' ? 'highlight-update' : 'highlight-error';
+    cell.classList.add(className);
+    
+    setTimeout(() => {
+        cell.classList.remove(className);
+    }, 2000);
+}
+
+// 포지션 통계 업데이트
+function updatePositionStats() {
+    const positionRows = document.querySelectorAll('tr[data-position-id]');
+    const totalCount = positionRows.length;
+    
+    let longCount = 0;
+    let shortCount = 0;
+    
+    positionRows.forEach(row => {
+        const directionBadge = row.querySelector('.position-direction .badge');
+        if (directionBadge) {
+            if (directionBadge.classList.contains('badge-success')) {
+                longCount++;
+            } else if (directionBadge.classList.contains('badge-error')) {
+                shortCount++;
+            }
+        }
+    });
+    
+    // 통계 카드 업데이트
+    const totalCountElement = document.querySelector('.stats-grid .stats-value');
+    if (totalCountElement) {
+        totalCountElement.textContent = totalCount;
+    }
+    
+    const longCountElements = document.querySelectorAll('.stats-grid .stats-card:nth-child(2) .stats-value');
+    longCountElements.forEach(el => el.textContent = longCount);
+    
+    const shortCountElements = document.querySelectorAll('.stats-grid .stats-card:nth-child(3) .stats-value');
+    shortCountElements.forEach(el => el.textContent = shortCount);
+    
+    console.debug('포지션 통계 업데이트:', { total: totalCount, long: longCount, short: shortCount });
 }
 
 // SSE 연결 상태 업데이트

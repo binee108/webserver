@@ -388,12 +388,17 @@ class RealtimeUpdatesManager {
             return;
         }
         
-        // 주문 목록을 새로 로드하는 것이 더 안전
-        setTimeout(() => {
-            if (typeof refreshOpenOrders === 'function') {
-                refreshOpenOrders();
-            }
-        }, 500);
+        // 동적으로 주문 행 추가 (새로고침 없이)
+        if (typeof addNewOrderRow === 'function') {
+            addNewOrderRow(orderData);
+        } else {
+            // fallback: 주문 목록 새로고침
+            setTimeout(() => {
+                if (typeof refreshOpenOrders === 'function') {
+                    refreshOpenOrders();
+                }
+            }, 500);
+        }
     }
     
     /**

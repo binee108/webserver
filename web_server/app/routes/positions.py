@@ -288,4 +288,60 @@ def event_stats():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@bp.route('/strategies/<int:strategy_id>/positions', methods=['GET'])
+@login_required
+def get_strategy_positions(strategy_id):
+    """특정 전략의 포지션 조회 (동적 업데이트용)"""
+    try:
+        from app.models import Strategy, StrategyPosition, StrategyAccount
+        from sqlalchemy.orm import joinedload
+        
+        # 사용자 권한 확인
+        strategy = Strategy.query.filter_by(id=strategy_id, user_id=current_user.id).first()
+        if not strategy:
+            return jsonify({
+                'success': False,
+                'error': '전략을 찾을 수 없거나 접근 권한이 없습니다.'
+            }), 404
+        
+        # 해당 전략의 활성 포지션만 조회 (수량이 0이 아닌 포지션)
+        positions_query = StrategyPosition.query.join(StrategyAccount).options(
+            joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account)
+        ).filter(
+            StrategyAccount.strategy_id == strategy_id,
+            StrategyPosition.quantity != 0
+        ).all()
+        
+        # StrategyPosition 객체들을 딕셔너리로 변환
+        positions = []
+        for pos in positions_query:
+            position_dict = {
+                'position_id': pos.id, # 'id' 대신 'position_id' 사용 (SSE 이벤트와 일치)
+                'symbol': pos.symbol,
+                'quantity': float(pos.quantity),
+                'entry_price': float(pos.entry_price) if pos.entry_price else 0.0,
+                'account': {
+                    'name': pos.strategy_account.account.name if pos.strategy_account and pos.strategy_account.account else 'Unknown',
+                    'exchange': pos.strategy_account.account.exchange if pos.strategy_account and pos.strategy_account.account else 'unknown'
+                } if pos.strategy_account else None,
+                'created_at': pos.created_at.isoformat() if pos.created_at else None,
+                'updated_at': pos.updated_at.isoformat() if pos.updated_at else None
+            }
+            positions.append(position_dict)
+        
+        current_app.logger.info(f'전략 {strategy_id} 포지션 조회 완료: {len(positions)}개')
+        
+        return jsonify({
+            'success': True,
+            'positions': positions,
+            'total_count': len(positions)
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f'전략 포지션 조회 실패: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500 
