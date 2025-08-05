@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}{{ user.username }} 텔레그램 설정 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>{{ user.username }} 텔레그램 설정</h1>
+                    <p>사용자의 텔레그램 알림 설정을 관리합니다.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                    사용자 목록으로 돌아가기
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 사용자 정보 카드 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">사용자 정보</h3>
+        </div>
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                    <div class="text-sm text-muted">사용자명</div>
+                    <div class="font-medium">{{ user.username }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted">이메일</div>
+                    <div class="font-medium">{{ user.email or '설정되지 않음' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted">상태</div>
+                    <div>
+                        <span class="badge {{ 'badge-success' if user.is_active else 'badge-error' }}">
+                            {{ '활성' if user.is_active else '비활성' }}
+                        </span>
+                        {% if user.is_admin %}
+                        <span class="badge badge-info ml-2">관리자</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 텔레그램 설정 폼 -->
+    <div class="max-w-2xl">
+        <form method="POST" class="space-y-6">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">텔레그램 설정</h3>
+                    <p class="card-description">사용자의 텔레그램 알림 설정을 관리합니다.</p>
+                </div>
+                
+                <div class="card-body space-y-6">
+                    <div class="form-group">
+                        <label for="telegram_id" class="form-label">텔레그램 Chat ID</label>
+                        <div class="relative">
+                            <input type="text" id="telegram_id" name="telegram_id" 
+                                   value="{{ user.telegram_id or '' }}" 
+                                   class="form-input pr-24" 
+                                   placeholder="예: 123456789">
+                            <button type="button" id="testTelegramBtn" 
+                                    onclick="testTelegramConnection({{ user.id }})"
+                                    class="absolute right-2 top-1/2 transform -translate-y-1/2 btn btn-secondary btn-sm"
+                                    {% if not user.telegram_id %}disabled{% endif %}>
+                                테스트
+                            </button>
+                        </div>
+                        <div class="form-help">
+                            <p>사용자의 텔레그램 Chat ID를 설정합니다. 사용자에게 @userinfobot을 통해 ID를 확인하도록 안내하세요.</p>
+                        </div>
+                    </div>
+
+                    <!-- 텔레그램 연결 상태 -->
+                    <div id="telegramStatus" class="hidden">
+                        <div class="alert alert-info">
+                            <div class="flex items-center">
+                                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                                </svg>
+                                <span id="telegramStatusMessage">텔레그램 연결을 테스트하세요.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 저장 버튼 -->
+            <div class="flex justify-end space-x-3">
+                <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
+                    취소
+                </a>
+                <button type="submit" class="btn btn-primary">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    저장
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 관리자 도구 -->
+    {% if user.telegram_id %}
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">관리자 도구</h3>
+            <p class="card-description">사용자에게 직접 알림을 보내거나 연결을 테스트할 수 있습니다.</p>
+        </div>
+        
+        <div class="card-body space-y-6">
+            <!-- 알림 전송 폼 -->
+            <div class="border rounded-lg p-4">
+                <h4 class="font-medium mb-4">알림 전송</h4>
+                <div class="space-y-4">
+                    <div class="form-group">
+                        <label for="notificationTitle" class="form-label">제목</label>
+                        <input type="text" id="notificationTitle" 
+                               class="form-input" 
+                               placeholder="알림 제목을 입력하세요"
+                               value="관리자 알림">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="notificationMessage" class="form-label">메시지</label>
+                        <textarea id="notificationMessage" 
+                                  class="form-textarea" 
+                                  rows="3"
+                                  placeholder="전송할 메시지를 입력하세요"></textarea>
+                    </div>
+                    
+                    <button type="button" 
+                            onclick="sendNotification({{ user.id }})"
+                            class="btn btn-primary">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                        </svg>
+                        알림 전송
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 토스트 컨테이너 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<script>
+// Toast 함수들
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container') || createToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    toast.innerHTML = `
+        <div class="toast-content">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()" class="toast-close">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'fixed top-4 right-4 z-50 space-y-2';
+    document.body.appendChild(container);
+    return container;
+}
+
+// CSRF 토큰
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+}
+
+// 텔레그램 연결 테스트
+function testTelegramConnection(userId) {
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const testBtn = document.getElementById('testTelegramBtn');
+    const statusDiv = document.getElementById('telegramStatus');
+    
+    if (!telegramId) {
+        showToast('텔레그램 ID를 먼저 입력하세요.', 'error');
+        return;
+    }
+    
+    // 버튼 비활성화 및 로딩 상태
+    testBtn.disabled = true;
+    testBtn.innerHTML = '<div class="loading-spinner"></div>테스트 중...';
+    
+    fetch(`/admin/users/${userId}/test-telegram`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        statusDiv.classList.remove('hidden');
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>✅ ${data.message}</span>
+                    </div>
+                </div>
+            `;
+            showToast('텔레그램 테스트 메시지가 전송되었습니다!', 'success');
+        } else {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>❌ ${data.message}</span>
+                    </div>
+                </div>
+            `;
+            showToast(`텔레그램 연결 실패: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = `
+            <div class="alert alert-error">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>❌ 연결 테스트 중 오류가 발생했습니다.</span>
+                </div>
+            </div>
+        `;
+        showToast('연결 테스트 중 오류가 발생했습니다.', 'error');
+    })
+    .finally(() => {
+        // 버튼 상태 복원
+        testBtn.disabled = false;
+        testBtn.innerHTML = '테스트';
+    });
+}
+
+// 알림 전송
+function sendNotification(userId) {
+    const title = document.getElementById('notificationTitle').value.trim();
+    const message = document.getElementById('notificationMessage').value.trim();
+    
+    if (!message) {
+        showToast('메시지를 입력해주세요.', 'error');
+        return;
+    }
+    
+    fetch(`/admin/users/${userId}/send-telegram-notification`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify({
+            title: title,
+            message: message
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast(data.message, 'success');
+            // 메시지 필드 초기화
+            document.getElementById('notificationMessage').value = '';
+        } else {
+            showToast(`알림 전송 실패: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        showToast('알림 전송 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+// 텔레그램 ID 입력 시 테스트 버튼 활성화/비활성화
+document.getElementById('telegram_id').addEventListener('input', function() {
+    const testBtn = document.getElementById('testTelegramBtn');
+    const statusDiv = document.getElementById('telegramStatus');
+    
+    if (this.value.trim()) {
+        testBtn.disabled = false;
+    } else {
+        testBtn.disabled = true;
+        statusDiv.classList.add('hidden');
+    }
+});
+
+// 페이지 로드 시 초기 상태 설정
+document.addEventListener('DOMContentLoaded', function() {
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const testBtn = document.getElementById('testTelegramBtn');
+    
+    if (telegramId) {
+        testBtn.disabled = false;
+    }
+});
+</script>
+{% endblock %}

@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from functools import wraps
 from app import db, csrf
 from app.models import User, Account, Strategy, StrategyAccount
+from app.services.telegram_service import telegram_service
 import secrets
 import string
 
@@ -484,4 +485,205 @@ def get_precision_cache_stats():
         return jsonify({
             'success': False,
             'message': f'Precision 캐시 통계 조회 실패: {str(e)}'
+        }), 500
+
+@bp.route('/users/<int:user_id>/telegram-settings', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def user_telegram_settings(user_id):
+    """사용자 텔레그램 설정 관리"""
+    user = User.query.get_or_404(user_id)
+    
+    if request.method == 'POST':
+        telegram_id = request.form.get('telegram_id', '').strip()
+        
+        # 텔레그램 ID 업데이트
+        user.telegram_id = telegram_id if telegram_id else None
+        
+        try:
+            db.session.commit()
+            flash(f'{user.username} 사용자의 텔레그램 설정이 업데이트되었습니다.', 'success')
+            return redirect(url_for('admin.user_telegram_settings', user_id=user_id))
+        except Exception as e:
+            db.session.rollback()
+            flash('텔레그램 설정 업데이트 중 오류가 발생했습니다.', 'error')
+    
+    return render_template('admin/user_telegram_settings.html', user=user)
+
+@bp.route('/users/<int:user_id>/test-telegram', methods=['POST'])
+@login_required
+@admin_required
+@csrf.exempt
+def test_user_telegram(user_id):
+    """관리자가 사용자의 텔레그램 연결 테스트"""
+    try:
+        user = User.query.get_or_404(user_id)
+        
+        if not user.telegram_id:
+            return jsonify({
+                'success': False,
+                'message': '해당 사용자의 텔레그램 ID가 설정되지 않았습니다.'
+            }), 400
+        
+        result = telegram_service.test_user_connection(user.telegram_id, user.telegram_bot_token)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': f'{user.username} 사용자의 텔레그램 연결 테스트 성공'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'{user.username} 사용자의 텔레그램 연결 실패: {result["message"]}'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'테스트 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+@bp.route('/users/<int:user_id>/send-telegram-notification', methods=['POST'])
+@login_required
+@admin_required
+@csrf.exempt
+def send_user_telegram_notification(user_id):
+    """관리자가 사용자에게 텔레그램 알림 전송"""
+    try:
+        user = User.query.get_or_404(user_id)
+        data = request.get_json()
+        
+        if not user.telegram_id:
+            return jsonify({
+                'success': False,
+                'message': '해당 사용자의 텔레그램 ID가 설정되지 않았습니다.'
+            }), 400
+        
+        title = data.get('title', '관리자 알림')
+        message = data.get('message', '')
+        
+        if not message:
+            return jsonify({
+                'success': False,
+                'message': '메시지를 입력해주세요.'
+            }), 400
+        
+        success = telegram_service.send_user_notification(
+            user.telegram_id, 
+            title, 
+            message,
+            {'보낸이': '시스템 관리자'},
+            user.telegram_bot_token
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'{user.username} 사용자에게 알림이 전송되었습니다.'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '알림 전송에 실패했습니다.'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'알림 전송 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+@bp.route('/system/telegram-settings', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def telegram_settings():
+    """전역 텔레그램 설정 관리"""
+    if request.method == 'GET':
+        # 현재 설정 조회
+        settings = telegram_service.get_global_settings()
+        return jsonify({
+            'success': True,
+            'settings': {
+                'bot_token': settings['bot_token'][:20] + '...' if settings['bot_token'] else None,  # 마스킹
+                'bot_token_full': settings['bot_token'],  # 편집용
+                'chat_id': settings['chat_id']
+            }
+        })
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            bot_token = data.get('bot_token', '').strip()
+            chat_id = data.get('chat_id', '').strip()
+            
+            # 설정 검증: 둘 다 있거나 둘 다 없어야 함
+            if (bot_token and not chat_id) or (not bot_token and chat_id):
+                return jsonify({
+                    'success': False,
+                    'message': '전역 텔레그램 설정은 봇 토큰과 Chat ID를 모두 입력하거나 모두 비워두어야 합니다.'
+                }), 400
+            
+            # 빈 문자열을 None으로 변환
+            bot_token = bot_token if bot_token else None
+            chat_id = chat_id if chat_id else None
+            
+            # 설정 업데이트
+            success = telegram_service.update_global_settings(
+                bot_token=bot_token,
+                chat_id=chat_id
+            )
+            
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': '전역 텔레그램 설정이 업데이트되었습니다.'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': '설정 업데이트에 실패했습니다.'
+                }), 500
+                
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'설정 업데이트 중 오류가 발생했습니다: {str(e)}'
+            }), 500
+
+@bp.route('/system/test-global-telegram', methods=['POST'])
+@login_required
+@admin_required
+@csrf.exempt
+def test_global_telegram():
+    """전역 텔레그램 설정 테스트"""
+    try:
+        # JSON에서 현재 입력값 가져오기
+        data = request.get_json()
+        if data:
+            bot_token = data.get('bot_token', '').strip()
+            chat_id = data.get('chat_id', '').strip()
+            
+            # 디버깅 로그
+            from flask import current_app
+            current_app.logger.debug(f"전역 텔레그램 테스트 요청: bot_token={'설정됨' if bot_token else '없음'}, chat_id={chat_id}")
+            
+            # 입력값으로 직접 테스트
+            result = telegram_service.test_with_params(bot_token, chat_id)
+        else:
+            # JSON이 없으면 저장된 설정 사용 (폴백)
+            current_app.logger.debug("JSON 데이터가 없어 저장된 전역 설정으로 테스트")
+            result = telegram_service.test_global_settings()
+        
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"전역 텔레그램 테스트 중 예외 발생: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'테스트 중 오류가 발생했습니다: {str(e)}'
         }), 500 

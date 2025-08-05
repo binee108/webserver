@@ -17,20 +17,223 @@ class TelegramService:
     """텔레그램 알림 서비스 클래스"""
     
     def __init__(self):
-        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        # DB 설정 우선, 환경변수는 폴백
+        self.bot_token = None
+        self.chat_id = None
         self.bot = None
+        self._initialize_global_settings()
+    
+    def _initialize_global_settings(self):
+        """전역 설정 초기화 - DB 우선, 환경변수 폴백"""
+        try:
+            from app.models import SystemSetting
+            
+            # DB에서 설정 조회
+            self.bot_token = SystemSetting.get_setting('TELEGRAM_BOT_TOKEN')
+            self.chat_id = SystemSetting.get_setting('TELEGRAM_CHAT_ID')
+            
+            # DB 설정이 없으면 환경변수 사용
+            if not self.bot_token:
+                self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if not self.chat_id:
+                self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            
+            # 봇 인스턴스 생성 (설정이 있을 때만)
+            if self.bot_token and self.bot_token.strip():
+                try:
+                    self.bot = Bot(token=self.bot_token)
+                    logger.info("전역 텔레그램 봇이 초기화되었습니다.")
+                except Exception as bot_error:
+                    logger.warning(f"전역 텔레그램 봇 생성 실패: {str(bot_error)}")
+                    self.bot = None
+            else:
+                logger.info("전역 텔레그램 봇 토큰이 설정되지 않았습니다. 관리자 페이지에서 설정할 수 있습니다.")
+                self.bot = None
+                
+        except Exception as e:
+            # DB 접근 실패 시 환경변수 사용
+            logger.warning(f"DB 설정 조회 실패, 환경변수로 폴백: {str(e)}")
+            self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            
+            if self.bot_token and self.bot_token.strip():
+                try:
+                    self.bot = Bot(token=self.bot_token)
+                    logger.info("환경변수로 전역 텔레그램 봇이 초기화되었습니다.")
+                except Exception as bot_error:
+                    logger.warning(f"환경변수 봇 생성 실패: {str(bot_error)}")
+                    self.bot = None
+            else:
+                logger.info("환경변수에도 전역 텔레그램 설정이 없습니다. 시스템은 정상 작동하며, 필요시 관리자 페이지에서 설정할 수 있습니다.")
+                self.bot = None
+    
+    def get_global_settings(self) -> dict:
+        """전역 텔레그램 설정 조회"""
+        try:
+            from app.models import SystemSetting
+            return {
+                'bot_token': SystemSetting.get_setting('TELEGRAM_BOT_TOKEN'),
+                'chat_id': SystemSetting.get_setting('TELEGRAM_CHAT_ID')
+            }
+        except Exception as e:
+            logger.error(f"전역 설정 조회 실패: {str(e)}")
+            return {'bot_token': None, 'chat_id': None}
+    
+    def update_global_settings(self, bot_token: str = None, chat_id: str = None) -> bool:
+        """전역 텔레그램 설정 업데이트"""
+        try:
+            from app.models import SystemSetting
+            
+            if bot_token is not None:
+                SystemSetting.set_setting(
+                    'TELEGRAM_BOT_TOKEN', 
+                    bot_token, 
+                    '시스템 오류 및 상태 알림을 위한 전역 텔레그램 봇 토큰'
+                )
+                self.bot_token = bot_token
+                
+            if chat_id is not None:
+                SystemSetting.set_setting(
+                    'TELEGRAM_CHAT_ID', 
+                    chat_id, 
+                    '시스템 오류 및 상태 알림을 위한 전역 텔레그램 Chat ID'
+                )
+                self.chat_id = chat_id
+            
+            # 봇 인스턴스 재생성
+            if self.bot_token:
+                self.bot = Bot(token=self.bot_token)
+            else:
+                self.bot = None
+                
+            logger.info("전역 텔레그램 설정이 업데이트되었습니다.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"전역 설정 업데이트 실패: {str(e)}")
+            return False
+    
+    def test_global_settings(self) -> Dict[str, Any]:
+        """저장된 전역 텔레그램 설정 테스트"""
+        if not self.bot_token or not self.chat_id:
+            return {
+                'success': False,
+                'message': '전역 텔레그램 설정이 완료되지 않았습니다.'
+            }
         
-        if self.bot_token:
-            self.bot = Bot(token=self.bot_token)
+        test_message = f"🧪 전역 텔레그램 연결 테스트\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        if self.send_message(test_message):
+            return {
+                'success': True,
+                'message': '전역 텔레그램 연결 테스트 성공'
+            }
         else:
-            logger.debug("텔레그램 봇 토큰이 설정되지 않았습니다. 알림 기능이 비활성화됩니다.")
+            return {
+                'success': False,
+                'message': '전역 텔레그램 메시지 전송 실패'
+            }
+    
+    def test_with_params(self, bot_token: str, chat_id: str) -> Dict[str, Any]:
+        """주어진 파라미터로 텔레그램 연결 테스트"""
+        if not bot_token or not chat_id:
+            return {
+                'success': False,
+                'message': '텔레그램 봇 토큰과 Chat ID를 모두 입력해야 테스트할 수 있습니다.'
+            }
+        
+        if bot_token.strip() == "" or chat_id.strip() == "":
+            return {
+                'success': False,
+                'message': '텔레그램 봇 토큰과 Chat ID에 빈 값이 포함되어 있습니다.'
+            }
+        
+        try:
+            # 임시 봇 생성하여 테스트
+            temp_bot = Bot(token=bot_token.strip())
+            test_message = f"🧪 전역 텔레그램 연결 테스트\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # 동기적으로 메시지 전송 테스트
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(temp_bot.send_message(
+                chat_id=chat_id.strip(), 
+                text=test_message,
+                parse_mode='HTML'
+            ))
+            loop.close()
+            
+            logger.info(f"전역 텔레그램 테스트 성공: Chat ID={chat_id}")
+            return {
+                'success': True,
+                'message': '전역 텔레그램 연결 테스트 성공'
+            }
+            
+        except TelegramError as e:
+            logger.warning(f"전역 텔레그램 테스트 실패 (Telegram API): {str(e)}")
+            return {
+                'success': False,
+                'message': f'텔레그램 API 오류: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"전역 텔레그램 테스트 실패 (일반 오류): {str(e)}")
+            return {
+                'success': False,
+                'message': f'테스트 실패: {str(e)}'
+            }
+    
+    def get_user_bot(self, user_telegram_bot_token: str) -> Optional[Bot]:
+        """사용자별 봇 인스턴스 생성"""
+        if not user_telegram_bot_token or user_telegram_bot_token.strip() == "":
+            return None
+        
+        try:
+            return Bot(token=user_telegram_bot_token.strip())
+        except Exception as e:
+            logger.error(f"사용자 봇 생성 실패: {str(e)}")
+            return None
+    
+    def get_effective_bot_and_chat(self, user_telegram_bot_token: str = None, user_telegram_id: str = None) -> tuple[Optional[Bot], Optional[str]]:
+        """사용자별 또는 전역 봇과 채팅 ID 반환 (우선순위: 사용자 > 전역)"""
+        # 빈 문자열을 None으로 정규화
+        if user_telegram_bot_token and user_telegram_bot_token.strip() == "":
+            user_telegram_bot_token = None
+        if user_telegram_id and user_telegram_id.strip() == "":
+            user_telegram_id = None
+        
+        # 사용자별 봇 토큰이 있으면 사용자 봇 우선
+        if user_telegram_bot_token and user_telegram_id:
+            logger.debug(f"사용자별 봇 토큰 시도: 토큰={user_telegram_bot_token[:20]}..., Chat ID={user_telegram_id}")
+            user_bot = self.get_user_bot(user_telegram_bot_token)
+            if user_bot:
+                logger.debug("사용자별 봇 사용")
+                return user_bot, user_telegram_id
+            else:
+                logger.warning("사용자별 봇 생성 실패, 전역 봇으로 폴백")
+        
+        # 사용자별 봇이 없으면 전역 봇 사용
+        if user_telegram_id and self.bot:
+            logger.debug(f"전역 봇 사용, 사용자 Chat ID={user_telegram_id}")
+            return self.bot, user_telegram_id
+        elif self.bot and self.chat_id:
+            logger.debug(f"전역 봇과 전역 Chat ID 사용: {self.chat_id}")
+            return self.bot, self.chat_id
+        else:
+            logger.warning("사용 가능한 봇과 채팅 ID가 없습니다")
+            return None, None
     
     def is_enabled(self) -> bool:
-        """텔레그램 알림이 활성화되어 있는지 확인"""
-        return (self.bot is not None and 
-                self.chat_id is not None and 
-                self.chat_id.strip() != "")
+        """전역 텔레그램 알림이 활성화되어 있는지 확인"""
+        is_active = (self.bot is not None and 
+                    self.bot_token is not None and 
+                    self.bot_token.strip() != "" and
+                    self.chat_id is not None and 
+                    self.chat_id.strip() != "")
+        
+        if not is_active:
+            logger.debug("전역 텔레그램 설정이 완료되지 않았습니다.")
+        
+        return is_active
     
     async def send_message_async(self, message: str, parse_mode: str = 'HTML') -> bool:
         """비동기 메시지 전송"""
@@ -73,6 +276,10 @@ class TelegramService:
     def send_error_alert(self, error_type: str, error_message: str, 
                         context: Optional[Dict[str, Any]] = None) -> bool:
         """오류 알림 전송"""
+        if not self.is_enabled():
+            logger.info("전역 텔레그램 설정이 미완료되어 오류 알림을 전송하지 않습니다.")
+            return False
+            
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         message = f"""
@@ -95,6 +302,7 @@ class TelegramService:
     def send_webhook_error(self, webhook_data: dict, error_message: str) -> bool:
         """웹훅 처리 오류 알림 전송"""
         if not self.is_enabled():
+            logger.info("전역 텔레그램 설정이 미완료되어 웹훅 오류 알림을 전송하지 않습니다.")
             return False
         
         message = f"""
@@ -111,6 +319,7 @@ class TelegramService:
     def send_exchange_error(self, account_id: int, exchange: str, error_message: str) -> bool:
         """거래소 연결 오류 알림 전송"""
         if not self.is_enabled():
+            logger.info("전역 텔레그램 설정이 미완료되어 거래소 오류 알림을 전송하지 않습니다.")
             return False
         
         message = f"""
@@ -135,6 +344,10 @@ class TelegramService:
     
     def send_system_status(self, status: str, details: Optional[str] = None) -> bool:
         """시스템 상태 알림"""
+        if not self.is_enabled():
+            logger.info("전역 텔레그램 설정이 미완료되어 시스템 상태 알림을 전송하지 않습니다.")
+            return False
+            
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         if status == "startup":
@@ -166,6 +379,10 @@ class TelegramService:
     
     def send_daily_summary(self, summary_data: Dict[str, Any]) -> bool:
         """일일 트레이딩 요약 보고서 전송"""
+        if not self.is_enabled():
+            logger.info("전역 텔레그램 설정이 미완료되어 일일 요약 보고서를 전송하지 않습니다.")
+            return False
+            
         date_str = summary_data.get('date', datetime.now().strftime('%Y-%m-%d'))
         
         # 기본 정보
@@ -258,6 +475,118 @@ class TelegramService:
                 'success': False,
                 'message': '텔레그램 메시지 전송 실패'
             }
+    
+    def send_message_to_user(self, user_telegram_id: str, message: str, parse_mode: str = 'HTML', user_telegram_bot_token: str = None) -> bool:
+        """특정 사용자에게 메시지 전송 (사용자별 봇 토큰 지원)"""
+        # 사용자별 설정 완전 검증 - 둘 다 있어야만 전송
+        if not user_telegram_bot_token or not user_telegram_id:
+            logger.info("사용자 텔레그램 설정 미완료 - 봇 토큰과 Chat ID 모두 필요합니다.")
+            return False
+        
+        if user_telegram_bot_token.strip() == "" or user_telegram_id.strip() == "":
+            logger.info("사용자 텔레그램 설정 미완료 - 빈 값이 포함되어 있습니다.")
+            return False
+        
+        # 사용자 봇 생성 시도
+        user_bot = self.get_user_bot(user_telegram_bot_token)
+        if not user_bot:
+            logger.warning("사용자 텔레그램 봇 생성 실패 - 토큰이 유효하지 않습니다.")
+            return False
+        
+        try:
+            # 새 이벤트 루프 생성하여 비동기 함수 실행
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(self._send_message_to_user_async(user_telegram_id, message, parse_mode, user_bot))
+            loop.close()
+            return result
+        except Exception as e:
+            logger.error(f"사용자별 메시지 전송 실패: {str(e)}")
+            return False
+    
+    async def _send_message_to_user_async(self, user_telegram_id: str, message: str, parse_mode: str = 'HTML', bot: Bot = None) -> bool:
+        """특정 사용자에게 비동기 메시지 전송"""
+        # 봇이 지정되지 않으면 기본 봇 사용
+        if bot is None:
+            bot = self.bot
+        
+        if bot is None:
+            logger.error("사용 가능한 봇이 없습니다.")
+            return False
+        
+        try:
+            await bot.send_message(
+                chat_id=user_telegram_id,
+                text=message,
+                parse_mode=parse_mode
+            )
+            logger.info(f"사용자({user_telegram_id})에게 텔레그램 메시지 전송 성공")
+            return True
+            
+        except TelegramError as e:
+            logger.error(f"사용자({user_telegram_id}) 텔레그램 메시지 전송 실패: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"사용자({user_telegram_id}) 텔레그램 메시지 전송 중 예상치 못한 오류: {str(e)}")
+            return False
+    
+    def test_user_connection(self, user_telegram_id: str, user_telegram_bot_token: str = None) -> Dict[str, Any]:
+        """특정 사용자의 텔레그램 연결 테스트 (사용자별 봇 토큰 지원)"""
+        # 사용자별 설정 완전 검증 - 둘 다 필요
+        if not user_telegram_bot_token or not user_telegram_id:
+            return {
+                'success': False,
+                'message': '텔레그램 봇 토큰과 Chat ID를 모두 입력해야 테스트할 수 있습니다.'
+            }
+        
+        if user_telegram_bot_token.strip() == "" or user_telegram_id.strip() == "":
+            return {
+                'success': False,
+                'message': '텔레그램 봇 토큰과 Chat ID에 빈 값이 포함되어 있습니다.'
+            }
+        
+        # 사용자 봇 생성 시도
+        user_bot = self.get_user_bot(user_telegram_bot_token)
+        if not user_bot:
+            return {
+                'success': False,
+                'message': '입력하신 텔레그램 봇 토큰이 유효하지 않습니다. 토큰을 확인해주세요.'
+            }
+        
+        test_message = f"🧪 개인 텔레그램 연결 테스트\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        if self.send_message_to_user(user_telegram_id, test_message, parse_mode='HTML', user_telegram_bot_token=user_telegram_bot_token):
+            return {
+                'success': True,
+                'message': '텔레그램 연결 테스트 성공'
+            }
+        else:
+            return {
+                'success': False,
+                'message': '텔레그램 메시지 전송 실패'
+            }
+    
+    def send_user_notification(self, user_telegram_id: str, title: str, message: str, 
+                              context: Optional[Dict[str, Any]] = None, user_telegram_bot_token: str = None) -> bool:
+        """사용자별 알림 전송 (사용자별 봇 토큰 지원)"""
+        if not user_telegram_id:
+            return False
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        notification = f"""
+📢 <b>{title}</b>
+
+⏰ <b>시간:</b> {timestamp}
+📝 <b>내용:</b> {message}
+"""
+        
+        if context:
+            notification += "\n📊 <b>상세 정보:</b>\n"
+            for key, value in context.items():
+                notification += f"• {key}: {value}\n"
+        
+        return self.send_message_to_user(user_telegram_id, notification, parse_mode='HTML', user_telegram_bot_token=user_telegram_bot_token)
 
 # 전역 인스턴스
 telegram_service = TelegramService() 

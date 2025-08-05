@@ -12,7 +12,8 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=True)
-    telegram_id = db.Column(db.String(100), nullable=True)  # 텔레그램 ID
+    telegram_id = db.Column(db.String(100), nullable=True)  # 텔레그램 Chat ID
+    telegram_bot_token = db.Column(db.Text, nullable=True)  # 사용자별 텔레그램 봇 토큰
     is_active = db.Column(db.Boolean, default=False, nullable=False)
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)  # 비밀번호 변경 강제 여부
@@ -224,4 +225,39 @@ class SystemSummary(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<SystemSummary {self.date}>' 
+        return f'<SystemSummary {self.date}>'
+
+class SystemSetting(db.Model):
+    """시스템 전역 설정 테이블"""
+    __tablename__ = 'system_settings'
+    
+    key = db.Column(db.String(100), primary_key=True)
+    value = db.Column(db.Text, nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    @classmethod
+    def get_setting(cls, key: str, default_value: str = None) -> str:
+        """설정 값 조회"""
+        setting = cls.query.filter_by(key=key).first()
+        return setting.value if setting and setting.value else default_value
+    
+    @classmethod
+    def set_setting(cls, key: str, value: str, description: str = None):
+        """설정 값 업데이트 또는 생성"""
+        from app import db
+        setting = cls.query.filter_by(key=key).first()
+        if setting:
+            setting.value = value
+            setting.updated_at = datetime.utcnow()
+            if description:
+                setting.description = description
+        else:
+            setting = cls(key=key, value=value, description=description)
+            db.session.add(setting)
+        db.session.commit()
+        return setting
+    
+    def __repr__(self):
+        return f'<SystemSetting {self.key}={self.value}>' 

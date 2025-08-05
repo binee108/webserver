@@ -225,6 +225,92 @@
         </div>
     </div>
     
+    <!-- 전역 텔레그램 설정 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                </svg>
+                전역 텔레그램 설정
+            </h2>
+            <p class="text-sm text-secondary mt-1">시스템 오류 및 상태 알림을 위한 전역 텔레그램 봇 설정</p>
+        </div>
+        <div class="p-6">
+            <div class="space-y-6">
+                <!-- 전역 텔레그램 설정 상태 표시 -->
+                <div id="globalTelegramConfigStatus" class="mb-4">
+                    <!-- JavaScript로 동적 업데이트 -->
+                </div>
+                
+                <div class="form-group">
+                    <label for="global_telegram_bot_token" class="form-label">전역 봇 토큰</label>
+                    <div class="flex space-x-2">
+                        <input type="password" id="global_telegram_bot_token" 
+                               class="form-input flex-1" 
+                               placeholder="예: 123456789:AAE...xyz">
+                        <button type="button" onclick="toggleTokenVisibility()" 
+                                class="btn btn-secondary btn-sm">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="form-help">시스템 오류 및 상태 알림을 전송할 전역 텔레그램 봇 토큰입니다.</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="global_telegram_chat_id" class="form-label">전역 Chat ID</label>
+                    <input type="text" id="global_telegram_chat_id" 
+                           class="form-input" 
+                           placeholder="예: 123456789">
+                    <p class="form-help">시스템 알림을 받을 관리자의 텔레그램 Chat ID입니다.</p>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                    <div class="flex space-x-2">
+                        <button type="button" onclick="saveGlobalTelegramSettings()" 
+                                class="btn btn-primary">
+                            <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            저장
+                        </button>
+                        <button type="button" onclick="testGlobalTelegram()" 
+                                id="testGlobalTelegramBtn"
+                                class="btn btn-info">
+                            <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            테스트
+                        </button>
+                    </div>
+                    <button type="button" onclick="loadGlobalTelegramSettings()" 
+                            class="btn btn-secondary">
+                        <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                        </svg>
+                        새로고침
+                    </button>
+                </div>
+                
+                <!-- 전역 텔레그렘 상태 -->
+                <div id="globalTelegramStatus" class="hidden">
+                    <div class="alert alert-info">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                            </svg>
+                            <span id="globalTelegramStatusMessage">전역 텔레그램 설정을 확인하세요.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 수동 작업 실행 -->
     <div class="card">
         <div class="px-6 py-4 border-b border-color">
@@ -426,5 +512,218 @@ setInterval(() => {
     })
     .catch(error => console.error('스케줄러 상태 확인 오류:', error));
 }, 30000);
+
+// 전역 텔레그램 설정 관련 함수들
+function loadGlobalTelegramSettings() {
+    fetch('/admin/system/telegram-settings', {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const settings = data.settings;
+            document.getElementById('global_telegram_bot_token').value = settings.bot_token_full || '';
+            document.getElementById('global_telegram_chat_id').value = settings.chat_id || '';
+            updateGlobalTelegramStatus(settings.bot_token_full, settings.chat_id);
+        } else {
+            showNotification('설정 조회 실패: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('설정 조회 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+function updateGlobalTelegramStatus(botToken, chatId) {
+    const statusDiv = document.getElementById('globalTelegramConfigStatus');
+    
+    if (botToken && chatId) {
+        statusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-success-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-success" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-success">전역 텔레그램 알림 활성화됨</p>
+                    <p class="text-xs text-success-dark">다음 시스템 알림이 관리자에게 전송됩니다:</p>
+                    <ul class="text-xs text-success-dark mt-1 ml-4 list-disc">
+                        <li>시스템 오류 및 예외 상황</li>
+                        <li>거래소 연결 문제</li>
+                        <li>웹훅 처리 오류</li>
+                        <li>시스템 시작/종료 상태</li>
+                        <li>일일 거래 요약 보고서</li>
+                    </ul>
+                </div>
+            </div>
+        `;
+    } else {
+        statusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-warning-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-warning">전역 텔레그램 알림 비활성화됨</p>
+                    <p class="text-xs text-warning-dark">봇 토큰과 Chat ID를 모두 입력해야 다음 기능이 활성화됩니다:</p>
+                    <ul class="text-xs text-warning-dark mt-1 ml-4 list-disc">
+                        <li>시스템 오류 및 예외 상황 알림</li>
+                        <li>거래소 연결 문제 알림</li>
+                        <li>웹훅 처리 오류 알림</li>
+                        <li>시스템 시작/종료 상태 알림</li>
+                        <li>일일 거래 요약 보고서</li>
+                    </ul>
+                    <p class="text-xs text-error mt-2"><strong>주의:</strong> 설정이 미완료된 동안 시스템 문제를 즉시 알 수 없습니다.</p>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function saveGlobalTelegramSettings() {
+    const botToken = document.getElementById('global_telegram_bot_token').value.trim();
+    const chatId = document.getElementById('global_telegram_chat_id').value.trim();
+    
+    // 둘 다 있거나 둘 다 없어야 함
+    if ((botToken && !chatId) || (!botToken && chatId)) {
+        showNotification('봇 토큰과 Chat ID를 모두 입력하거나 모두 비워두어야 합니다.', 'error');
+        return;
+    }
+    
+    fetch('/admin/system/telegram-settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            bot_token: botToken,
+            chat_id: chatId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message, 'success');
+            // 설정을 다시 로드하여 마스킹된 토큰 표시 및 상태 업데이트
+            setTimeout(() => {
+                loadGlobalTelegramSettings();
+                updateGlobalTelegramStatus(botToken, chatId);
+            }, 1000);
+        } else {
+            showNotification('설정 저장 실패: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('설정 저장 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+function testGlobalTelegram() {
+    const testBtn = document.getElementById('testGlobalTelegramBtn');
+    const statusDiv = document.getElementById('globalTelegramStatus');
+    const statusMessage = document.getElementById('globalTelegramStatusMessage');
+    const originalContent = testBtn.innerHTML;
+    
+    // 현재 입력칸의 값 가져오기
+    const botToken = document.getElementById('global_telegram_bot_token').value.trim();
+    const chatId = document.getElementById('global_telegram_chat_id').value.trim();
+    
+    // 입력값 검증
+    if (!botToken || !chatId) {
+        showNotification('봇 토큰과 Chat ID를 모두 입력해야 테스트할 수 있습니다.', 'error');
+        return;
+    }
+    
+    // 버튼 비활성화 및 로딩 상태
+    testBtn.disabled = true;
+    testBtn.innerHTML = `
+        <div class="flex items-center">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            테스트 중...
+        </div>
+    `;
+    
+    fetch('/admin/system/test-global-telegram', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            bot_token: botToken,
+            chat_id: chatId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        statusDiv.classList.remove('hidden');
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>✅ 전역 텔레그램 연결 성공! 테스트 메시지를 확인하세요.</span>
+                    </div>
+                </div>
+            `;
+            showNotification('전역 텔레그램 테스트 메시지가 전송되었습니다!', 'success');
+        } else {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>❌ ${data.message}</span>
+                    </div>
+                </div>
+            `;
+            showNotification(`전역 텔레그램 연결 실패: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = `
+            <div class="alert alert-error">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>❌ 연결 테스트 중 오류가 발생했습니다.</span>
+                </div>
+            </div>
+        `;
+        showNotification('연결 테스트 중 오류가 발생했습니다.', 'error');
+    })
+    .finally(() => {
+        testBtn.disabled = false;
+        testBtn.innerHTML = originalContent;
+    });
+}
+
+function toggleTokenVisibility() {
+    const tokenInput = document.getElementById('global_telegram_bot_token');
+    if (tokenInput.type === 'password') {
+        tokenInput.type = 'text';
+    } else {
+        tokenInput.type = 'password';
+    }
+}
+
+// 페이지 로드 시 전역 텔레그램 설정 로드
+document.addEventListener('DOMContentLoaded', function() {
+    loadGlobalTelegramSettings();
+});
 </script>
 {% endblock %} 

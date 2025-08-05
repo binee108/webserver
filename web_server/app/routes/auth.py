@@ -1,7 +1,8 @@
-from flask import Blueprint, render_template, request, flash, redirect, url_for
+from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
-from app import db
+from app import db, csrf
 from app.models import User
+from app.services.telegram_service import telegram_service
 from datetime import datetime
 
 bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -188,6 +189,120 @@ def register():
             flash('회원가입 중 오류가 발생했습니다.', 'error')
     
     return render_template('auth/register.html')
+
+@bp.route('/profile', methods=['GET', 'POST'])
+@login_required
+def profile():
+    """사용자 프로필 설정"""
+    # 강제 비밀번호 변경이 필요한 경우 해당 페이지로 리다이렉트
+    if current_user.must_change_password:
+        return redirect(url_for('auth.force_change_password'))
+    
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip()
+        telegram_id = request.form.get('telegram_id', '').strip()
+        telegram_bot_token = request.form.get('telegram_bot_token', '').strip()
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        
+        # 이메일 업데이트
+        if email != current_user.email:
+            # 이메일 중복 확인
+            if email and User.query.filter(User.email == email, User.id != current_user.id).first():
+                flash('이미 존재하는 이메일입니다.', 'error')
+                return render_template('auth/profile.html')
+            
+            current_user.email = email if email else None
+        
+        # 텔레그램 설정 검증: 둘 다 있거나 둘 다 없어야 함
+        if (telegram_id and not telegram_bot_token) or (not telegram_id and telegram_bot_token):
+            flash('텔레그램 알림을 사용하려면 봇 토큰과 Chat ID를 모두 입력해야 합니다.', 'error')
+            return render_template('auth/profile.html')
+        
+        # 텔레그램 ID 업데이트
+        if telegram_id != current_user.telegram_id:
+            current_user.telegram_id = telegram_id if telegram_id else None
+        
+        # 텔레그램 봇 토큰 업데이트
+        if telegram_bot_token != current_user.telegram_bot_token:
+            current_user.telegram_bot_token = telegram_bot_token if telegram_bot_token else None
+        
+        # 비밀번호 변경 (선택사항)
+        if current_password or new_password or confirm_password:
+            # 비밀번호 변경 시 입력 검증
+            if not all([current_password, new_password, confirm_password]):
+                flash('비밀번호를 변경하려면 모든 비밀번호 필드를 입력해주세요.', 'error')
+                return render_template('auth/profile.html')
+            
+            if not current_user.check_password(current_password):
+                flash('현재 비밀번호가 올바르지 않습니다.', 'error')
+                return render_template('auth/profile.html')
+            
+            if new_password != confirm_password:
+                flash('새 비밀번호가 일치하지 않습니다.', 'error')
+                return render_template('auth/profile.html')
+            
+            if len(new_password) < 6:
+                flash('비밀번호는 최소 6자 이상이어야 합니다.', 'error')
+                return render_template('auth/profile.html')
+            
+            current_user.set_password(new_password)
+        
+        try:
+            db.session.commit()
+            flash('프로필이 성공적으로 업데이트되었습니다.', 'success')
+            return redirect(url_for('auth.profile'))
+        except Exception as e:
+            db.session.rollback()
+            flash('프로필 업데이트 중 오류가 발생했습니다.', 'error')
+    
+    return render_template('auth/profile.html')
+
+@bp.route('/profile/test-telegram', methods=['POST'])
+@login_required
+@csrf.exempt
+def test_telegram():
+    """사용자의 텔레그램 연결 테스트 (사용자별 봇 토큰 지원)"""
+    try:
+        # JSON 요청에서 현재 입력된 값들 가져오기
+        data = request.get_json()
+        if data:
+            telegram_id = data.get('telegram_id', '').strip()
+            telegram_bot_token = data.get('telegram_bot_token', '').strip()
+            # 빈 문자열을 None으로 변환
+            if not telegram_bot_token:
+                telegram_bot_token = None
+        else:
+            # JSON이 없으면 현재 저장된 값 사용 (폴백)
+            telegram_id = current_user.telegram_id
+            telegram_bot_token = current_user.telegram_bot_token
+        
+        # 디버깅 로그
+        from flask import current_app
+        current_app.logger.debug(f"텔레그램 테스트 요청: telegram_id={telegram_id}, bot_token={'설정됨' if telegram_bot_token else '없음'}")
+        
+        if not telegram_id or not telegram_bot_token:
+            return jsonify({
+                'success': False,
+                'message': '텔레그램 봇 토큰과 Chat ID를 모두 입력해야 테스트할 수 있습니다.'
+            }), 400
+        
+        result = telegram_service.test_user_connection(
+            telegram_id, 
+            telegram_bot_token
+        )
+        
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'테스트 중 오류가 발생했습니다: {str(e)}'
+        }), 500
 
 @bp.route('/logout')
 @login_required
