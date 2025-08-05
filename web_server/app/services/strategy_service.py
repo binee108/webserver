@@ -81,7 +81,7 @@ class StrategyService:
                     'created_at': strategy.created_at.isoformat(),
                     'connected_accounts': connected_accounts,
                     'total_allocated_capital': total_allocated_capital,
-                    'position_count': sum(len(sa.strategy_positions) for sa in strategy.strategy_accounts)  # 이제 추가 쿼리 없이 접근 가능
+                    'position_count': sum(len([pos for pos in sa.strategy_positions if pos.quantity != 0]) for sa in strategy.strategy_accounts)  # 활성 포지션만 계산
                 })
             
             return strategies_data
