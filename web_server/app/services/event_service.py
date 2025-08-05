@@ -143,16 +143,11 @@ class EventService:
                 logger.debug(f"연결 메시지 내용: {connection_msg.strip()}")
                 yield connection_msg
                 
-                # 🔧 즉시 추가 데이터 전송하여 연결 안정화
+                # 즉시 추가 데이터 전송하여 연결 안정화
                 yield ": keepalive\n\n"  # SSE 주석 (브라우저에서 무시됨)
                 
-                # 최근 이벤트 전송 (있는 경우)
-                with self.lock:
-                    recent_events = list(self.event_queues.get(user_id, []))
-                
-                for event in recent_events[-10:]:  # 최근 10개 이벤트만
-                    logger.debug(f"📤 최근 이벤트 전송 - 사용자: {user_id}, 타입: {event.get('type')}")
-                    yield self._format_sse_message(event)
+                # 새로운 연결에서는 과거 이벤트를 재전송하지 않음
+                # 실시간 이벤트만 전송하여 중복 처리 방지
                 
                 # 실시간 이벤트 처리
                 while True:

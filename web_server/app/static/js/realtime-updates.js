@@ -36,7 +36,7 @@ class RealtimeUpdatesManager {
             return;
         }
         
-        // 🔧 로그인 상태 확인
+        // 로그인 상태 확인
         this.logger.info('🔍 로그인 상태 확인 시작...');
         try {
             const isLoggedIn = await this.checkLoginStatus();
@@ -56,17 +56,17 @@ class RealtimeUpdatesManager {
         try {
             this.logger.info('SSE 연결 시작...');
             
-            // 🔧 프로토콜 독립적 SSE URL 생성
+            // 프로토콜 독립적 SSE URL 생성
             const sseUrl = this.buildSSEUrl();
             this.logger.info('SSE URL:', sseUrl);
             
             this.eventSource = new EventSource(sseUrl);
             
-            // 🔧 EventSource 생성 직후 상태 확인
+            // EventSource 생성 직후 상태 확인
             this.logger.info('EventSource 생성됨 - readyState:', this.eventSource.readyState);
             this.logger.info('EventSource 실제 URL:', this.eventSource.url);
             
-            // 🔧 강화된 디버깅: EventSource 상태 모니터링
+            // EventSource 상태 모니터링
             const checkConnectionStatus = () => {
                 const states = {
                     [EventSource.CONNECTING]: 'CONNECTING',
@@ -81,7 +81,7 @@ class RealtimeUpdatesManager {
             // 5초 후 상태 확인
             setTimeout(checkConnectionStatus, 5000);
             
-            // 🔧 연결 타임아웃 감지 - 10초 후에도 CONNECTING 상태면 강제 재연결
+            // 연결 타임아웃 감지 - 10초 후에도 CONNECTING 상태면 강제 재연결
             setTimeout(() => {
                 if (this.eventSource && this.eventSource.readyState === EventSource.CONNECTING) {
                     this.logger.warn('🚨 SSE 연결 타임아웃 감지 - 강제 재연결 시도');
@@ -123,7 +123,7 @@ class RealtimeUpdatesManager {
                 this.logger.error('Event type:', event.type);
                 this.logger.error('Event target:', event.target);
                 
-                // 🔧 추가 디버깅 정보
+                // 추가 디버깅 정보
                 const states = {
                     [EventSource.CONNECTING]: 'CONNECTING',
                     [EventSource.OPEN]: 'OPEN', 
@@ -431,7 +431,7 @@ class RealtimeUpdatesManager {
         if (positionRows.length === 0) {
             this.logger.info('📭 모든 포지션이 청산되었습니다.');
             
-            // 🔧 무한 새로고침 방지: 빈 상태 UI 표시만 하고 새로고침하지 않음
+            // 무한 새로고침 방지: 빈 상태 UI 표시만 하고 새로고침하지 않음
             this.showEmptyPositionsState();
             
             // 알림 표시
@@ -572,7 +572,7 @@ class RealtimeUpdatesManager {
         const protocol = window.location.protocol;
         const hostname = window.location.hostname;
         
-        // 🔧 HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
+        // HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
         if (protocol === 'https:') {
             // HTTPS 접속: Nginx 프록시를 통한 SSE 연결
             const port = window.location.port ? `:${window.location.port}` : '';
@@ -590,7 +590,7 @@ class RealtimeUpdatesManager {
         const protocol = window.location.protocol;
         const hostname = window.location.hostname;
         
-        // 🔧 HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
+        // HTTPS일 때는 현재 호스트 사용, HTTP일 때는 5001 포트 사용
         if (protocol === 'https:') {
             // HTTPS 접속: Nginx 프록시를 통한 API 호출
             const port = window.location.port ? `:${window.location.port}` : '';
@@ -607,7 +607,7 @@ class RealtimeUpdatesManager {
     async checkLoginStatus() {
         this.logger.info('🔍 checkLoginStatus() 함수 진입');
         try {
-            // 🔧 동적 API URL 생성
+            // 동적 API URL 생성
             const apiUrl = this.buildApiUrl('/api/auth/check');
             this.logger.info('🔍 API 호출 시작:', apiUrl);
             
@@ -634,7 +634,7 @@ class RealtimeUpdatesManager {
         } catch (error) {
             this.logger.error('로그인 상태 확인 중 오류:', error);
             
-            // 🔧 API 호출 실패 시 fallback 로직
+            // API 호출 실패 시 fallback 로직
             // 1. 현재 페이지가 로그인 페이지인지 확인
             if (window.location.pathname.includes('/auth/login')) {
                 return false;
