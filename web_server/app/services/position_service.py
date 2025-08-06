@@ -40,6 +40,9 @@ class PositionService:
             
             strategy = strategy_account.strategy
             
+            # 계좌 정보 조회
+            account = strategy_account.account
+            
             # 이벤트 생성 및 발송
             position_event = PositionEvent(
                 event_type=event_type,
@@ -49,7 +52,11 @@ class PositionService:
                 user_id=strategy.user_id,
                 quantity=position.quantity,
                 entry_price=position.entry_price,
-                timestamp=datetime.utcnow().isoformat()
+                timestamp=datetime.utcnow().isoformat(),
+                # 계좌 정보 추가
+                account_id=account.id,
+                account_name=account.name,
+                exchange=account.exchange
             )
             
             event_service.emit_position_event(position_event)

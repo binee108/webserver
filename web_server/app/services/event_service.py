@@ -26,6 +26,10 @@ class PositionEvent:
     quantity: float
     entry_price: float
     timestamp: str
+    # 계좌 정보 추가
+    account_id: int = 0
+    account_name: str = ""
+    exchange: str = ""
 
 @dataclass
 class OrderEvent:
@@ -40,6 +44,10 @@ class OrderEvent:
     price: float
     status: str
     timestamp: str
+    # 계좌 정보 추가
+    account_id: int = 0
+    account_name: str = ""
+    exchange: str = ""
 
 class EventService:
     """실시간 이벤트 서비스 클래스"""

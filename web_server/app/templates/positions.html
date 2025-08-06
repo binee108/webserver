@@ -473,11 +473,20 @@ function addNewOrderRow(orderData) {
     const existingRow = document.querySelector(`tr[data-order-id="${orderData.order_id}"]`);
     if (existingRow) {
         console.warn('이미 존재하는 주문 행:', orderData.order_id);
-        return;
+        console.log('🔍 기존 행 발견, 업데이트 대신 새 생성 시도');
+        
+        // 기존 행이 있지만 SSE 이벤트가 왔다는 것은 업데이트가 필요하다는 의미
+        // 기존 행을 제거하고 새로 생성하거나, 기존 행을 업데이트
+        existingRow.remove();
+        console.log('🔍 기존 행 제거 완료, 새 행 생성 진행');
     }
+    
+    console.log('🔍 addNewOrderRow - createOrderRow 호출 준비');
+    console.log('🔍 전달할 orderData:', orderData);
     
     // 새 주문 행 생성
     const newRow = createOrderRow(orderData);
+    console.log('🔍 createOrderRow 완료, 생성된 행:', newRow);
     orderTable.appendChild(newRow);
     
     // 애니메이션 효과
@@ -556,10 +565,19 @@ function createOrderRow(orderData) {
     const price = parseFloat(orderData.price || 0);
     const filledQuantity = parseFloat(orderData.filled_quantity || 0);
     
-    // 계좌 정보 (기본값 설정)
-    const accountName = orderData.account?.name || 'Unknown';
-    const exchange = orderData.account?.exchange || 'unknown';
+    // 계좌 정보 디버깅
+    console.log('🔍 createOrderRow - 전체 orderData:', orderData);
+    console.log('🔍 orderData.account_name:', orderData.account_name);
+    console.log('🔍 orderData.exchange:', orderData.exchange);
+    console.log('🔍 orderData.account:', orderData.account);
+    
+    // 계좌 정보 (SSE 이벤트에서 직접 전달되는 형식 지원)
+    const accountName = orderData.account_name || orderData.account?.name || 'Unknown';
+    const exchange = orderData.exchange || orderData.account?.exchange || 'unknown';
     const exchangeInitial = exchange.toUpperCase().charAt(0);
+    
+    console.log('🔍 최종 accountName:', accountName);
+    console.log('🔍 최종 exchange:', exchange);
     
     // 생성 시간 포맷팅
     const createdAt = orderData.created_at ? new Date(orderData.created_at).toLocaleString() : '방금 전';
@@ -1468,10 +1486,19 @@ function createPositionRow(positionData) {
     const quantity = Math.abs(parseFloat(positionData.quantity));
     const entryPrice = parseFloat(positionData.entry_price || 0);
     
-    // 계좌 정보 (기본값 설정)
-    const accountName = positionData.account?.name || 'Unknown';
-    const exchange = positionData.account?.exchange || 'unknown';
+    // 계좌 정보 디버깅
+    console.log('🔍 createPositionRow - 전체 positionData:', positionData);
+    console.log('🔍 positionData.account_name:', positionData.account_name);
+    console.log('🔍 positionData.exchange:', positionData.exchange);
+    console.log('🔍 positionData.account:', positionData.account);
+    
+    // 계좌 정보 (SSE 이벤트에서 직접 전달되는 형식 지원)
+    const accountName = positionData.account_name || positionData.account?.name || 'Unknown';
+    const exchange = positionData.exchange || positionData.account?.exchange || 'unknown';
     const exchangeInitial = exchange.toUpperCase().charAt(0);
+    
+    console.log('🔍 최종 accountName:', accountName);
+    console.log('🔍 최종 exchange:', exchange);
     
     row.innerHTML = `
         <td>

@@ -158,22 +158,31 @@ class WebhookService:
                             logger.warning(f"⚠️ 사용자 ID를 찾을 수 없음 - 결과: {result_item}")
                             continue
                             
-                        # 주문 이벤트 생성
-                        order_event = OrderEvent(
-                            event_type='order_created',
-                            order_id=result_item.get('order_id', 'webhook_generated'),
-                            symbol=result_item.get('symbol', ''),
-                            strategy_id=result_item.get('strategy_id', 0),
-                            user_id=user_id,
-                            side=result_item.get('side', ''),
-                            quantity=float(result_item.get('quantity', 0)),
-                            price=float(result_item.get('price', 0)),
-                            status='filled' if result_item.get('filled') else 'created',
-                            timestamp=datetime.utcnow().isoformat()
-                        )
-                        
-                        event_service.emit_order_event(order_event)
-                        logger.info(f"📤 주문 SSE 이벤트 발송: 사용자 {user_id}, 심볼 {result_item.get('symbol')}")
+                        # LIMIT 주문만 SSE 이벤트 발송 (시장가 주문은 즉시 체결되므로 제외)
+                        order_type = result_item.get('order_type', 'LIMIT')  # 기본값은 LIMIT
+                        if order_type.upper() == 'LIMIT':
+                            # 주문 이벤트 생성
+                            order_event = OrderEvent(
+                                event_type='order_created',
+                                order_id=result_item.get('order_id', 'webhook_generated'),
+                                symbol=result_item.get('symbol', ''),
+                                strategy_id=result_item.get('strategy_id', 0),
+                                user_id=user_id,
+                                side=result_item.get('side', ''),
+                                quantity=float(result_item.get('quantity', 0)),
+                                price=float(result_item.get('price', 0)),
+                                status='filled' if result_item.get('filled') else 'created',
+                                timestamp=datetime.utcnow().isoformat(),
+                                # 계좌 정보 추가
+                                account_id=result_item.get('account_id', 0),
+                                account_name=result_item.get('account_name', ''),
+                                exchange=result_item.get('exchange', '')
+                            )
+                            
+                            event_service.emit_order_event(order_event)
+                            logger.info(f"📤 LIMIT 주문 SSE 이벤트 발송: 사용자 {user_id}, 심볼 {result_item.get('symbol')}")
+                        else:
+                            logger.info(f"📈 MARKET 주문은 SSE 이벤트 생략: 사용자 {user_id}, 심볼 {result_item.get('symbol')} (즉시 포지션 반영 예정)")
                         
                         # 포지션 변경이 있는 경우 포지션 이벤트도 생성
                         if result_item.get('position_updated'):

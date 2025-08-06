@@ -25,7 +25,7 @@ class OpenOrderManager:
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
                          symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = 'spot', session: Optional[Session] = None) -> OpenOrder:
+                         market_type: str = 'spot', order_type: str = 'LIMIT', session: Optional[Session] = None) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성"""
         current_session = session or self.session
         
@@ -50,8 +50,12 @@ class OpenOrderManager:
             logger.info(f"📋 OpenOrder 레코드 생성 - 주문ID: {exchange_order_id}, "
                        f"심볼: {symbol}, 수량: {quantity}, 가격: {price}")
             
-            # 주문 생성 이벤트 발송
-            self._emit_order_event(open_order, 'order_created', current_session)
+            # LIMIT 주문만 SSE 이벤트 발송 (시장가 주문은 즉시 체결되므로 제외)
+            if order_type.upper() == 'LIMIT':
+                self._emit_order_event(open_order, 'order_created', current_session)
+                logger.info(f"🚀 LIMIT 주문 생성 이벤트 발송: {exchange_order_id}")
+            else:
+                logger.info(f"📈 MARKET 주문은 SSE 이벤트 생략: {exchange_order_id} (즉시 포지션 반영 예정)")
             
             return open_order
             
@@ -133,6 +137,8 @@ class OpenOrderManager:
                 return
             
             strategy = strategy_account.strategy
+            # 계좌 정보 조회
+            account = strategy_account.account
             
             # 이벤트 생성 및 발송
             order_event = OrderEvent(
@@ -145,7 +151,11 @@ class OpenOrderManager:
                 quantity=order.quantity,
                 price=order.price,
                 status=order.status,
-                timestamp=datetime.utcnow().isoformat()
+                timestamp=datetime.utcnow().isoformat(),
+                # 계좌 정보 추가
+                account_id=account.id,
+                account_name=account.name,
+                exchange=account.exchange
             )
             
             event_service.emit_order_event(order_event)

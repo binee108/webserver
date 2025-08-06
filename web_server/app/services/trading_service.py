@@ -236,6 +236,10 @@ class TradingService:
                 logger.error(f"계좌 {account.id}({account.name}) 거래 실행 실패 후 롤백: {error_msg}")
                 logger.error(f"거래 실행 실패 상세 정보 - 전략: {strategy.name}, 심볼: {symbol}, "
                             f"사이드: {side}, 주문타입: {order_type}, 가격: {price}, 수량비율: {qty_per}%")
+                
+                # 시장가 주문 실패의 경우 추가 로깅
+                if order_type.upper() == 'MARKET':
+                    logger.error(f"🚨 MARKET 주문 완전 실패 - 포지션 업데이트 없음, SSE 이벤트 없음")
                 return {
                     'account_id': account.id,
                     'account_name': account.name,
@@ -483,7 +487,10 @@ class TradingService:
                         'status': 'FILLED'
                     }
                 else:
-                    # 체결되지 않은 경우
+                    # 체결되지 않은 경우 - 시장가 주문이 체결되지 않는 것은 비정상적 상황
+                    logger.warning(f"⚠️ MARKET 주문 미체결 - 주문ID: {order_id}, 심볼: {symbol}, "
+                                  f"계좌: {account.id}({account.name}), 주문상태: {filled_order.get('status')}, "
+                                  f"체결수량: {filled_order.get('filled', 0)}")
                     filled_info = {
                         'filled_quantity': Decimal('0'),
                         'average_price': final_price if final_price else Decimal('0'),
@@ -492,6 +499,7 @@ class TradingService:
                         'status': 'PENDING'
                     }
             except Exception as e:
+                logger.error(f"🚨 MARKET 주문 체결 확인 실패 - 주문ID: {order_id}, 심볼: {symbol}, 계좌: {account.id}({account.name}), 오류: {str(e)}")
                 logger.warning(f"시장가 주문 체결 정보 조회 실패: {str(e)}")
                 # 체결 정보를 가져오지 못한 경우 전처리된 값 사용
                 filled_info = {
@@ -566,6 +574,7 @@ class TradingService:
                 quantity=final_quantity,  # 전처리된 수량 사용
                 price=final_price if final_price else Decimal('0'),  # 전처리된 가격 사용
                 market_type=market,
+                order_type=order_type,  # 🔧 주문 타입 전달
                 session=session  # 🔧 현재 세션 전달
             )
             
@@ -596,6 +605,7 @@ class TradingService:
             'order_id': order_id,
             'symbol': symbol,
             'side': side,
+            'order_type': order_type,  # 🔧 주문 타입 추가 (webhook_service에서 사용)
             'quantity': decimal_to_float(filled_info['filled_quantity']) if filled_info['status'] == 'FILLED' else decimal_to_float(final_quantity),
             'order_price': decimal_to_float(final_price) if final_price else None,  # 🆕 주문 가격
             'filled_price': decimal_to_float(filled_info['average_price']),  # 🆕 체결 가격
