@@ -38,6 +38,62 @@ class TradingService:
         # 🆕 스레드 로컬 세션 팩토리 생성
         self.SessionLocal = sessionmaker(bind=db.engine)
     
+    def _emit_trading_events(self, order_type: str, filled_info: Dict[str, Any], order_id: str,
+                           symbol: str, side: str, quantity: Decimal, price: Decimal, average_price: Decimal,
+                           strategy: Strategy, account: Account, position: StrategyPosition):
+        """거래 완료 후 통합 SSE 이벤트 발송 (중앙화)"""
+        try:
+            from app.services.event_service import event_service, OrderEvent, PositionEvent
+            
+            # 계좌 정보를 중첩 구조로 구성 (프론트엔드 친화적)
+            account_info = {
+                'id': account.id,
+                'name': account.name,
+                'exchange': account.exchange
+            }
+            
+            # 1. LIMIT 주문인 경우만 주문 이벤트 발송 (시장가 주문은 제외)
+            if order_type.upper() == 'LIMIT' and filled_info['status'] != 'FILLED':
+                order_event = OrderEvent(
+                    event_type='order_created',
+                    order_id=order_id,
+                    symbol=symbol,
+                    strategy_id=strategy.id,
+                    user_id=strategy.user_id,
+                    side=side,  # 이미 BUY/SELL로 표준화되어 전달됨
+                    quantity=decimal_to_float(quantity),
+                    price=decimal_to_float(price),
+                    status='OPEN',
+                    timestamp=datetime.utcnow().isoformat(),
+                    # 중첩 구조로 계좌 정보 전달
+                    account=account_info
+                )
+                event_service.emit_order_event(order_event)
+                logger.info(f"📤 LIMIT 주문 SSE 이벤트: {order_id} ({account.name})")
+            
+            # 2. 체결된 경우 포지션 이벤트 발송 (시장가 주문 포함)
+            if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
+                position_qty = to_decimal(position.quantity)
+                event_type = 'position_closed' if position_qty == 0 else 'position_updated'
+                
+                position_event = PositionEvent(
+                    event_type=event_type,
+                    position_id=position.id,
+                    symbol=symbol,
+                    strategy_id=strategy.id,
+                    user_id=strategy.user_id,
+                    quantity=position.quantity,
+                    entry_price=position.entry_price,
+                    timestamp=datetime.utcnow().isoformat(),
+                    # 중첩 구조로 계좌 정보 전달
+                    account=account_info
+                )
+                event_service.emit_position_event(position_event)
+                logger.info(f"📤 포지션 SSE 이벤트: {event_type} - {symbol} ({account.name})")
+                
+        except Exception as e:
+            logger.error(f"통합 SSE 이벤트 발송 실패: {str(e)}")
+    
     def process_trading_signal(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """거래 신호 처리 (병렬 처리 개선)"""
         # 필수 필드 검증
@@ -333,21 +389,21 @@ class TradingService:
         
         if qty_per == Decimal('-1'):
             # 전체 청산 처리
-            if side in ['sell', 'short'] and current_position_qty > 0:
+            if side == 'SELL' and current_position_qty > 0:
                 # 롱 포지션 전체 청산
                 quantity = abs(current_position_qty)
-            elif side in ['buy', 'long'] and current_position_qty < 0:
+            elif side == 'BUY' and current_position_qty < 0:
                 # 숏 포지션 전체 청산
                 quantity = abs(current_position_qty)
             else:
                 raise TradingError(f"청산할 포지션이 없습니다. 현재 포지션: {current_position_qty}")
-        elif side in ['buy', 'long']:
+        elif side == 'BUY':
             # 롱 포지션 진입/추가
             target_value = allocated_capital * (qty_per / Decimal('100')) * leverage
             current_ticker = exchange_service.get_ticker(account, symbol)
             current_price = to_decimal(current_ticker['last'])
             quantity = target_value / current_price
-        elif side in ['sell', 'short']:
+        elif side == 'SELL':
             # 숏 포지션 진입 또는 롱 포지션 청산
             if current_position_qty > 0:
                 # 롱 포지션 부분 청산
@@ -528,11 +584,11 @@ class TradingService:
         # 8. 실현 손익 계산 (포지션 청산 시)
         realized_pnl = Decimal('0')
         if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
-            if side in ['sell', 'short'] and current_position_qty > 0:
+            if side == 'SELL' and current_position_qty > 0:
                 # 롱 포지션 청산
                 close_quantity = min(filled_info['filled_quantity'], current_position_qty)
                 realized_pnl = close_quantity * (filled_info['average_price'] - current_entry_price)
-            elif side in ['buy', 'long'] and current_position_qty < 0:
+            elif side == 'BUY' and current_position_qty < 0:
                 # 숏 포지션 청산
                 close_quantity = min(filled_info['filled_quantity'], abs(current_position_qty))
                 realized_pnl = close_quantity * (current_entry_price - filled_info['average_price'])
@@ -595,6 +651,11 @@ class TradingService:
         # 11. 포지션 업데이트 (체결된 경우만, 정확한 체결 정보 사용)
         if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
             position_service.update_position(position, side, filled_info['filled_quantity'], filled_info['average_price'])
+        
+        # 12. 통합 SSE 이벤트 발송 (중앙화)
+        self._emit_trading_events(order_type, filled_info, order_id, symbol, side, 
+                                final_quantity, final_price, filled_info.get('average_price', Decimal('0')),
+                                strategy, account, position)
         
         return {
             'account_id': account.id,

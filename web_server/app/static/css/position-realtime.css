@@ -78,6 +78,21 @@
     }
 }
 
+@keyframes highlight-new {
+    0% {
+        background-color: rgba(34, 197, 94, 0.2);
+        border-left: 3px solid rgba(34, 197, 94, 0.8);
+    }
+    50% {
+        background-color: rgba(34, 197, 94, 0.15);
+        border-left: 3px solid rgba(34, 197, 94, 0.6);
+    }
+    100% {
+        background-color: transparent;
+        border-left: 3px solid transparent;
+    }
+}
+
 @keyframes row-slide-in {
     0% {
         opacity: 0;
@@ -107,6 +122,10 @@
 
 .highlight-error {
     animation: highlight-error 2s ease-out;
+}
+
+.highlight-new {
+    animation: highlight-new 2s ease-out;
 }
 
 /* 행 애니메이션 클래스 */

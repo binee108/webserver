@@ -372,12 +372,15 @@ class ExchangeService:
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
             
+            # side를 거래소 API 형식으로 변환 (BUY/SELL -> buy/sell)
+            api_side = side.lower() if isinstance(side, str) else side
+            
             if order_type.lower() == 'market':
-                order = exchange.create_market_order(symbol, side, amount)
+                order = exchange.create_market_order(symbol, api_side, amount)
             elif order_type.lower() == 'limit':
                 if price is None:
                     raise ExchangeError("지정가 주문에는 가격이 필요합니다")
-                order = exchange.create_limit_order(symbol, side, amount, price)
+                order = exchange.create_limit_order(symbol, api_side, amount, price)
             else:
                 raise ExchangeError(f"지원하지 않는 주문 타입: {order_type}")
             

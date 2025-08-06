@@ -3,6 +3,8 @@
 {% block title %}포지션 관리 - {{ strategy.name }} - 트레이딩 자동화 시스템{% endblock %}
 
 {% block head %}
+<!-- Position-specific CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/positions.css') }}">
 <!-- Real-time position CSS -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/position-realtime.css') }}">
 
@@ -131,12 +133,12 @@
         <div class="p-6">
             {% if positions %}
                 <div class="overflow-x-auto">
-                    <table class="table">
+                    <table id="positionsTable" class="table">
                         <thead>
                             <tr>
                                 <th>계좌</th>
                                 <th>심볼</th>
-                                <th>포지션</th>
+                                <th>방향</th>
                                 <th>수량</th>
                                 <th>진입가격</th>
                                 <th>현재가격</th>
@@ -149,15 +151,13 @@
                             {% for position in positions %}
                             <tr class="position-row" data-position-id="{{ position.id }}">
                                 <td>
-                                    <div class="flex items-center">
-                                        <div class="flex-shrink-0 h-8 w-8">
-                                            <div class="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                                <span class="text-xs font-bold text-info">{{ position.account.exchange.upper()[:1] if position.account else 'N' }}</span>
-                                            </div>
+                                    <div class="account-info">
+                                        <div class="account-avatar">
+                                            <span>{{ position.account.exchange.upper()[:1] if position.account else 'N' }}</span>
                                         </div>
-                                        <div class="ml-3">
-                                            <div class="text-sm font-medium text-primary">{{ position.account.name if position.account else 'Unknown' }}</div>
-                                            <div class="text-sm text-muted">{{ position.account.exchange.title() if position.account else 'Unknown' }}</div>
+                                        <div class="account-details">
+                                            <div class="account-name">{{ position.account.name if position.account else 'Unknown' }}</div>
+                                            <div class="account-exchange">{{ position.account.exchange.title() if position.account else 'Unknown' }}</div>
                                         </div>
                                     </div>
                                 </td>
@@ -170,18 +170,18 @@
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
                                             </svg>
-                                            롱
+                                            LONG
                                         </span>
                                     {% elif position.quantity < 0 %}
                                         <span class="badge badge-error">
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
                                             </svg>
-                                            숏
+                                            SHORT
                                         </span>
                                     {% else %}
                                         <span class="badge badge-secondary">
-                                            평평
+                                            FLAT
                                         </span>
                                     {% endif %}
                                 </td>
@@ -218,14 +218,12 @@
                     </table>
                 </div>
             {% else %}
-                <div class="text-center py-16">
-                    <div class="mx-auto w-24 h-24 bg-gradient-to-r from-purple-100 to-blue-100 rounded-full flex items-center justify-center mb-6">
-                        <svg class="w-12 h-12 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-xl font-semibold text-primary mb-2">현재 포지션이 없습니다</h3>
-                    <p class="text-muted mb-6">이 전략에서 보유 중인 포지션이 없습니다.</p>
+                <div class="empty-state">
+                    <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                    <h3>현재 포지션이 없습니다</h3>
+                    <p>이 전략에서 보유 중인 포지션이 없습니다.</p>
                     <a href="{{ url_for('main.strategies') }}" 
                        class="btn btn-primary">
                         <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -385,7 +383,7 @@ function getStrategyIdFromUrl() {
 
 // 포지션 테이블 업데이트
 function updatePositionTable(positions) {
-    const positionTable = document.querySelector('table tbody');
+    const positionTable = document.querySelector('#positionsTable tbody');
     if (!positionTable) return;
     
     // 기존 포지션 행들 제거 (빈 상태 행 제외)
@@ -473,20 +471,12 @@ function addNewOrderRow(orderData) {
     const existingRow = document.querySelector(`tr[data-order-id="${orderData.order_id}"]`);
     if (existingRow) {
         console.warn('이미 존재하는 주문 행:', orderData.order_id);
-        console.log('🔍 기존 행 발견, 업데이트 대신 새 생성 시도');
-        
-        // 기존 행이 있지만 SSE 이벤트가 왔다는 것은 업데이트가 필요하다는 의미
-        // 기존 행을 제거하고 새로 생성하거나, 기존 행을 업데이트
+        // 기존 행을 제거하고 새로 생성
         existingRow.remove();
-        console.log('🔍 기존 행 제거 완료, 새 행 생성 진행');
     }
-    
-    console.log('🔍 addNewOrderRow - createOrderRow 호출 준비');
-    console.log('🔍 전달할 orderData:', orderData);
     
     // 새 주문 행 생성
     const newRow = createOrderRow(orderData);
-    console.log('🔍 createOrderRow 완료, 생성된 행:', newRow);
     orderTable.appendChild(newRow);
     
     // 애니메이션 효과
@@ -532,17 +522,15 @@ function removeOrderRow(orderId) {
 function createOrderTable(container) {
     const tableHtml = `
         <div class="overflow-x-auto">
-            <table class="table">
+            <table id="openOrdersTable" class="table">
                 <thead>
                     <tr>
                         <th>계좌</th>
                         <th>심볼</th>
-                        <th>주문유형</th>
+                        <th>주문방향</th>
                         <th>수량</th>
-                        <th>가격</th>
-                        <th>체결수량</th>
+                        <th>주문가격</th>
                         <th>상태</th>
-                        <th>생성시간</th>
                         <th>액션</th>
                     </tr>
                 </thead>
@@ -560,44 +548,36 @@ function createOrderRow(orderData) {
     row.className = 'order-row';
     row.setAttribute('data-order-id', orderData.order_id);
     
-    const isBuy = orderData.side.toLowerCase() === 'buy';
+    // side 값 표준화 (백엔드에서 BUY/SELL로 전송됨)
+    const side = orderData.side.toUpperCase();
+    const isBuy = side === 'BUY';
     const quantity = Math.abs(parseFloat(orderData.quantity || 0));
     const price = parseFloat(orderData.price || 0);
     const filledQuantity = parseFloat(orderData.filled_quantity || 0);
     
-    // 계좌 정보 디버깅
-    console.log('🔍 createOrderRow - 전체 orderData:', orderData);
-    console.log('🔍 orderData.account_name:', orderData.account_name);
-    console.log('🔍 orderData.exchange:', orderData.exchange);
-    console.log('🔍 orderData.account:', orderData.account);
-    
-    // 계좌 정보 (SSE 이벤트에서 직접 전달되는 형식 지원)
+    // 계좌 정보 (중첩 구조 지원)
     const accountName = orderData.account_name || orderData.account?.name || 'Unknown';
     const exchange = orderData.exchange || orderData.account?.exchange || 'unknown';
     const exchangeInitial = exchange.toUpperCase().charAt(0);
     
-    console.log('🔍 최종 accountName:', accountName);
-    console.log('🔍 최종 exchange:', exchange);
-    
     // 생성 시간 포맷팅
     const createdAt = orderData.created_at ? new Date(orderData.created_at).toLocaleString() : '방금 전';
     
+    // 기존 CSS 스타일 사용 - 컬럼 순서: 계좌, 심볼, 사이드, 수량, 주문가격, 상태, 액션
     row.innerHTML = `
         <td>
-            <div class="flex items-center">
-                <div class="flex-shrink-0 h-8 w-8">
-                    <div class="h-8 w-8 bg-yellow-100 rounded-full flex items-center justify-center">
-                        <span class="text-xs font-bold text-warning">${exchangeInitial}</span>
-                    </div>
+            <div class="account-info">
+                <div class="account-avatar">
+                    <span>${exchangeInitial}</span>
                 </div>
-                <div class="ml-3">
-                    <div class="text-sm font-medium text-primary">${accountName}</div>
-                    <div class="text-sm text-muted">${exchange.toUpperCase()}</div>
+                <div class="account-details">
+                    <div class="account-name">${accountName}</div>
+                    <div class="account-exchange">${exchange.toUpperCase()}</div>
                 </div>
             </div>
         </td>
         <td>
-            <div class="text-sm font-medium text-primary">${orderData.symbol}</div>
+            <div class="order-symbol">${orderData.symbol}</div>
         </td>
         <td>
             <span class="badge ${isBuy ? 'badge-success' : 'badge-error'}">
@@ -607,7 +587,7 @@ function createOrderRow(orderData) {
                         : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z'
                     }" clip-rule="evenodd"></path>
                 </svg>
-                ${orderData.side.toUpperCase()}
+                ${side}
             </span>
         </td>
         <td class="text-sm text-primary">
@@ -616,14 +596,8 @@ function createOrderRow(orderData) {
         <td class="text-sm text-primary">
             $${price.toLocaleString()}
         </td>
-        <td class="text-sm text-primary">
-            ${filledQuantity.toLocaleString()}
-        </td>
         <td>
             <span class="badge badge-warning realtime-status">${orderData.status || 'NEW'}</span>
-        </td>
-        <td class="text-sm text-muted">
-            ${createdAt}
         </td>
         <td>
             <button data-order-id="${orderData.order_id}" data-symbol="${orderData.symbol}" 
@@ -667,103 +641,51 @@ function showEmptyOrdersState() {
     }
 }
 
+// 빈 주문 상태 제거
+function removeEmptyOrdersState() {
+    const container = document.getElementById('open-orders-content');
+    if (container && container.querySelector('.empty-state')) {
+        // 통일된 테이블 구조로 복원 (createOrderTable과 동일)
+        createOrderTable(container);
+    }
+}
+
 // 열린 주문 렌더링
 function renderOpenOrders(orders) {
     const container = document.getElementById('open-orders-content');
     
     if (!orders || orders.length === 0) {
         container.innerHTML = `
-            <div class="text-center py-16">
-                <div class="mx-auto w-24 h-24 bg-gradient-to-r from-yellow-100 to-orange-100 rounded-full flex items-center justify-center mb-6">
-                    <svg class="w-12 h-12 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                </div>
-                <h3 class="text-xl font-semibold text-primary mb-2">열린 주문이 없습니다</h3>
-                <p class="text-muted">현재 대기 중인 주문이 없습니다.</p>
+            <div class="empty-state">
+                <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <h3>열린 주문이 없습니다</h3>
+                <p>현재 대기 중인 주문이 없습니다.</p>
             </div>
         `;
         return;
     }
     
-    const tableHtml = `
-        <div class="overflow-x-auto">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>계좌</th>
-                        <th>심볼</th>
-                        <th>주문유형</th>
-                        <th>수량</th>
-                        <th>가격</th>
-                        <th>체결수량</th>
-                        <th>상태</th>
-                        <th>생성시간</th>
-                        <th>액션</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${orders.map(order => `
-                        <tr class="order-row" data-order-id="${order.exchange_order_id}">
-                            <td>
-                                <div class="flex items-center">
-                                    <div class="flex-shrink-0 h-8 w-8">
-                                        <div class="h-8 w-8 bg-yellow-100 rounded-full flex items-center justify-center">
-                                            <span class="text-xs font-bold text-warning">${order.account.exchange.toUpperCase().charAt(0)}</span>
-                                        </div>
-                                    </div>
-                                    <div class="ml-3">
-                                        <div class="text-sm font-medium text-primary">${order.account.name}</div>
-                                        <div class="text-sm text-muted">${order.account.exchange.toUpperCase()}</div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="text-sm font-medium text-primary">${order.symbol}</div>
-                            </td>
-                            <td>
-                                <span class="badge ${order.side.toLowerCase() === 'buy' ? 'badge-success' : 'badge-error'}">
-                                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                        ${order.side.toLowerCase() === 'buy' 
-                                            ? '<path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>'
-                                            : '<path fill-rule="evenodd" d="M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>'
-                                        }
-                                    </svg>
-                                    ${order.side.toUpperCase()}
-                                </span>
-                            </td>
-                            <td class="text-sm text-primary">
-                                ${parseFloat(order.quantity).toLocaleString()}
-                            </td>
-                            <td class="text-sm text-primary">
-                                $${parseFloat(order.price).toLocaleString()}
-                            </td>
-                            <td class="text-sm text-primary">
-                                ${parseFloat(order.filled_quantity).toLocaleString()}
-                            </td>
-                            <td>
-                                <span class="badge badge-warning realtime-status">${order.status}</span>
-                            </td>
-                            <td class="text-sm text-muted">
-                                ${new Date(order.created_at).toLocaleString()}
-                            </td>
-                            <td>
-                                <button data-order-id="${order.exchange_order_id}" data-symbol="${order.symbol}" 
-                                        class="cancel-order-btn btn btn-warning btn-sm">
-                                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
-                                    취소
-                                </button>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
+    // 통일된 테이블 구조 사용
+    createOrderTable(container);
+    const tbody = container.querySelector('tbody');
     
-    container.innerHTML = tableHtml;
+    // 각 주문을 createOrderRow로 생성하여 일관성 보장
+    orders.forEach(order => {
+        const orderRow = createOrderRow({
+            order_id: order.exchange_order_id,
+            symbol: order.symbol,
+            side: order.side,
+            quantity: order.quantity,
+            price: order.price,
+            status: order.status,
+            created_at: order.created_at,
+            // 계좌 정보 (중첩 구조)
+            account: order.account
+        });
+        tbody.appendChild(orderRow);
+    });
     
     // 취소 버튼 이벤트 리스너 추가
     container.querySelectorAll('.cancel-order-btn').forEach(button => {
@@ -1250,10 +1172,8 @@ function handlePositionUpdate(data) {
         // 이벤트 타입에 따른 처리
         switch (data.event_type) {
             case 'position_created':
-                addNewPositionRow(data);
-                break;
             case 'position_updated':
-                updateExistingPositionRow(data);
+                upsertPositionRow(data);
                 break;
             case 'position_closed':
                 removePositionRow(data.position_id);
@@ -1279,7 +1199,7 @@ function handlePositionUpdate(data) {
     }
 }
 
-// 주문 업데이트 처리
+// 주문 업데이트 처리 (개선된 upsert 로직)
 function handleOrderUpdate(data) {
     try {
         console.info('주문 업데이트 처리:', data);
@@ -1287,7 +1207,12 @@ function handleOrderUpdate(data) {
         // 이벤트 타입에 따른 처리
         switch (data.event_type) {
             case 'order_created':
-                addNewOrderRow(data);
+                console.info('📊 주문 생성 이벤트 수신:', data);
+                // 시장가 주문은 즉시 체결되므로 order_created 이벤트가 오면 안됨
+                if (data.order_type && data.order_type.toUpperCase() === 'MARKET') {
+                    console.error('⚠️ 시장가 주문이 order_created 이벤트로 수신됨 (비정상):', data);
+                }
+                upsertOrderRow(data);
                 break;
             case 'order_filled':
                 removeOrderRow(data.order_id);
@@ -1326,7 +1251,7 @@ function handleOrderUpdate(data) {
 
 // 새 포지션 행 추가
 function addNewPositionRow(positionData) {
-    const positionTable = document.querySelector('table tbody');
+    const positionTable = document.querySelector('#positionsTable tbody');
     if (!positionTable) return;
     
     // 이미 존재하는지 확인
@@ -1442,7 +1367,7 @@ function checkEmptyPositions() {
 
 // 빈 포지션 상태 UI 표시
 function showEmptyPositionsState() {
-    const positionTable = document.querySelector('table tbody');
+    const positionTable = document.querySelector('#positionsTable tbody');
     if (positionTable) {
         // 기존 빈 상태 메시지가 있으면 제거
         const existingEmptyRow = positionTable.querySelector('.empty-positions-row');
@@ -1454,13 +1379,13 @@ function showEmptyPositionsState() {
         const emptyRow = document.createElement('tr');
         emptyRow.className = 'empty-positions-row';
         emptyRow.innerHTML = `
-            <td colspan="9" class="text-center py-8 text-gray-500">
-                <div class="flex flex-col items-center space-y-2">
-                    <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <td colspan="9">
+                <div class="empty-state" style="padding: 2rem 1rem;">
+                    <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                     </svg>
-                    <div class="text-lg font-medium">보유 포지션이 없습니다</div>
-                    <div class="text-sm">모든 포지션이 성공적으로 청산되었습니다</div>
+                    <h3>보유 포지션이 없습니다</h3>
+                    <p>모든 포지션이 성공적으로 청산되었습니다</p>
                 </div>
             </td>
         `;
@@ -1486,36 +1411,25 @@ function createPositionRow(positionData) {
     const quantity = Math.abs(parseFloat(positionData.quantity));
     const entryPrice = parseFloat(positionData.entry_price || 0);
     
-    // 계좌 정보 디버깅
-    console.log('🔍 createPositionRow - 전체 positionData:', positionData);
-    console.log('🔍 positionData.account_name:', positionData.account_name);
-    console.log('🔍 positionData.exchange:', positionData.exchange);
-    console.log('🔍 positionData.account:', positionData.account);
-    
-    // 계좌 정보 (SSE 이벤트에서 직접 전달되는 형식 지원)
+    // 계좌 정보 (중첩 구조 지원)
     const accountName = positionData.account_name || positionData.account?.name || 'Unknown';
     const exchange = positionData.exchange || positionData.account?.exchange || 'unknown';
     const exchangeInitial = exchange.toUpperCase().charAt(0);
     
-    console.log('🔍 최종 accountName:', accountName);
-    console.log('🔍 최종 exchange:', exchange);
-    
     row.innerHTML = `
         <td>
-            <div class="flex items-center">
-                <div class="flex-shrink-0 h-8 w-8">
-                    <div class="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
-                        <span class="text-xs font-bold text-info">${exchangeInitial}</span>
-                    </div>
+            <div class="account-info">
+                <div class="account-avatar">
+                    <span>${exchangeInitial}</span>
                 </div>
-                <div class="ml-3">
-                    <div class="text-sm font-medium text-primary">${accountName}</div>
-                    <div class="text-sm text-muted">${exchange.charAt(0).toUpperCase() + exchange.slice(1)}</div>
+                <div class="account-details">
+                    <div class="account-name">${accountName}</div>
+                    <div class="account-exchange">${exchange.charAt(0).toUpperCase() + exchange.slice(1)}</div>
                 </div>
             </div>
         </td>
         <td>
-            <div class="text-sm font-medium text-primary">${positionData.symbol}</div>
+            <div class="position-symbol">${positionData.symbol}</div>
         </td>
         <td class="position-direction">
             <span class="badge ${isLong ? 'badge-success' : 'badge-error'}">
@@ -1525,7 +1439,7 @@ function createPositionRow(positionData) {
                         : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z'
                     }" clip-rule="evenodd"></path>
                 </svg>
-                ${isLong ? '롱' : '숏'}
+                ${isLong ? 'LONG' : 'SHORT'}
             </span>
         </td>
         <td class="text-sm text-primary position-quantity">
@@ -1609,6 +1523,84 @@ function updatePositionStats() {
     shortCountElements.forEach(el => el.textContent = shortCount);
     
     console.debug('포지션 통계 업데이트:', { total: totalCount, long: longCount, short: shortCount });
+}
+
+// 🆕 개선된 upsert 로직: 주문 행 생성/업데이트
+function upsertOrderRow(orderData) {
+    console.info('📊 주문 upsert 시작:', orderData);
+    
+    // 빈 상태 제거 및 테이블 복원
+    removeEmptyOrdersState();
+    
+    const orderTable = document.querySelector('#openOrdersTable tbody');
+    if (!orderTable) {
+        console.error('주문 테이블 tbody를 찾을 수 없습니다');
+        return;
+    }
+    
+    const orderId = orderData.order_id;
+    const existingRow = document.querySelector(`tr[data-order-id="${orderId}"]`);
+    
+    if (existingRow) {
+        console.info('📊 기존 주문 행 업데이트:', orderId);
+        // 기존 행을 새 데이터로 교체
+        const newRow = createOrderRow(orderData);
+        existingRow.replaceWith(newRow);
+        // 업데이트 애니메이션 적용
+        newRow.classList.add('highlight-update');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-update');
+        }, 1000);
+    } else {
+        console.info('📊 새 주문 행 생성:', orderId);
+        // 새 행 생성 및 추가
+        const newRow = createOrderRow(orderData);
+        orderTable.appendChild(newRow);
+        // 새 행 추가 애니메이션 (초록색 배경)
+        newRow.classList.add('highlight-new');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-new');
+        }, 1000);
+    }
+}
+
+// 🆕 개선된 upsert 로직: 포지션 행 생성/업데이트  
+function upsertPositionRow(positionData) {
+    console.info('📈 포지션 upsert 시작:', positionData);
+    
+    const positionTable = document.querySelector('#positionsTable tbody');
+    if (!positionTable) {
+        console.error('포지션 테이블을 찾을 수 없습니다');
+        return;
+    }
+    
+    const positionId = positionData.position_id;
+    const existingRow = document.querySelector(`tr[data-position-id="${positionId}"]`);
+    
+    if (existingRow) {
+        console.info('📈 기존 포지션 행 업데이트:', positionId);
+        // 기존 행을 새 데이터로 교체
+        const newRow = createPositionRow(positionData);
+        existingRow.replaceWith(newRow);
+        // 업데이트 애니메이션 적용
+        newRow.classList.add('highlight-update');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-update');
+        }, 2000);
+    } else {
+        console.info('📈 새 포지션 행 생성:', positionId);
+        // 새 행 생성 및 추가
+        const newRow = createPositionRow(positionData);
+        positionTable.appendChild(newRow);
+        // 새 행 추가 애니메이션 (초록색 배경)
+        newRow.classList.add('highlight-new');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-new');
+        }, 2000);
+    }
+    
+    // 빈 상태 제거
+    removeEmptyPositionsState();
 }
 
 // SSE 연결 상태 업데이트

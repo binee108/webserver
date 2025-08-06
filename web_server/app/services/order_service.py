@@ -28,45 +28,41 @@ class OrderService:
     def __init__(self):
         self.session = db.session
     
-    def _emit_order_event(self, order: OpenOrder, event_type: str):
-        """주문 이벤트 발송 헬퍼"""
+    def _emit_order_cancelled_event(self, open_order: OpenOrder, account: Account, strategy):
+        """주문 취소 SSE 이벤트 발송"""
         try:
-            logger.info(f"🚀 주문 이벤트 발송 시작 - 주문ID: {order.id}, 타입: {event_type}")
             from app.services.event_service import event_service, OrderEvent
+            from datetime import datetime
             
-            # Strategy 정보 조회
-            strategy_account = self.session.get(StrategyAccount, order.strategy_account_id)
-            if not strategy_account or not strategy_account.strategy:
-                logger.warning(f"⚠️ 전략 정보 없음 - 전략계좌ID: {order.strategy_account_id}")
-                return
+            # 계좌 정보를 중첩 구조로 구성
+            account_info = {
+                'id': account.id,
+                'name': account.name,
+                'exchange': account.exchange
+            }
             
-            strategy = strategy_account.strategy
-            # 계좌 정보 조회
-            account = strategy_account.account
-            
-            # 이벤트 생성 및 발송
+            # 주문 취소 이벤트 생성
             order_event = OrderEvent(
-                event_type=event_type,
-                order_id=order.exchange_order_id,
-                symbol=order.symbol,
+                event_type='order_cancelled',
+                order_id=open_order.exchange_order_id,
+                symbol=open_order.symbol,
                 strategy_id=strategy.id,
                 user_id=strategy.user_id,
-                side=order.side,
-                quantity=order.quantity,
-                price=order.price,
-                status=order.status,
+                side=open_order.side,
+                quantity=float(open_order.quantity),
+                price=float(open_order.price),
+                status='CANCELLED',
                 timestamp=datetime.utcnow().isoformat(),
-                # 계좌 정보 추가
-                account_id=account.id,
-                account_name=account.name,
-                exchange=account.exchange
+                account=account_info
             )
             
             event_service.emit_order_event(order_event)
-            logger.info(f"✅ 주문 이벤트 발송 완료: {event_type} - {order.symbol}, 사용자: {strategy.user_id}")
+            logger.info(f"📤 주문 취소 SSE 이벤트 발송: 사용자 {strategy.user_id}, 주문ID {open_order.exchange_order_id}")
             
         except Exception as e:
-            logger.warning(f"주문 이벤트 발송 실패: {str(e)}")
+            logger.warning(f"주문 취소 SSE 이벤트 발송 실패: {str(e)}")
+    
+    # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
     
     def update_open_orders_status(self):
         """미체결 주문 상태 업데이트 (백그라운드 작업) - 새로운 모듈 사용"""
@@ -119,12 +115,8 @@ class OrderService:
                 session=self.session
             )
             
-            # LIMIT 주문만 SSE 이벤트 발송 (시장가 주문은 즉시 체결되므로 제외)
-            if order_type.upper() == 'LIMIT':
-                self._emit_order_event(order, 'order_created')
-                logger.info(f"🚀 LIMIT 주문 생성 이벤트 발송: {exchange_order_id}")
-            else:
-                logger.info(f"📈 MARKET 주문은 SSE 이벤트 생략: {exchange_order_id} (즉시 포지션 반영 예정)")
+            # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
+            logger.info(f"📋 OpenOrder 레코드 생성 완료: {exchange_order_id} (SSE 이벤트는 trading_service에서 처리)")
             
             return order
         except Exception as e:
@@ -167,8 +159,9 @@ class OrderService:
                 if open_order_manager.process_cancelled_order(open_order, session=self.session):
                     self.session.commit()
                     
-                    # 주문 취소 이벤트 발송
-                    self._emit_order_event(open_order, 'order_cancelled')
+                    # 주문 취소 SSE 이벤트 발송
+                    self._emit_order_cancelled_event(open_order, strategy_account.account, strategy_account.strategy)
+                    logger.info(f"📋 주문 취소 처리 완료: {order_id} (SSE 이벤트 발송)")
                     
                     logger.info(f"✅ 주문 취소 성공 및 레코드 삭제 완료 - ID: {order_id}")
                     

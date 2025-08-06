@@ -17,13 +17,14 @@ def decimal_to_float(value: Decimal) -> float:
     """Decimal을 float로 변환 (거래소 API 호출용)"""
     return float(value)
 
+
 def calculate_is_entry(current_position_qty: Decimal, side: str) -> bool:
     """
     거래가 진입인지 청산인지 판단하는 공통 헬퍼 함수
     
     Args:
         current_position_qty: 현재 포지션 수량 (양수: 롱, 음수: 숏, 0: 포지션 없음)
-        side: 거래 방향 ('buy', 'long', 'sell', 'short')
+        side: 거래 방향 ('BUY', 'SELL')
         
     Returns:
         bool: True=진입, False=청산
@@ -33,18 +34,18 @@ def calculate_is_entry(current_position_qty: Decimal, side: str) -> bool:
         return True
     elif current_position_qty > 0:
         # 롱 포지션 보유 중
-        if side in ['buy', 'long']:
+        if side.upper() == 'BUY':
             # 같은 방향 -> 추가 진입
             return True
-        else:  # sell, short
+        else:  # SELL
             # 반대 방향 -> 청산
             return False
     else:  # current_position_qty < 0
         # 숏 포지션 보유 중
-        if side in ['sell', 'short']:
+        if side.upper() == 'SELL':
             # 같은 방향 -> 추가 진입
             return True
-        else:  # buy, long
+        else:  # BUY
             # 반대 방향 -> 청산
             return False
 
@@ -85,7 +86,15 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         normalized['orderType'] = normalized['orderType'].upper()  # 대문자로 표준화 (MARKET, LIMIT 등)
     
     if 'side' in normalized and isinstance(normalized['side'], str):
-        normalized['side'] = normalized['side'].lower()  # 소문자로 표준화 (buy, sell, long, short 등)
+        # side를 BUY/SELL로 표준화
+        side_lower = normalized['side'].lower()
+        if side_lower in ['buy', 'long']:
+            normalized['side'] = 'BUY'
+        elif side_lower in ['sell', 'short']:
+            normalized['side'] = 'SELL'
+        else:
+            # 이미 대문자인 경우 그대로 사용
+            normalized['side'] = normalized['side'].upper()
     
     if 'exchange' in normalized and isinstance(normalized['exchange'], str):
         normalized['exchange'] = normalized['exchange'].upper()  # 대문자로 표준화 (BINANCE, BYBIT 등)
