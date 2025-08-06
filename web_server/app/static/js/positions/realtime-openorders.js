@@ -48,7 +48,7 @@ class RealtimeOpenOrdersManager {
         }
         
         this.isInitialized = true;
-        this.logger.success('Realtime open orders manager initialized');
+        this.logger.info('✅ Realtime open orders manager initialized');
     }
     
     /**

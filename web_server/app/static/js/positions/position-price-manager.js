@@ -285,12 +285,27 @@ class PositionPriceManager {
                     onOpen: () => {
                         this.logger.info(`Connected to ${exchangeName} ${marketType}`);
                         this.subscribeToPositions(ws, positions, wsKey);
+                        
+                        // Update realtime indicator when WebSocket connects
+                        if (window.updateRealtimeIndicator) {
+                            window.updateRealtimeIndicator(true);
+                        }
+                        
+                        // Emit event for WebSocket connection
+                        if (this.eventBus) {
+                            this.eventBus.emit('websocket-connected', { exchange: exchangeName, marketType });
+                        }
                     },
                     onError: (error) => {
                         this.logger.error(`WebSocket error for ${wsKey}:`, error);
                     },
                     onClose: () => {
                         this.logger.warn(`WebSocket closed for ${wsKey}`);
+                        
+                        // Check if any WebSocket is still connected
+                        if (this.exchanges.size === 0 && window.updateRealtimeIndicator) {
+                            window.updateRealtimeIndicator(false);
+                        }
                     }
                 });
                 

@@ -917,41 +917,80 @@ function initializeAllRealtimeSystems() {
             if (jsonContent && jsonContent.trim() !== '') {
                 positionsData = JSON.parse(jsonContent);
                 log.info(`Loaded ${positionsData.length} positions from page`);
+                window.positionsData = positionsData; // Store globally
             }
         } catch (error) {
             log.error('Failed to parse positions data:', error);
+            window.positionsData = [];
         }
     }
     
-    // 2. Initialize SSE Manager
-    const sseManager = window.initializeSSE ? window.initializeSSE() : null;
+    // 2. Initialize SSE Manager with skip auth check
+    const sseManager = window.initializeSSE ? window.initializeSSE({
+        skipAuthCheck: true  // positions 페이지는 이미 인증이 필요하므로 auth check 생략
+    }) : null;
+    
     if (!sseManager) {
         log.error('Failed to initialize SSE Manager');
+        updateRealtimeIndicator(false);
         return;
     }
     
-    // 3. Initialize Position Price Manager (WebSocket prices)
+    // 3. Add SSE connection event listeners
+    if (window.RealtimeCore && window.RealtimeCore.eventBus) {
+        const eventBus = window.RealtimeCore.eventBus;
+        
+        // SSE 연결 성공 이벤트
+        eventBus.on('sse-connected', () => {
+            log.success('✅ SSE connected successfully');
+            updateRealtimeIndicator(true);
+            updateConnectionStatusDisplay();
+        });
+        
+        // SSE 연결 끊김 이벤트
+        eventBus.on('sse-disconnected', () => {
+            log.warn('⚠️ SSE disconnected');
+            updateRealtimeIndicator(false);
+            updateConnectionStatusDisplay();
+        });
+        
+        // SSE 에러 이벤트
+        eventBus.on('sse-error', () => {
+            log.error('❌ SSE error');
+            updateRealtimeIndicator(false);
+            updateConnectionStatusDisplay();
+        });
+    }
+    
+    // 4. Initialize Position Price Manager (WebSocket prices)
     const priceManager = window.initializePositionPrices ? 
         window.initializePositionPrices(positionsData) : null;
     
-    // 4. Initialize Realtime Positions Manager (SSE position updates)
+    if (priceManager) {
+        log.info('Position price manager initialized');
+    }
+    
+    // 5. Initialize Realtime Positions Manager (SSE position updates)
     const positionsManager = window.initializeRealtimePositions ? 
         window.initializeRealtimePositions({ positions: positionsData }) : null;
     
-    // 5. Initialize Realtime Open Orders Manager (SSE order updates)
+    if (positionsManager) {
+        log.info('Realtime positions manager initialized');
+    }
+    
+    // 6. Initialize Realtime Open Orders Manager (SSE order updates)
     const ordersManager = window.initializeRealtimeOpenOrders ? 
         window.initializeRealtimeOpenOrders({ loadOnInit: true }) : null;
     
-    // 6. Initialize legacy position manager for backward compatibility
-    if (window.initializePositionRealtime) {
-        window.initializePositionRealtime(positionsData);
+    if (ordersManager) {
+        log.info('Realtime open orders manager initialized');
     }
     
-    // Update UI indicators
-    setTimeout(() => {
-        updateRealtimeIndicator(true);
-        updateConnectionStatusDisplay();
-    }, 2000);
+    // 7. Initialize legacy position manager for backward compatibility
+    if (window.initializePositionRealtime) {
+        window.initializePositionRealtime(positionsData);
+        log.info('Legacy position manager initialized');
+    }
     
     log.success('All real-time systems initialized successfully');
 }
@@ -974,61 +1013,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
-
-// Initialize all realtime systems
-function initializeAllRealtimeSystems() {
-    console.info('🚀 Initializing all realtime systems...');
-    
-    // Parse positions data from JSON script
-    const jsonScript = document.getElementById('positions-json-data');
-    if (jsonScript) {
-        try {
-            window.positionsData = JSON.parse(jsonScript.textContent || jsonScript.innerText || '[]');
-            console.info(`Loaded ${window.positionsData.length} positions from template`);
-        } catch (e) {
-            console.error('Failed to parse positions data:', e);
-            window.positionsData = [];
-        }
-    } else {
-        window.positionsData = [];
-    }
-    
-    // 1. Initialize SSE Manager first (skip auth check since positions page requires auth)
-    const sseManager = window.initializeSSE ? window.initializeSSE({
-        skipAuthCheck: true  // positions 페이지는 이미 인증이 필요하므로 auth check 생략
-    }) : null;
-    if (!sseManager) {
-        console.error('Failed to initialize SSE Manager');
-        return;
-    }
-    
-    // 2. Initialize realtime positions manager
-    const positionsManager = window.initializeRealtimePositions ? 
-        window.initializeRealtimePositions({
-            positions: window.positionsData || []
-        }) : null;
-    
-    // 3. Initialize realtime open orders manager
-    const ordersManager = window.initializeRealtimeOpenOrders ? 
-        window.initializeRealtimeOpenOrders({
-            loadOnInit: true
-        }) : null;
-    
-    // 4. Initialize position price manager (WebSocket prices)
-    const priceManager = window.initializePositionPrices ? 
-        window.initializePositionPrices(window.positionsData || []) : null;
-    
-    // 5. Legacy support - initialize old position manager if exists
-    if (typeof initializeRealtimePositions === 'function') {
-        try {
-            initializeRealtimePositions();
-        } catch (e) {
-            console.warn('Legacy initializeRealtimePositions failed:', e);
-        }
-    }
-    
-    console.info('✅ All realtime systems initialized');
-}
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {

@@ -159,7 +159,7 @@ class SSEManager {
         
         // Connection opened
         this.eventSource.onopen = (event) => {
-            this.logger.success('🟢 SSE 연결 성공!');
+            this.logger.info('🟢 SSE 연결 성공!');
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.connectionManager.setStatus(window.RealtimeCore?.ConnectionStatus.CONNECTED);

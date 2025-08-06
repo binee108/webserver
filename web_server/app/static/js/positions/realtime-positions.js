@@ -53,7 +53,7 @@ class RealtimePositionsManager {
         }
         
         this.isInitialized = true;
-        this.logger.success('Realtime positions manager initialized');
+        this.logger.info('✅ Realtime positions manager initialized');
     }
     
     /**
