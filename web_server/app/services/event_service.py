@@ -205,8 +205,16 @@ class EventService:
     def _format_sse_message(self, data: Dict[str, Any]) -> str:
         """SSE 메시지 포맷팅"""
         try:
-            json_data = json.dumps(data, ensure_ascii=False)
-            return f"data: {json_data}\n\n"
+            json_data = json.dumps(data.get('data', data), ensure_ascii=False)
+            
+            # Extract event type if available
+            event_type = data.get('type', None)
+            
+            # Format SSE message with event type
+            if event_type:
+                return f"event: {event_type}\ndata: {json_data}\n\n"
+            else:
+                return f"data: {json_data}\n\n"
         except Exception as e:
             logger.error(f"SSE 메시지 포맷팅 실패: {str(e)}")
             return f"data: {{}}\n\n"

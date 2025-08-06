@@ -282,4 +282,7 @@ class WebSocketManager {
         }
         return symbols;
     }
-} 
+}
+
+// Export to global scope
+window.WebSocketManager = WebSocketManager; 

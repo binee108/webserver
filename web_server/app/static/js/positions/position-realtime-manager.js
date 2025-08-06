@@ -87,6 +87,203 @@ class PositionRealtimeManager {
     }
     
     /**
+     * Dynamically add a position and update WebSocket subscriptions
+     */
+    addPositionDynamic(positionData) {
+        const positionKey = `${positionData.id || positionData.position_id}`;
+        
+        // Check if position already exists
+        if (this.positions.has(positionKey)) {
+            this.log.debug(`Position ${positionKey} already tracked, updating...`);
+        }
+        
+        // Normalize position data
+        const normalizedData = {
+            id: positionData.id || positionData.position_id,
+            symbol: positionData.symbol,
+            account: positionData.account || {
+                exchange: positionData.exchange || 'unknown',
+                name: positionData.account_name || 'unknown'
+            },
+            quantity: positionData.quantity,
+            entry_price: positionData.entry_price
+        };
+        
+        // Add position to tracking
+        this.addPosition(normalizedData);
+        
+        // Get position details
+        const position = this.positions.get(positionKey);
+        if (!position) {
+            this.log.error(`Failed to add position ${positionKey}`);
+            return;
+        }
+        
+        // Check if we need to subscribe to this symbol
+        const exchangeKey = `${position.exchange}-${position.marketType}`;
+        const ws = this.exchanges.get(exchangeKey);
+        
+        if (ws) {
+            // Check if already subscribed to this symbol
+            const subscribedSymbols = ws.getSubscribedSymbols ? ws.getSubscribedSymbols() : [];
+            if (!subscribedSymbols.includes(position.symbol)) {
+                this.log.subscription(`Dynamically subscribing to ${position.symbol} on ${exchangeKey}`);
+                
+                try {
+                    ws.subscribeToPrice(position.symbol, (priceData) => {
+                        this.log.debug(`Price data received for ${position.symbol} on ${exchangeKey}:`, priceData);
+                        this.updateAllPositionsForSymbol(position.symbol, priceData);
+                    });
+                    
+                    this.log.success(`Successfully subscribed to ${position.symbol} on ${exchangeKey}`);
+                } catch (error) {
+                    this.log.error(`Failed to subscribe to ${position.symbol} on ${exchangeKey}:`, error);
+                }
+            } else {
+                this.log.debug(`Already subscribed to ${position.symbol} on ${exchangeKey}`);
+            }
+        } else {
+            // Need to create new WebSocket connection for this exchange
+            this.log.info(`Creating new WebSocket for ${position.exchange} ${position.marketType}`);
+            this.connectToExchange(position.exchange);
+        }
+    }
+    
+    /**
+     * Dynamically remove a position and update WebSocket subscriptions
+     */
+    removePositionDynamic(positionId) {
+        const positionKey = `${positionId}`;
+        const position = this.positions.get(positionKey);
+        
+        if (!position) {
+            this.log.warn(`Position ${positionKey} not found in tracking`);
+            return;
+        }
+        
+        const symbol = position.symbol;
+        const exchangeKey = `${position.exchange}-${position.marketType}`;
+        
+        // Remove position from tracking
+        this.positions.delete(positionKey);
+        this.log.info(`Removed position ${positionKey} from tracking`);
+        
+        // Check if any other positions use the same symbol
+        let symbolStillNeeded = false;
+        for (const [, pos] of this.positions.entries()) {
+            if (pos.symbol === symbol && 
+                pos.exchange === position.exchange && 
+                pos.marketType === position.marketType) {
+                symbolStillNeeded = true;
+                break;
+            }
+        }
+        
+        // Unsubscribe if no other positions need this symbol
+        if (!symbolStillNeeded) {
+            const ws = this.exchanges.get(exchangeKey);
+            if (ws && ws.unsubscribe) {
+                this.log.subscription(`Unsubscribing from ${symbol} on ${exchangeKey} (no positions remaining)`);
+                
+                try {
+                    ws.unsubscribe('ticker', symbol);
+                    this.log.success(`Successfully unsubscribed from ${symbol} on ${exchangeKey}`);
+                } catch (error) {
+                    this.log.error(`Failed to unsubscribe from ${symbol} on ${exchangeKey}:`, error);
+                }
+            }
+        } else {
+            this.log.debug(`Keeping subscription for ${symbol} on ${exchangeKey} (other positions still need it)`);
+        }
+        
+        // Check if we should disconnect from exchange entirely
+        let exchangeStillNeeded = false;
+        for (const [, pos] of this.positions.entries()) {
+            if (pos.exchange === position.exchange && pos.marketType === position.marketType) {
+                exchangeStillNeeded = true;
+                break;
+            }
+        }
+        
+        if (!exchangeStillNeeded) {
+            const ws = this.exchanges.get(exchangeKey);
+            if (ws) {
+                this.log.info(`Disconnecting from ${exchangeKey} (no positions remaining)`);
+                ws.close();
+                this.exchanges.delete(exchangeKey);
+            }
+        }
+    }
+    
+    /**
+     * Update subscriptions for all current positions
+     * Useful for reconciling subscriptions after multiple changes
+     */
+    updateSubscriptions() {
+        this.log.info('Updating WebSocket subscriptions for all positions...');
+        
+        // Group positions by exchange and market type
+        const exchangeGroups = new Map();
+        
+        for (const [, position] of this.positions.entries()) {
+            const exchangeKey = `${position.exchange}-${position.marketType}`;
+            if (!exchangeGroups.has(exchangeKey)) {
+                exchangeGroups.set(exchangeKey, new Set());
+            }
+            exchangeGroups.get(exchangeKey).add(position.symbol);
+        }
+        
+        // Update subscriptions for each exchange
+        for (const [exchangeKey, symbols] of exchangeGroups.entries()) {
+            const ws = this.exchanges.get(exchangeKey);
+            if (!ws) {
+                this.log.warn(`No WebSocket connection for ${exchangeKey}, skipping...`);
+                continue;
+            }
+            
+            const currentSubscriptions = ws.getSubscribedSymbols ? ws.getSubscribedSymbols() : [];
+            const neededSymbols = Array.from(symbols);
+            
+            // Subscribe to new symbols
+            for (const symbol of neededSymbols) {
+                if (!currentSubscriptions.includes(symbol)) {
+                    this.log.subscription(`Subscribing to ${symbol} on ${exchangeKey}`);
+                    try {
+                        ws.subscribeToPrice(symbol, (priceData) => {
+                            this.updateAllPositionsForSymbol(symbol, priceData);
+                        });
+                    } catch (error) {
+                        this.log.error(`Failed to subscribe to ${symbol}:`, error);
+                    }
+                }
+            }
+            
+            // Unsubscribe from unneeded symbols
+            for (const symbol of currentSubscriptions) {
+                if (!neededSymbols.includes(symbol)) {
+                    this.log.subscription(`Unsubscribing from ${symbol} on ${exchangeKey}`);
+                    try {
+                        ws.unsubscribe('ticker', symbol);
+                    } catch (error) {
+                        this.log.error(`Failed to unsubscribe from ${symbol}:`, error);
+                    }
+                }
+            }
+        }
+        
+        // Disconnect from exchanges with no positions
+        for (const [exchangeKey, ws] of this.exchanges.entries()) {
+            if (!exchangeGroups.has(exchangeKey)) {
+                this.log.info(`Disconnecting from ${exchangeKey} (no positions)`);
+                ws.close();
+                this.exchanges.delete(exchangeKey);
+            }
+        }
+        
+        this.log.success('WebSocket subscriptions updated successfully');
+    }
+    
+    /**
      * Determine market type from position data
      */
     determineMarketType(positionData) {
@@ -464,7 +661,7 @@ class PositionRealtimeManager {
         });
         
         // Position diagnostics
-        this.positions.forEach((position, key) => {
+        this.positions.forEach((position) => {
             const latestPrice = this.getLatestPrice(position.exchange, position.symbol);
             diagnostics.positions.push({
                 id: position.id,
@@ -644,12 +841,348 @@ function getPositionManager() {
     return positionManager;
 }
 
+// ========================================
+// Position UI Management Functions
+// ========================================
+
 /**
- * Global test functions for easy access from console or UI
+ * Create a position row element
  */
-window.positionTestUtils = {
+function createPositionRow(positionData) {
+    const row = document.createElement('tr');
+    row.className = 'position-row';
+    row.setAttribute('data-position-id', positionData.position_id || positionData.id);
+    
+    const isLong = parseFloat(positionData.quantity) > 0;
+    const quantity = Math.abs(parseFloat(positionData.quantity));
+    const entryPrice = parseFloat(positionData.entry_price || 0);
+    
+    // 계좌 정보 (중첩 구조 지원)
+    const accountName = positionData.account_name || positionData.account?.name || 'Unknown';
+    const exchange = positionData.exchange || positionData.account?.exchange || 'unknown';
+    const exchangeInitial = exchange.toUpperCase().charAt(0);
+    
+    row.innerHTML = `
+        <td>
+            <div class="account-info">
+                <div class="account-avatar">
+                    <span>${exchangeInitial}</span>
+                </div>
+                <div class="account-details">
+                    <div class="account-name">${accountName}</div>
+                    <div class="account-exchange">${exchange.charAt(0).toUpperCase() + exchange.slice(1)}</div>
+                </div>
+            </div>
+        </td>
+        <td>
+            <div class="position-symbol">${positionData.symbol}</div>
+        </td>
+        <td class="position-direction">
+            <span class="badge ${isLong ? 'badge-success' : 'badge-error'}">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="${isLong 
+                        ? 'M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z'
+                        : 'M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z'
+                    }" clip-rule="evenodd"></path>
+                </svg>
+                ${isLong ? 'LONG' : 'SHORT'}
+            </span>
+        </td>
+        <td class="text-sm text-primary position-quantity">
+            ${quantity.toFixed(8)}
+        </td>
+        <td class="text-sm text-primary entry-price">
+            $${entryPrice.toFixed(4)}
+        </td>
+        <td class="text-sm text-primary current-price" id="current-price-${positionData.position_id || positionData.id}">
+            <span class="text-muted loading-price">연결 중...</span>
+        </td>
+        <td class="text-sm" id="pnl-${positionData.position_id || positionData.id}">
+            <span class="text-muted">계산 중...</span>
+        </td>
+        <td class="text-sm text-muted">
+            <span id="last-update-${positionData.position_id || positionData.id}">방금 전</span>
+        </td>
+        <td>
+            ${quantity !== 0 ? `
+                <button data-position-id="${positionData.position_id || positionData.id}" class="close-position-btn btn btn-error btn-sm">
+                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    청산
+                </button>
+            ` : '<span class="text-muted text-xs">-</span>'}
+        </td>
+    `;
+    
+    // 청산 버튼 이벤트 리스너 추가
+    const closeBtn = row.querySelector('.close-position-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            const positionId = this.getAttribute('data-position-id');
+            if (typeof closePosition === 'function') {
+                closePosition(positionId);
+            }
+        });
+    }
+    
+    return row;
+}
+
+/**
+ * Upsert (insert or update) a position row
+ */
+function upsertPositionRow(positionData) {
+    const log = window.logger || console;
+    log.info('📈 포지션 upsert 시작:', positionData);
+    
+    let positionTable = document.querySelector('#positionsTable tbody');
+    
+    // 테이블이 없으면 에러 대신 경고만 출력
+    if (!positionTable) {
+        log.error('포지션 테이블을 찾을 수 없습니다. 페이지 구조를 확인하세요.');
+        return;
+    }
+    
+    // 빈 상태 메시지가 있으면 제거
+    const emptyRow = positionTable.querySelector('.empty-positions-row');
+    if (emptyRow) {
+        emptyRow.remove();
+    }
+    
+    const positionId = positionData.position_id || positionData.id;
+    const existingRow = document.querySelector(`tr[data-position-id="${positionId}"]`);
+    
+    if (existingRow) {
+        log.info('📈 기존 포지션 행 업데이트:', positionId);
+        // 기존 행을 새 데이터로 교체
+        const newRow = createPositionRow(positionData);
+        existingRow.replaceWith(newRow);
+        // 업데이트 애니메이션 적용
+        newRow.classList.add('highlight-update');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-update');
+        }, 2000);
+    } else {
+        log.info('📈 새 포지션 행 생성:', positionId);
+        // 새 행 생성 및 추가
+        const newRow = createPositionRow(positionData);
+        positionTable.appendChild(newRow);
+        // 새 행 추가 애니메이션 (초록색 배경)
+        newRow.classList.add('highlight-new');
+        setTimeout(() => {
+            newRow.classList.remove('highlight-new');
+        }, 2000);
+        
+        // 새 포지션이 추가되면 웹소켓 구독 시작
+        if (positionManager && !existingRow) {
+            log.info('📈 새 포지션에 대한 웹소켓 구독 시작:', positionData.symbol);
+            positionManager.addPositionDynamic(positionData);
+        }
+    }
+}
+
+/**
+ * Remove a position row from the table
+ */
+function removePositionRow(positionId) {
+    const log = window.logger || console;
+    const positionRow = document.querySelector(`tr[data-position-id="${positionId}"]`);
+    if (!positionRow) {
+        log.warn('제거할 포지션 행을 찾을 수 없음:', positionId);
+        return;
+    }
+    
+    // 포지션 제거 시 웹소켓 구독 해제
+    if (positionManager) {
+        log.info('📈 포지션 제거에 따른 웹소켓 구독 해제:', positionId);
+        positionManager.removePositionDynamic(positionId);
+    }
+    
+    // 제거 애니메이션
+    positionRow.style.transition = 'all 0.3s ease-out';
+    positionRow.style.opacity = '0.5';
+    positionRow.style.transform = 'translateX(-10px)';
+    
+    setTimeout(() => {
+        positionRow.remove();
+        checkEmptyPositions();
+        log.info('포지션 행 제거됨:', positionId);
+    }, 300);
+}
+
+/**
+ * Check if positions table is empty and show empty state
+ */
+function checkEmptyPositions() {
+    const positionRows = document.querySelectorAll('tr[data-position-id]');
+    if (positionRows.length === 0) {
+        showEmptyPositionsState();
+        if (typeof showToast === 'function') {
+            showToast('모든 포지션이 청산되었습니다.', 'success');
+        }
+    }
+}
+
+/**
+ * Show empty positions state in the table
+ */
+function showEmptyPositionsState() {
+    const positionTable = document.querySelector('#positionsTable tbody');
+    if (positionTable) {
+        // 기존 빈 상태 메시지가 있으면 제거
+        const existingEmptyRow = positionTable.querySelector('.empty-positions-row');
+        if (existingEmptyRow) {
+            existingEmptyRow.remove();
+        }
+        
+        // 새로운 빈 상태 행 추가
+        const emptyRow = document.createElement('tr');
+        emptyRow.className = 'empty-positions-row';
+        emptyRow.innerHTML = `
+            <td colspan="9">
+                <div class="empty-state" style="padding: 2rem 1rem;">
+                    <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <h3>보유 포지션이 없습니다</h3>
+                    <p>모든 포지션이 성공적으로 청산되었습니다</p>
+                </div>
+            </td>
+        `;
+        positionTable.appendChild(emptyRow);
+    }
+}
+
+/**
+ * Remove empty positions state from the table
+ */
+function removeEmptyPositionsState() {
+    const emptyRow = document.querySelector('.empty-positions-row');
+    if (emptyRow) {
+        emptyRow.remove();
+    }
+}
+
+/**
+ * Update position statistics
+ */
+function updatePositionStats() {
+    const positionRows = document.querySelectorAll('tr[data-position-id]');
+    const totalCount = positionRows.length;
+    
+    let longCount = 0;
+    let shortCount = 0;
+    
+    positionRows.forEach(row => {
+        const directionBadge = row.querySelector('.position-direction .badge');
+        if (directionBadge) {
+            if (directionBadge.classList.contains('badge-success')) {
+                longCount++;
+            } else if (directionBadge.classList.contains('badge-error')) {
+                shortCount++;
+            }
+        }
+    });
+    
+    // 통계 카드 업데이트
+    const totalCountElement = document.querySelector('.stats-grid .stats-value');
+    if (totalCountElement) {
+        totalCountElement.textContent = totalCount;
+    }
+    
+    const longCountElements = document.querySelectorAll('.stats-grid .stats-card:nth-child(2) .stats-value');
+    longCountElements.forEach(el => el.textContent = longCount);
+    
+    const shortCountElements = document.querySelectorAll('.stats-grid .stats-card:nth-child(3) .stats-value');
+    shortCountElements.forEach(el => el.textContent = shortCount);
+    
+    const log = window.logger || console;
+    log.debug('포지션 통계 업데이트:', { total: totalCount, long: longCount, short: shortCount });
+}
+
+/**
+ * Handle position update from SSE
+ */
+function handlePositionUpdate(data) {
+    const log = window.logger || console;
+    try {
+        log.info('포지션 업데이트 처리:', data);
+        
+        // 이벤트 타입에 따른 처리
+        switch (data.event_type) {
+            case 'position_created':
+            case 'position_updated':
+                upsertPositionRow(data);
+                // 웹소켓 구독 동적 관리
+                if (positionManager) {
+                    positionManager.addPositionDynamic(data);
+                }
+                break;
+            case 'position_closed':
+                removePositionRow(data.position_id);
+                // 웹소켓 구독 해제
+                if (positionManager) {
+                    positionManager.removePositionDynamic(data.position_id);
+                }
+                break;
+            default:
+                log.warn('알 수 없는 포지션 이벤트 타입:', data.event_type);
+        }
+        
+        // 통계 정보 업데이트
+        updatePositionStats();
+        
+        // 토스트 알림
+        const eventTypeText = {
+            'position_created': '새 포지션',
+            'position_updated': '포지션 업데이트', 
+            'position_closed': '포지션 청산'
+        }[data.event_type] || '포지션 변경';
+        
+        if (typeof showToast === 'function') {
+            showToast(`${eventTypeText}: ${data.symbol} (${Math.abs(data.quantity)})`, 'success', 2000);
+        }
+        
+    } catch (error) {
+        log.error('포지션 업데이트 처리 실패:', error);
+    }
+}
+
+// ========================================
+// Export functions to global scope
+// ========================================
+
+window.positionRealtimeUtils = {
+    // Manager functions
+    initializePositionRealtime,
+    getPositionManager,
+    
+    // UI functions
+    createPositionRow,
+    upsertPositionRow,
+    removePositionRow,
+    checkEmptyPositions,
+    showEmptyPositionsState,
+    removeEmptyPositionsState,
+    updatePositionStats,
+    handlePositionUpdate,
+    
+    // Test functions
     getDiagnostics: () => positionManager ? positionManager.getDiagnostics() : null,
     testExchange: (exchange, marketType, symbols) => positionManager ? positionManager.testExchangeConnection(exchange, marketType, symbols) : null,
     runSystemTest: () => positionManager ? positionManager.runSystemTest() : null,
     getManager: () => positionManager
-}; 
+};
+
+// Also export individual functions for backward compatibility
+window.initializePositionRealtime = initializePositionRealtime;
+window.getPositionManager = getPositionManager;
+window.createPositionRow = createPositionRow;
+window.upsertPositionRow = upsertPositionRow;
+window.removePositionRow = removePositionRow;
+window.checkEmptyPositions = checkEmptyPositions;
+window.showEmptyPositionsState = showEmptyPositionsState;
+window.removeEmptyPositionsState = removeEmptyPositionsState;
+window.updatePositionStats = updatePositionStats;
+window.handlePositionUpdate = handlePositionUpdate; 

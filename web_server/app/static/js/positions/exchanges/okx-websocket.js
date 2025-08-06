@@ -224,8 +224,11 @@ class OkxWebSocket extends WebSocketManager {
  * Factory function to create OKX WebSocket instances
  */
 function createOkxWebSocket(marketType = 'spot', options = {}) {
-    return new OkxWebSocket({
+        return new OkxWebSocket({
         marketType: marketType,
         ...options
     });
-} 
+}
+
+// Export to global scope
+window.OkxWebSocket = OkxWebSocket; 

@@ -141,4 +141,7 @@ function createBinanceWebSocket(marketType = 'spot', options = {}) {
         marketType: marketType,
         ...options
     });
-} 
+}
+
+// Export to global scope
+window.BinanceWebSocket = BinanceWebSocket; 
