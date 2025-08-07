@@ -64,7 +64,7 @@ class PositionPriceManager {
         this.startExchangeConnections();
         
         this.isInitialized = true;
-        this.logger.success('Position price tracking initialized successfully');
+        this.logger.info('✅ Position price tracking initialized successfully');
     }
     
     /**
@@ -116,23 +116,23 @@ class PositionPriceManager {
         const ws = this.exchanges.get(exchangeKey);
         
         if (ws) {
-            // Check if already subscribed to this symbol
-            const subscribedSymbols = ws.getSubscribedSymbols ? ws.getSubscribedSymbols() : [];
-            if (!subscribedSymbols.includes(position.symbol)) {
+            // Check if already subscribed using unified interface
+            if (ws.isSubscribed && ws.isSubscribed(position.symbol)) {
+                this.logger.debug(`Already subscribed to ${position.symbol} on ${exchangeKey}`);
+            } else {
                 this.logger.info(`Dynamically subscribing to ${position.symbol} on ${exchangeKey}`);
                 
                 try {
-                    ws.subscribeToPrice(position.symbol, (priceData) => {
+                    // Use unified interface
+                    ws.subscribePrice(position.symbol, (priceData) => {
                         this.logger.debug(`Price data received for ${position.symbol}:`, priceData);
                         this.updateAllPositionsForSymbol(position.symbol, priceData);
                     });
                     
-                    this.logger.success(`Successfully subscribed to ${position.symbol} on ${exchangeKey}`);
+                    this.logger.info(`✅ Successfully subscribed to ${position.symbol} on ${exchangeKey}`);
                 } catch (error) {
                     this.logger.error(`Failed to subscribe to ${position.symbol} on ${exchangeKey}:`, error);
                 }
-            } else {
-                this.logger.debug(`Already subscribed to ${position.symbol} on ${exchangeKey}`);
             }
         } else {
             // Need to create new WebSocket connection for this exchange
@@ -178,8 +178,13 @@ class PositionPriceManager {
                 this.logger.info(`Unsubscribing from ${symbol} on ${exchangeKey} (no positions remaining)`);
                 
                 try {
-                    ws.unsubscribe('ticker', symbol);
-                    this.logger.success(`Successfully unsubscribed from ${symbol} on ${exchangeKey}`);
+                    // Use unified interface
+                    const result = ws.unsubscribePrice(symbol);
+                    if (result) {
+                        this.logger.info(`✅ Successfully unsubscribed from ${symbol} on ${exchangeKey}`);
+                    } else {
+                        this.logger.warn(`⚠️ Could not unsubscribe from ${symbol} on ${exchangeKey}`);
+                    }
                 } catch (error) {
                     this.logger.error(`Failed to unsubscribe from ${symbol} on ${exchangeKey}:`, error);
                 }
@@ -348,7 +353,8 @@ class PositionPriceManager {
                 
                 this.logger.info(`Subscribing to ${symbol} on ${wsKey} for ${positionsForSymbol.length} positions`);
                 
-                ws.subscribeToPrice(symbol, (priceData) => {
+                // Use unified interface
+                ws.subscribePrice(symbol, (priceData) => {
                     this.logger.debug(`Price data received for ${symbol} on ${wsKey}:`, priceData);
                     this.updateAllPositionsForSymbol(symbol, priceData);
                 });
@@ -518,7 +524,8 @@ class PositionPriceManager {
                 if (!currentSubscriptions.includes(symbol)) {
                     this.logger.info(`Subscribing to ${symbol} on ${exchangeKey}`);
                     try {
-                        ws.subscribeToPrice(symbol, (priceData) => {
+                        // Use unified interface
+                        ws.subscribePrice(symbol, (priceData) => {
                             this.updateAllPositionsForSymbol(symbol, priceData);
                         });
                     } catch (error) {
@@ -532,7 +539,11 @@ class PositionPriceManager {
                 if (!neededSymbols.includes(symbol)) {
                     this.logger.info(`Unsubscribing from ${symbol} on ${exchangeKey}`);
                     try {
-                        ws.unsubscribe('ticker', symbol);
+                        // Use unified interface
+                        const result = ws.unsubscribePrice(symbol);
+                        if (!result) {
+                            this.logger.warn(`Could not unsubscribe from ${symbol} on ${exchangeKey}`);
+                        }
                     } catch (error) {
                         this.logger.error(`Failed to unsubscribe from ${symbol}:`, error);
                     }
@@ -549,7 +560,7 @@ class PositionPriceManager {
             }
         }
         
-        this.logger.success('WebSocket subscriptions updated successfully');
+        this.logger.info('✅ WebSocket subscriptions updated successfully');
     }
     
     /**
@@ -708,3 +719,39 @@ function initializePositionPrices(positionsData = []) {
 window.PositionPriceManager = PositionPriceManager;
 window.getPositionPriceManager = getPositionPriceManager;
 window.initializePositionPrices = initializePositionPrices;
+
+// ========================================
+// Legacy Compatibility (레거시 호환성)
+// ========================================
+
+// Redirect legacy PositionRealtimeManager to PositionPriceManager
+window.PositionRealtimeManager = PositionPriceManager;
+
+// Redirect legacy initialization function
+window.initializePositionRealtime = function(positionsData) {
+    console.warn('⚠️ initializePositionRealtime is deprecated. Use initializePositionPrices instead.');
+    return initializePositionPrices(positionsData);
+};
+
+// Redirect legacy getter function
+window.getPositionManager = function() {
+    console.warn('⚠️ getPositionManager is deprecated. Use getPositionPriceManager instead.');
+    return getPositionPriceManager();
+};
+
+// Additional legacy functions that might be used
+window.upsertPositionRow = function(positionData) {
+    console.warn('⚠️ upsertPositionRow is deprecated. Use RealtimePositionsManager instead.');
+    const manager = window.getRealtimePositionsManager ? window.getRealtimePositionsManager() : null;
+    if (manager && manager.isInitialized) {
+        manager.upsertPosition(positionData);
+    }
+};
+
+window.removePositionRow = function(positionId) {
+    console.warn('⚠️ removePositionRow is deprecated. Use RealtimePositionsManager instead.');
+    const manager = window.getRealtimePositionsManager ? window.getRealtimePositionsManager() : null;
+    if (manager && manager.isInitialized) {
+        manager.removePosition(positionId);
+    }
+};

@@ -14,8 +14,6 @@ class OkxWebSocket extends WebSocketManager {
         });
         
         this.marketType = options.marketType || 'spot'; // 'spot', 'futures', 'swap'
-        this.priceCallbacks = new Map();
-        this.subscribedSymbols = new Set();
         this.requestId = Date.now();
         
         // Use logger if available, fallback to console
@@ -73,64 +71,77 @@ class OkxWebSocket extends WebSocketManager {
         });
     }
     
-    subscribeToPrice(symbol, callback) {
+    /**
+     * Subscribe to price updates (unified interface)
+     * Overrides base class method
+     */
+    subscribePrice(symbol, callback) {
         // Normalize symbol for OKX
         const normalizedSymbol = this.normalizeSymbol(symbol);
         
         // Check if already subscribed
         if (this.subscribedSymbols.has(normalizedSymbol)) {
-            this.log.warn(`OKX ${this.marketType}: Symbol ${normalizedSymbol} already subscribed, skipping duplicate`);
+            this.log.warn(`OKX ${this.marketType}: Symbol ${normalizedSymbol} already subscribed`);
             return normalizedSymbol;
         }
         
         this.log.debug(`Subscribing to OKX ${this.marketType} price for ${normalizedSymbol}`);
         
-        // Register callback
+        // Register callback and track subscription
         this.priceCallbacks.set(normalizedSymbol, callback);
         this.subscribedSymbols.add(normalizedSymbol);
         
-        // Update parent class subscriptions for proper tracking
-        const subscriptionKey = `tickers:${normalizedSymbol}`;
-        this.subscriptions.set(subscriptionKey, callback);
-        
-        // Subscribe to ticker channel
-        this.send({
-            op: 'subscribe',
-            args: [{
-                channel: 'tickers',
-                instId: normalizedSymbol
-            }],
-            id: this.getNextRequestId()
-        });
+        // Send subscription message
+        this.sendPriceSubscription(normalizedSymbol);
         
         this.log.debug(`OKX ${this.marketType} subscription added for ${normalizedSymbol} (total: ${this.subscribedSymbols.size})`);
         
         return normalizedSymbol;
     }
     
-    unsubscribeFromPrice(symbol) {
+    /**
+     * Unsubscribe from price updates (unified interface)
+     * Overrides base class method
+     */
+    unsubscribePrice(symbol) {
         const normalizedSymbol = this.normalizeSymbol(symbol);
+        
+        if (!this.subscribedSymbols.has(normalizedSymbol)) {
+            this.log.warn(`OKX ${this.marketType}: Cannot unsubscribe ${normalizedSymbol} - not subscribed`);
+            return false;
+        }
         
         this.log.debug(`Unsubscribing from OKX ${this.marketType} price for ${normalizedSymbol}`);
         
+        // Remove callback and tracking
         this.priceCallbacks.delete(normalizedSymbol);
         this.subscribedSymbols.delete(normalizedSymbol);
         
-        // Update parent class subscriptions
-        const subscriptionKey = `tickers:${normalizedSymbol}`;
-        this.subscriptions.delete(subscriptionKey);
+        // Send unsubscription message
+        this.sendPriceUnsubscription(normalizedSymbol);
         
-        // Unsubscribe from ticker channel
-        this.send({
-            op: 'unsubscribe',
-            args: [{
-                channel: 'tickers',
-                instId: normalizedSymbol
-            }],
-            id: this.getNextRequestId()
-        });
+        this.log.debug(`OKX ${this.marketType} unsubscribed from ${normalizedSymbol} (remaining: ${this.subscribedSymbols.size})`);
+        return true;
     }
     
+    /**
+     * @deprecated Use subscribePrice() instead
+     */
+    subscribeToPrice(symbol, callback) {
+        return this.subscribePrice(symbol, callback);
+    }
+    
+    /**
+     * @deprecated Use unsubscribePrice() instead
+     */
+    unsubscribeFromPrice(symbol) {
+        return this.unsubscribePrice(symbol);
+    }
+    
+    /**
+     * Normalize symbol for OKX format
+     * Overrides base class method
+     */
     normalizeSymbol(symbol) {
         // Convert various formats to OKX format
         if (this.marketType === 'spot') {
@@ -155,7 +166,37 @@ class OkxWebSocket extends WebSocketManager {
         return symbol.replace(/[\/\_]/g, '-').toUpperCase();
     }
     
-    // Override subscription methods
+    /**
+     * Send price subscription message
+     * Overrides base class method
+     */
+    sendPriceSubscription(normalizedSymbol) {
+        this.send({
+            op: 'subscribe',
+            args: [{
+                channel: 'tickers',
+                instId: normalizedSymbol
+            }],
+            id: this.getNextRequestId()
+        });
+    }
+    
+    /**
+     * Send price unsubscription message
+     * Overrides base class method
+     */
+    sendPriceUnsubscription(normalizedSymbol) {
+        this.send({
+            op: 'unsubscribe',
+            args: [{
+                channel: 'tickers',
+                instId: normalizedSymbol
+            }],
+            id: this.getNextRequestId()
+        });
+    }
+    
+    // Override old subscription methods
     sendSubscription(channel, symbol) {
         this.send({
             op: 'subscribe',
@@ -182,12 +223,10 @@ class OkxWebSocket extends WebSocketManager {
         return String(this.requestId++);
     }
     
-    // Get current subscribed symbols
-    getSubscribedSymbols() {
-        return Array.from(this.subscribedSymbols);
-    }
-    
-    // Check if symbol is subscribed
+    /**
+     * Check if symbol is subscribed
+     * Overrides base class method
+     */
     isSubscribed(symbol) {
         const normalizedSymbol = this.normalizeSymbol(symbol);
         return this.subscribedSymbols.has(normalizedSymbol);

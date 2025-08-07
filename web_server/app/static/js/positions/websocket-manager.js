@@ -23,6 +23,10 @@ class WebSocketManager {
         this.subscriptions = new Map();
         this.messageQueue = [];
         
+        // Price subscription tracking (unified interface)
+        this.priceCallbacks = new Map();
+        this.subscribedSymbols = new Set();
+        
         // Ping/Pong management
         this.pingTimer = null;
         this.pongTimer = null;
@@ -96,7 +100,15 @@ class WebSocketManager {
         }
     }
     
+    /**
+     * @deprecated Use subscribePrice() instead
+     */
     subscribe(channel, symbol, callback) {
+        // For backward compatibility, redirect to new interface if it's a price subscription
+        if (channel === 'ticker' || channel === 'tickers') {
+            return this.subscribePrice(symbol, callback);
+        }
+        
         const subscriptionKey = `${channel}:${symbol}`;
         
         // Check for duplicate subscription
@@ -114,7 +126,15 @@ class WebSocketManager {
         return true;
     }
     
+    /**
+     * @deprecated Use unsubscribePrice() instead
+     */
     unsubscribe(channel, symbol) {
+        // For backward compatibility, redirect to new interface if it's a price subscription
+        if (channel === 'ticker' || channel === 'tickers') {
+            return this.unsubscribePrice(symbol);
+        }
+        
         const subscriptionKey = `${channel}:${symbol}`;
         
         if (!this.subscriptions.has(subscriptionKey)) {
@@ -269,18 +289,103 @@ class WebSocketManager {
     
     // Get list of subscribed symbols
     getSubscribedSymbols() {
-        const symbols = [];
-        for (const key of this.subscriptions.keys()) {
-            // Extract symbol from subscription key (format: "channel:symbol")
-            const parts = key.split(':');
-            if (parts.length >= 2) {
-                const symbol = parts[1];
-                if (!symbols.includes(symbol)) {
-                    symbols.push(symbol);
-                }
-            }
+        return Array.from(this.subscribedSymbols);
+    }
+    
+    // ========================================
+    // Unified Price Subscription Interface
+    // ========================================
+    
+    /**
+     * Subscribe to price updates for a symbol (unified interface)
+     * All exchange implementations should override this method
+     * @param {string} symbol - The trading symbol
+     * @param {function} callback - Callback for price updates
+     * @returns {string} Normalized symbol
+     */
+    subscribePrice(symbol, callback) {
+        // Normalize symbol (can be overridden by subclasses)
+        const normalizedSymbol = this.normalizeSymbol(symbol);
+        
+        // Check if already subscribed
+        if (this.subscribedSymbols.has(normalizedSymbol)) {
+            this.log.warn(`Symbol ${normalizedSymbol} already subscribed`);
+            return normalizedSymbol;
         }
-        return symbols;
+        
+        // Register callback and track subscription
+        this.priceCallbacks.set(normalizedSymbol, callback);
+        this.subscribedSymbols.add(normalizedSymbol);
+        
+        // Call exchange-specific implementation
+        this.sendPriceSubscription(normalizedSymbol);
+        
+        this.log.debug(`Price subscription added for ${normalizedSymbol}`);
+        return normalizedSymbol;
+    }
+    
+    /**
+     * Unsubscribe from price updates for a symbol (unified interface)
+     * All exchange implementations should override this method
+     * @param {string} symbol - The trading symbol
+     * @returns {boolean} Success status
+     */
+    unsubscribePrice(symbol) {
+        // Normalize symbol
+        const normalizedSymbol = this.normalizeSymbol(symbol);
+        
+        if (!this.subscribedSymbols.has(normalizedSymbol)) {
+            this.log.warn(`Cannot unsubscribe: ${normalizedSymbol} not subscribed`);
+            return false;
+        }
+        
+        // Remove callback and tracking
+        this.priceCallbacks.delete(normalizedSymbol);
+        this.subscribedSymbols.delete(normalizedSymbol);
+        
+        // Call exchange-specific implementation
+        this.sendPriceUnsubscription(normalizedSymbol);
+        
+        this.log.debug(`Price subscription removed for ${normalizedSymbol}`);
+        return true;
+    }
+    
+    /**
+     * Check if a symbol is subscribed
+     * @param {string} symbol - The trading symbol
+     * @returns {boolean} Subscription status
+     */
+    isSubscribed(symbol) {
+        const normalizedSymbol = this.normalizeSymbol(symbol);
+        return this.subscribedSymbols.has(normalizedSymbol);
+    }
+    
+    /**
+     * Normalize symbol format (override in subclasses for exchange-specific formats)
+     * @param {string} symbol - The trading symbol
+     * @returns {string} Normalized symbol
+     */
+    normalizeSymbol(symbol) {
+        // Default normalization: remove separators, uppercase
+        return symbol.replace(/[\/-_]/g, '').toUpperCase();
+    }
+    
+    /**
+     * Send price subscription message (must be implemented by subclasses)
+     * @param {string} normalizedSymbol - The normalized symbol
+     */
+    sendPriceSubscription(normalizedSymbol) {
+        // Override in exchange-specific implementations
+        this.log.warn('sendPriceSubscription must be implemented by subclass');
+    }
+    
+    /**
+     * Send price unsubscription message (must be implemented by subclasses)
+     * @param {string} normalizedSymbol - The normalized symbol
+     */
+    sendPriceUnsubscription(normalizedSymbol) {
+        // Override in exchange-specific implementations
+        this.log.warn('sendPriceUnsubscription must be implemented by subclass');
     }
 }
 

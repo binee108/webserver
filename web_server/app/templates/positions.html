@@ -28,8 +28,7 @@
 <script src="{{ url_for('static', filename='js/positions/realtime-openorders.js') }}"></script>
 <script src="{{ url_for('static', filename='js/positions/position-price-manager.js') }}"></script>
 
-<!-- Legacy support (will be removed later) -->
-<script src="{{ url_for('static', filename='js/positions/position-realtime-manager.js') }}"></script>
+<!-- Legacy support is now handled by position-price-manager.js -->
 {% endblock %}
 
 {% block content %}
@@ -719,7 +718,7 @@ window.debugPositionsData = function() {
 
 // Helper functions for debugging
 function logDiagnostics() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (manager) {
         const diagnostics = manager.getDiagnostics();
         console.table(diagnostics);
@@ -731,7 +730,7 @@ function logDiagnostics() {
 }
 
 function debugPosition(positionId) {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -760,7 +759,7 @@ function debugPosition(positionId) {
 }
 
 function checkDuplicateSubscriptions() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -831,7 +830,7 @@ function showDebugHelp() {
 
 // Debug WebSocket subscriptions
 function debugWebSocketSubscriptions() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -883,7 +882,7 @@ function debugWebSocketSubscriptions() {
 
 // Manually reconcile WebSocket subscriptions
 function reconcileSubscriptions() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -986,13 +985,10 @@ function initializeAllRealtimeSystems() {
         log.info('Realtime open orders manager initialized');
     }
     
-    // 7. Initialize legacy position manager for backward compatibility
-    if (window.initializePositionRealtime) {
-        window.initializePositionRealtime(positionsData);
-        log.info('Legacy position manager initialized');
-    }
+    // Legacy initialization is now handled by position-price-manager.js
+    // which provides backward compatibility for initializePositionRealtime
     
-    log.success('All real-time systems initialized successfully');
+    log.info('✅ All real-time systems initialized successfully');
 }
 
 // 페이지 로드 시 실시간 위치 추적 초기화
@@ -1016,87 +1012,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
-    // Cleanup price manager
+    // Cleanup price manager (WebSocket connections)
     const priceManager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (priceManager && priceManager.disconnect) {
         priceManager.disconnect();
     }
     
-    // Cleanup SSE
+    // Cleanup SSE connection
     if (window.disconnectSSE) {
         window.disconnectSSE();
     }
-    
-    // Legacy cleanup
-    const manager = getPositionManager();
-    if (manager) {
-        manager.disconnect();
-    }
 });
 
-// 실시간 업데이트 관리자 인스턴스
-let realtimeUpdatesManager = null;
-
-// 실시간 업데이트 초기화
-function initializeRealtimeUpdates() {
-    try {
-        if (typeof RealtimeUpdatesManager === 'undefined') {
-            console.error('RealtimeUpdatesManager가 로드되지 않았습니다.');
-            return;
-        }
-        
-        console.info('실시간 업데이트 초기화 시작...');
-        
-        realtimeUpdatesManager = new RealtimeUpdatesManager({
-            maxReconnectAttempts: 5,
-            reconnectInterval: 3000
-        });
-        
-        // 포지션 업데이트 이벤트 핸들러
-        realtimeUpdatesManager.on('position_update', (data) => {
-            console.info('📈 포지션 업데이트 수신:', data);
-            handlePositionUpdate(data);
-        });
-        
-        // 주문 업데이트 이벤트 핸들러
-        realtimeUpdatesManager.on('order_update', (data) => {
-            console.info('📊 주문 업데이트 수신:', data);
-            handleOrderUpdate(data);
-        });
-        
-        // 연결 상태 이벤트 핸들러
-        realtimeUpdatesManager.on('connection', (data) => {
-            console.log('SSE 연결 상태:', data);
-            updateSSEConnectionStatus(data.status === 'connected');
-        });
-        
-        // 오류 이벤트 핸들러
-        realtimeUpdatesManager.on('error', (data) => {
-            console.error('SSE 오류:', data);
-            showToast('실시간 업데이트 연결에 문제가 발생했습니다.', 'error');
-            
-            // 연결 실패 시 주기적으로 수동 새로고침 실행
-            setTimeout(() => {
-                if (!realtimeUpdatesManager.isConnected) {
-                    console.warn('SSE 연결이 여전히 끊어져 있음. 수동 새로고침 실행');
-                    loadOpenOrders();  // 주문 목록 새로고침
-                    loadPositionsData(); // 포지션 목록 새로고침
-                }
-            }, 10000); // 10초 후 확인
-        });
-        
-        // SSE 연결 시도 전 URL 확인
-        console.info('SSE URL:', '/api/events/stream');
-        
-        // SSE 연결 시작
-        realtimeUpdatesManager.connect();
-        
-        console.info('실시간 업데이트 초기화 완료');
-        
-    } catch (error) {
-        console.error('실시간 업데이트 초기화 실패:', error);
-    }
-}
+// Legacy RealtimeUpdatesManager code has been removed.
+// Real-time updates are now handled by:
+// - SSEManager: for SSE connection management
+// - RealtimePositionsManager: for position updates
+// - RealtimeOpenOrdersManager: for order updates
+// - PositionPriceManager: for WebSocket price updates
 
 // disconnectRealtimeUpdates is now handled by SSEManager
 
