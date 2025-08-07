@@ -38,7 +38,7 @@ if config is None:
     print("Using fallback config...")
     class DefaultConfig:
         SECRET_KEY = 'dev-secret-key-change-in-production'
-        SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///trading_system.db')
+        SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'postgresql://trader:password123@localhost:5432/trading_system')
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         SQLALCHEMY_ENGINE_OPTIONS = {
             'pool_size': 10,

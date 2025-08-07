@@ -43,8 +43,7 @@
 │         ▼                                                           │
 │  ┌──────────────┐                                                  │
 │  │   Database   │                                                  │
-│  │   (SQLite/   │                                                  │
-│  │  PostgreSQL) │                                                  │
+│  │ (PostgreSQL) │                                                  │
 │  └──────────────┘                                                  │
 └─────────────────────────────────────────────────────────────────────┘
                           │
@@ -294,7 +293,7 @@ Browser → Position Route → Position Service → Exchange Service → Exchang
 ## 개발 및 배포
 
 ### 개발 환경
-- **로컬 개발**: SQLite, Flask 개발 서버
+- **로컬 개발**: PostgreSQL, Flask 개발 서버
 - **테스트**: pytest, 격리된 테스트 DB
 - **디버깅**: Flask 디버그 모드
 

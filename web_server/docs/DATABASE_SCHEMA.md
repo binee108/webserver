@@ -2,7 +2,7 @@
 
 ## 개요
 
-암호화폐 자동 거래 시스템의 데이터베이스는 SQLAlchemy ORM을 사용하여 구성되어 있습니다. 개발 환경에서는 SQLite를, 프로덕션 환경에서는 PostgreSQL 또는 MySQL을 사용할 수 있도록 설계되었습니다.
+암호화폐 자동 거래 시스템의 데이터베이스는 SQLAlchemy ORM을 사용하여 구성되어 있습니다. 모든 환경에서 PostgreSQL을 사용하도록 설계되었습니다.
 
 ## 테이블 구조
 
@@ -289,13 +289,7 @@ flask db downgrade
 
 ## 백업 및 복구
 
-### 1. SQLite 백업
-```bash
-# 데이터베이스 파일 복사
-cp instance/trading_system.db backup/trading_system_$(date +%Y%m%d).db
-```
-
-### 2. PostgreSQL 백업
+### 1. PostgreSQL 백업
 ```bash
 # 전체 백업
 pg_dump -U username -d database_name > backup.sql
@@ -304,7 +298,7 @@ pg_dump -U username -d database_name > backup.sql
 pg_dump -U username -d database_name -t table_name > table_backup.sql
 ```
 
-### 3. 복구
+### 2. 복구
 ```bash
 # PostgreSQL 복구
 psql -U username -d database_name < backup.sql

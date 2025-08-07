@@ -6,7 +6,7 @@ load_dotenv()
 class Config:
     """기본 설정 클래스"""
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///trading_system.db'
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'postgresql://trader:password123@localhost:5432/trading_system'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # PostgreSQL 커넥션 풀링 설정
@@ -64,7 +64,7 @@ class ProductionConfig(Config):
 class TestingConfig(Config):
     """테스트 환경 설정"""
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///test.db'
+    SQLALCHEMY_DATABASE_URI = 'postgresql://trader:password123@localhost:5432/trading_test'
     WTF_CSRF_ENABLED = False
 
 config = {

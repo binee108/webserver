@@ -79,7 +79,7 @@
 
 ### Backend
 - **Framework**: Flask 2.3.3
-- **Database**: SQLAlchemy, SQLite (개발), PostgreSQL/MySQL (프로덕션)
+- **Database**: SQLAlchemy, PostgreSQL
 - **Authentication**: Flask-Login
 - **Scheduler**: APScheduler
 - **Exchange API**: CCXT 4.1.64

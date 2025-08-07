@@ -77,9 +77,8 @@ FLASK_APP=app.py
 FLASK_ENV=development  # production으로 변경 시 프로덕션 모드
 SECRET_KEY=your-secret-key-here  # 강력한 랜덤 키로 변경 필수!
 
-# 데이터베이스 설정
-DATABASE_URL=sqlite:///instance/trading_system.db  # 개발용
-# DATABASE_URL=postgresql://user:password@localhost/dbname  # 프로덕션용
+# 데이터베이스 설정 (PostgreSQL 필수)
+DATABASE_URL=postgresql://trader:password123@localhost:5432/trading_system
 
 # Telegram 봇 설정 (선택사항)
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
@@ -280,12 +279,11 @@ pip install -r requirements.txt --force-reinstall
 
 ### 2. 데이터베이스 연결 오류
 ```bash
-# SQLite 권한 확인
-chmod 664 instance/trading_system.db
-chmod 775 instance/
-
 # PostgreSQL 연결 확인
-psql -U trading_user -d trading_db -h localhost
+psql -U trader -d trading_system -h localhost
+
+# PostgreSQL 서비스 상태 확인
+sudo systemctl status postgresql
 ```
 
 ### 3. 포트 충돌
