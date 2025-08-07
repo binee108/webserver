@@ -146,7 +146,6 @@ def register():
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '')
         password_confirm = request.form.get('password_confirm', '')
-        telegram_id = request.form.get('telegram_id', '').strip()
         
         # 입력 검증
         if not all([username, email, password, password_confirm]):
@@ -174,7 +173,6 @@ def register():
         user = User(
             username=username,
             email=email,
-            telegram_id=telegram_id if telegram_id else None,
             is_active=False  # 관리자 승인 필요
         )
         user.set_password(password)

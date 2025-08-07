@@ -5,26 +5,25 @@
 {% block content %}
 <div class="space-y-8">
     <!-- 페이지 헤더 -->
-    <div class="page-header">
+    <div class="page-header bg-gradient-to-r from-blue-600 to-purple-600">
         <div class="header-content">
             <div class="header-info">
-                <div class="header-icon">
-                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
-                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                <div class="header-icon bg-white/20">
+                    <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 496 512">
+                        <path d="M248,8C111.033,8,0,119.033,0,256S111.033,504,248,504,496,392.967,496,256,384.967,8,248,8ZM362.952,176.66c-3.732,39.215-19.881,134.378-28.1,178.3-3.476,18.584-10.322,24.816-16.948,25.425-14.4,1.326-25.338-9.517-39.287-18.661-21.827-14.308-34.158-23.215-55.346-37.177-24.485-16.135-8.612-25,5.342-39.5,3.652-3.793,67.107-61.51,68.335-66.746.153-.655.3-3.1-1.154-4.384s-3.59-.849-5.135-.5q-3.283.746-104.608,69.142-14.845,10.194-26.894,9.934c-8.855-.191-25.888-5.006-38.551-9.123-15.531-5.048-27.875-7.717-26.8-16.291q.84-6.7,18.45-13.7,108.446-47.248,144.628-62.3c68.872-28.647,83.183-33.623,92.511-33.789,2.052-.034,6.639.474,9.61,2.885a10.452,10.452,0,0,1,3.53,6.716A43.765,43.765,0,0,1,362.952,176.66Z"/>
                     </svg>
                 </div>
                 <div class="header-text">
-                    <h1>{{ user.username }} 텔레그램 설정</h1>
-                    <p>사용자의 텔레그램 알림 설정을 관리합니다.</p>
+                    <h1 class="text-3xl font-bold">{{ user.username }} 텔레그램 설정</h1>
+                    <p class="text-white/80 mt-1">사용자의 텔레그램 알림 설정을 관리합니다.</p>
                 </div>
             </div>
             <div class="header-actions">
-                <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
+                <a href="{{ url_for('admin.users') }}" class="btn btn-white/20 hover:bg-white/30 text-white border-white/30">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                     </svg>
-                    사용자 목록으로 돌아가기
+                    사용자 목록으로
                 </a>
             </div>
         </div>
@@ -32,27 +31,39 @@
 
     <!-- 사용자 정보 카드 -->
     <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">사용자 정보</h3>
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clip-rule="evenodd"/>
+                </svg>
+                사용자 정보
+            </h2>
+            <p class="text-sm text-secondary mt-1">현재 사용자의 기본 정보입니다</p>
         </div>
-        <div class="card-body">
+        <div class="p-6">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                    <div class="text-sm text-muted">사용자명</div>
-                    <div class="font-medium">{{ user.username }}</div>
+                    <label class="text-sm font-medium text-muted">사용자명</label>
+                    <p class="text-lg font-semibold text-primary mt-1">{{ user.username }}</p>
                 </div>
                 <div>
-                    <div class="text-sm text-muted">이메일</div>
-                    <div class="font-medium">{{ user.email or '설정되지 않음' }}</div>
+                    <label class="text-sm font-medium text-muted">이메일</label>
+                    <p class="text-lg font-semibold text-primary mt-1">{{ user.email or '설정되지 않음' }}</p>
                 </div>
                 <div>
-                    <div class="text-sm text-muted">상태</div>
-                    <div>
-                        <span class="badge {{ 'badge-success' if user.is_active else 'badge-error' }}">
+                    <label class="text-sm font-medium text-muted">상태</label>
+                    <div class="mt-1">
+                        <span class="badge {{ 'badge-success' if user.is_active else 'badge-warning' }}">
+                            <div class="w-1.5 h-1.5 {{ 'bg-green-400' if user.is_active else 'bg-yellow-400' }} rounded-full mr-1.5"></div>
                             {{ '활성' if user.is_active else '비활성' }}
                         </span>
                         {% if user.is_admin %}
-                        <span class="badge badge-info ml-2">관리자</span>
+                        <span class="badge badge-accent ml-2">
+                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clip-rule="evenodd"/>
+                            </svg>
+                            관리자
+                        </span>
                         {% endif %}
                     </div>
                 </div>
@@ -61,80 +72,91 @@
     </div>
 
     <!-- 텔레그램 설정 폼 -->
-    <div class="max-w-2xl">
-        <form method="POST" class="space-y-6">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">텔레그램 설정</h3>
-                    <p class="card-description">사용자의 텔레그램 알림 설정을 관리합니다.</p>
-                </div>
-                
-                <div class="card-body space-y-6">
-                    <div class="form-group">
-                        <label for="telegram_id" class="form-label">텔레그램 Chat ID</label>
-                        <div class="relative">
-                            <input type="text" id="telegram_id" name="telegram_id" 
-                                   value="{{ user.telegram_id or '' }}" 
-                                   class="form-input pr-24" 
-                                   placeholder="예: 123456789">
-                            <button type="button" id="testTelegramBtn" 
-                                    onclick="testTelegramConnection({{ user.id }})"
-                                    class="absolute right-2 top-1/2 transform -translate-y-1/2 btn btn-secondary btn-sm"
-                                    {% if not user.telegram_id %}disabled{% endif %}>
-                                테스트
-                            </button>
-                        </div>
-                        <div class="form-help">
-                            <p>사용자의 텔레그램 Chat ID를 설정합니다. 사용자에게 @userinfobot을 통해 ID를 확인하도록 안내하세요.</p>
-                        </div>
-                    </div>
-
-                    <!-- 텔레그램 연결 상태 -->
-                    <div id="telegramStatus" class="hidden">
-                        <div class="alert alert-info">
-                            <div class="flex items-center">
-                                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-                                </svg>
-                                <span id="telegramStatusMessage">텔레그램 연결을 테스트하세요.</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 저장 버튼 -->
-            <div class="flex justify-end space-x-3">
-                <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
-                    취소
-                </a>
-                <button type="submit" class="btn btn-primary">
-                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+    <form method="POST" class="space-y-6">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-blue-500" fill="currentColor" viewBox="0 0 496 512">
+                        <path d="M248,8C111.033,8,0,119.033,0,256S111.033,504,248,504,496,392.967,496,256,384.967,8,248,8ZM362.952,176.66c-3.732,39.215-19.881,134.378-28.1,178.3-3.476,18.584-10.322,24.816-16.948,25.425-14.4,1.326-25.338-9.517-39.287-18.661-21.827-14.308-34.158-23.215-55.346-37.177-24.485-16.135-8.612-25,5.342-39.5,3.652-3.793,67.107-61.51,68.335-66.746.153-.655.3-3.1-1.154-4.384s-3.59-.849-5.135-.5q-3.283.746-104.608,69.142-14.845,10.194-26.894,9.934c-8.855-.191-25.888-5.006-38.551-9.123-15.531-5.048-27.875-7.717-26.8-16.291q.84-6.7,18.45-13.7,108.446-47.248,144.628-62.3c68.872-28.647,83.183-33.623,92.511-33.789,2.052-.034,6.639.474,9.61,2.885a10.452,10.452,0,0,1,3.53,6.716A43.765,43.765,0,0,1,362.952,176.66Z"/>
                     </svg>
-                    저장
-                </button>
+                    텔레그램 설정
+                </h2>
+                <p class="text-sm text-secondary mt-1">사용자의 텔레그램 알림 설정을 관리합니다</p>
             </div>
-        </form>
-    </div>
+            
+            <div class="p-6 space-y-6">
+                <div class="form-group">
+                    <label for="telegram_id" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 Chat ID</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="telegram_id" name="telegram_id" 
+                               value="{{ user.telegram_id or '' }}" 
+                               class="form-input flex-1" 
+                               placeholder="예: 123456789">
+                        <button type="button" id="testTelegramBtn" 
+                                onclick="testTelegramConnection({{ user.id }})"
+                                class="btn btn-info"
+                                {% if not user.telegram_id %}disabled{% endif %}>
+                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            테스트
+                        </button>
+                    </div>
+                    <div class="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
+                        <p class="text-sm text-blue-800 dark:text-blue-300">
+                            <strong>💡 설정 방법:</strong> 사용자에게 텔레그램에서 @userinfobot을 검색하여 대화를 시작하고, /start 명령어를 보내면 받을 수 있는 ID 숫자를 입력하도록 안내하세요.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 텔레그램 연결 상태 -->
+                <div id="telegramStatus" class="hidden"></div>
+            </div>
+        </div>
+
+        <!-- 저장 버튼 -->
+        <div class="flex justify-end gap-3">
+            <a href="{{ url_for('admin.users') }}" class="btn btn-secondary">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                취소
+            </a>
+            <button type="submit" class="btn btn-primary">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                설정 저장
+            </button>
+        </div>
+    </form>
 
     <!-- 관리자 도구 -->
     {% if user.telegram_id %}
     <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">관리자 도구</h3>
-            <p class="card-description">사용자에게 직접 알림을 보내거나 연결을 테스트할 수 있습니다.</p>
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+                </svg>
+                관리자 도구
+            </h2>
+            <p class="text-sm text-secondary mt-1">사용자에게 직접 알림을 보낼 수 있습니다</p>
         </div>
         
-        <div class="card-body space-y-6">
-            <!-- 알림 전송 폼 -->
-            <div class="border rounded-lg p-4">
-                <h4 class="font-medium mb-4">알림 전송</h4>
+        <div class="p-6">
+            <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+                <h3 class="text-lg font-semibold text-primary mb-4 flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                    </svg>
+                    알림 전송
+                </h3>
                 <div class="space-y-4">
                     <div class="form-group">
-                        <label for="notificationTitle" class="form-label">제목</label>
+                        <label for="notificationTitle" class="block text-sm font-medium text-gray-700 mb-2">제목</label>
                         <input type="text" id="notificationTitle" 
                                class="form-input" 
                                placeholder="알림 제목을 입력하세요"
@@ -142,10 +164,10 @@
                     </div>
                     
                     <div class="form-group">
-                        <label for="notificationMessage" class="form-label">메시지</label>
+                        <label for="notificationMessage" class="block text-sm font-medium text-gray-700 mb-2">메시지</label>
                         <textarea id="notificationMessage" 
-                                  class="form-textarea" 
-                                  rows="3"
+                                  class="form-input" 
+                                  rows="4"
                                   placeholder="전송할 메시지를 입력하세요"></textarea>
                     </div>
                     
