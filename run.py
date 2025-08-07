@@ -480,15 +480,38 @@ class TradingSystemManager:
             self.print_status("Docker Desktop을 설치해주세요: https://www.docker.com/get-started", "info")
             return False
         
-        # Docker Compose 설치 확인
+        # Docker Compose 설치 확인 (docker-compose 또는 docker compose)
+        compose_version = None
+        compose_cmd = None
+        
+        # 먼저 'docker compose' (V2) 시도
         try:
-            result = subprocess.run(['docker-compose', '--version'], 
+            result = subprocess.run(['docker', 'compose', 'version'], 
                                   capture_output=True, text=True)
-            if result.returncode != 0:
-                raise subprocess.CalledProcessError(result.returncode, 'docker-compose')
-            self.print_status(f"Docker Compose 확인: {result.stdout.strip()}", "success")
+            if result.returncode == 0:
+                compose_version = result.stdout.strip()
+                compose_cmd = ['docker', 'compose']
         except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        
+        # 'docker compose'가 없으면 'docker-compose' (V1) 시도
+        if not compose_cmd:
+            try:
+                result = subprocess.run(['docker-compose', '--version'], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    compose_version = result.stdout.strip()
+                    compose_cmd = ['docker-compose']
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        
+        if compose_cmd:
+            self.print_status(f"Docker Compose 확인: {compose_version}", "success")
+            # compose_cmd를 인스턴스 변수로 저장
+            self.compose_cmd = compose_cmd
+        else:
             self.print_status("Docker Compose가 설치되지 않았습니다.", "error")
+            self.print_status("Docker Desktop 최신 버전을 설치하거나 docker-compose-plugin을 설치해주세요.", "info")
             return False
         
         # Docker 실행 상태 확인
@@ -508,15 +531,25 @@ class TradingSystemManager:
     def run_command(self, command, cwd=None, show_output=False):
         """명령어 실행"""
         try:
-            if show_output:
-                result = subprocess.run(command, shell=True, cwd=cwd, check=True)
+            # 리스트로 전달된 경우 shell=False로 실행
+            if isinstance(command, list):
+                if show_output:
+                    result = subprocess.run(command, cwd=cwd, check=True)
+                else:
+                    result = subprocess.run(command, cwd=cwd, 
+                                          capture_output=True, text=True, check=True)
             else:
-                result = subprocess.run(command, shell=True, cwd=cwd, 
-                                      capture_output=True, text=True, check=True)
+                # 문자열로 전달된 경우 shell=True로 실행
+                if show_output:
+                    result = subprocess.run(command, shell=True, cwd=cwd, check=True)
+                else:
+                    result = subprocess.run(command, shell=True, cwd=cwd, 
+                                          capture_output=True, text=True, check=True)
             return result
         except subprocess.CalledProcessError as e:
             if not show_output and hasattr(e, 'stderr') and e.stderr:
-                self.print_status(f"명령어 실행 오류: {command}", "error")
+                cmd_str = ' '.join(command) if isinstance(command, list) else command
+                self.print_status(f"명령어 실행 오류: {cmd_str}", "error")
                 self.print_status(f"오류 메시지: {e.stderr.strip()}", "error")
             raise e
     
@@ -526,10 +559,10 @@ class TradingSystemManager:
         
         for attempt in range(max_attempts):
             try:
-                result = subprocess.run([
-                    'docker-compose', 'exec', '-T', 'postgres', 
-                    'pg_isready', '-U', 'trader', '-d', 'trading_system'
-                ], capture_output=True, text=True, cwd=self.root_dir)
+                # compose_cmd 리스트와 추가 명령어를 합침
+                cmd = self.compose_cmd + ['exec', '-T', 'postgres', 
+                                         'pg_isready', '-U', 'trader', '-d', 'trading_system']
+                result = subprocess.run(cmd, capture_output=True, text=True, cwd=self.root_dir)
                 
                 if result.returncode == 0:
                     self.print_status("PostgreSQL 준비 완료!", "success")
@@ -662,7 +695,7 @@ class TradingSystemManager:
         try:
             # 기존 컨테이너 정리
             self.print_status("기존 컨테이너 정리 중...", "info")
-            self.run_command("docker-compose down", cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['down'], cwd=self.root_dir)
             
             # SSL 인증서 생성/확인
             if not self.generate_ssl_certificates():
@@ -670,7 +703,7 @@ class TradingSystemManager:
             
             # PostgreSQL 먼저 시작
             self.print_status("PostgreSQL 데이터베이스 시작 중...", "info")
-            self.run_command("docker-compose up -d postgres", cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['up', '-d', 'postgres'], cwd=self.root_dir)
             
             # PostgreSQL 준비 대기
             if not self.wait_for_postgres():
@@ -678,7 +711,7 @@ class TradingSystemManager:
             
             # Flask 앱 시작
             self.print_status("Flask 애플리케이션 시작 중...", "info")
-            self.run_command("docker-compose up -d app", cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['up', '-d', 'app'], cwd=self.root_dir)
             
             # 앱 준비 대기
             self.print_status("Flask 애플리케이션 준비 대기 중...", "info")
@@ -689,7 +722,7 @@ class TradingSystemManager:
             
             # Nginx 시작 (마지막에)
             self.print_status("Nginx 리버스 프록시 시작 중...", "info")
-            self.run_command("docker-compose up -d nginx", cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['up', '-d', 'nginx'], cwd=self.root_dir)
             
             # 네트워크 정보 수집
             local_ip = self.get_local_ip()
@@ -753,8 +786,12 @@ class TradingSystemManager:
         """시스템 중지"""
         self.print_status("트레이딩 시스템 중지 중...", "info")
         
+        # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
+        if not hasattr(self, 'compose_cmd'):
+            self.check_requirements()
+        
         try:
-            self.run_command("docker-compose down", cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['down'], cwd=self.root_dir)
             self.print_status("시스템이 중지되었습니다.", "success")
             print(f"\n{Colors.BLUE}💡 데이터는 보존되었습니다. 다시 시작하려면 'python run.py start'를 실행하세요.{Colors.RESET}")
             print(f"{Colors.RED}🗑️  모든 데이터를 삭제하려면 'python run.py clean'을 실행하세요.{Colors.RESET}")
@@ -772,10 +809,14 @@ class TradingSystemManager:
     
     def show_logs(self, follow=False):
         """로그 확인"""
+        # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
+        if not hasattr(self, 'compose_cmd'):
+            self.check_requirements()
+        
         try:
-            cmd = "docker-compose logs"
+            cmd = self.compose_cmd + ['logs']
             if follow:
-                cmd += " -f"
+                cmd.append('-f')
             self.run_command(cmd, cwd=self.root_dir, show_output=True)
         except subprocess.CalledProcessError as e:
             self.print_status(f"로그 확인 실패: {e}", "error")
@@ -786,8 +827,12 @@ class TradingSystemManager:
         """시스템 상태 확인"""
         self.print_status("시스템 상태 확인 중...", "info")
         
+        # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
+        if not hasattr(self, 'compose_cmd'):
+            self.check_requirements()
+        
         try:
-            result = self.run_command("docker-compose ps", cwd=self.root_dir)
+            result = self.run_command(self.compose_cmd + ['ps'], cwd=self.root_dir)
             print(f"\n{Colors.CYAN}컨테이너 상태:{Colors.RESET}")
             print(result.stdout)
             
@@ -871,16 +916,20 @@ class TradingSystemManager:
                 self.print_status("작업이 취소되었습니다.", "info")
                 return True
             
+            # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
+            if not hasattr(self, 'compose_cmd'):
+                self.check_requirements()
+            
             # 1. Docker 컨테이너, 볼륨, 이미지 삭제
             self.print_status("Docker 컨테이너, 볼륨, 이미지 삭제 중...", "info")
             try:
-                self.run_command("docker-compose down --rmi all -v", cwd=self.root_dir)
+                self.run_command(self.compose_cmd + ['down', '--rmi', 'all', '-v'], cwd=self.root_dir)
                 self.print_status("Docker 컨테이너, 볼륨, 이미지 삭제 완료", "success")
             except subprocess.CalledProcessError as e:
                 self.print_status(f"Docker 정리 중 일부 오류 발생: {e}", "warning")
                 # 기본 정리라도 시도
                 try:
-                    self.run_command("docker-compose down -v", cwd=self.root_dir)
+                    self.run_command(self.compose_cmd + ['down', '-v'], cwd=self.root_dir)
                     self.print_status("기본 Docker 정리 완료", "success")
                 except subprocess.CalledProcessError:
                     self.print_status("Docker 정리 실패", "error")

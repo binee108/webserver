@@ -14,22 +14,190 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 
 ## 🚀 처음 시작하기 (초보자 가이드)
 
-### 사전 준비사항
+### 📋 사전 준비사항
 
 #### 1. 필수 소프트웨어 설치
+
+##### 🐳 Docker 설치 (필수)
+Docker는 이 시스템을 실행하는데 반드시 필요합니다. OS별로 아래 가이드를 따라 설치해주세요.
+
+**Windows 사용자:**
+1. [Docker Desktop for Windows](https://docs.docker.com/desktop/windows/install/) 다운로드
+2. 시스템 요구사항:
+   - Windows 10 64-bit: Pro, Enterprise, Education (Build 16299 이상)
+   - Windows 11 64-bit
+   - WSL2 Backend 사용 권장
+3. 설치 과정:
+   ```powershell
+   # 1. 다운로드한 Docker Desktop Installer.exe 실행
+   # 2. "Enable WSL 2 Features" 옵션 체크
+   # 3. 설치 완료 후 시스템 재시작
+   
+   # 4. PowerShell에서 설치 확인
+   docker --version
+   docker-compose --version
+   ```
+
+**macOS 사용자:**
+1. [Docker Desktop for Mac](https://docs.docker.com/desktop/mac/install/) 다운로드
+2. 시스템 요구사항:
+   - macOS 11 Big Sur 이상
+   - Apple Silicon (M1/M2) 또는 Intel 칩 지원
+3. 설치 과정:
+   ```bash
+   # 1. Docker.dmg 다운로드 후 실행
+   # 2. Docker 아이콘을 Applications 폴더로 드래그
+   # 3. Applications에서 Docker 실행
+   
+   # 4. 터미널에서 설치 확인
+   docker --version
+   docker-compose --version
+   ```
+
+**Linux 사용자 (Ubuntu/Debian):**
+```bash
+# 1. 이전 버전 제거
+sudo apt-get remove docker docker-engine docker.io containerd runc
+
+# 2. 필수 패키지 설치
+sudo apt-get update
+sudo apt-get install \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+# 3. Docker GPG 키 추가
+sudo mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# 4. Docker 저장소 설정
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 5. Docker Engine 설치
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 6. Docker 서비스 시작
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# 7. 현재 사용자를 docker 그룹에 추가 (sudo 없이 실행)
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 8. 설치 확인
+docker --version
+docker compose version
+```
+
+**Linux 사용자 (CentOS/RHEL/Fedora):**
+```bash
+# 1. 이전 버전 제거
+sudo yum remove docker \
+                docker-client \
+                docker-client-latest \
+                docker-common \
+                docker-latest \
+                docker-latest-logrotate \
+                docker-logrotate \
+                docker-engine
+
+# 2. 필수 패키지 설치
+sudo yum install -y yum-utils
+
+# 3. Docker 저장소 추가
+sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+
+# 4. Docker Engine 설치
+sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 5. Docker 서비스 시작
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# 6. 사용자를 docker 그룹에 추가
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 7. 설치 확인
+docker --version
+docker compose version
+```
+
+##### 🔍 Docker 설치 확인
+모든 OS에서 다음 명령어로 Docker가 정상 설치되었는지 확인:
+```bash
+# Docker 버전 확인
+docker --version
+# 예상 출력: Docker version 24.0.x, build xxxxxxx
+
+# Docker Compose 버전 확인
+docker-compose --version
+# 또는
+docker compose version
+# 예상 출력: Docker Compose version v2.x.x
+
+# Docker 서비스 상태 확인
+docker info
+
+# 테스트 컨테이너 실행
+docker run hello-world
+```
+
+문제가 있다면 아래 "Docker 설치 문제 해결" 섹션을 참조하세요.
+
+##### 기타 필수 소프트웨어
 - **Git**: [https://git-scm.com/downloads](https://git-scm.com/downloads)
-- **Docker Desktop**: 
-  - Windows: [Docker Desktop for Windows](https://docs.docker.com/desktop/windows/install/)
-  - Mac: [Docker Desktop for Mac](https://docs.docker.com/desktop/mac/install/)
-  - Linux: [Docker Engine](https://docs.docker.com/engine/install/)
 - **Python 3.8+**: [https://www.python.org/downloads/](https://www.python.org/downloads/)
 
 #### 2. Docker Desktop 설정 (Windows/Mac)
-1. Docker Desktop 설치 후 실행
-2. Settings → Resources → Advanced
-3. Memory: 최소 4GB 할당
-4. CPUs: 최소 2개 할당
-5. Apply & Restart 클릭
+Docker Desktop 설치 후 다음과 같이 리소스를 설정하세요:
+
+1. Docker Desktop 실행
+2. Settings(⚙️) → Resources → Advanced
+3. 권장 설정:
+   - **Memory**: 최소 4GB, 권장 6GB 이상
+   - **CPUs**: 최소 2개, 권장 4개 이상
+   - **Swap**: 2GB
+   - **Disk image size**: 20GB 이상
+4. Apply & Restart 클릭
+
+#### 3. Docker 설치 문제 해결
+
+**Windows - WSL2 오류:**
+```powershell
+# WSL2 설치
+wsl --install
+
+# WSL2를 기본으로 설정
+wsl --set-default-version 2
+
+# 시스템 재시작 후 Docker Desktop 재실행
+```
+
+**Mac - 권한 오류:**
+```bash
+# Docker 소켓 권한 확인
+ls -la /var/run/docker.sock
+
+# 필요시 권한 수정
+sudo chmod 666 /var/run/docker.sock
+```
+
+**Linux - Docker 데몬 시작 실패:**
+```bash
+# Docker 상태 확인
+sudo systemctl status docker
+
+# Docker 데몬 재시작
+sudo systemctl restart docker
+
+# 부팅 시 자동 시작 설정
+sudo systemctl enable docker
+```
 
 ### 📦 설치 단계별 가이드
 
