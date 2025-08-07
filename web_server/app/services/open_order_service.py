@@ -25,7 +25,7 @@ class OpenOrderManager:
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
                          symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = 'spot', session: Optional[Session] = None) -> OpenOrder:
+                         market_type: str = 'spot', order_type: str = 'LIMIT', session: Optional[Session] = None) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성"""
         current_session = session or self.session
         
@@ -39,7 +39,7 @@ class OpenOrderManager:
                 strategy_account_id=strategy_account_id,
                 exchange_order_id=exchange_order_id,
                 symbol=symbol,
-                side=side,
+                side=side,  # 이미 BUY/SELL로 표준화되어 전달됨
                 quantity=decimal_to_float(quantity),
                 price=decimal_to_float(price),
                 status='OPEN',
@@ -50,8 +50,8 @@ class OpenOrderManager:
             logger.info(f"📋 OpenOrder 레코드 생성 - 주문ID: {exchange_order_id}, "
                        f"심볼: {symbol}, 수량: {quantity}, 가격: {price}")
             
-            # 주문 생성 이벤트 발송
-            self._emit_order_event(open_order, 'order_created', current_session)
+            # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
+            logger.info(f"📋 {order_type} 주문 생성 완료: {exchange_order_id} (SSE는 중앙 처리)")
             
             return open_order
             
@@ -105,8 +105,7 @@ class OpenOrderManager:
             # 3. 포지션 업데이트
             self._update_position_from_fill(order, filled_quantity, average_price, current_session)
             
-            # 4. 주문 체결 이벤트 발송
-            self._emit_order_event(order, 'order_filled', current_session)
+            # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
             
             logger.info(f"✅ 주문 체결 처리 완료 - ID: {order.exchange_order_id}")
             return True
@@ -115,44 +114,7 @@ class OpenOrderManager:
             logger.error(f"주문 체결 처리 실패 - ID: {order.exchange_order_id}, 오류: {str(e)}")
             return False
     
-    def _emit_order_event(self, order: OpenOrder, event_type: str, session: Optional[Session] = None):
-        """주문 이벤트 발송 헬퍼"""
-        try:
-            logger.info(f"🚀 주문 이벤트 발송 시작 (open_order_service) - 주문ID: {order.id}, 타입: {event_type}")
-            from app.services.event_service import event_service, OrderEvent
-            
-            current_session = session or self.session
-            if current_session is None:
-                from app import db
-                current_session = db.session
-            
-            # Strategy 정보 조회
-            strategy_account = current_session.get(StrategyAccount, order.strategy_account_id)
-            if not strategy_account or not strategy_account.strategy:
-                logger.warning(f"⚠️ 전략 정보 없음 (open_order_service) - 전략계좌ID: {order.strategy_account_id}")
-                return
-            
-            strategy = strategy_account.strategy
-            
-            # 이벤트 생성 및 발송
-            order_event = OrderEvent(
-                event_type=event_type,
-                order_id=order.exchange_order_id,
-                symbol=order.symbol,
-                strategy_id=strategy.id,
-                user_id=strategy.user_id,
-                side=order.side,
-                quantity=order.quantity,
-                price=order.price,
-                status=order.status,
-                timestamp=datetime.utcnow().isoformat()
-            )
-            
-            event_service.emit_order_event(order_event)
-            logger.info(f"✅ 주문 이벤트 발송 완료 (open_order_service): {event_type} - {order.symbol}, 사용자: {strategy.user_id}")
-            
-        except Exception as e:
-            logger.warning(f"주문 이벤트 발송 실패: {str(e)}")
+    # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
     
     def mark_order_cancelled(self, order: OpenOrder, session: Optional[Session] = None) -> bool:
         """주문을 취소 상태로 마킹"""
@@ -309,10 +271,10 @@ class OpenOrderManager:
         if position and filled_quantity > 0:
             current_entry_price = to_decimal(position.entry_price)
             
-            if order.side in ['sell', 'short'] and current_position_qty > 0:
+            if order.side == 'SELL' and current_position_qty > 0:
                 close_quantity = min(filled_quantity, current_position_qty)
                 realized_pnl = close_quantity * (average_price - current_entry_price)
-            elif order.side in ['buy', 'long'] and current_position_qty < 0:
+            elif order.side == 'BUY' and current_position_qty < 0:
                 close_quantity = min(filled_quantity, abs(current_position_qty))
                 realized_pnl = close_quantity * (current_entry_price - average_price)
         

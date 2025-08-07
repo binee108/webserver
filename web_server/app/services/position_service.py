@@ -28,35 +28,7 @@ class PositionService:
     def __init__(self):
         self.session = db.session
     
-    def _emit_position_event(self, position: StrategyPosition, event_type: str):
-        """포지션 이벤트 발송 헬퍼"""
-        try:
-            from app.services.event_service import event_service, PositionEvent
-            
-            # Strategy 정보 조회
-            strategy_account = self.session.get(StrategyAccount, position.strategy_account_id)
-            if not strategy_account or not strategy_account.strategy:
-                return
-            
-            strategy = strategy_account.strategy
-            
-            # 이벤트 생성 및 발송
-            position_event = PositionEvent(
-                event_type=event_type,
-                position_id=position.id,
-                symbol=position.symbol,
-                strategy_id=strategy.id,
-                user_id=strategy.user_id,
-                quantity=position.quantity,
-                entry_price=position.entry_price,
-                timestamp=datetime.utcnow().isoformat()
-            )
-            
-            event_service.emit_position_event(position_event)
-            logger.debug(f"포지션 이벤트 발송: {event_type} - {position.symbol}")
-            
-        except Exception as e:
-            logger.warning(f"포지션 이벤트 발송 실패: {str(e)}")
+    # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
     
     def update_position(self, position: StrategyPosition, side: str, quantity: Decimal, price: Decimal):
         """포지션 업데이트 (평균가 계산 포함)"""
@@ -71,7 +43,7 @@ class PositionService:
         # 이전 수량 저장 (이벤트 판단용)
         previous_qty = current_qty
         
-        if side in ['buy', 'long']:
+        if side.upper() == 'BUY':
             if current_qty >= 0:
                 # 롱 포지션 추가 - 가중평균 계산
                 if current_qty == 0:
@@ -105,7 +77,7 @@ class PositionService:
                     new_qty = current_qty + quantity  # 음수에서 0에 가까워짐
                     position.quantity = decimal_to_float(new_qty)
         
-        elif side in ['sell', 'short']:
+        elif side.upper() == 'SELL':
             if current_qty <= 0:
                 # 숏 포지션 추가 - 가중평균 계산
                 if current_qty == 0:
@@ -145,15 +117,9 @@ class PositionService:
         logger.info(f"포지션 업데이트 완료 - 심볼: {position.symbol}, "
                    f"최종 포지션: {position.quantity}, 최종 평균가: {position.entry_price}")
         
-        # 실시간 이벤트 발송
+        # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
         final_qty = to_decimal(position.quantity)
-        
-        # 포지션 변화가 있는 경우에만 이벤트 발송
-        if abs(previous_qty - final_qty) > Decimal('0.00000001'):
-            if final_qty == 0:
-                self._emit_position_event(position, 'position_closed')
-            else:
-                self._emit_position_event(position, 'position_updated')
+        logger.debug(f"포지션 업데이트 완료, SSE는 중앙 처리: {position.symbol}, 수량: {final_qty}")
     
     def update_position_from_order(self, order, strategy_account: StrategyAccount, 
                                   filled_quantity: Decimal, average_price: Decimal,
@@ -213,10 +179,10 @@ class PositionService:
             
             if current_qty > 0:
                 # 롱 포지션 청산 (SELL)
-                side = 'sell'
+                side = 'SELL'
             else:
                 # 숏 포지션 청산 (BUY)
-                side = 'buy'
+                side = 'BUY'
             
             # 청산 실행 전 상세 로깅
             market_type = strategy_account.strategy.market_type.upper()
@@ -494,8 +460,7 @@ class PositionService:
                 self.session.commit()
                 logger.info(f'포지션 청산 및 커밋 완료: 포지션 ID {position_id}')
                 
-                # 청산 이벤트 발송 (포지션이 0이 된 후)
-                self._emit_position_event(position, 'position_closed')
+                # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
             else:
                 # 실패시 롤백
                 self.session.rollback()
@@ -752,7 +717,7 @@ class PositionService:
                 account = strategy_account.account
                 
                 qty = to_decimal(order.quantity)
-                if order.side.lower() in ['buy', 'long']:
+                if order.side.upper() == 'BUY':
                     total_buy_orders += qty
                 else:
                     total_sell_orders += qty

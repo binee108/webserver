@@ -19,8 +19,6 @@ class BinanceWebSocket extends WebSocketManager {
         });
         
         this.marketType = marketType;
-        this.priceCallbacks = new Map();
-        this.subscribedSymbols = new Set();
         
         // Use logger if available, fallback to console
         this.log = window.logger || console;
@@ -65,25 +63,25 @@ class BinanceWebSocket extends WebSocketManager {
         }
     }
     
-    subscribeToPrice(symbol, callback) {
+    /**
+     * Subscribe to price updates (unified interface)
+     * Overrides base class method
+     */
+    subscribePrice(symbol, callback) {
         // Normalize symbol for Binance (uppercase, no separator)
         const normalizedSymbol = this.normalizeSymbol(symbol);
         
         // Check if already subscribed
         if (this.subscribedSymbols.has(normalizedSymbol)) {
-            this.log.warn(`Binance ${this.marketType}: Symbol ${normalizedSymbol} already subscribed, skipping duplicate`);
+            this.log.warn(`Binance ${this.marketType}: Symbol ${normalizedSymbol} already subscribed`);
             return normalizedSymbol;
         }
         
         this.log.debug(`Subscribing to Binance ${this.marketType} price for ${normalizedSymbol}`);
         
-        // Register callback
+        // Register callback and track subscription
         this.priceCallbacks.set(normalizedSymbol, callback);
         this.subscribedSymbols.add(normalizedSymbol);
-        
-        // Update parent class subscriptions for proper tracking
-        const subscriptionKey = `ticker:${normalizedSymbol}`;
-        this.subscriptions.set(subscriptionKey, callback);
         
         // Binance all-ticker stream includes all symbols automatically
         // No need to send specific subscription message
@@ -93,26 +91,72 @@ class BinanceWebSocket extends WebSocketManager {
         return normalizedSymbol;
     }
     
-    unsubscribeFromPrice(symbol) {
+    /**
+     * Unsubscribe from price updates (unified interface)
+     * Overrides base class method
+     */
+    unsubscribePrice(symbol) {
         const normalizedSymbol = this.normalizeSymbol(symbol);
+        
+        if (!this.subscribedSymbols.has(normalizedSymbol)) {
+            this.log.warn(`Binance ${this.marketType}: Cannot unsubscribe ${normalizedSymbol} - not subscribed`);
+            return false;
+        }
         
         this.log.debug(`Unsubscribing from Binance ${this.marketType} price for ${normalizedSymbol}`);
         
+        // Remove callback and tracking
         this.priceCallbacks.delete(normalizedSymbol);
         this.subscribedSymbols.delete(normalizedSymbol);
         
-        // Update parent class subscriptions
-        const subscriptionKey = `ticker:${normalizedSymbol}`;
-        this.subscriptions.delete(subscriptionKey);
+        // Binance all-ticker stream - no need to send unsubscribe message
+        
+        this.log.debug(`Binance ${this.marketType} unsubscribed from ${normalizedSymbol} (remaining: ${this.subscribedSymbols.size})`);
+        return true;
     }
     
+    /**
+     * @deprecated Use subscribePrice() instead
+     */
+    subscribeToPrice(symbol, callback) {
+        return this.subscribePrice(symbol, callback);
+    }
+    
+    /**
+     * @deprecated Use unsubscribePrice() instead
+     */
+    unsubscribeFromPrice(symbol) {
+        return this.unsubscribePrice(symbol);
+    }
+    
+    /**
+     * Normalize symbol for Binance format
+     * Overrides base class method
+     */
     normalizeSymbol(symbol) {
         // Convert various formats to Binance format
         // e.g., "BTC/USDT" -> "BTCUSDT", "BTC-USDT" -> "BTCUSDT"
         return symbol.replace(/[\/\-_]/g, '').toUpperCase();
     }
     
-    // Override subscription methods (not used for all-ticker stream)
+    /**
+     * Send price subscription message
+     * Overrides base class method
+     */
+    sendPriceSubscription(normalizedSymbol) {
+        // Binance all-ticker stream includes all symbols automatically
+        // No need to send specific subscription message
+    }
+    
+    /**
+     * Send price unsubscription message
+     * Overrides base class method
+     */
+    sendPriceUnsubscription(normalizedSymbol) {
+        // Binance all-ticker stream - no need to send unsubscribe message
+    }
+    
+    // Override old subscription methods (not used for all-ticker stream)
     sendSubscription(channel, symbol) {
         // Not needed for all-ticker stream
     }
@@ -121,12 +165,10 @@ class BinanceWebSocket extends WebSocketManager {
         // Not needed for all-ticker stream
     }
     
-    // Get current subscribed symbols
-    getSubscribedSymbols() {
-        return Array.from(this.subscribedSymbols);
-    }
-    
-    // Check if symbol is subscribed
+    /**
+     * Check if symbol is subscribed
+     * Overrides base class method
+     */
     isSubscribed(symbol) {
         const normalizedSymbol = this.normalizeSymbol(symbol);
         return this.subscribedSymbols.has(normalizedSymbol);
@@ -141,4 +183,7 @@ function createBinanceWebSocket(marketType = 'spot', options = {}) {
         marketType: marketType,
         ...options
     });
-} 
+}
+
+// Export to global scope
+window.BinanceWebSocket = BinanceWebSocket; 

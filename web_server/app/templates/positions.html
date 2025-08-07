@@ -3,19 +3,32 @@
 {% block title %}포지션 관리 - {{ strategy.name }} - 트레이딩 자동화 시스템{% endblock %}
 
 {% block head %}
+<!-- Position-specific CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/positions.css') }}">
 <!-- Real-time position CSS -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/position-realtime.css') }}">
 
 <!-- Logger utility -->
 <script src="{{ url_for('static', filename='js/logger.js') }}"></script>
-<!-- WebSocket scripts for real-time price updates -->
-<script src="{{ url_for('static', filename='js/websocket-manager.js') }}"></script>
-<script src="{{ url_for('static', filename='js/exchanges/binance-websocket.js') }}"></script>
-<script src="{{ url_for('static', filename='js/exchanges/bybit-websocket.js') }}"></script>
-<script src="{{ url_for('static', filename='js/exchanges/okx-websocket.js') }}"></script>
-<script src="{{ url_for('static', filename='js/position-realtime-manager.js') }}"></script>
-<!-- Real-time updates via SSE -->
-<script src="{{ url_for('static', filename='js/realtime-updates.js') }}"></script>
+
+<!-- Core utilities -->
+<script src="{{ url_for('static', filename='js/positions/realtime-core.js') }}"></script>
+
+<!-- WebSocket infrastructure -->
+<script src="{{ url_for('static', filename='js/positions/websocket-manager.js') }}"></script>
+<script src="{{ url_for('static', filename='js/positions/exchanges/binance-websocket.js') }}"></script>
+<script src="{{ url_for('static', filename='js/positions/exchanges/bybit-websocket.js') }}"></script>
+<script src="{{ url_for('static', filename='js/positions/exchanges/okx-websocket.js') }}"></script>
+
+<!-- SSE Manager -->
+<script src="{{ url_for('static', filename='js/positions/sse-manager.js') }}"></script>
+
+<!-- Real-time managers -->
+<script src="{{ url_for('static', filename='js/positions/realtime-positions.js') }}"></script>
+<script src="{{ url_for('static', filename='js/positions/realtime-openorders.js') }}"></script>
+<script src="{{ url_for('static', filename='js/positions/position-price-manager.js') }}"></script>
+
+<!-- Legacy support is now handled by position-price-manager.js -->
 {% endblock %}
 
 {% block content %}
@@ -129,35 +142,34 @@
             <p class="text-sm text-muted mt-1">전략의 모든 계좌에서 보유 중인 포지션을 확인하세요.</p>
         </div>
         <div class="p-6">
-            {% if positions %}
-                <div class="overflow-x-auto">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>계좌</th>
-                                <th>심볼</th>
-                                <th>포지션</th>
-                                <th>수량</th>
-                                <th>진입가격</th>
-                                <th>현재가격</th>
-                                <th>미실현 PnL</th>
-                                <th>업데이트</th>
-                                <th>액션</th>
-                            </tr>
-                        </thead>
-                        <tbody>
+            <!-- 항상 테이블 구조를 유지 -->
+            <div class="overflow-x-auto">
+                <table id="positionsTable" class="table">
+                    <thead>
+                        <tr>
+                            <th>계좌</th>
+                            <th>심볼</th>
+                            <th>방향</th>
+                            <th>수량</th>
+                            <th>진입가격</th>
+                            <th>현재가격</th>
+                            <th>미실현 PnL</th>
+                            <th>업데이트</th>
+                            <th>액션</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if positions %}
                             {% for position in positions %}
                             <tr class="position-row" data-position-id="{{ position.id }}">
                                 <td>
-                                    <div class="flex items-center">
-                                        <div class="flex-shrink-0 h-8 w-8">
-                                            <div class="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                                <span class="text-xs font-bold text-info">{{ position.account.exchange.upper()[:1] if position.account else 'N' }}</span>
-                                            </div>
+                                    <div class="account-info">
+                                        <div class="account-avatar">
+                                            <span>{{ position.account.exchange.upper()[:1] if position.account else 'N' }}</span>
                                         </div>
-                                        <div class="ml-3">
-                                            <div class="text-sm font-medium text-primary">{{ position.account.name if position.account else 'Unknown' }}</div>
-                                            <div class="text-sm text-muted">{{ position.account.exchange.title() if position.account else 'Unknown' }}</div>
+                                        <div class="account-details">
+                                            <div class="account-name">{{ position.account.name if position.account else 'Unknown' }}</div>
+                                            <div class="account-exchange">{{ position.account.exchange.title() if position.account else 'Unknown' }}</div>
                                         </div>
                                     </div>
                                 </td>
@@ -170,18 +182,18 @@
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
                                             </svg>
-                                            롱
+                                            LONG
                                         </span>
                                     {% elif position.quantity < 0 %}
                                         <span class="badge badge-error">
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
                                             </svg>
-                                            숏
+                                            SHORT
                                         </span>
                                     {% else %}
                                         <span class="badge badge-secondary">
-                                            평평
+                                            FLAT
                                         </span>
                                     {% endif %}
                                 </td>
@@ -214,27 +226,23 @@
                                 </td>
                             </tr>
                             {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <div class="text-center py-16">
-                    <div class="mx-auto w-24 h-24 bg-gradient-to-r from-purple-100 to-blue-100 rounded-full flex items-center justify-center mb-6">
-                        <svg class="w-12 h-12 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-xl font-semibold text-primary mb-2">현재 포지션이 없습니다</h3>
-                    <p class="text-muted mb-6">이 전략에서 보유 중인 포지션이 없습니다.</p>
-                    <a href="{{ url_for('main.strategies') }}" 
-                       class="btn btn-primary">
-                        <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-                        </svg>
-                        전략 목록으로 돌아가기
-                    </a>
-                </div>
-            {% endif %}
+                        {% else %}
+                            <!-- 포지션이 없을 때 tbody 안에 빈 상태 메시지 표시 -->
+                            <tr class="empty-positions-row">
+                                <td colspan="9">
+                                    <div class="empty-state" style="padding: 2rem 1rem;">
+                                        <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                        </svg>
+                                        <h3>현재 포지션이 없습니다</h3>
+                                        <p>이 전략에서 보유 중인 포지션이 없습니다.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -340,36 +348,119 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 }
 
-// 포지션 새로고침
+// 포지션 새로고침 - API를 통한 동적 업데이트
 function refreshPositions() {
-    location.reload();
+    loadPositionsData();
+}
+
+// 포지션 데이터 로드
+async function loadPositionsData() {
+    try {
+        const strategyId = getStrategyIdFromUrl();
+        if (!strategyId) {
+            console.error('전략 ID를 찾을 수 없습니다.');
+            return;
+        }
+        
+        const response = await fetch(`/api/strategies/${strategyId}/positions`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+            updatePositionTable(data.positions);
+            console.info('포지션 데이터 로드 완료:', data.positions.length + '개');
+        } else {
+            throw new Error(data.error || '포지션 데이터 로드 실패');
+        }
+        
+    } catch (error) {
+        console.error('포지션 데이터 로드 실패:', error);
+        showToast('포지션 데이터를 불러오는데 실패했습니다.', 'error');
+    }
+}
+
+// URL에서 전략 ID 추출
+function getStrategyIdFromUrl() {
+    const pathParts = window.location.pathname.split('/');
+    const strategiesIndex = pathParts.indexOf('strategies');
+    if (strategiesIndex !== -1 && pathParts[strategiesIndex + 1]) {
+        return parseInt(pathParts[strategiesIndex + 1]);
+    }
+    return null;
+}
+
+// 포지션 테이블 업데이트
+function updatePositionTable(positions) {
+    const positionTable = document.querySelector('#positionsTable tbody');
+    if (!positionTable) return;
+    
+    // 기존 포지션 행들 제거 (빈 상태 행 제외)
+    const existingRows = positionTable.querySelectorAll('tr[data-position-id]');
+    existingRows.forEach(row => row.remove());
+    
+    if (!positions || positions.length === 0) {
+        // Use new manager if available
+        const manager = window.getRealtimePositionsManager ? window.getRealtimePositionsManager() : null;
+        if (manager && manager.showEmptyPositionsState) {
+            manager.showEmptyPositionsState();
+        }
+        if (manager && manager.updatePositionStats) {
+            manager.updatePositionStats();
+        }
+        return;
+    }
+    
+    // Remove empty state
+    const emptyRow = positionTable.querySelector('.empty-positions-row');
+    if (emptyRow) {
+        emptyRow.remove();
+    }
+    
+    // Add new position rows
+    positions.forEach(position => {
+        const manager = window.getRealtimePositionsManager ? window.getRealtimePositionsManager() : null;
+        if (manager && manager.upsertPosition) {
+            manager.upsertPosition(position);
+        }
+    });
+    
+    // Update stats
+    const manager = window.getRealtimePositionsManager ? window.getRealtimePositionsManager() : null;
+    if (manager && manager.updatePositionStats) {
+        manager.updatePositionStats();
+    }
+    
+    console.info('포지션 테이블 업데이트 완료:', positions.length + '개');
 }
 
 // 열린 주문 새로고침
 async function refreshOpenOrders() {
-    await loadOpenOrders();
+    // Use new manager if available
+    const manager = window.getRealtimeOpenOrdersManager ? window.getRealtimeOpenOrdersManager() : null;
+    if (manager && manager.loadOpenOrders) {
+        await manager.loadOpenOrders();
+    }
 }
 
 // 열린 주문 로드
 async function loadOpenOrders() {
-    try {
-        const response = await fetch('/api/open-orders');
-        const data = await response.json();
-        
-        if (data.success) {
-            renderOpenOrders(data.open_orders);
-            updateOpenOrdersCount(data.total_count);
-        } else {
-            showOpenOrdersError('데이터 로딩 실패: ' + data.error);
-        }
-    } catch (error) {
-        console.error('Error loading open orders:', error);
-        showOpenOrdersError('열린 주문을 불러오는 중 오류가 발생했습니다.');
+    // Use new manager if available
+    const manager = window.getRealtimeOpenOrdersManager ? window.getRealtimeOpenOrdersManager() : null;
+    if (manager && manager.loadOpenOrders) {
+        await manager.loadOpenOrders();
     }
 }
 
 // 열린 주문 개수 업데이트
 function updateOpenOrdersCount(count) {
+    // count가 제공되지 않으면 현재 테이블에서 계산
+    if (count === undefined) {
+        const orderRows = document.querySelectorAll('tr[data-order-id]');
+        count = orderRows.length;
+    }
+    
     const countElement = document.getElementById('open-orders-count');
     if (countElement) {
         countElement.textContent = count + '개';
@@ -377,129 +468,43 @@ function updateOpenOrdersCount(count) {
     }
 }
 
-// 열린 주문 렌더링
-function renderOpenOrders(orders) {
-    const container = document.getElementById('open-orders-content');
-    
-    if (!orders || orders.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-16">
-                <div class="mx-auto w-24 h-24 bg-gradient-to-r from-yellow-100 to-orange-100 rounded-full flex items-center justify-center mb-6">
-                    <svg class="w-12 h-12 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                </div>
-                <h3 class="text-xl font-semibold text-primary mb-2">열린 주문이 없습니다</h3>
-                <p class="text-muted">현재 대기 중인 주문이 없습니다.</p>
-            </div>
-        `;
-        return;
-    }
-    
+// addNewOrderRow is now handled by RealtimeOpenOrdersManager
+
+// removeOrderRow is now handled by RealtimeOpenOrdersManager
+
+// 주문 테이블 생성
+function createOrderTable(container) {
     const tableHtml = `
         <div class="overflow-x-auto">
-            <table class="table">
+            <table id="openOrdersTable" class="table">
                 <thead>
                     <tr>
                         <th>계좌</th>
                         <th>심볼</th>
-                        <th>주문유형</th>
+                        <th>주문방향</th>
                         <th>수량</th>
-                        <th>가격</th>
-                        <th>체결수량</th>
+                        <th>주문가격</th>
                         <th>상태</th>
-                        <th>생성시간</th>
                         <th>액션</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${orders.map(order => `
-                        <tr class="order-row" data-order-id="${order.exchange_order_id}">
-                            <td>
-                                <div class="flex items-center">
-                                    <div class="flex-shrink-0 h-8 w-8">
-                                        <div class="h-8 w-8 bg-yellow-100 rounded-full flex items-center justify-center">
-                                            <span class="text-xs font-bold text-warning">${order.account.exchange.toUpperCase().charAt(0)}</span>
-                                        </div>
-                                    </div>
-                                    <div class="ml-3">
-                                        <div class="text-sm font-medium text-primary">${order.account.name}</div>
-                                        <div class="text-sm text-muted">${order.account.exchange.toUpperCase()}</div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="text-sm font-medium text-primary">${order.symbol}</div>
-                            </td>
-                            <td>
-                                <span class="badge ${order.side.toLowerCase() === 'buy' ? 'badge-success' : 'badge-error'}">
-                                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                        ${order.side.toLowerCase() === 'buy' 
-                                            ? '<path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>'
-                                            : '<path fill-rule="evenodd" d="M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 112 0v11.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>'
-                                        }
-                                    </svg>
-                                    ${order.side.toUpperCase()}
-                                </span>
-                            </td>
-                            <td class="text-sm text-primary">
-                                ${parseFloat(order.quantity).toLocaleString()}
-                            </td>
-                            <td class="text-sm text-primary">
-                                $${parseFloat(order.price).toLocaleString()}
-                            </td>
-                            <td class="text-sm text-primary">
-                                ${parseFloat(order.filled_quantity).toLocaleString()}
-                            </td>
-                            <td>
-                                <span class="badge badge-warning realtime-status">${order.status}</span>
-                            </td>
-                            <td class="text-sm text-muted">
-                                ${new Date(order.created_at).toLocaleString()}
-                            </td>
-                            <td>
-                                <button data-order-id="${order.exchange_order_id}" data-symbol="${order.symbol}" 
-                                        class="cancel-order-btn btn btn-warning btn-sm">
-                                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
-                                    취소
-                                </button>
-                            </td>
-                        </tr>
-                    `).join('')}
                 </tbody>
             </table>
         </div>
     `;
-    
     container.innerHTML = tableHtml;
-    
-    // 취소 버튼 이벤트 리스너 추가
-    container.querySelectorAll('.cancel-order-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const orderId = this.getAttribute('data-order-id');
-            const symbol = this.getAttribute('data-symbol');
-            cancelOpenOrder(orderId, symbol);
-        });
-    });
 }
 
-// 열린 주문 오류 표시
-function showOpenOrdersError(message) {
-    const container = document.getElementById('open-orders-content');
-    container.innerHTML = `
-        <div class="text-center py-8">
-            <div class="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
-                <svg class="w-8 h-8 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-            </div>
-            <p class="text-error">${message}</p>
-            <button onclick="loadOpenOrders()" class="btn btn-primary btn-sm mt-3">다시 시도</button>
-        </div>
-    `;
-}
+// createOrderRow is now handled by RealtimeOpenOrdersManager
+
+// showEmptyOrdersState is now handled by RealtimeOpenOrdersManager
+
+// removeEmptyOrdersState is now handled by RealtimeOpenOrdersManager
+
+// renderOpenOrders is now handled by RealtimeOpenOrdersManager
+
+// showOpenOrdersError is now handled by RealtimeOpenOrdersManager
 
 // 개별 주문 취소
 async function cancelOpenOrder(orderId, symbol) {
@@ -518,13 +523,13 @@ async function cancelOpenOrder(orderId, symbol) {
         const data = await response.json();
         
         if (data.success) {
-            alert('주문이 성공적으로 취소되었습니다.');
-            await loadOpenOrders();
+            showToast('주문이 성공적으로 취소되었습니다.', 'success');
+            // SSE를 통해 자동으로 업데이트될 예정이므로 loadOpenOrders 호출하지 않음
         } else {
-            alert('주문 취소 실패: ' + data.error);
+            showToast('주문 취소 실패: ' + data.error, 'error');
         }
     } catch (error) {
-        alert('주문 취소 중 오류가 발생했습니다: ' + error.message);
+        showToast('주문 취소 중 오류가 발생했습니다: ' + error.message, 'error');
     }
 }
 
@@ -548,13 +553,13 @@ async function cancelAllOpenOrders() {
         if (data.success) {
             const successCount = data.cancelled_orders ? data.cancelled_orders.length : 0;
             const failedCount = data.failed_orders ? data.failed_orders.length : 0;
-            alert(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`);
-            await loadOpenOrders();
+            showToast(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`, 'success');
+            // SSE를 통해 자동으로 업데이트될 예정이므로 loadOpenOrders 호출하지 않음
         } else {
-            alert('일괄 취소 실패: ' + data.error);
+            showToast('일괄 취소 실패: ' + data.error, 'error');
         }
     } catch (error) {
-        alert('일괄 취소 중 오류가 발생했습니다: ' + error.message);
+        showToast('일괄 취소 중 오류가 발생했습니다: ' + error.message, 'error');
     }
 }
 
@@ -571,14 +576,14 @@ function closePosition(positionId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('포지션 청산 요청이 전송되었습니다.');
-                location.reload();
+                showToast('포지션 청산 요청이 전송되었습니다.', 'success');
+                // SSE를 통해 자동으로 업데이트될 예정이므로 새로고침하지 않음
             } else {
-                alert('포지션 청산 중 오류가 발생했습니다: ' + data.error);
+                showToast('포지션 청산 중 오류가 발생했습니다: ' + data.error, 'error');
             }
         })
         .catch(error => {
-            alert('포지션 청산 중 오류가 발생했습니다: ' + error.message);
+            showToast('포지션 청산 중 오류가 발생했습니다: ' + error.message, 'error');
         });
     }
 }
@@ -595,8 +600,12 @@ function toggleConnectionStatus() {
 }
 
 function updateConnectionStatusDisplay() {
-    const manager = getPositionManager();
-    if (!manager) return;
+    // Use new Position Price Manager for WebSocket status
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
+    if (!manager) {
+        console.warn('Position Price Manager not available');
+        return;
+    }
     
     const status = manager.getConnectionStatus();
     const connectionList = document.getElementById('connection-list');
@@ -623,6 +632,28 @@ function updateConnectionStatusDisplay() {
     }
     
     connectionList.innerHTML = html;
+    
+    // Update SSE connection status
+    const sseStatus = document.getElementById('sse-connection-status');
+    if (sseStatus) {
+        const sseManager = window.getSSEManager ? window.getSSEManager() : null;
+        if (sseManager) {
+            const sseInfo = sseManager.getStatus();
+            if (sseInfo.connected) {
+                sseStatus.textContent = '연결됨';
+                sseStatus.className = 'status-connected';
+            } else if (sseInfo.reconnectAttempts > 0) {
+                sseStatus.textContent = `재연결 시도 중 (${sseInfo.reconnectAttempts}회)`;
+                sseStatus.className = 'status-reconnecting';
+            } else {
+                sseStatus.textContent = '연결 안됨';
+                sseStatus.className = 'status-disconnected';
+            }
+        } else {
+            sseStatus.textContent = '초기화 중...';
+            sseStatus.className = 'status-connecting';
+        }
+    }
 }
 
 // Update realtime indicator
@@ -687,7 +718,7 @@ window.debugPositionsData = function() {
 
 // Helper functions for debugging
 function logDiagnostics() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (manager) {
         const diagnostics = manager.getDiagnostics();
         console.table(diagnostics);
@@ -699,7 +730,7 @@ function logDiagnostics() {
 }
 
 function debugPosition(positionId) {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -728,7 +759,7 @@ function debugPosition(positionId) {
 }
 
 function checkDuplicateSubscriptions() {
-    const manager = getPositionManager();
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
     if (!manager) {
         log.error('Position manager not available');
         return;
@@ -790,69 +821,180 @@ function showDebugHelp() {
     log.info('- logDiagnostics() - Show system diagnostics');
     log.info('- debugPosition(positionId) - Debug specific position');
     log.info('- checkDuplicateSubscriptions() - Check for duplicates');
+    log.info('- debugWebSocketSubscriptions() - Check WebSocket subscription status');
+    log.info('- reconcileSubscriptions() - Manually reconcile WebSocket subscriptions');
     log.info('- enableDebugMode() - Enable debug mode');
     log.info('- disableDebugMode() - Disable debug mode');
     log.info('- toggleDebugMode() - Toggle debug mode');
 }
 
-// Initialize real-time position manager
-function initializeRealtimePositions() {
-    log.info('Initializing real-time positions...');
-    
-    // 새로운 방식: JSON script 태그에서 데이터 로드
-    const jsonScript = document.getElementById('positions-json-data');
-    if (!jsonScript) {
-        log.error('No JSON script element found');
+// Debug WebSocket subscriptions
+function debugWebSocketSubscriptions() {
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
+    if (!manager) {
+        log.error('Position manager not available');
         return;
     }
     
-    try {
-        const jsonContent = jsonScript.textContent || jsonScript.innerText;
-        log.debug('JSON script content length:', jsonContent.length);
-        
-        if (!jsonContent || jsonContent.trim() === '') {
-            log.warn('Empty JSON content');
-            return;
+    log.info('=== WebSocket Subscription Status ===');
+    
+    // Get current positions
+    const positions = Array.from(manager.positions.values());
+    log.info(`Total positions tracked: ${positions.length}`);
+    
+    // Group positions by symbol
+    const symbolGroups = {};
+    positions.forEach(pos => {
+        const key = `${pos.exchange}-${pos.marketType}`;
+        if (!symbolGroups[key]) {
+            symbolGroups[key] = new Set();
         }
+        symbolGroups[key].add(pos.symbol);
+    });
+    
+    log.info('Positions by exchange:', symbolGroups);
+    
+    // Check actual subscriptions
+    manager.exchanges.forEach((ws, wsKey) => {
+        const status = ws.getStatus();
+        const subscribedSymbols = status.subscribedSymbols || [];
+        const neededSymbols = symbolGroups[wsKey] ? Array.from(symbolGroups[wsKey]) : [];
         
-        const positionsData = JSON.parse(jsonContent);
-        log.debug('Successfully parsed positions data from JSON script:', positionsData);
+        log.info(`\n${wsKey}:`);
+        log.info(`  Connected: ${status.connected}`);
+        log.info(`  Subscribed symbols: ${subscribedSymbols.join(', ')}`);
+        log.info(`  Needed symbols: ${neededSymbols.join(', ')}`);
         
-        if (positionsData && Array.isArray(positionsData) && positionsData.length > 0) {
-            log.info(`Initializing real-time position tracking for ${positionsData.length} positions`);
-            
-            // Initialize position manager
-            const manager = initializePositionRealtime(positionsData);
-            
-            // Update connection status periodically
-            setInterval(updateConnectionStatusDisplay, 5000);
-            
-            // Update realtime indicator
-            setTimeout(() => {
-                updateRealtimeIndicator(true);
-            }, 2000);
-            
-            log.success('Real-time position tracking initialized successfully');
-        } else {
-            log.info('No positions to track (empty or invalid data)');
+        // Find discrepancies
+        const extraSubscriptions = subscribedSymbols.filter(s => !neededSymbols.includes(s));
+        const missingSubscriptions = neededSymbols.filter(s => !subscribedSymbols.includes(s));
+        
+        if (extraSubscriptions.length > 0) {
+            log.warn(`  Extra subscriptions (should unsubscribe): ${extraSubscriptions.join(', ')}`);
         }
-        
-    } catch (error) {
-        log.error('Failed to parse JSON from script tag:', error);
-        updateRealtimeIndicator(false);
+        if (missingSubscriptions.length > 0) {
+            log.error(`  Missing subscriptions (should subscribe): ${missingSubscriptions.join(', ')}`);
+        }
+    });
+    
+    return manager;
+}
+
+// Manually reconcile WebSocket subscriptions
+function reconcileSubscriptions() {
+    const manager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
+    if (!manager) {
+        log.error('Position manager not available');
+        return;
     }
+    
+    log.info('Reconciling WebSocket subscriptions...');
+    manager.updateSubscriptions();
+    
+    // Show status after reconciliation
+    setTimeout(() => {
+        debugWebSocketSubscriptions();
+    }, 1000);
+}
+
+// Add to global scope for easy access
+window.debugWebSocketSubscriptions = debugWebSocketSubscriptions;
+window.reconcileSubscriptions = reconcileSubscriptions;
+
+// Initialize all real-time systems
+function initializeAllRealtimeSystems() {
+    const log = window.logger || console;
+    log.info('Initializing all real-time systems...');
+    
+    // 1. Parse positions data
+    let positionsData = [];
+    const jsonScript = document.getElementById('positions-json-data');
+    
+    if (jsonScript) {
+        try {
+            const jsonContent = jsonScript.textContent || jsonScript.innerText;
+            if (jsonContent && jsonContent.trim() !== '') {
+                positionsData = JSON.parse(jsonContent);
+                log.info(`Loaded ${positionsData.length} positions from page`);
+                window.positionsData = positionsData; // Store globally
+            }
+        } catch (error) {
+            log.error('Failed to parse positions data:', error);
+            window.positionsData = [];
+        }
+    }
+    
+    // 2. Initialize SSE Manager with skip auth check
+    const sseManager = window.initializeSSE ? window.initializeSSE({
+        skipAuthCheck: true  // positions 페이지는 이미 인증이 필요하므로 auth check 생략
+    }) : null;
+    
+    if (!sseManager) {
+        log.error('Failed to initialize SSE Manager');
+        updateRealtimeIndicator(false);
+        return;
+    }
+    
+    // 3. Add SSE connection event listeners
+    if (window.RealtimeCore && window.RealtimeCore.eventBus) {
+        const eventBus = window.RealtimeCore.eventBus;
+        
+        // SSE 연결 성공 이벤트
+        eventBus.on('sse-connected', () => {
+            log.success('✅ SSE connected successfully');
+            updateRealtimeIndicator(true);
+            updateConnectionStatusDisplay();
+        });
+        
+        // SSE 연결 끊김 이벤트
+        eventBus.on('sse-disconnected', () => {
+            log.warn('⚠️ SSE disconnected');
+            updateRealtimeIndicator(false);
+            updateConnectionStatusDisplay();
+        });
+        
+        // SSE 에러 이벤트
+        eventBus.on('sse-error', () => {
+            log.error('❌ SSE error');
+            updateRealtimeIndicator(false);
+            updateConnectionStatusDisplay();
+        });
+    }
+    
+    // 4. Initialize Position Price Manager (WebSocket prices)
+    const priceManager = window.initializePositionPrices ? 
+        window.initializePositionPrices(positionsData) : null;
+    
+    if (priceManager) {
+        log.info('Position price manager initialized');
+    }
+    
+    // 5. Initialize Realtime Positions Manager (SSE position updates)
+    const positionsManager = window.initializeRealtimePositions ? 
+        window.initializeRealtimePositions({ positions: positionsData }) : null;
+    
+    if (positionsManager) {
+        log.info('Realtime positions manager initialized');
+    }
+    
+    // 6. Initialize Realtime Open Orders Manager (SSE order updates)
+    const ordersManager = window.initializeRealtimeOpenOrders ? 
+        window.initializeRealtimeOpenOrders({ loadOnInit: true }) : null;
+    
+    if (ordersManager) {
+        log.info('Realtime open orders manager initialized');
+    }
+    
+    // Legacy initialization is now handled by position-price-manager.js
+    // which provides backward compatibility for initializePositionRealtime
+    
+    log.info('✅ All real-time systems initialized successfully');
 }
 
 // 페이지 로드 시 실시간 위치 추적 초기화
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize real-time position tracking
-    initializeRealtimePositions();
-    
-    // Initialize real-time updates (SSE)
-    initializeRealtimeUpdates();
-    
-    // Load open orders
-    loadOpenOrders();
+    // Initialize all realtime systems
+    initializeAllRealtimeSystems();
     
     // Show debug help only in debug mode
     if (window.logger && window.logger.debugMode) {
@@ -870,189 +1012,61 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
-    const manager = getPositionManager();
-    if (manager) {
-        manager.disconnect();
+    // Cleanup price manager (WebSocket connections)
+    const priceManager = window.getPositionPriceManager ? window.getPositionPriceManager() : null;
+    if (priceManager && priceManager.disconnect) {
+        priceManager.disconnect();
     }
     
-    // Disconnect real-time updates
-    disconnectRealtimeUpdates();
+    // Cleanup SSE connection
+    if (window.disconnectSSE) {
+        window.disconnectSSE();
+    }
 });
 
-// 실시간 업데이트 관리자 인스턴스
-let realtimeUpdatesManager = null;
+// Legacy RealtimeUpdatesManager code has been removed.
+// Real-time updates are now handled by:
+// - SSEManager: for SSE connection management
+// - RealtimePositionsManager: for position updates
+// - RealtimeOpenOrdersManager: for order updates
+// - PositionPriceManager: for WebSocket price updates
 
-// 실시간 업데이트 초기화
-function initializeRealtimeUpdates() {
-    try {
-        if (typeof RealtimeUpdatesManager === 'undefined') {
-            console.error('RealtimeUpdatesManager가 로드되지 않았습니다.');
-            return;
-        }
-        
-        console.info('실시간 업데이트 초기화 시작...');
-        
-        realtimeUpdatesManager = new RealtimeUpdatesManager({
-            maxReconnectAttempts: 5,
-            reconnectInterval: 3000
-        });
-        
-        // 포지션 업데이트 이벤트 핸들러
-        realtimeUpdatesManager.on('position_update', (data) => {
-            console.info('📈 포지션 업데이트 수신:', data);
-            handlePositionUpdate(data);
-        });
-        
-        // 주문 업데이트 이벤트 핸들러
-        realtimeUpdatesManager.on('order_update', (data) => {
-            console.info('📊 주문 업데이트 수신:', data);
-            handleOrderUpdate(data);
-        });
-        
-        // 연결 상태 이벤트 핸들러
-        realtimeUpdatesManager.on('connection', (data) => {
-            console.log('SSE 연결 상태:', data);
-            updateSSEConnectionStatus(data.status === 'connected');
-        });
-        
-        // 오류 이벤트 핸들러
-        realtimeUpdatesManager.on('error', (data) => {
-            console.error('SSE 오류:', data);
-            showToast('실시간 업데이트 연결에 문제가 발생했습니다.', 'error');
-        });
-        
-        // SSE 연결 시도 전 URL 확인
-        console.info('SSE URL:', '/api/events/stream');
-        
-        // SSE 연결 시작
-        realtimeUpdatesManager.connect();
-        
-        console.info('실시간 업데이트 초기화 완료');
-        
-    } catch (error) {
-        console.error('실시간 업데이트 초기화 실패:', error);
-    }
-}
+// disconnectRealtimeUpdates is now handled by SSEManager
 
-// 실시간 업데이트 연결 해제
-function disconnectRealtimeUpdates() {
-    if (realtimeUpdatesManager) {
-        realtimeUpdatesManager.disconnect();
-        realtimeUpdatesManager = null;
-        console.info('실시간 업데이트 연결 해제 완료');
-    }
-}
+// Position update handling is now in position-realtime-manager.js
+// handlePositionUpdate function is imported from there
 
-// 포지션 업데이트 처리
-function handlePositionUpdate(data) {
-    try {
-        // 포지션 테이블 업데이트
-        updatePositionRow(data);
-        
-        // 토스트 알림
-        const eventTypeText = data.event_type === 'position_closed' ? '포지션 청산' : '포지션 업데이트';
-        showToast(`${eventTypeText}: ${data.symbol} (${data.quantity})`, 'success', 2000);
-        
-    } catch (error) {
-        console.error('포지션 업데이트 처리 실패:', error);
-    }
-}
+// handleOrderUpdate is now handled by RealtimeOpenOrdersManager
 
-// 주문 업데이트 처리
-function handleOrderUpdate(data) {
-    try {
-        // 주문 목록 새로고침
-        loadOpenOrders();
-        
-        // 토스트 알림
-        const eventTypeMap = {
-            'order_created': '주문 생성',
-            'order_filled': '주문 체결',
-            'order_cancelled': '주문 취소'
-        };
-        
-        const eventTypeText = eventTypeMap[data.event_type] || '주문 업데이트';
-        showToast(`${eventTypeText}: ${data.symbol} ${data.side.toUpperCase()} ${data.quantity}`, 'info', 2000);
-        
-    } catch (error) {
-        console.error('주문 업데이트 처리 실패:', error);
-    }
-}
+// Position row management functions are now in position-realtime-manager.js
 
-// 포지션 행 업데이트
-function updatePositionRow(positionData) {
-    const positionRow = document.querySelector(`tr[data-position-id="${positionData.position_id}"]`);
+// Position row update functions are now in position-realtime-manager.js
+
+// removePositionRow is now in position-realtime-manager.js
+
+// checkEmptyPositions is now in position-realtime-manager.js
+
+// showEmptyPositionsState is now in position-realtime-manager.js
+
+// removeEmptyPositionsState is now in position-realtime-manager.js
+
+// Position row creation functions are now in position-realtime-manager.js
+
+// Cell highlight effect - keeping this UI utility function
+function highlightCell(cell, type = 'updated') {
+    const className = type === 'updated' ? 'highlight-update' : 'highlight-error';
+    cell.classList.add(className);
     
-    // 무한 새로고침 방지: 청산된 포지션에 대한 업데이트인 경우 처리하지 않음
-    if (!positionRow) {
-        if (positionData.event_type === 'position_closed') {
-            // 이미 청산된 포지션에 대한 업데이트 - 무시
-            return;
-        }
-        
-        // 새 포지션이 생성된 경우만 페이지 새로고침
-        if (positionData.event_type === 'position_created' || positionData.event_type === 'position_updated') {
-            setTimeout(() => window.location.reload(), 1000);
-        }
-        return;
-    }
-    
-    // 포지션이 청산된 경우 행 제거
-    if (positionData.event_type === 'position_closed') {
-        positionRow.style.opacity = '0.5';
-        setTimeout(() => {
-            positionRow.remove();
-            showToast(`포지션 청산 완료: ${positionData.symbol}`, 'success');
-            checkEmptyPositions();
-        }, 1000);
-        return;
-    }
-    
-    // 수량 업데이트
-    const quantityCell = positionRow.querySelector('.position-quantity');
-    if (quantityCell) {
-        quantityCell.textContent = parseFloat(positionData.quantity).toFixed(8);
-        quantityCell.parentElement.classList.add('highlight-update');
-        setTimeout(() => quantityCell.parentElement.classList.remove('highlight-update'), 2000);
-    }
+    setTimeout(() => {
+        cell.classList.remove(className);
+    }, 2000);
 }
 
-// 빈 포지션 상태 확인
-function checkEmptyPositions() {
-    const positionRows = document.querySelectorAll('tr[data-position-id]');
-    if (positionRows.length === 0) {
-        showEmptyPositionsState();
-        showToast('모든 포지션이 청산되었습니다.', 'success');
-    }
-}
+// updatePositionStats is now in position-realtime-manager.js
 
-// 빈 포지션 상태 UI 표시
-function showEmptyPositionsState() {
-    const positionTable = document.querySelector('table tbody');
-    if (positionTable) {
-        // 기존 빈 상태 메시지가 있으면 제거
-        const existingEmptyRow = positionTable.querySelector('.empty-positions-row');
-        if (existingEmptyRow) {
-            existingEmptyRow.remove();
-        }
-        
-        // 새로운 빈 상태 행 추가
-        const emptyRow = document.createElement('tr');
-        emptyRow.className = 'empty-positions-row';
-        emptyRow.innerHTML = `
-            <td colspan="9" class="text-center py-8 text-gray-500">
-                <div class="flex flex-col items-center space-y-2">
-                    <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <div class="text-lg font-medium">보유 포지션이 없습니다</div>
-                    <div class="text-sm">모든 포지션이 성공적으로 청산되었습니다</div>
-                </div>
-            </td>
-        `;
-        positionTable.appendChild(emptyRow);
-    }
-}
+// upsertOrderRow is now handled by RealtimeOpenOrdersManager
+
+// upsertPositionRow is now in position-realtime-manager.js
 
 // SSE 연결 상태 업데이트
 function updateSSEConnectionStatus(isConnected) {

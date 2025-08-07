@@ -26,6 +26,8 @@ class PositionEvent:
     quantity: float
     entry_price: float
     timestamp: str
+    # 계좌 정보 (중첩 구조)
+    account: Dict[str, Any] = None
 
 @dataclass
 class OrderEvent:
@@ -40,6 +42,8 @@ class OrderEvent:
     price: float
     status: str
     timestamp: str
+    # 계좌 정보 (중첩 구조)
+    account: Dict[str, Any] = None
 
 class EventService:
     """실시간 이벤트 서비스 클래스"""
@@ -201,8 +205,16 @@ class EventService:
     def _format_sse_message(self, data: Dict[str, Any]) -> str:
         """SSE 메시지 포맷팅"""
         try:
-            json_data = json.dumps(data, ensure_ascii=False)
-            return f"data: {json_data}\n\n"
+            json_data = json.dumps(data.get('data', data), ensure_ascii=False)
+            
+            # Extract event type if available
+            event_type = data.get('type', None)
+            
+            # Format SSE message with event type
+            if event_type:
+                return f"event: {event_type}\ndata: {json_data}\n\n"
+            else:
+                return f"data: {json_data}\n\n"
         except Exception as e:
             logger.error(f"SSE 메시지 포맷팅 실패: {str(e)}")
             return f"data: {{}}\n\n"

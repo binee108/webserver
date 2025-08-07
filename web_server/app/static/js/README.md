@@ -98,12 +98,58 @@ class ExampleWebSocket extends WebSocketManager {
         // 거래소별 초기화
     }
     
-    subscribeToPrice(symbol, callback) {
-        // 가격 구독 구현
+    /**
+     * 가격 구독 (통일된 인터페이스)
+     * @param {string} symbol - 거래 심볼
+     * @param {function} callback - 가격 업데이트 콜백
+     */
+    subscribePrice(symbol, callback) {
+        // 부모 클래스의 통일된 인터페이스 사용
+        return super.subscribePrice(symbol, callback);
+    }
+    
+    /**
+     * 가격 구독 해제 (통일된 인터페이스)
+     * @param {string} symbol - 거래 심볼
+     */
+    unsubscribePrice(symbol) {
+        // 부모 클래스의 통일된 인터페이스 사용
+        return super.unsubscribePrice(symbol);
+    }
+    
+    /**
+     * 거래소별 구독 메시지 전송
+     * @override
+     */
+    sendPriceSubscription(normalizedSymbol) {
+        // 거래소별 구독 메시지 구현
+        this.send({
+            type: 'subscribe',
+            symbol: normalizedSymbol
+        });
+    }
+    
+    /**
+     * 거래소별 구독 해제 메시지 전송
+     * @override
+     */
+    sendPriceUnsubscription(normalizedSymbol) {
+        // 거래소별 구독 해제 메시지 구현
+        this.send({
+            type: 'unsubscribe',
+            symbol: normalizedSymbol
+        });
     }
     
     handleMessage(data) {
         // 메시지 처리 구현
+    }
+    
+    /**
+     * @deprecated Use subscribePrice() instead
+     */
+    subscribeToPrice(symbol, callback) {
+        return this.subscribePrice(symbol, callback);
     }
 }
 ```
