@@ -424,9 +424,9 @@ class PositionService:
             from app.models import Strategy, StrategyAccount
             
             # 포지션 조회 및 권한 확인
-            position = StrategyPosition.query.join(StrategyAccount).join(Strategy).filter(
+            position = StrategyPosition.query.join(StrategyAccount).join(Strategy).join(Account).filter(
                 StrategyPosition.id == position_id,
-                Strategy.user_id == user_id
+                (Strategy.user_id == user_id) | (Account.user_id == user_id)
             ).first()
             
             if not position:
@@ -497,7 +497,7 @@ class PositionService:
                     .joinedload(StrategyAccount.account)
                 )
                 .filter(
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (Account.user_id == user_id),
                     OpenOrder.status == 'OPEN',
                     Account.is_active == True
                 )
@@ -518,7 +518,7 @@ class PositionService:
                     .joinedload(StrategyAccount.account)
                 )
                 .filter(
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (Account.user_id == user_id),
                     StrategyPosition.quantity != 0,
                     Account.is_active == True
                 )
@@ -637,7 +637,7 @@ class PositionService:
                     .joinedload(StrategyAccount.account)
                 )
                 .filter(
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (Account.user_id == user_id),
                     StrategyPosition.symbol == symbol,
                     StrategyPosition.quantity != 0,
                     Account.is_active == True
@@ -658,7 +658,7 @@ class PositionService:
                     .joinedload(StrategyAccount.account)
                 )
                 .filter(
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (Account.user_id == user_id),
                     OpenOrder.symbol == symbol,
                     OpenOrder.status == 'OPEN',
                     Account.is_active == True

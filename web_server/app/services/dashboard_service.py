@@ -89,7 +89,7 @@ class DashboardService:
                 .join(StrategyAccount, Strategy.id == StrategyAccount.strategy_id)
                 .join(Account, StrategyAccount.account_id == Account.id)
                 .outerjoin(StrategyCapital, StrategyAccount.id == StrategyCapital.strategy_account_id)
-                .filter(Strategy.user_id == user_id)
+                .filter((Strategy.user_id == user_id) | (Account.user_id == user_id))
             )
             
             results = query.all()
@@ -102,8 +102,9 @@ class DashboardService:
                 )
                 .join(StrategyPosition, StrategyAccount.id == StrategyPosition.strategy_account_id)
                 .join(Strategy, StrategyAccount.strategy_id == Strategy.id)
+                .join(Account, StrategyAccount.account_id == Account.id)
                 .filter(
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (Account.user_id == user_id),
                     StrategyPosition.quantity != 0
                 )
                 .group_by(StrategyAccount.id)

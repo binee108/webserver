@@ -53,6 +53,7 @@ Content-Type: application/json
 | 필드명 | 타입 | 설명 | 예시 |
 |--------|------|------|------|
 | `group_name` | String | 전략 그룹명 (전략 생성 시 설정) | "my_strategy" |
+| `token` | String | 전략 소유자의 웹훅 토큰 (프로필에서 발급/재발행) | "<your_user_webhook_token>" |
 | `exchange` | String | 거래소 | "BINANCE", "BYBIT", "OKX" |
 | `market` | String | 시장 타입 | "SPOT", "FUTURE" |
 | `currency` | String | 결제 통화 | "USDT", "BUSD" |
@@ -90,6 +91,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_btc_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE",
     "market": "SPOT",
     "currency": "USDT",
@@ -103,6 +105,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_btc_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE", 
     "market": "SPOT",
     "currency": "USDT",

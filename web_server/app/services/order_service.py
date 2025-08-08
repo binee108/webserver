@@ -333,7 +333,7 @@ class OrderService:
                 .join(Strategy)
                 .filter(
                     OpenOrder.exchange_order_id == order_id,
-                    Strategy.user_id == user_id,
+                    (Strategy.user_id == user_id) | (StrategyAccount.account.has(Account.user_id == user_id)),
                     OpenOrder.status == 'OPEN'
                 )
                 .first()
