@@ -283,6 +283,32 @@ class TradingService:
                     session.rollback()
                     logger.warning(f"❌ 계좌 {account.id}({account.name}) 거래 실패 후 롤백")
                 
+                # 실패/성공 결과에 따른 텔레그램 알림 처리 (계좌 소유자 대상)
+                try:
+                    from app.services.telegram_service import telegram_service
+                    # 실패 알림: 스킵된 경우는 알림 제외
+                    if not result.get('success') and not result.get('skipped'):
+                        user = account.user
+                        if getattr(user, 'telegram_id', None):
+                            context = {
+                                '전략': strategy.name,
+                                '계좌': account.name,
+                                '거래소': account.exchange,
+                                '심볼': result.get('symbol') or symbol,
+                                '사이드': result.get('side') or side,
+                                '주문타입': result.get('order_type') or order_type,
+                            }
+                            telegram_service.send_user_notification(
+                                user_telegram_id=user.telegram_id,
+                                title='거래 실패',
+                                message=result.get('error', '원인 불명 오류'),
+                                context=context,
+                                user_telegram_bot_token=getattr(user, 'telegram_bot_token', None)
+                            )
+                except Exception:
+                    # 알림 실패는 거래 흐름에 영향 주지 않음
+                    pass
+
                 return result
                 
             except Exception as e:
@@ -656,6 +682,34 @@ class TradingService:
         self._emit_trading_events(order_type, filled_info, order_id, symbol, side, 
                                 final_quantity, final_price, filled_info.get('average_price', Decimal('0')),
                                 strategy, account, position)
+
+        # 13. 텔레그램 알림: 체결된 거래만 계좌 소유자에게 전송
+        try:
+            if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
+                from app.services.telegram_service import telegram_service
+                user = account.user
+                if getattr(user, 'telegram_id', None):
+                    filled_qty = filled_info['filled_quantity']
+                    avg_price = filled_info.get('average_price', Decimal('0'))
+                    msg = f"{symbol} {side} {decimal_to_float(filled_qty)} @ {decimal_to_float(avg_price)}"
+                    context = {
+                        '전략': strategy.name,
+                        '계좌': account.name,
+                        '거래소': account.exchange,
+                        '마켓': market,
+                        '주문ID': order_id,
+                        'PnL(실현)': decimal_to_float(realized_pnl) if realized_pnl != 0 else 0
+                    }
+                    telegram_service.send_user_notification(
+                        user_telegram_id=user.telegram_id,
+                        title='체결 알림',
+                        message=msg,
+                        context=context,
+                        user_telegram_bot_token=getattr(user, 'telegram_bot_token', None)
+                    )
+        except Exception:
+            # 알림 실패는 무시
+            pass
         
         return {
             'account_id': account.id,
