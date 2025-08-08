@@ -225,6 +225,80 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+// 관리자 검증 래퍼 및 모달
+let _adminVerifyResolve = null;
+function openAdminVerifyModal() {
+    const existing = document.getElementById('adminVerifyModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'adminVerifyModal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+    <div class="modal-content max-w-md">
+        <div class="modal-header">
+            <h3 class="text-lg font-semibold text-primary">관리자 확인</h3>
+            <button onclick="closeAdminVerifyModal()" class="modal-close">✕</button>
+        </div>
+        <div class="p-6 space-y-4">
+            <p class="text-sm text-muted">민감한 작업입니다. 관리자 비밀번호를 입력해주세요.</p>
+            <div class="form-group">
+                <label class="form-label">비밀번호</label>
+                <input id="adminVerifyPassword" type="password" class="form-input" placeholder="현재 비밀번호" />
+                <p id="adminVerifyError" class="text-sm text-red-600 mt-2 hidden"></p>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button class="btn btn-secondary" onclick="closeAdminVerifyModal()">취소</button>
+                <button id="adminVerifySubmit" class="btn btn-primary" onclick="submitAdminVerification()">확인</button>
+            </div>
+        </div>
+    </div>`;
+    document.body.appendChild(modal);
+    setTimeout(() => document.getElementById('adminVerifyPassword')?.focus(), 0);
+}
+function closeAdminVerifyModal() {
+    const modal = document.getElementById('adminVerifyModal');
+    if (modal) modal.remove();
+    if (_adminVerifyResolve) { _adminVerifyResolve(false); _adminVerifyResolve = null; }
+}
+function submitAdminVerification() {
+    const password = document.getElementById('adminVerifyPassword').value;
+    const btn = document.getElementById('adminVerifySubmit');
+    const err = document.getElementById('adminVerifyError');
+    btn.disabled = true; btn.innerText = '확인 중...'; err.classList.add('hidden');
+    fetch('/admin/verify-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+        body: JSON.stringify({ password })
+    }).then(r => r.json().then(d => ({ ok: r.ok, data: d }))).then(({ ok, data }) => {
+        if (ok && data.success) {
+            const modal = document.getElementById('adminVerifyModal');
+            if (modal) modal.remove();
+            if (_adminVerifyResolve) { _adminVerifyResolve(true); _adminVerifyResolve = null; }
+        } else {
+            err.textContent = data?.message || '검증에 실패했습니다.'; err.classList.remove('hidden');
+        }
+    }).catch(() => {
+        err.textContent = '네트워크 오류가 발생했습니다.'; err.classList.remove('hidden');
+    }).finally(() => { btn.disabled = false; btn.innerText = '확인'; });
+}
+function ensureAdminVerified() {
+    return new Promise((resolve) => { _adminVerifyResolve = resolve; openAdminVerifyModal(); });
+}
+async function adminFetch(input, init = {}) {
+    const first = await fetch(input, init);
+    if (first.status === 401 || first.status === 403) {
+        try {
+            const body = await first.clone().json();
+            if (body && body.require_admin_verification) {
+                const verified = await ensureAdminVerified();
+                if (!verified) return first;
+                return fetch(input, init);
+            }
+        } catch (_) {}
+    }
+    return first;
+}
+
 // 텔레그램 연결 테스트
 function testTelegramConnection(userId) {
     const telegramId = document.getElementById('telegram_id').value.trim();
@@ -240,7 +314,7 @@ function testTelegramConnection(userId) {
     testBtn.disabled = true;
     testBtn.innerHTML = '<div class="loading-spinner"></div>테스트 중...';
     
-    fetch(`/admin/users/${userId}/test-telegram`, {
+    adminFetch(`/admin/users/${userId}/test-telegram`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -308,7 +382,7 @@ function sendNotification(userId) {
         return;
     }
     
-    fetch(`/admin/users/${userId}/send-telegram-notification`, {
+    adminFetch(`/admin/users/${userId}/send-telegram-notification`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
