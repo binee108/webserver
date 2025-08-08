@@ -203,7 +203,16 @@ def update_strategy(strategy_id):
         
         # is_public 수정 (소유자만)
         if 'is_public' in data:
-            strategy.is_public = bool(data['is_public'])
+            new_public = bool(data['is_public'])
+            # 공개 -> 비공개로 바뀌는 경우, 소유자 외 구독 연결 비활성화
+            if strategy.is_public and not new_public:
+                deactivated = 0
+                for sa in strategy.strategy_accounts:
+                    if sa.account.user_id != current_user.id and sa.is_active:
+                        sa.is_active = False
+                        deactivated += 1
+                current_app.logger.info(f'공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화')
+            strategy.is_public = new_public
         
         # 계좌 연결 정보 업데이트
         if 'accounts' in data:

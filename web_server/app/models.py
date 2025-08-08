@@ -89,6 +89,8 @@ class StrategyAccount(db.Model):
     weight = db.Column(db.Float, nullable=False)  # 전략 비중
     leverage = db.Column(db.Float, nullable=False)  # 레버리지 설정
     max_symbols = db.Column(db.Integer, nullable=True, default=None)  # 최대 보유 심볼 수 (None은 제한 없음)
+    # 공개 전략 비공개 전환 등으로 연결을 비활성화할 때 사용
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
     
     # 복합 유니크 제약조건
     __table_args__ = (db.UniqueConstraint('strategy_id', 'account_id'),)

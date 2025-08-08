@@ -137,6 +137,10 @@ class TradingService:
         for sa in strategy_accounts:
             account = sa.account
             
+            # 전략-계좌 링크 비활성화 시 스킵 (공개->비공개 전환 등)
+            if hasattr(sa, 'is_active') and not sa.is_active:
+                logger.debug(f"전략 링크 비활성화로 제외 - StrategyAccount {sa.id}")
+                continue
             # 계좌 존재 및 활성화 상태 확인
             if not account:
                 logger.warning(f"전략계좌 {sa.id}: 연결된 계좌가 없음")

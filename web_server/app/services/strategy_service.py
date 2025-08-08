@@ -160,6 +160,7 @@ class StrategyService:
                         'leverage': sa.leverage,
                         'max_symbols': sa.max_symbols
                     }
+                    account_info['is_active'] = getattr(sa, 'is_active', True)
                     if sa.strategy_capital:
                         account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
                         account_info['current_pnl'] = sa.strategy_capital.current_pnl
@@ -185,6 +186,7 @@ class StrategyService:
                     'leverage': sa.leverage,
                     'max_symbols': sa.max_symbols
                 }
+                account_info['is_active'] = getattr(sa, 'is_active', True)
                 if sa.strategy_capital:
                     account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
                     account_info['current_pnl'] = sa.strategy_capital.current_pnl
