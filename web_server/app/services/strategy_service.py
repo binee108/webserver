@@ -50,8 +50,8 @@ class StrategyService:
                 total_allocated_capital = 0
                 
                 for sa in strategy.strategy_accounts:
-                    # 내 전략 카드에는 내 계좌만 표시
-                    if sa.account.user_id != user_id:
+                    # 연결된 계좌가 없거나 소유자가 아니면 제외
+                    if not sa.account or sa.account.user_id != user_id:
                         continue
                     account_info = {
                         'id': sa.account.id,
@@ -82,7 +82,10 @@ class StrategyService:
                     'created_at': strategy.created_at.isoformat(),
                     'connected_accounts': connected_accounts,
                     'total_allocated_capital': total_allocated_capital,
-                    'position_count': sum(len([pos for pos in sa.strategy_positions if pos.quantity != 0]) for sa in strategy.strategy_accounts if sa.account.user_id == user_id)  # 내 계좌의 활성 포지션만 계산
+                    'position_count': sum(
+                        len([pos for pos in sa.strategy_positions if pos.quantity != 0])
+                        for sa in strategy.strategy_accounts if sa.account and sa.account.user_id == user_id
+                    )  # 내 계좌의 활성 포지션만 계산
                 })
             
             return strategies_data
