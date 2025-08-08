@@ -538,9 +538,16 @@ def user_telegram_settings(user_id):
     
     if request.method == 'POST':
         telegram_id = request.form.get('telegram_id', '').strip()
-        
-        # 텔레그램 ID 업데이트
+        telegram_bot_token = request.form.get('telegram_bot_token', '').strip()
+
+        # 검증: 둘 다 있거나 둘 다 없어야 함
+        if (telegram_id and not telegram_bot_token) or (not telegram_id and telegram_bot_token):
+            flash('사용자 텔레그램 설정은 봇 토큰과 Chat ID를 모두 입력하거나 모두 비워두어야 합니다.', 'error')
+            return render_template('admin/user_telegram_settings.html', user=user)
+
+        # 빈 문자열을 None으로 변환 후 업데이트
         user.telegram_id = telegram_id if telegram_id else None
+        user.telegram_bot_token = telegram_bot_token if telegram_bot_token else None
         
         try:
             db.session.commit()

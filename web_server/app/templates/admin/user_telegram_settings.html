@@ -87,27 +87,37 @@
             </div>
             
             <div class="p-6 space-y-6">
-                <div class="form-group">
-                    <label for="telegram_id" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 Chat ID</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="telegram_id" name="telegram_id" 
-                               value="{{ user.telegram_id or '' }}" 
-                               class="form-input flex-1" 
-                               placeholder="예: 123456789">
-                        <button type="button" id="testTelegramBtn" 
-                                onclick="testTelegramConnection({{ user.id }})"
-                                class="btn btn-info"
-                                {% if not user.telegram_id %}disabled{% endif %}>
-                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                            </svg>
-                            테스트
-                        </button>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="form-group">
+                        <label for="telegram_bot_token" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 봇 토큰</label>
+                        <input type="password" id="telegram_bot_token" name="telegram_bot_token" 
+                               value="{{ user.telegram_bot_token or '' }}" 
+                               class="form-input" 
+                               placeholder="예: 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                        <p class="form-help">사용자별 봇 토큰을 입력하지 않으면 전역 봇 설정을 사용할 수 있습니다.</p>
                     </div>
-                    <div class="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
-                        <p class="text-sm text-blue-800 dark:text-blue-300">
-                            <strong>💡 설정 방법:</strong> 사용자에게 텔레그램에서 @userinfobot을 검색하여 대화를 시작하고, /start 명령어를 보내면 받을 수 있는 ID 숫자를 입력하도록 안내하세요.
-                        </p>
+                    <div class="form-group">
+                        <label for="telegram_id" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 Chat ID</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="telegram_id" name="telegram_id" 
+                                   value="{{ user.telegram_id or '' }}" 
+                                   class="form-input flex-1" 
+                                   placeholder="예: 123456789">
+                            <button type="button" id="testTelegramBtn" 
+                                    onclick="testTelegramConnection({{ user.id }})"
+                                    class="btn btn-info"
+                                    {% if not user.telegram_id and not user.telegram_bot_token %}disabled{% endif %}>
+                                <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                테스트
+                            </button>
+                        </div>
+                        <div class="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
+                            <p class="text-sm text-blue-800 dark:text-blue-300">
+                                <strong>💡 설정 방법:</strong> 사용자에게 텔레그램에서 @userinfobot을 검색하여 대화를 시작하고, /start 명령어를 보내면 받을 수 있는 ID 숫자를 입력하도록 안내하세요.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -302,11 +312,12 @@ async function adminFetch(input, init = {}) {
 // 텔레그램 연결 테스트
 function testTelegramConnection(userId) {
     const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
     const testBtn = document.getElementById('testTelegramBtn');
     const statusDiv = document.getElementById('telegramStatus');
     
-    if (!telegramId) {
-        showToast('텔레그램 ID를 먼저 입력하세요.', 'error');
+    if (!telegramId || !telegramBotToken) {
+        showToast('텔레그램 봇 토큰과 Chat ID를 모두 입력하세요.', 'error');
         return;
     }
     
@@ -408,27 +419,26 @@ function sendNotification(userId) {
     });
 }
 
-// 텔레그램 ID 입력 시 테스트 버튼 활성화/비활성화
-document.getElementById('telegram_id').addEventListener('input', function() {
+// 입력 변화 시 테스트 버튼 활성/비활성
+function updateTestButtonState() {
     const testBtn = document.getElementById('testTelegramBtn');
     const statusDiv = document.getElementById('telegramStatus');
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
     
-    if (this.value.trim()) {
+    if (telegramId && telegramBotToken) {
         testBtn.disabled = false;
     } else {
         testBtn.disabled = true;
         statusDiv.classList.add('hidden');
     }
-});
+}
+document.getElementById('telegram_id').addEventListener('input', updateTestButtonState);
+document.getElementById('telegram_bot_token').addEventListener('input', updateTestButtonState);
 
 // 페이지 로드 시 초기 상태 설정
 document.addEventListener('DOMContentLoaded', function() {
-    const telegramId = document.getElementById('telegram_id').value.trim();
-    const testBtn = document.getElementById('testTelegramBtn');
-    
-    if (telegramId) {
-        testBtn.disabled = false;
-    }
+    updateTestButtonState();
 });
 </script>
 {% endblock %}
