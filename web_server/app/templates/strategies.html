@@ -571,6 +571,20 @@ function renderSubscribeAccountPicker(strategyId) {
                 <div class="text-sm text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
                 <button class="btn btn-primary btn-sm" onclick="subscribeStrategy(${strategyId}, ${acc.id})">이 계좌로 구독</button>
               </div>
+              <div class="grid grid-cols-3 gap-3 mt-3">
+                <div>
+                  <label class="form-label text-xs">가중치</label>
+                  <input type="number" step="0.1" min="0.1" max="10" value="1.0" id="weight-${acc.id}" class="form-input form-input-sm" placeholder="1.0">
+                </div>
+                <div>
+                  <label class="form-label text-xs">레버리지</label>
+                  <input type="number" step="0.1" min="1" max="100" value="1.0" id="leverage-${acc.id}" class="form-input form-input-sm" placeholder="1.0">
+                </div>
+                <div>
+                  <label class="form-label text-xs">최대 심볼(선택)</label>
+                  <input type="number" min="1" max="100" id="maxsymbols-${acc.id}" class="form-input form-input-sm" placeholder="예: 10">
+                </div>
+              </div>
             </div>`;
           });
         }
@@ -583,7 +597,33 @@ function renderSubscribeAccountPicker(strategyId) {
 }
 
 function subscribeStrategy(strategyId, accountId) {
-    const body = { account_id: accountId };
+    // 입력값 수집 및 간단 검증
+    const weightEl = document.getElementById(`weight-${accountId}`);
+    const leverageEl = document.getElementById(`leverage-${accountId}`);
+    const maxSymbolsEl = document.getElementById(`maxsymbols-${accountId}`);
+
+    const weight = parseFloat(weightEl?.value || '1.0');
+    const leverage = parseFloat(leverageEl?.value || '1.0');
+    const maxSymbolsRaw = maxSymbolsEl?.value?.trim();
+
+    if (!(weight > 0 && weight <= 10)) {
+        showToast('가중치는 0.1~10.0 사이여야 합니다.', 'error');
+        return;
+    }
+    if (!(leverage >= 1 && leverage <= 100)) {
+        showToast('레버리지는 1~100 사이여야 합니다.', 'error');
+        return;
+    }
+
+    const body = { account_id: accountId, weight, leverage };
+    if (maxSymbolsRaw) {
+        const ms = parseInt(maxSymbolsRaw);
+        if (!(ms >= 1 && ms <= 100)) {
+            showToast('최대 심볼 수는 1~100 사이의 정수여야 합니다.', 'error');
+            return;
+        }
+        body.max_symbols = ms;
+    }
     fetch(`/api/strategies/${strategyId}/subscribe`, {
         method: 'POST',
         headers: {
