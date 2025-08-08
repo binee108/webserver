@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
+from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify, session
 from flask_login import login_required, current_user
 from functools import wraps
 from app import db, csrf
@@ -6,6 +6,7 @@ from app.models import User, Account, Strategy, StrategyAccount
 from app.services.telegram_service import telegram_service
 import secrets
 import string
+from datetime import datetime, timedelta
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -19,12 +20,53 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def _is_admin_session_verified() -> bool:
+    """관리자 민감 작업을 위한 추가 세션 검증 상태 확인"""
+    try:
+        verified_until_str = session.get('admin_verified_until')
+        if not verified_until_str:
+            return False
+        verified_until = datetime.fromisoformat(verified_until_str)
+        return datetime.utcnow() < verified_until
+    except Exception:
+        return False
+
+def admin_verification_required(f):
+    """민감한 관리자 작업에 대해 추가 비밀번호 검증을 요구"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _is_admin_session_verified():
+            return jsonify({
+                'success': False,
+                'require_admin_verification': True,
+                'message': '관리자 확인이 필요합니다. 비밀번호를 입력해주세요.'
+            }), 401
+        return f(*args, **kwargs)
+    return decorated
+
 @bp.route('/')
 @login_required
 @admin_required
 def index():
     """관리자 대시보드"""
     return redirect(url_for('admin.users'))
+
+@bp.route('/verify-session', methods=['POST'])
+@login_required
+@admin_required
+def verify_admin_session():
+    """관리자 비밀번호로 민감 작업 허용 세션을 일정 시간 부여"""
+    data = request.get_json() or {}
+    password = data.get('password', '')
+    if not password:
+        return jsonify({'success': False, 'message': '비밀번호를 입력해주세요.'}), 400
+    if not current_user.check_password(password):
+        return jsonify({'success': False, 'message': '비밀번호가 올바르지 않습니다.'}), 401
+
+    # 10분간 유효
+    valid_until = datetime.utcnow() + timedelta(minutes=10)
+    session['admin_verified_until'] = valid_until.isoformat()
+    return jsonify({'success': True, 'verified_until': session['admin_verified_until']})
 
 @bp.route('/users')
 @login_required
@@ -181,7 +223,7 @@ def change_admin_password():
 @bp.route('/users/<int:user_id>/toggle-active', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def toggle_user_active(user_id):
     """사용자 활성화/비활성화 토글"""
     user = User.query.get_or_404(user_id)
@@ -208,7 +250,7 @@ def toggle_user_active(user_id):
 @bp.route('/users/<int:user_id>/toggle-admin', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def toggle_user_admin(user_id):
     """사용자 관리자 권한 토글"""
     user = User.query.get_or_404(user_id)
@@ -235,7 +277,7 @@ def toggle_user_admin(user_id):
 @bp.route('/users/<int:user_id>/approve', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def approve_user(user_id):
     """사용자 승인"""
     try:
@@ -272,7 +314,7 @@ def approve_user(user_id):
 @bp.route('/users/<int:user_id>/reject', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def reject_user(user_id):
     """사용자 가입 거부 (계정 삭제)"""
     try:
@@ -304,7 +346,7 @@ def reject_user(user_id):
 @bp.route('/users/<int:user_id>/reset-password', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def reset_user_password(user_id):
     """사용자 비밀번호 초기화"""
     try:
@@ -333,7 +375,7 @@ def reset_user_password(user_id):
 @bp.route('/users/<int:user_id>', methods=['DELETE'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def delete_user(user_id):
     """사용자 삭제"""
     try:
@@ -416,7 +458,7 @@ def system():
 @bp.route('/system/precision-cache/clear', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def clear_precision_cache():
     """🆕 Precision 캐시 수동 정리"""
     try:
@@ -442,7 +484,7 @@ def clear_precision_cache():
 @bp.route('/system/precision-cache/warmup', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def warmup_precision_cache():
     """🆕 Precision 캐시 수동 웜업"""
     try:
@@ -496,9 +538,16 @@ def user_telegram_settings(user_id):
     
     if request.method == 'POST':
         telegram_id = request.form.get('telegram_id', '').strip()
-        
-        # 텔레그램 ID 업데이트
+        telegram_bot_token = request.form.get('telegram_bot_token', '').strip()
+
+        # 검증: 둘 다 있거나 둘 다 없어야 함
+        if (telegram_id and not telegram_bot_token) or (not telegram_id and telegram_bot_token):
+            flash('사용자 텔레그램 설정은 봇 토큰과 Chat ID를 모두 입력하거나 모두 비워두어야 합니다.', 'error')
+            return render_template('admin/user_telegram_settings.html', user=user)
+
+        # 빈 문자열을 None으로 변환 후 업데이트
         user.telegram_id = telegram_id if telegram_id else None
+        user.telegram_bot_token = telegram_bot_token if telegram_bot_token else None
         
         try:
             db.session.commit()
@@ -513,7 +562,7 @@ def user_telegram_settings(user_id):
 @bp.route('/users/<int:user_id>/test-telegram', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def test_user_telegram(user_id):
     """관리자가 사용자의 텔레그램 연결 테스트"""
     try:
@@ -547,7 +596,7 @@ def test_user_telegram(user_id):
 @bp.route('/users/<int:user_id>/send-telegram-notification', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def send_user_telegram_notification(user_id):
     """관리자가 사용자에게 텔레그램 알림 전송"""
     try:
@@ -654,7 +703,7 @@ def telegram_settings():
 @bp.route('/system/test-global-telegram', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
+@admin_verification_required
 def test_global_telegram():
     """전역 텔레그램 설정 테스트"""
     try:

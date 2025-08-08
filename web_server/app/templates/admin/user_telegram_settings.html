@@ -87,27 +87,37 @@
             </div>
             
             <div class="p-6 space-y-6">
-                <div class="form-group">
-                    <label for="telegram_id" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 Chat ID</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="telegram_id" name="telegram_id" 
-                               value="{{ user.telegram_id or '' }}" 
-                               class="form-input flex-1" 
-                               placeholder="예: 123456789">
-                        <button type="button" id="testTelegramBtn" 
-                                onclick="testTelegramConnection({{ user.id }})"
-                                class="btn btn-info"
-                                {% if not user.telegram_id %}disabled{% endif %}>
-                            <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                            </svg>
-                            테스트
-                        </button>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="form-group">
+                        <label for="telegram_bot_token" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 봇 토큰</label>
+                        <input type="password" id="telegram_bot_token" name="telegram_bot_token" 
+                               value="{{ user.telegram_bot_token or '' }}" 
+                               class="form-input" 
+                               placeholder="예: 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                        <p class="form-help">사용자별 봇 토큰을 입력하지 않으면 전역 봇 설정을 사용할 수 있습니다.</p>
                     </div>
-                    <div class="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
-                        <p class="text-sm text-blue-800 dark:text-blue-300">
-                            <strong>💡 설정 방법:</strong> 사용자에게 텔레그램에서 @userinfobot을 검색하여 대화를 시작하고, /start 명령어를 보내면 받을 수 있는 ID 숫자를 입력하도록 안내하세요.
-                        </p>
+                    <div class="form-group">
+                        <label for="telegram_id" class="block text-sm font-medium text-gray-700 mb-2">텔레그램 Chat ID</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="telegram_id" name="telegram_id" 
+                                   value="{{ user.telegram_id or '' }}" 
+                                   class="form-input flex-1" 
+                                   placeholder="예: 123456789">
+                            <button type="button" id="testTelegramBtn" 
+                                    onclick="testTelegramConnection({{ user.id }})"
+                                    class="btn btn-info"
+                                    {% if not user.telegram_id and not user.telegram_bot_token %}disabled{% endif %}>
+                                <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                테스트
+                            </button>
+                        </div>
+                        <div class="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
+                            <p class="text-sm text-blue-800 dark:text-blue-300">
+                                <strong>💡 설정 방법:</strong> 사용자에게 텔레그램에서 @userinfobot을 검색하여 대화를 시작하고, /start 명령어를 보내면 받을 수 있는 ID 숫자를 입력하도록 안내하세요.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -225,14 +235,89 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+// 관리자 검증 래퍼 및 모달
+let _adminVerifyResolve = null;
+function openAdminVerifyModal() {
+    const existing = document.getElementById('adminVerifyModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'adminVerifyModal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+    <div class="modal-content max-w-md">
+        <div class="modal-header">
+            <h3 class="text-lg font-semibold text-primary">관리자 확인</h3>
+            <button onclick="closeAdminVerifyModal()" class="modal-close">✕</button>
+        </div>
+        <div class="p-6 space-y-4">
+            <p class="text-sm text-muted">민감한 작업입니다. 관리자 비밀번호를 입력해주세요.</p>
+            <div class="form-group">
+                <label class="form-label">비밀번호</label>
+                <input id="adminVerifyPassword" type="password" class="form-input" placeholder="현재 비밀번호" />
+                <p id="adminVerifyError" class="text-sm text-red-600 mt-2 hidden"></p>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button class="btn btn-secondary" onclick="closeAdminVerifyModal()">취소</button>
+                <button id="adminVerifySubmit" class="btn btn-primary" onclick="submitAdminVerification()">확인</button>
+            </div>
+        </div>
+    </div>`;
+    document.body.appendChild(modal);
+    setTimeout(() => document.getElementById('adminVerifyPassword')?.focus(), 0);
+}
+function closeAdminVerifyModal() {
+    const modal = document.getElementById('adminVerifyModal');
+    if (modal) modal.remove();
+    if (_adminVerifyResolve) { _adminVerifyResolve(false); _adminVerifyResolve = null; }
+}
+function submitAdminVerification() {
+    const password = document.getElementById('adminVerifyPassword').value;
+    const btn = document.getElementById('adminVerifySubmit');
+    const err = document.getElementById('adminVerifyError');
+    btn.disabled = true; btn.innerText = '확인 중...'; err.classList.add('hidden');
+    fetch('/admin/verify-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+        body: JSON.stringify({ password })
+    }).then(r => r.json().then(d => ({ ok: r.ok, data: d }))).then(({ ok, data }) => {
+        if (ok && data.success) {
+            const modal = document.getElementById('adminVerifyModal');
+            if (modal) modal.remove();
+            if (_adminVerifyResolve) { _adminVerifyResolve(true); _adminVerifyResolve = null; }
+        } else {
+            err.textContent = data?.message || '검증에 실패했습니다.'; err.classList.remove('hidden');
+        }
+    }).catch(() => {
+        err.textContent = '네트워크 오류가 발생했습니다.'; err.classList.remove('hidden');
+    }).finally(() => { btn.disabled = false; btn.innerText = '확인'; });
+}
+function ensureAdminVerified() {
+    return new Promise((resolve) => { _adminVerifyResolve = resolve; openAdminVerifyModal(); });
+}
+async function adminFetch(input, init = {}) {
+    const first = await fetch(input, init);
+    if (first.status === 401 || first.status === 403) {
+        try {
+            const body = await first.clone().json();
+            if (body && body.require_admin_verification) {
+                const verified = await ensureAdminVerified();
+                if (!verified) return first;
+                return fetch(input, init);
+            }
+        } catch (_) {}
+    }
+    return first;
+}
+
 // 텔레그램 연결 테스트
 function testTelegramConnection(userId) {
     const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
     const testBtn = document.getElementById('testTelegramBtn');
     const statusDiv = document.getElementById('telegramStatus');
     
-    if (!telegramId) {
-        showToast('텔레그램 ID를 먼저 입력하세요.', 'error');
+    if (!telegramId || !telegramBotToken) {
+        showToast('텔레그램 봇 토큰과 Chat ID를 모두 입력하세요.', 'error');
         return;
     }
     
@@ -240,7 +325,7 @@ function testTelegramConnection(userId) {
     testBtn.disabled = true;
     testBtn.innerHTML = '<div class="loading-spinner"></div>테스트 중...';
     
-    fetch(`/admin/users/${userId}/test-telegram`, {
+    adminFetch(`/admin/users/${userId}/test-telegram`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -308,7 +393,7 @@ function sendNotification(userId) {
         return;
     }
     
-    fetch(`/admin/users/${userId}/send-telegram-notification`, {
+    adminFetch(`/admin/users/${userId}/send-telegram-notification`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -334,27 +419,26 @@ function sendNotification(userId) {
     });
 }
 
-// 텔레그램 ID 입력 시 테스트 버튼 활성화/비활성화
-document.getElementById('telegram_id').addEventListener('input', function() {
+// 입력 변화 시 테스트 버튼 활성/비활성
+function updateTestButtonState() {
     const testBtn = document.getElementById('testTelegramBtn');
     const statusDiv = document.getElementById('telegramStatus');
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
     
-    if (this.value.trim()) {
+    if (telegramId && telegramBotToken) {
         testBtn.disabled = false;
     } else {
         testBtn.disabled = true;
         statusDiv.classList.add('hidden');
     }
-});
+}
+document.getElementById('telegram_id').addEventListener('input', updateTestButtonState);
+document.getElementById('telegram_bot_token').addEventListener('input', updateTestButtonState);
 
 // 페이지 로드 시 초기 상태 설정
 document.addEventListener('DOMContentLoaded', function() {
-    const telegramId = document.getElementById('telegram_id').value.trim();
-    const testBtn = document.getElementById('testTelegramBtn');
-    
-    if (telegramId) {
-        testBtn.disabled = false;
-    }
+    updateTestButtonState();
 });
 </script>
 {% endblock %}

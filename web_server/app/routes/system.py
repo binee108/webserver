@@ -7,32 +7,21 @@ bp = Blueprint('system', __name__, url_prefix='/api')
 
 @bp.route('/system/health', methods=['GET'])
 def health_check():
-    """시스템 헬스 체크 엔드포인트"""
+    """시스템 헬스 체크 엔드포인트 - 민감한 정보 제거"""
     try:
-        # 데이터베이스 연결 확인
+        # 데이터베이스 연결만 확인
         from sqlalchemy import text
         db.session.execute(text('SELECT 1'))
-        db_status = 'healthy'
-    except Exception as e:
-        current_app.logger.error(f'데이터베이스 연결 오류: {str(e)}')
-        db_status = 'unhealthy'
-    
-    # 텔레그램 서비스 상태 확인
-    try:
-        from app.services.telegram_service import telegram_service
-        telegram_status = 'enabled' if telegram_service.is_enabled() else 'disabled'
+
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
     except Exception:
-        telegram_status = 'error'
-    
-    return jsonify({
-        'status': 'healthy' if db_status == 'healthy' else 'unhealthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0',
-        'services': {
-            'database': db_status,
-            'telegram': telegram_status
-        }
-    })
+        return jsonify({
+            'status': 'unhealthy',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 503
 
 @bp.route('/system/test-telegram', methods=['POST'])
 @login_required
