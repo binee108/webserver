@@ -24,11 +24,11 @@
   - 프런트 UI: `strategies.html`의 전략 추가/수정 모달에 공개/비공개 토글 없음
 
 - 작업 항목 (P1)
-  - [ ] UI: 전략 추가/수정 모달에 "공개 전략" 토글 추가, 저장 시 is_public 포함 전송
-  - [ ] UI: 편집 시 is_public 값 채우기 (GET /api/strategies/<id> 응답에 포함 필요)
+  - [x] UI: 전략 추가/수정 모달에 "공개 전략" 토글 추가, 저장 시 is_public 포함 전송
+  - [x] UI: 편집 시 is_public 값 채우기 (GET /api/strategies/<id> 응답에 포함 필요)
   - [ ] 목록 카드에 공개 배지(예: "공개") 표시(선택)
-  - [ ] API(조회): get_strategies_by_user 출력에 is_public 포함, GET /api/strategies/<id> 응답 반영
-  - [ ] API(수정): PUT /api/strategies/<id>에서 is_public 업데이트 반영 (소유자만)
+  - [x] API(조회): get_strategies_by_user 출력에 is_public 포함, GET /api/strategies/<id> 응답 반영
+  - [x] API(수정): PUT /api/strategies/<id>에서 is_public 업데이트 반영 (소유자만)
 
 ## P2 — 마이그레이션/성능/운영
 - [ ] Alembic 마이그레이션 정식화 (`strategies.is_public`, `users.webhook_token` + 인덱스)
