@@ -44,9 +44,16 @@
         {% endif %}
     {% endwith %}
 
-    <!-- 전략 목록 섹션 -->
-    <section>
-        <h2 class="text-2xl font-semibold strategy-title mb-6">등록된 전략 목록</h2>
+    <!-- 탭 내비게이션 -->
+    <div class="flex space-x-2 mb-4">
+        <button id="tab-my" class="btn btn-secondary btn-sm" onclick="switchTab('my')">내 전략</button>
+        <button id="tab-subscribed" class="btn btn-secondary btn-sm" onclick="switchTab('subscribed')">구독 전략</button>
+        <button id="tab-discover" class="btn btn-secondary btn-sm" onclick="switchTab('discover')">공개 전략 탐색</button>
+    </div>
+
+    <!-- 전략 목록 섹션: 내 전략 (서버 렌더 기본) -->
+    <section id="section-my">
+        <h2 class="text-2xl font-semibold strategy-title mb-6">내 전략</h2>
         
         {% if strategies %}
             <div class="space-y-8">
@@ -242,6 +249,18 @@
             </div>
         {% endif %}
     </section>
+
+    <!-- 전략 목록 섹션: 구독 전략 (클라이언트 렌더) -->
+    <section id="section-subscribed" class="hidden">
+        <h2 class="text-2xl font-semibold strategy-title mb-6">구독 전략</h2>
+        <div id="subscribed-strategies" class="space-y-8"></div>
+    </section>
+
+    <!-- 전략 목록 섹션: 공개 전략 탐색 (클라이언트 렌더) -->
+    <section id="section-discover" class="hidden">
+        <h2 class="text-2xl font-semibold strategy-title mb-6">공개 전략 탐색</h2>
+        <div id="public-strategies" class="space-y-4"></div>
+    </section>
 </div>
 
 <!-- 토스트 컨테이너 -->
@@ -408,6 +427,162 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+function switchTab(tab) {
+    const sections = {
+        my: document.getElementById('section-my'),
+        subscribed: document.getElementById('section-subscribed'),
+        discover: document.getElementById('section-discover')
+    };
+    Object.values(sections).forEach(s => s.classList.add('hidden'));
+    sections[tab]?.classList.remove('hidden');
+
+    // Load data when switching to subscribed or discover
+    if (tab === 'subscribed') {
+        loadSubscribedStrategies();
+    } else if (tab === 'discover') {
+        loadPublicStrategies();
+    }
+}
+
+function loadSubscribedStrategies() {
+    fetch('/api/strategies/accessibles', { headers: { 'X-CSRFToken': getCSRFToken() }})
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('subscribed-strategies');
+            if (!data.success) {
+                container.innerHTML = '<div class="text-error">구독 전략을 불러오지 못했습니다.</div>';
+                return;
+            }
+            const items = (data.strategies || []).filter(s => s.ownership === 'subscriber');
+            if (items.length === 0) {
+                container.innerHTML = '<div class="text-muted">구독 중인 전략이 없습니다.</div>';
+                return;
+            }
+            container.innerHTML = items.map(renderSubscribedStrategy).join('');
+        })
+        .catch(() => {
+            document.getElementById('subscribed-strategies').innerHTML = '<div class="text-error">오류가 발생했습니다.</div>';
+        });
+}
+
+function renderSubscribedStrategy(s) {
+    const accounts = s.connected_accounts || [];
+    return `
+    <div class="card-inner">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-lg font-semibold text-primary">${s.name}</div>
+                <div class="text-sm text-muted">${s.description || ''}</div>
+            </div>
+            <div class="badge ${s.is_active ? 'badge-success' : 'badge-secondary'}">${s.is_active ? '활성' : '비활성'}</div>
+        </div>
+        <div class="mt-3">
+            ${accounts.length ? accounts.map(a => `
+                <div class="flex items-center justify-between py-2 border-b border-color">
+                    <div class="text-sm text-primary">${a.exchange.toUpperCase()} - ${a.name}</div>
+                    <div class="text-xs text-muted">가중치 ${a.weight}, 레버리지 ${a.leverage}x${a.max_symbols ? `, 최대 ${a.max_symbols}개` : ''}</div>
+                </div>
+            `).join('') : '<div class="text-sm text-muted">연결된 내 계좌가 없습니다.</div>'}
+        </div>
+    </div>`;
+}
+
+function loadPublicStrategies() {
+    fetch('/api/strategies/public', { headers: { 'X-CSRFToken': getCSRFToken() }})
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('public-strategies');
+            if (!data.success) {
+                container.innerHTML = '<div class="text-error">공개 전략을 불러오지 못했습니다.</div>';
+                return;
+            }
+            const items = data.strategies || [];
+            if (items.length === 0) {
+                container.innerHTML = '<div class="text-muted">공개된 전략이 없습니다.</div>';
+                return;
+            }
+            container.innerHTML = items.map(renderPublicStrategy).join('');
+        })
+        .catch(() => {
+            document.getElementById('public-strategies').innerHTML = '<div class="text-error">오류가 발생했습니다.</div>';
+        });
+}
+
+function renderPublicStrategy(s) {
+    return `
+    <div class="card-inner">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-lg font-semibold text-primary">${s.name}</div>
+                <div class="text-sm text-muted">${s.description || ''}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openSubscribeModal(${s.id})">구독하기</button>
+        </div>
+    </div>`;
+}
+
+function openSubscribeModal(strategyId) {
+    // 기존 계좌 연결 모달을 재사용
+    document.getElementById('accountModal').classList.remove('hidden');
+    renderSubscribeAccountPicker(strategyId);
+}
+
+function renderSubscribeAccountPicker(strategyId) {
+    const modalContent = document.getElementById('accountModalContent');
+    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
+    
+    // 내 계좌 목록만 불러옴
+    fetch('/api/accounts', { headers: { 'X-CSRFToken': getCSRFToken() }})
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) {
+          modalContent.innerHTML = '<div class="text-center py-8 text-error">계좌 목록을 불러오지 못했습니다.</div>';
+          return;
+        }
+        const accounts = data.accounts || [];
+        let html = '<div class="space-y-3">';
+        if (accounts.length === 0) {
+           html += '<div class="text-center py-8 text-muted">등록된 계좌가 없습니다.</div>';
+        } else {
+          accounts.forEach(acc => {
+            html += `
+            <div class="account-item">
+              <div class="flex items-center justify-between">
+                <div class="text-sm text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
+                <button class="btn btn-primary btn-sm" onclick="subscribeStrategy(${strategyId}, ${acc.id})">이 계좌로 구독</button>
+              </div>
+            </div>`;
+          });
+        }
+        html += '</div>';
+        modalContent.innerHTML = html;
+      })
+      .catch(() => {
+        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다.</div>';
+      });
+}
+
+function subscribeStrategy(strategyId, accountId) {
+    const body = { account_id: accountId };
+    fetch(`/api/strategies/${strategyId}/subscribe`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify(body)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('구독이 완료되었습니다.', 'success');
+            closeAccountModal();
+        } else {
+            showToast('구독 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+        }
+    })
+    .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
+}
 // 전략 관련 함수들
 function openAddStrategyModal() {
     document.getElementById('strategyModalTitle').textContent = '전략 추가';

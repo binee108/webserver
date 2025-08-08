@@ -74,14 +74,12 @@ def accounts():
 def strategies():
     """전략 관리 페이지"""
     try:
-        # strategy_service를 사용하여 가공된 데이터 조회
+        # 내 전략만 서버 렌더, 구독/공개 전략은 클라이언트에서 API 호출로 로드
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
         return render_template('strategies.html', strategies=strategies_data)
-    except StrategyError as e:
-        # 오류 발생 시 빈 목록으로 처리
+    except StrategyError:
         return render_template('strategies.html', strategies=[])
-    except Exception as e:
-        # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
+    except Exception:
         return render_template('strategies.html', strategies=[])
 
 @bp.route('/strategies/<int:strategy_id>/positions')
