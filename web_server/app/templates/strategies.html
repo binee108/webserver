@@ -604,14 +604,11 @@ function openSubscribeSettings(strategyId, accountId, accountLabel) {
     const modalContent = document.getElementById('accountModalContent');
     modalContent.innerHTML = `
         <div class="space-y-6">
-            <div class="flex items-center space-x-3">
+            <div class="flex items-center justify-between">
+                <h4 class="text-lg font-medium text-primary">구독 설정</h4>
                 <button onclick="renderSubscribeAccountPicker(${strategyId})" class="btn btn-secondary btn-sm">
-                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-                    </svg>
                     돌아가기
                 </button>
-                <h4 class="text-lg font-medium text-primary">구독 설정</h4>
             </div>
             <div class="text-sm text-muted">대상 계좌: ${accountLabel}</div>
             <form id="subscribeSettingsForm" onsubmit="submitSubscribeSettings(event, ${strategyId}, ${accountId})">
