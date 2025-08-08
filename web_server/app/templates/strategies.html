@@ -479,8 +479,13 @@ function renderSubscribedStrategy(s) {
         <div class="mt-3">
             ${accounts.length ? accounts.map(a => `
                 <div class="flex items-center justify-between py-2 border-b border-color">
-                    <div class="text-sm text-primary">${a.exchange.toUpperCase()} - ${a.name}</div>
-                    <div class="text-xs text-muted">가중치 ${a.weight}, 레버리지 ${a.leverage}x${a.max_symbols ? `, 최대 ${a.max_symbols}개` : ''}</div>
+                    <div>
+                        <div class="text-sm text-primary">${a.exchange.toUpperCase()} - ${a.name}</div>
+                        <div class="text-xs text-muted">가중치 ${a.weight}, 레버리지 ${a.leverage}x${a.max_symbols ? `, 최대 ${a.max_symbols}개` : ''}</div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button class="btn btn-error btn-xs" onclick="unsubscribeStrategy(${s.id}, ${a.account_id || a.id})">구독 해제</button>
+                    </div>
                 </div>
             `).join('') : '<div class="text-sm text-muted">연결된 내 계좌가 없습니다.</div>'}
         </div>
@@ -516,7 +521,10 @@ function renderPublicStrategy(s) {
                 <div class="text-lg font-semibold text-primary">${s.name}</div>
                 <div class="text-sm text-muted">${s.description || ''}</div>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="openSubscribeModal(${s.id})">구독하기</button>
+            <div class="flex items-center space-x-2">
+                <button class="btn btn-secondary btn-sm" onclick="openPublicDetail(${s.id})">자세히</button>
+                <button class="btn btn-primary btn-sm" onclick="openSubscribeModal(${s.id})">구독하기</button>
+            </div>
         </div>
     </div>`;
 }
@@ -577,11 +585,65 @@ function subscribeStrategy(strategyId, accountId) {
         if (data.success) {
             showToast('구독이 완료되었습니다.', 'success');
             closeAccountModal();
+            // 갱신
+            loadSubscribedStrategies();
         } else {
             showToast('구독 실패: ' + (data.error || '알 수 없는 오류'), 'error');
         }
     })
     .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
+}
+
+function unsubscribeStrategy(strategyId, accountId) {
+    if (!confirm('이 전략에서 해당 계좌의 구독을 해제하시겠습니까? 활성 포지션이 있으면 해제할 수 없습니다.')) return;
+    fetch(`/api/strategies/${strategyId}/subscribe/${accountId}`, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('구독이 해제되었습니다.', 'success');
+            loadSubscribedStrategies();
+        } else {
+            showToast('구독 해제 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+        }
+    })
+    .catch(err => showToast('구독 해제 중 오류: ' + err.message, 'error'));
+}
+
+function openPublicDetail(strategyId) {
+    const modal = document.getElementById('accountModal');
+    modal.classList.remove('hidden');
+    const modalContent = document.getElementById('accountModalContent');
+    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
+    fetch(`/api/strategies/public/${strategyId}`, { headers: { 'X-CSRFToken': getCSRFToken() }})
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) {
+            modalContent.innerHTML = '<div class="text-center py-8 text-error">전략 정보를 불러오지 못했습니다.</div>';
+            return;
+        }
+        const s = data.strategy;
+        modalContent.innerHTML = `
+            <div class="space-y-4">
+                <div>
+                    <div class="text-lg font-semibold text-primary">${s.name}</div>
+                    <div class="text-sm text-muted">${s.description || ''}</div>
+                    <div class="text-xs text-secondary mt-1">마켓: ${s.market_type.toUpperCase()}</div>
+                </div>
+                <div class="flex justify-end space-x-2">
+                    <button class="btn btn-secondary" onclick="renderSubscribeAccountPicker(${s.id})">계좌 선택하여 구독</button>
+                </div>
+            </div>
+        `;
+      })
+      .catch(() => {
+        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다.</div>';
+      });
 }
 // 전략 관련 함수들
 function openAddStrategyModal() {
