@@ -412,6 +412,9 @@
 </div>
 
 <script>
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+}
 function showNotification(message, type = 'info') {
     const notification = document.getElementById('notification');
     const messageEl = document.getElementById('notification-message');
@@ -497,7 +500,7 @@ function approveUser(userId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name=csrf-token]')?.getAttribute('content') || ''
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => {
@@ -531,6 +534,7 @@ function rejectUser(userId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => response.json())
@@ -554,6 +558,7 @@ function toggleAdmin(userId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => response.json())
@@ -584,6 +589,7 @@ function resetPassword(userId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => response.json())
@@ -616,6 +622,7 @@ function deleteUser(userId) {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => response.json())

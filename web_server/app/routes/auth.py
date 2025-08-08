@@ -259,7 +259,6 @@ def profile():
 
 @bp.route('/profile/test-telegram', methods=['POST'])
 @login_required
-@csrf.exempt
 def test_telegram():
     """사용자의 텔레그램 연결 테스트 (사용자별 봇 토큰 지원)"""
     try:

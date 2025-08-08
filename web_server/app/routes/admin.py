@@ -181,7 +181,6 @@ def change_admin_password():
 @bp.route('/users/<int:user_id>/toggle-active', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def toggle_user_active(user_id):
     """사용자 활성화/비활성화 토글"""
     user = User.query.get_or_404(user_id)
@@ -208,7 +207,6 @@ def toggle_user_active(user_id):
 @bp.route('/users/<int:user_id>/toggle-admin', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def toggle_user_admin(user_id):
     """사용자 관리자 권한 토글"""
     user = User.query.get_or_404(user_id)
@@ -235,7 +233,6 @@ def toggle_user_admin(user_id):
 @bp.route('/users/<int:user_id>/approve', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def approve_user(user_id):
     """사용자 승인"""
     try:
@@ -272,7 +269,6 @@ def approve_user(user_id):
 @bp.route('/users/<int:user_id>/reject', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def reject_user(user_id):
     """사용자 가입 거부 (계정 삭제)"""
     try:
@@ -304,7 +300,6 @@ def reject_user(user_id):
 @bp.route('/users/<int:user_id>/reset-password', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def reset_user_password(user_id):
     """사용자 비밀번호 초기화"""
     try:
@@ -333,7 +328,6 @@ def reset_user_password(user_id):
 @bp.route('/users/<int:user_id>', methods=['DELETE'])
 @login_required
 @admin_required
-@csrf.exempt
 def delete_user(user_id):
     """사용자 삭제"""
     try:
@@ -416,7 +410,6 @@ def system():
 @bp.route('/system/precision-cache/clear', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def clear_precision_cache():
     """🆕 Precision 캐시 수동 정리"""
     try:
@@ -442,7 +435,6 @@ def clear_precision_cache():
 @bp.route('/system/precision-cache/warmup', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def warmup_precision_cache():
     """🆕 Precision 캐시 수동 웜업"""
     try:
@@ -513,7 +505,6 @@ def user_telegram_settings(user_id):
 @bp.route('/users/<int:user_id>/test-telegram', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def test_user_telegram(user_id):
     """관리자가 사용자의 텔레그램 연결 테스트"""
     try:
@@ -547,7 +538,6 @@ def test_user_telegram(user_id):
 @bp.route('/users/<int:user_id>/send-telegram-notification', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def send_user_telegram_notification(user_id):
     """관리자가 사용자에게 텔레그램 알림 전송"""
     try:
@@ -654,7 +644,6 @@ def telegram_settings():
 @bp.route('/system/test-global-telegram', methods=['POST'])
 @login_required
 @admin_required
-@csrf.exempt
 def test_global_telegram():
     """전역 텔레그램 설정 테스트"""
     try:
