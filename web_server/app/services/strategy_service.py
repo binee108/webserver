@@ -50,6 +50,9 @@ class StrategyService:
                 total_allocated_capital = 0
                 
                 for sa in strategy.strategy_accounts:
+                    # 내 전략 카드에는 내 계좌만 표시
+                    if sa.account.user_id != user_id:
+                        continue
                     account_info = {
                         'id': sa.account.id,
                         'account_id': sa.account.id,
@@ -59,8 +62,6 @@ class StrategyService:
                         'leverage': sa.leverage,
                         'max_symbols': sa.max_symbols
                     }
-                    
-                    # 할당된 자본 정보 (이제 추가 쿼리 없이 접근 가능)
                     if sa.strategy_capital:
                         account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
                         account_info['current_pnl'] = sa.strategy_capital.current_pnl
@@ -68,7 +69,6 @@ class StrategyService:
                     else:
                         account_info['allocated_capital'] = 0
                         account_info['current_pnl'] = 0
-                    
                     connected_accounts.append(account_info)
                 
                 strategies_data.append({
@@ -82,7 +82,7 @@ class StrategyService:
                     'created_at': strategy.created_at.isoformat(),
                     'connected_accounts': connected_accounts,
                     'total_allocated_capital': total_allocated_capital,
-                    'position_count': sum(len([pos for pos in sa.strategy_positions if pos.quantity != 0]) for sa in strategy.strategy_accounts)  # 활성 포지션만 계산
+                    'position_count': sum(len([pos for pos in sa.strategy_positions if pos.quantity != 0]) for sa in strategy.strategy_accounts if sa.account.user_id == user_id)  # 내 계좌의 활성 포지션만 계산
                 })
             
             return strategies_data
