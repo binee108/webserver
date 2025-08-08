@@ -319,6 +319,11 @@
                                class="rounded border-color text-accent shadow-sm focus:border-accent focus:ring focus:ring-accent focus:ring-opacity-50">
                         <label for="is_active" class="ml-2 text-sm text-primary">전략 활성화</label>
                     </div>
+                    <div class="flex items-center">
+                        <input type="checkbox" id="is_public" name="is_public" 
+                               class="rounded border-color text-accent shadow-sm focus:border-accent focus:ring focus:ring-accent focus:ring-opacity-50">
+                        <label for="is_public" class="ml-2 text-sm text-primary">공개 전략</label>
+                    </div>
                 </div>
                 
                 <div class="flex space-x-3 mt-6">
@@ -678,6 +683,7 @@ function editStrategy(strategyId) {
             document.getElementById('group_name').value = strategy.group_name || '';
             document.getElementById('market_type').value = strategy.market_type || '';
             document.getElementById('is_active').checked = strategy.is_active || false;
+            document.getElementById('is_public').checked = strategy.is_public || false;
             
             document.getElementById('strategyModal').classList.remove('hidden');
         } else {
@@ -725,7 +731,8 @@ function submitStrategy(event) {
         description: formData.get('description'),
         group_name: formData.get('group_name'),
         market_type: formData.get('market_type'),
-        is_active: formData.get('is_active') === 'on'
+        is_active: formData.get('is_active') === 'on',
+        is_public: formData.get('is_public') === 'on'
     };
     
     const url = strategyId ? `/api/strategies/${strategyId}` : '/api/strategies';

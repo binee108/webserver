@@ -201,6 +201,10 @@ def update_strategy(strategy_id):
                 }), 400
             strategy.group_name = data['group_name']
         
+        # is_public 수정 (소유자만)
+        if 'is_public' in data:
+            strategy.is_public = bool(data['is_public'])
+        
         # 계좌 연결 정보 업데이트
         if 'accounts' in data:
             # 기존 연결된 계좌들 기록

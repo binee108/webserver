@@ -77,6 +77,7 @@ class StrategyService:
                     'description': strategy.description,
                     'group_name': strategy.group_name,
                     'market_type': strategy.market_type,
+                    'is_public': getattr(strategy, 'is_public', False),
                     'is_active': strategy.is_active,
                     'created_at': strategy.created_at.isoformat(),
                     'connected_accounts': connected_accounts,
