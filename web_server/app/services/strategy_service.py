@@ -411,13 +411,15 @@ class StrategyService:
                     raise StrategyError('활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.')
 
             account_name = strategy_account.account.name
+            # 세션 분리/삭제 후 lazy load 방지를 위해 미리 참조값 보관
+            strategy_name = strategy_account.strategy.name if hasattr(strategy_account, 'strategy') and strategy_account.strategy else '알수없음'
             self.session.delete(strategy_account)
             self.session.commit()
 
             # 남은 전략들로 자본 재배분
             capital_service.auto_allocate_capital_for_account(account_id)
 
-            logger.info(f'공개 전략 구독 해제: 전략 {strategy_account.strategy.name} - 계좌 {account_name}')
+            logger.info(f'공개 전략 구독 해제: 전략 {strategy_name} - 계좌 {account_name}')
             return True
 
         except StrategyError:
