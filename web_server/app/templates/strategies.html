@@ -94,6 +94,13 @@
                                             현물
                                         </span>
                                     {% endif %}
+                                    
+                                    <!-- 공개 여부 배지 -->
+                                    {% if strategy.is_public %}
+                                        <span class="badge badge-accent">공개</span>
+                                    {% else %}
+                                        <span class="badge badge-secondary">비공개</span>
+                                    {% endif %}
                                 </div>
                             </div>
                             <p>{{ strategy.description or '단기 변동성 추종 전략 (예시 설명)' }}</p>
@@ -476,7 +483,7 @@ function renderSubscribedStrategy(s) {
     <div class="card-inner">
         <div class="flex items-center justify-between">
             <div>
-                <div class="text-lg font-semibold text-primary">${s.name}</div>
+                <div class="text-lg font-semibold text-primary">${s.name} ${s.is_public ? '<span class="badge badge-accent ml-2">공개</span>' : '<span class="badge badge-secondary ml-2">비공개</span>'}</div>
                 <div class="text-sm text-muted">${s.description || ''}</div>
             </div>
             <div class="badge ${s.is_active ? 'badge-success' : 'badge-secondary'}">${s.is_active ? '활성' : '비활성'}</div>
