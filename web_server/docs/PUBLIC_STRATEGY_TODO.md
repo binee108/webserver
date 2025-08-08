@@ -30,6 +30,20 @@
   - [x] API(조회): get_strategies_by_user 출력에 is_public 포함, GET /api/strategies/<id> 응답 반영
   - [x] API(수정): PUT /api/strategies/<id>에서 is_public 업데이트 반영 (소유자만)
 
+### 신규 요구: 공개 전략 구독 시 연결 설정(가중치/레버리지/최대심볼) 입력 지원
+- 현황 점검
+  - 백엔드: `subscribe_to_strategy`가 `weight`, `leverage`, `max_symbols`를 이미 지원
+  - 프런트: 공개 전략 구독 플로우에서 계정 선택만 있고 설정 입력 UI 없음
+
+- 작업 항목 (P1)
+  - [ ] UI: 공개 전략 구독 모달에 설정 필드 추가
+    - 가중치(weight, 기본 1.0, 0.1~10.0 스텝 0.1)
+    - 레버리지(leverage, 기본 1.0, 1~100 스텝 0.1)
+    - 최대 보유 심볼 수(max_symbols, 선택)
+  - [ ] 전송: 구독 API 요청 본문에 설정 포함 `{ account_id, weight, leverage, max_symbols? }`
+  - [ ] 유효성: 숫자 범위/정수(최대심볼) 검증 및 오류 표시
+  - [ ] UX: 구독 완료 시 구독 전략 목록 즉시 갱신
+
 ## P2 — 마이그레이션/성능/운영
 - [ ] Alembic 마이그레이션 정식화 (`strategies.is_public`, `users.webhook_token` + 인덱스)
 - [ ] 레이트리밋/감사 강화: `/api/webhook` 요청 방어(토큰 기반이라도)
