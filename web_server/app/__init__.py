@@ -211,6 +211,19 @@ def create_app(config_name=None):
                 # 모든 테이블 생성 (이미 존재하는 테이블은 무시됨)
                 db.create_all()
                 app.logger.info('데이터베이스 테이블 생성 완료')
+
+                # 호환성 마이그레이션: strategies 테이블에 is_public 컬럼이 없으면 추가
+                try:
+                    from sqlalchemy import inspect
+                    inspector = inspect(db.engine)
+                    columns = [col['name'] for col in inspector.get_columns('strategies')]
+                    if 'is_public' not in columns:
+                        with db.engine.connect() as conn:
+                            conn.execute(text("ALTER TABLE strategies ADD COLUMN is_public BOOLEAN NOT NULL DEFAULT FALSE"))
+                            conn.commit()
+                        app.logger.info("호환성 마이그레이션 적용: strategies.is_public 컬럼 추가")
+                except Exception as mig_e:
+                    app.logger.warning(f'호환성 마이그레이션(is_public) 적용 실패 또는 불필요: {str(mig_e)}')
             except Exception as e:
                 app.logger.error(f'데이터베이스 테이블 생성 실패: {str(e)}')
             

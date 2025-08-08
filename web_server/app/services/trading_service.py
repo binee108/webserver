@@ -59,7 +59,7 @@ class TradingService:
                     order_id=order_id,
                     symbol=symbol,
                     strategy_id=strategy.id,
-                    user_id=strategy.user_id,
+                    user_id=account.user_id,
                     side=side,  # 이미 BUY/SELL로 표준화되어 전달됨
                     quantity=decimal_to_float(quantity),
                     price=decimal_to_float(price),
@@ -81,7 +81,7 @@ class TradingService:
                     position_id=position.id,
                     symbol=symbol,
                     strategy_id=strategy.id,
-                    user_id=strategy.user_id,
+                    user_id=account.user_id,
                     quantity=position.quantity,
                     entry_price=position.entry_price,
                     timestamp=datetime.utcnow().isoformat(),

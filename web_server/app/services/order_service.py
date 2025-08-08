@@ -47,7 +47,7 @@ class OrderService:
                 order_id=open_order.exchange_order_id,
                 symbol=open_order.symbol,
                 strategy_id=strategy.id,
-                user_id=strategy.user_id,
+                user_id=account.user_id,
                 side=open_order.side,
                 quantity=float(open_order.quantity),
                 price=float(open_order.price),
@@ -57,7 +57,7 @@ class OrderService:
             )
             
             event_service.emit_order_event(order_event)
-            logger.info(f"📤 주문 취소 SSE 이벤트 발송: 사용자 {strategy.user_id}, 주문ID {open_order.exchange_order_id}")
+            logger.info(f"📤 주문 취소 SSE 이벤트 발송: 사용자 {account.user_id}, 주문ID {open_order.exchange_order_id}")
             
         except Exception as e:
             logger.warning(f"주문 취소 SSE 이벤트 발송 실패: {str(e)}")

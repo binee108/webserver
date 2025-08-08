@@ -89,6 +89,116 @@ class StrategyService:
         except Exception as e:
             logger.error(f'전략 목록 조회 오류: {str(e)}')
             raise StrategyError(f'전략 목록 조회 실패: {str(e)}')
+
+    def get_accessible_strategies(self, user_id: int) -> List[Dict[str, Any]]:
+        """사용자가 접근 가능한 전략: 내가 소유하거나, 내가 구독(내 계좌 연결) 중인 public 전략.
+        계좌 정보는 현재 사용자 소유 계좌로 한정하여 반환한다.
+        """
+        try:
+            # 내가 소유한 전략
+            owned_strategies = (
+                Strategy.query
+                .options(
+                    selectinload(Strategy.strategy_accounts)
+                    .selectinload(StrategyAccount.account),
+                    selectinload(Strategy.strategy_accounts)
+                    .selectinload(StrategyAccount.strategy_capital),
+                    selectinload(Strategy.strategy_accounts)
+                    .selectinload(StrategyAccount.strategy_positions)
+                )
+                .filter_by(user_id=user_id)
+                .all()
+            )
+
+            # 내가 구독한 전략 (내 계좌가 연결된 모든 전략)
+            subscribed_strategy_accounts = (
+                StrategyAccount.query
+                .options(
+                    selectinload(StrategyAccount.strategy),
+                    selectinload(StrategyAccount.account),
+                    selectinload(StrategyAccount.strategy_capital),
+                    selectinload(StrategyAccount.strategy_positions)
+                )
+                .join(StrategyAccount.account)
+                .filter(Account.user_id == user_id)
+                .all()
+            )
+
+            # 전략별로 현재 사용자 계좌만 담아서 구성
+            strategy_id_to_data: Dict[int, Dict[str, Any]] = {}
+
+            def ensure_strategy_entry(strategy: Strategy):
+                if strategy.id not in strategy_id_to_data:
+                    strategy_id_to_data[strategy.id] = {
+                        'id': strategy.id,
+                        'name': strategy.name,
+                        'description': strategy.description,
+                        'group_name': strategy.group_name,
+                        'market_type': strategy.market_type,
+                        'is_active': strategy.is_active,
+                        'is_public': getattr(strategy, 'is_public', False),
+                        'created_at': strategy.created_at.isoformat(),
+                        'connected_accounts': [],
+                        'position_count': 0,
+                        'ownership': 'owner' if strategy.user_id == user_id else 'subscriber'
+                    }
+
+            # 소유 전략 처리 (계좌 전체 표시)
+            for strategy in owned_strategies:
+                ensure_strategy_entry(strategy)
+                entry = strategy_id_to_data[strategy.id]
+                position_count = 0
+                for sa in strategy.strategy_accounts:
+                    account_info = {
+                        'id': sa.account.id,
+                        'account_id': sa.account.id,
+                        'name': sa.account.name,
+                        'exchange': sa.account.exchange,
+                        'weight': sa.weight,
+                        'leverage': sa.leverage,
+                        'max_symbols': sa.max_symbols
+                    }
+                    if sa.strategy_capital:
+                        account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
+                        account_info['current_pnl'] = sa.strategy_capital.current_pnl
+                    else:
+                        account_info['allocated_capital'] = 0
+                        account_info['current_pnl'] = 0
+                    entry['connected_accounts'].append(account_info)
+                    position_count += len([pos for pos in sa.strategy_positions if pos.quantity != 0])
+                entry['position_count'] = position_count
+
+            # 구독 전략 처리 (내 계좌만 표시)
+            for sa in subscribed_strategy_accounts:
+                strategy = sa.strategy
+                ensure_strategy_entry(strategy)
+                entry = strategy_id_to_data[strategy.id]
+                # 내 계좌만 추가
+                account_info = {
+                    'id': sa.account.id,
+                    'account_id': sa.account.id,
+                    'name': sa.account.name,
+                    'exchange': sa.account.exchange,
+                    'weight': sa.weight,
+                    'leverage': sa.leverage,
+                    'max_symbols': sa.max_symbols
+                }
+                if sa.strategy_capital:
+                    account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
+                    account_info['current_pnl'] = sa.strategy_capital.current_pnl
+                else:
+                    account_info['allocated_capital'] = 0
+                    account_info['current_pnl'] = 0
+
+                entry['connected_accounts'].append(account_info)
+                entry['position_count'] += len([pos for pos in sa.strategy_positions if pos.quantity != 0])
+
+            # 리스트로 반환
+            return list(strategy_id_to_data.values())
+
+        except Exception as e:
+            logger.error(f'접근 가능한 전략 조회 오류: {str(e)}')
+            raise StrategyError(f'접근 가능한 전략 조회 실패: {str(e)}')
     
     def create_strategy(self, user_id: int, strategy_data: Dict[str, Any]) -> Dict[str, Any]:
         """새 전략 생성"""
@@ -116,7 +226,8 @@ class StrategyService:
                 description=strategy_data.get('description', ''),
                 group_name=strategy_data['group_name'],
                 market_type=market_type,
-                is_active=strategy_data.get('is_active', True)
+                is_active=strategy_data.get('is_active', True),
+                is_public=strategy_data.get('is_public', False)
             )
             
             self.session.add(strategy)
@@ -188,7 +299,7 @@ class StrategyService:
                 raise StrategyError('전략을 찾을 수 없습니다.')
             
             # 수정 가능한 필드들
-            updatable_fields = ['name', 'description', 'is_active']
+            updatable_fields = ['name', 'description', 'is_active', 'is_public']
             
             for field in updatable_fields:
                 if field in update_data:
@@ -203,7 +314,8 @@ class StrategyService:
                 'strategy_id': strategy.id,
                 'name': strategy.name,
                 'description': strategy.description,
-                'is_active': strategy.is_active
+                'is_active': strategy.is_active,
+                'is_public': strategy.is_public
             }
             
         except StrategyError:
@@ -213,6 +325,106 @@ class StrategyService:
             self.session.rollback()
             logger.error(f'전략 수정 오류: {str(e)}')
             raise StrategyError(f'전략 수정 실패: {str(e)}')
+
+    def subscribe_to_strategy(self, strategy_id: int, user_id: int, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """공개 전략 구독: 현재 사용자 소유 계좌를 전략에 연결한다.
+        소유자는 공개 여부와 관계없이 자신의 전략에 계좌를 연결할 수 있다.
+        """
+        try:
+            strategy = Strategy.query.filter_by(id=strategy_id).first()
+            if not strategy:
+                raise StrategyError('전략을 찾을 수 없습니다.')
+
+            if not strategy.is_public and strategy.user_id != user_id:
+                raise StrategyError('공개되지 않은 전략입니다.')
+
+            account = Account.query.filter_by(id=account_data['account_id'], user_id=user_id).first()
+            if not account:
+                raise StrategyError('계좌를 찾을 수 없습니다.')
+
+            existing_connection = StrategyAccount.query.filter_by(
+                strategy_id=strategy.id,
+                account_id=account.id
+            ).first()
+
+            if existing_connection:
+                raise StrategyError('이미 연결된 계좌입니다.')
+
+            # max_symbols 유효성 검증
+            max_symbols = account_data.get('max_symbols')
+            if max_symbols is not None:
+                if not isinstance(max_symbols, int) or max_symbols <= 0:
+                    raise StrategyError('최대 보유 심볼 수는 양의 정수여야 합니다.')
+
+            strategy_account = StrategyAccount(
+                strategy_id=strategy.id,
+                account_id=account.id,
+                weight=account_data.get('weight', 1.0),
+                leverage=account_data.get('leverage', 1.0),
+                max_symbols=max_symbols
+            )
+
+            self.session.add(strategy_account)
+            self.session.commit()
+
+            # 자본 자동 배분
+            capital_service.auto_allocate_capital_for_account(account.id)
+
+            logger.info(f'공개 전략 구독: 전략 {strategy.name} - 계좌 {account.name}')
+
+            return {
+                'strategy_id': strategy.id,
+                'account_id': account.id,
+                'weight': strategy_account.weight,
+                'leverage': strategy_account.leverage,
+                'max_symbols': strategy_account.max_symbols
+            }
+
+        except StrategyError:
+            self.session.rollback()
+            raise
+        except Exception as e:
+            self.session.rollback()
+            logger.error(f'공개 전략 구독 오류: {str(e)}')
+            raise StrategyError(f'공개 전략 구독 실패: {str(e)}')
+
+    def unsubscribe_from_strategy(self, strategy_id: int, user_id: int, account_id: int) -> bool:
+        """공개 전략 구독 해제: 현재 사용자 소유 계좌 연결을 제거한다(활성 포지션 없을 때)."""
+        try:
+            strategy_account = StrategyAccount.query.filter_by(
+                strategy_id=strategy_id,
+                account_id=account_id
+            ).first()
+
+            if not strategy_account:
+                raise StrategyError('연결된 계좌를 찾을 수 없습니다.')
+
+            if strategy_account.account.user_id != user_id:
+                raise StrategyError('권한이 없습니다.')
+
+            # 활성 포지션 확인
+            if hasattr(strategy_account, 'strategy_positions') and strategy_account.strategy_positions:
+                active_positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
+                if active_positions:
+                    raise StrategyError('활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.')
+
+            account_name = strategy_account.account.name
+            self.session.delete(strategy_account)
+            self.session.commit()
+
+            # 남은 전략들로 자본 재배분
+            capital_service.auto_allocate_capital_for_account(account_id)
+
+            logger.info(f'공개 전략 구독 해제: 전략 {strategy_account.strategy.name} - 계좌 {account_name}')
+            return True
+
+        except StrategyError:
+            self.session.rollback()
+            raise
+        except Exception as e:
+            self.session.rollback()
+            logger.error(f'공개 전략 구독 해제 오류: {str(e)}')
+            raise StrategyError(f'공개 전략 구독 해제 실패: {str(e)}')
     
     def delete_strategy(self, strategy_id: int, user_id: int) -> bool:
         """전략 삭제"""

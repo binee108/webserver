@@ -67,6 +67,8 @@ class Strategy(db.Model):
     group_name = db.Column(db.String(100), unique=True, nullable=False)  # 웹훅 연동 키
     market_type = db.Column(db.String(10), nullable=False, default='spot')  # 마켓 타입: 'spot' 또는 'futures'
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 전략 활성화 상태
+    # 공개 전략 여부: True이면 타 사용자가 구독하여 자신의 계좌로 신호를 실행할 수 있음
+    is_public = db.Column(db.Boolean, default=False, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # 관계 설정

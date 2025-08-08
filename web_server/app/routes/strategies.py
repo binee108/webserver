@@ -24,6 +24,95 @@ def get_strategies():
             'success': False,
             'error': str(e)
         }), 500
+@bp.route('/strategies/accessibles', methods=['GET'])
+@login_required
+def get_accessible_strategies():
+    """내가 소유하거나 구독 중인 전략 목록 조회"""
+    try:
+        strategies_data = strategy_service.get_accessible_strategies(current_user.id)
+        return jsonify({'success': True, 'strategies': strategies_data})
+    except StrategyError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f'접근 가능한 전략 목록 조회 오류: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@bp.route('/strategies/public', methods=['GET'])
+@login_required
+def list_public_strategies():
+    """공개 전략 목록 조회(기본 정보만)"""
+    try:
+        from app.models import Strategy
+        strategies = Strategy.query.filter_by(is_public=True, is_active=True).all()
+        items = [
+            {
+                'id': s.id,
+                'name': s.name,
+                'description': s.description,
+                'market_type': s.market_type,
+                'created_at': s.created_at.isoformat()
+            } for s in strategies
+        ]
+        return jsonify({'success': True, 'strategies': items})
+    except Exception as e:
+        current_app.logger.error(f'공개 전략 목록 조회 오류: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@bp.route('/strategies/public/<int:strategy_id>', methods=['GET'])
+@login_required
+def get_public_strategy(strategy_id):
+    """공개 전략 상세 조회(정의 정보만, 타 사용자 계좌 비공개)"""
+    try:
+        from app.models import Strategy
+        strategy = Strategy.query.filter_by(id=strategy_id, is_public=True, is_active=True).first()
+        if not strategy:
+            return jsonify({'success': False, 'error': '전략을 찾을 수 없습니다.'}), 404
+        item = {
+            'id': strategy.id,
+            'name': strategy.name,
+            'description': strategy.description,
+            'group_name': strategy.group_name,
+            'market_type': strategy.market_type,
+            'created_at': strategy.created_at.isoformat()
+        }
+        return jsonify({'success': True, 'strategy': item})
+    except Exception as e:
+        current_app.logger.error(f'공개 전략 상세 조회 오류: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@bp.route('/strategies/<int:strategy_id>/subscribe', methods=['POST'])
+@login_required
+def subscribe_strategy(strategy_id):
+    """공개 전략 구독(내 계좌 연결)"""
+    try:
+        data = request.get_json()
+        result = strategy_service.subscribe_to_strategy(strategy_id, current_user.id, data)
+        # 최신 전략 데이터 반환(접근 가능한 전략 목록에서)
+        strategies_data = strategy_service.get_accessible_strategies(current_user.id)
+        updated_strategy = next((s for s in strategies_data if s['id'] == strategy_id), None)
+        return jsonify({'success': True, 'message': '구독이 완료되었습니다.', 'connection': result, 'updated_strategy': updated_strategy})
+    except StrategyError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f'공개 전략 구독 오류: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@bp.route('/strategies/<int:strategy_id>/subscribe/<int:account_id>', methods=['DELETE'])
+@login_required
+def unsubscribe_strategy(strategy_id, account_id):
+    """공개 전략 구독 해제(내 계좌 연결 해제)"""
+    try:
+        success = strategy_service.unsubscribe_from_strategy(strategy_id, current_user.id, account_id)
+        if not success:
+            return jsonify({'success': False, 'error': '구독 해제에 실패했습니다.'}), 400
+        strategies_data = strategy_service.get_accessible_strategies(current_user.id)
+        updated_strategy = next((s for s in strategies_data if s['id'] == strategy_id), None)
+        return jsonify({'success': True, 'message': '구독이 해제되었습니다.', 'updated_strategy': updated_strategy})
+    except StrategyError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f'공개 전략 구독 해제 오류: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         current_app.logger.error(f'전략 목록 조회 오류: {str(e)}')
         return jsonify({
