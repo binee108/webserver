@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, flash, redirect, url_for,
 from flask_login import login_user, logout_user, login_required, current_user
 from app import db, csrf
 from app.models import User
+import secrets
 from app.services.telegram_service import telegram_service
 from datetime import datetime
 
@@ -176,6 +177,11 @@ def register():
             is_active=False  # 관리자 승인 필요
         )
         user.set_password(password)
+        # 최초 웹훅 토큰 발급
+        try:
+            user.webhook_token = secrets.token_urlsafe(32)
+        except Exception:
+            user.webhook_token = None
         
         try:
             db.session.add(user)
@@ -191,12 +197,23 @@ def register():
 @bp.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
-    """사용자 프로필 설정"""
+    """사용자 프로필 설정 및 웹훅 토큰 관리"""
     # 강제 비밀번호 변경이 필요한 경우 해당 페이지로 리다이렉트
     if current_user.must_change_password:
         return redirect(url_for('auth.force_change_password'))
     
     if request.method == 'POST':
+        # 토큰 재발행 액션 우선 처리
+        if request.form.get('action') == 'regenerate_webhook_token':
+            try:
+                current_user.webhook_token = secrets.token_urlsafe(32)
+                db.session.commit()
+                flash('웹훅 토큰이 재발행되었습니다.', 'success')
+                return redirect(url_for('auth.profile'))
+            except Exception:
+                db.session.rollback()
+                flash('웹훅 토큰 재발행 중 오류가 발생했습니다.', 'error')
+                return render_template('auth/profile.html')
         email = request.form.get('email', '').strip()
         telegram_id = request.form.get('telegram_id', '').strip()
         telegram_bot_token = request.form.get('telegram_bot_token', '').strip()
@@ -255,6 +272,13 @@ def profile():
             db.session.rollback()
             flash('프로필 업데이트 중 오류가 발생했습니다.', 'error')
     
+    # GET: 토큰이 없다면 최초 발급
+    try:
+        if not current_user.webhook_token:
+            current_user.webhook_token = secrets.token_urlsafe(32)
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
     return render_template('auth/profile.html')
 
 @bp.route('/profile/test-telegram', methods=['POST'])

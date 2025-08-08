@@ -41,6 +41,23 @@ class WebhookService:
             self.session.add(webhook_log)
             self.session.commit()
             
+            # 전략 소유자 토큰 검증 (group_name 소유자 확인)
+            group_name = normalized_data.get('group_name')
+            token = normalized_data.get('token')
+            if not group_name:
+                raise WebhookError("group_name이 필요합니다")
+
+            strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
+            if not strategy:
+                raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
+
+            # 사용자 토큰 검증
+            owner = strategy.user
+            if not owner or not owner.webhook_token:
+                raise WebhookError("전략 소유자의 웹훅 토큰이 설정되지 않았습니다")
+            if not token or token != owner.webhook_token:
+                raise WebhookError("웹훅 토큰이 유효하지 않습니다")
+
             # 웹훅 타입 확인
             order_type = normalized_data.get('orderType', '').upper()
             
@@ -131,6 +148,7 @@ class WebhookService:
     def process_cancel_all_orders(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """모든 주문 취소 처리 - order_service를 통해 처리"""
         group_name = webhook_data.get('group_name')
+        token = webhook_data.get('token')
         exchange = webhook_data.get('exchange')
         symbol = webhook_data.get('symbol')
         market = webhook_data.get('market', 'spot')  # 🆕 웹훅에서 market 타입 추출, 기본값 'spot'
@@ -140,10 +158,15 @@ class WebhookService:
         if not group_name:
             raise WebhookError("group_name이 필요합니다")
         
-        # 전략 조회
+        # 전략 조회 및 소유자 토큰 검증
         strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
         if not strategy:
             raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
+        owner = strategy.user
+        if not owner or not owner.webhook_token:
+            raise WebhookError("전략 소유자의 웹훅 토큰이 설정되지 않았습니다")
+        if not token or token != owner.webhook_token:
+            raise WebhookError("웹훅 토큰이 유효하지 않습니다")
         
         logger.info(f"✅ 전략 조회 성공 - ID: {strategy.id}, 이름: {strategy.name}")
         

@@ -65,7 +65,9 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'order_type': 'orderType',
         'side': 'side',
         'price': 'price',
-        'qty_per': 'qty_per'
+        'qty_per': 'qty_per',
+        'token': 'token',
+        'user_token': 'token'
     }
     
     # 원본 데이터를 소문자 키로 변환하여 매핑

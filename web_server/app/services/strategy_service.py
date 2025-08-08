@@ -133,7 +133,8 @@ class StrategyService:
                         'id': strategy.id,
                         'name': strategy.name,
                         'description': strategy.description,
-                        'group_name': strategy.group_name,
+                        # 소유자가 아닌 경우 group_name 비노출
+                        'group_name': strategy.group_name if strategy.user_id == user_id else None,
                         'market_type': strategy.market_type,
                         'is_active': strategy.is_active,
                         'is_public': getattr(strategy, 'is_public', False),

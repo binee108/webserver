@@ -57,6 +57,34 @@
             </div>
         </div>
 
+        <!-- 웹훅 토큰 섹션 -->
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 2a2 2 0 00-2 2v2a2 2 0 104 0V4a2 2 0 00-2-2zM5 8a5 5 0 0110 0v3a3 3 0 012 2.83V15a3 3 0 01-3 3H6a3 3 0 01-3-3v-1.17A3 3 0 015 11V8z" clip-rule="evenodd"/>
+                    </svg>
+                    웹훅 토큰 관리
+                </h2>
+                <p class="text-sm text-secondary mt-1">외부 시스템(TradingView 등)에서 웹훅 호출 시 사용자 식별에 사용됩니다. 유출 시 즉시 재발행하세요.</p>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="form-group">
+                    <label class="form-label">현재 웹훅 토큰</label>
+                    <div class="flex space-x-2 items-center">
+                        <input type="password" class="form-input flex-1" value="{{ current_user.webhook_token or '' }}" readonly>
+                        <button type="submit" name="action" value="regenerate_webhook_token" class="btn btn-warning btn-sm">
+                            재발행
+                        </button>
+                    </div>
+                    <p class="form-help">토큰은 재발행 시 이전 토큰이 즉시 무효화됩니다.</p>
+                </div>
+                <div class="text-xs text-muted">
+                    웹훅 요청에는 다음과 같이 토큰을 포함해야 합니다: <code>{"token": "&lt;your_token&gt;", ...}</code>
+                </div>
+            </div>
+        </div>
+
         <!-- 텔레그램 설정 섹션 -->
         <div class="card">
             <div class="px-6 py-4 border-b border-color">

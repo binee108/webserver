@@ -224,6 +224,18 @@ def create_app(config_name=None):
                         app.logger.info("호환성 마이그레이션 적용: strategies.is_public 컬럼 추가")
                 except Exception as mig_e:
                     app.logger.warning(f'호환성 마이그레이션(is_public) 적용 실패 또는 불필요: {str(mig_e)}')
+                # 호환성 마이그레이션: users 테이블에 webhook_token 컬럼이 없으면 추가
+                try:
+                    from sqlalchemy import inspect
+                    inspector = inspect(db.engine)
+                    columns = [col['name'] for col in inspector.get_columns('users')]
+                    if 'webhook_token' not in columns:
+                        with db.engine.connect() as conn:
+                            conn.execute(text("ALTER TABLE users ADD COLUMN webhook_token VARCHAR(64) UNIQUE"))
+                            conn.commit()
+                        app.logger.info("호환성 마이그레이션 적용: users.webhook_token 컬럼 추가")
+                except Exception as mig_e:
+                    app.logger.warning(f'호환성 마이그레이션(webhook_token) 적용 실패 또는 불필요: {str(mig_e)}')
             except Exception as e:
                 app.logger.error(f'데이터베이스 테이블 생성 실패: {str(e)}')
             

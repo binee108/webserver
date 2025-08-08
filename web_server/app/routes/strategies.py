@@ -71,7 +71,6 @@ def get_public_strategy(strategy_id):
             'id': strategy.id,
             'name': strategy.name,
             'description': strategy.description,
-            'group_name': strategy.group_name,
             'market_type': strategy.market_type,
             'created_at': strategy.created_at.isoformat()
         }

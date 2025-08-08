@@ -13,6 +13,8 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=True)
     telegram_id = db.Column(db.String(100), nullable=True)  # 텔레그램 Chat ID
+    # 웹훅/외부 연동 시 사용자 식별을 위한 고유 토큰 (재발행 가능)
+    webhook_token = db.Column(db.String(64), unique=True, nullable=True)
     telegram_bot_token = db.Column(db.Text, nullable=True)  # 사용자별 텔레그램 봇 토큰
     is_active = db.Column(db.Boolean, default=False, nullable=False)
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
