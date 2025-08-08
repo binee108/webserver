@@ -350,7 +350,7 @@
 
 <!-- 계좌 연결 모달 -->
 <div id="accountModal" class="modal-overlay hidden">
-    <div class="modal-content max-w-4xl">
+    <div class="modal-content max-w-3xl">
         <div class="modal-header">
             <div class="flex items-center">
                 <div class="bg-accent rounded-full p-2 mr-3">
@@ -358,7 +358,7 @@
                         <path d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"></path>
                     </svg>
                 </div>
-                <h3 class="text-lg font-semibold text-primary">계좌 연결 관리</h3>
+                <h3 class="text-lg font-semibold text-primary">공개 전략 구독</h3>
             </div>
             <button onclick="closeAccountModal()" class="modal-close">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -560,29 +560,47 @@ function renderSubscribeAccountPicker(strategyId) {
           return;
         }
         const accounts = data.accounts || [];
-        let html = '<div class="space-y-3">';
+        let html = `
+        <div class="space-y-6">
+          <div class="bg-info bg-opacity-10 border border-info rounded-lg p-4">
+            <div class="flex items-start">
+                <svg class="h-5 w-5 text-info mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 100-16 8 8 0 000 16zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                <div>
+                    <h4 class="text-sm font-medium text-info">구독 설정 안내</h4>
+                    <p class="text-sm text-info mt-1">각 계좌마다 가중치/레버리지/최대 보유 심볼 수를 개별 설정할 수 있습니다.</p>
+                </div>
+            </div>
+          </div>`;
         if (accounts.length === 0) {
            html += '<div class="text-center py-8 text-muted">등록된 계좌가 없습니다.</div>';
         } else {
           accounts.forEach(acc => {
             html += `
-            <div class="account-item">
+            <div class="card-inner">
               <div class="flex items-center justify-between">
-                <div class="text-sm text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-accent bg-opacity-20 rounded-full flex items-center justify-center">
+                        <span class="text-sm font-bold text-accent">${acc.exchange.toUpperCase().charAt(0)}</span>
+                    </div>
+                    <div>
+                        <div class="font-medium text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
+                        <div class="text-xs text-muted">내 계좌</div>
+                    </div>
+                </div>
                 <button class="btn btn-primary btn-sm" onclick="subscribeStrategy(${strategyId}, ${acc.id})">이 계좌로 구독</button>
               </div>
-              <div class="grid grid-cols-3 gap-3 mt-3">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
                 <div>
                   <label class="form-label text-xs">가중치</label>
-                  <input type="number" step="0.1" min="0.1" max="10" value="1.0" id="weight-${acc.id}" class="form-input form-input-sm" placeholder="1.0">
+                  <input type="number" step="0.1" min="0.1" max="10" value="1.0" id="weight-${acc.id}" class="form-input" placeholder="1.0">
                 </div>
                 <div>
                   <label class="form-label text-xs">레버리지</label>
-                  <input type="number" step="0.1" min="1" max="100" value="1.0" id="leverage-${acc.id}" class="form-input form-input-sm" placeholder="1.0">
+                  <input type="number" step="0.1" min="1" max="100" value="1.0" id="leverage-${acc.id}" class="form-input" placeholder="1.0">
                 </div>
                 <div>
                   <label class="form-label text-xs">최대 심볼(선택)</label>
-                  <input type="number" min="1" max="100" id="maxsymbols-${acc.id}" class="form-input form-input-sm" placeholder="예: 10">
+                  <input type="number" min="1" max="100" id="maxsymbols-${acc.id}" class="form-input" placeholder="예: 10">
                 </div>
               </div>
             </div>`;
