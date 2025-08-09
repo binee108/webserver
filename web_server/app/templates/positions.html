@@ -32,9 +32,9 @@
 {% endblock %}
 
 {% block content %}
-<div class="space-y-8">
+<div class="space-y-8 page-positions">
     <!-- Connection Status Display (hidden by default) -->
-    <div id="connection-status" class="connection-status" style="display: none;">
+    <div id="connection-status" class="connection-status">
         <div class="font-semibold mb-2">연결 상태</div>
         <div id="connection-list"></div>
         <div class="mt-4">
@@ -230,7 +230,7 @@
                             <!-- 포지션이 없을 때 tbody 안에 빈 상태 메시지 표시 -->
                             <tr class="empty-positions-row">
                                 <td colspan="9">
-                                    <div class="empty-state" style="padding: 2rem 1rem;">
+                                    <div class="empty-state">
                                         <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                                         </svg>

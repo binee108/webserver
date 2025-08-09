@@ -6,8 +6,12 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 {% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+
 {% block content %}
-<div class="space-y-8">
+<div class="space-y-8 page-dashboard">
     <!-- 페이지 헤더 -->
     <div class="page-header">
         <div class="header-content">
@@ -189,7 +193,7 @@
                 <!-- 차트 -->
                 <div class="mb-8">
                     <h3 class="text-lg font-semibold text-primary mb-4">수익 곡선 (Equity Curve)</h3>
-                    <div class="bg-secondary rounded-lg p-4" style="height: 300px;">
+                    <div class="bg-secondary rounded-lg p-4 chart-card">
                         <canvas id="modal-equity-curve-chart"></canvas>
                     </div>
                 </div>
