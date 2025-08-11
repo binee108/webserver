@@ -5,8 +5,6 @@
 {% block head %}
 <!-- Position-specific CSS -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/positions.css') }}">
-<!-- Real-time position CSS -->
-<link rel="stylesheet" href="{{ url_for('static', filename='css/position-realtime.css') }}">
 
 <!-- Logger utility -->
 <script src="{{ url_for('static', filename='js/logger.js') }}"></script>
@@ -1148,23 +1146,6 @@ function showToast(message, type = 'info', duration = 3000) {
     }, duration);
 }
 
-// CSS 애니메이션 추가 (스타일시트에 없는 경우)
-if (!document.querySelector('#slideOutRightAnimation')) {
-    const style = document.createElement('style');
-    style.id = 'slideOutRightAnimation';
-    style.textContent = `
-        @keyframes slideOutRight {
-            from {
-                transform: translateX(0);
-                opacity: 1;
-            }
-            to {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-        }
-    `;
-    document.head.appendChild(style);
-}
+// CSS 애니메이션은 전역 스타일시트에 포함되어 있습니다 (position-realtime.css)
 </script>
 {% endblock %} 

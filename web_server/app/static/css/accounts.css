@@ -1,0 +1,11 @@
+/* Accounts page scoped styles */
+.page-accounts .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
+@media (max-width: 1024px) { .page-accounts .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .page-accounts .stats-grid { grid-template-columns: 1fr; } }
+
+.page-accounts .stats-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 0.5rem; }
+.page-accounts .stats-content { display: flex; justify-content: space-between; align-items: center; padding: 1rem; }
+.page-accounts .stats-info h3 { margin: 0; font-size: 0.875rem; color: var(--text-muted); }
+.page-accounts .stats-value { font-size: 1.25rem; font-weight: 700; }
+.page-accounts .stats-subtitle { font-size: 0.75rem; color: var(--text-muted); }
+.page-accounts .stats-icon { width: 2.5rem; height: 2.5rem; border-radius: 9999px; display:flex; align-items:center; justify-content:center; }
