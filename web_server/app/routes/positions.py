@@ -345,3 +345,55 @@ def get_strategy_positions(strategy_id):
             'success': False,
             'error': str(e)
         }), 500 
+
+# 구독 전략용: 내 계좌의 열린 주문 조회
+@bp.route('/strategies/<int:strategy_id>/my/open-orders', methods=['GET'])
+@login_required
+def get_my_strategy_open_orders(strategy_id):
+    try:
+        from app.models import Strategy, OpenOrder, StrategyAccount, Account
+        from sqlalchemy.orm import joinedload
+
+        strategy = Strategy.query.filter_by(id=strategy_id).first()
+        if not strategy:
+            return jsonify({'success': False, 'error': '전략을 찾을 수 없습니다.'}), 404
+
+        open_orders = (
+            OpenOrder.query
+            .join(StrategyAccount)
+            .join(Account)
+            .options(
+                joinedload(OpenOrder.strategy_account)
+                .joinedload(StrategyAccount.account)
+            )
+            .filter(
+                StrategyAccount.strategy_id == strategy_id,
+                Account.user_id == current_user.id,
+                OpenOrder.status == 'OPEN'
+            )
+            .all()
+        )
+
+        orders = []
+        for order in open_orders:
+            orders.append({
+                'id': order.id,
+                'exchange_order_id': order.exchange_order_id,
+                'symbol': order.symbol,
+                'side': order.side,
+                'price': float(order.price),
+                'quantity': float(order.quantity),
+                'filled_quantity': float(order.filled_quantity),
+                'status': order.status,
+                'market_type': order.market_type,
+                'created_at': order.created_at.isoformat() if order.created_at else None,
+                'account': {
+                    'name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
+                    'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown'
+                } if order.strategy_account else None
+            })
+
+        return jsonify({'success': True, 'open_orders': orders, 'total_count': len(orders)})
+    except Exception as e:
+        current_app.logger.error(f'구독 전략 열린 주문 조회 실패: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500

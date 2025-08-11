@@ -2,6 +2,10 @@
 
 {% block title %}시스템 모니터링 - 관리자{% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
 {% block content %}
 <div class="space-y-8">
     <!-- 페이지 헤더 -->

@@ -85,19 +85,32 @@ def strategies():
 @bp.route('/strategies/<int:strategy_id>/positions')
 @login_required
 def strategy_positions(strategy_id):
-    """전략별 포지션 관리 페이지"""
-    # 현재 사용자의 전략인지 확인
-    strategy = Strategy.query.filter_by(id=strategy_id, user_id=current_user.id).first()
+    """전략별 포지션 관리 페이지 (소유 전략 + 구독 전략 모두 지원)"""
+    # 전략 존재 확인
+    strategy = Strategy.query.filter_by(id=strategy_id).first()
     if not strategy:
         return redirect(url_for('main.strategies'))
-    
-    # 해당 전략의 활성 포지션만 조회 (수량이 0이 아닌 포지션)
-    positions_query = StrategyPosition.query.join(StrategyAccount).options(
-        joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account)
-    ).filter(
-        StrategyAccount.strategy_id == strategy_id,
-        StrategyPosition.quantity != 0
-    ).all()
+
+    # 권한 확인: 소유자이거나, 해당 전략에 내 계좌가 연결되어 있어야 함
+    is_owner = (strategy.user_id == current_user.id)
+    if not is_owner:
+        has_subscription = db.session.query(StrategyAccount)\
+            .join(StrategyAccount.account)\
+            .filter(StrategyAccount.strategy_id == strategy_id, Account.user_id == current_user.id)\
+            .count() > 0
+        if not has_subscription:
+            return redirect(url_for('main.strategies'))
+
+    # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
+    positions_query = StrategyPosition.query\
+        .join(StrategyAccount)\
+        .join(Account)\
+        .options(joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account))\
+        .filter(
+            StrategyAccount.strategy_id == strategy_id,
+            Account.user_id == current_user.id,
+            StrategyPosition.quantity != 0
+        ).all()
     
     # StrategyPosition 객체들을 딕셔너리로 변환 (JSON 직렬화 가능하도록)
     positions = []
