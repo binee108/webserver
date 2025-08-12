@@ -336,6 +336,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE",
     "market": "FUTURE",
     "currency": "USDT",
@@ -350,6 +351,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE",
     "market": "FUTURE",
     "currency": "USDT", 
@@ -365,6 +367,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE",
     "market": "FUTURE",
     "currency": "USDT",
@@ -379,6 +382,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "token": "<your_user_webhook_token>",
     "exchange": "BINANCE",
     "market": "FUTURE",
     "currency": "USDT",
@@ -394,6 +398,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "token": "<your_user_webhook_token>",
     "orderType": "CANCEL_ALL_ORDER"
   }'
 ```
@@ -403,27 +408,27 @@ curl -X POST https://your-domain.com/api/webhook \
 REM 1. 시장가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"buy\",\"qty_per\":5}"
+  -d "{\"group_name\":\"test_strategy\",\"token\":\"<your_user_webhook_token>\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"buy\",\"qty_per\":5}"
 
 REM 2. 지정가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"buy\",\"price\":94000,\"qty_per\":5}"
+  -d "{\"group_name\":\"test_strategy\",\"token\":\"<your_user_webhook_token>\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"buy\",\"price\":94000,\"qty_per\":5}"
 
 REM 3. 시장가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"sell\",\"qty_per\":100}"
+  -d "{\"group_name\":\"test_strategy\",\"token\":\"<your_user_webhook_token>\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"sell\",\"qty_per\":100}"
 
 REM 4. 지정가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"sell\",\"price\":96000,\"qty_per\":100}"
+  -d "{\"group_name\":\"test_strategy\",\"token\":\"<your_user_webhook_token>\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"sell\",\"price\":96000,\"qty_per\":100}"
 
 REM 5. 전체 주문 취소
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"orderType\":\"CANCEL_ALL_ORDER\"}"
+  -d "{\"group_name\":\"test_strategy\",\"token\":\"<your_user_webhook_token>\",\"orderType\":\"CANCEL_ALL_ORDER\"}"
 ```
 
 #### Windows (PowerShell)
@@ -431,27 +436,27 @@ curl -X POST https://your-domain.com/api/webhook ^
 # 1. 시장가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook `
   -H "Content-Type: application/json" `
-  -d '{"group_name":"test_strategy","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"MARKET","side":"buy","qty_per":5}'
+  -d '{"group_name":"test_strategy","token":"<your_user_webhook_token>","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"MARKET","side":"buy","qty_per":5}'
 
 # 2. 지정가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook `
   -H "Content-Type: application/json" `
-  -d '{"group_name":"test_strategy","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"LIMIT","side":"buy","price":94000,"qty_per":5}'
+  -d '{"group_name":"test_strategy","token":"<your_user_webhook_token>","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"LIMIT","side":"buy","price":94000,"qty_per":5}'
 
 # 3. 시장가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook `
   -H "Content-Type: application/json" `
-  -d '{"group_name":"test_strategy","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"MARKET","side":"sell","qty_per":100}'
+  -d '{"group_name":"test_strategy","token":"<your_user_webhook_token>","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"MARKET","side":"sell","qty_per":100}'
 
 # 4. 지정가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook `
   -H "Content-Type: application/json" `
-  -d '{"group_name":"test_strategy","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"LIMIT","side":"sell","price":96000,"qty_per":100}'
+  -d '{"group_name":"test_strategy","token":"<your_user_webhook_token>","exchange":"BINANCE","market":"FUTURE","currency":"USDT","symbol":"BTCUSDT.P","orderType":"LIMIT","side":"sell","price":96000,"qty_per":100}'
 
 # 5. 전체 주문 취소
 curl -X POST https://your-domain.com/api/webhook `
   -H "Content-Type: application/json" `
-  -d '{"group_name":"test_strategy","orderType":"CANCEL_ALL_ORDER"}'
+  -d '{"group_name":"test_strategy","token":"<your_user_webhook_token>","orderType":"CANCEL_ALL_ORDER"}'
 ```
 
 #### 파일을 사용한 테스트 (모든 OS 공통)

@@ -53,9 +53,34 @@ class WebhookService:
 
             # 사용자 토큰 검증
             owner = strategy.user
-            if not owner or not owner.webhook_token:
-                raise WebhookError("전략 소유자의 웹훅 토큰이 설정되지 않았습니다")
-            if not token or token != owner.webhook_token:
+            if not token:
+                # 토큰 미제공 시 명확한 오류 반환
+                raise WebhookError("웹훅 토큰이 필요합니다")
+
+            # 허용되는 토큰 집합 구성
+            valid_tokens = set()
+            if owner and getattr(owner, 'webhook_token', None):
+                valid_tokens.add(owner.webhook_token)
+
+            # 공개 전략의 경우: 전략을 구독(연결)한 사용자들의 토큰도 허용
+            if getattr(strategy, 'is_public', False):
+                try:
+                    for sa in strategy.strategy_accounts:
+                        # 전략-계좌 링크 활성 + 계좌/사용자/토큰 존재 시 수집
+                        if getattr(sa, 'is_active', True) and getattr(sa, 'account', None):
+                            account_user = getattr(sa.account, 'user', None)
+                            user_token = getattr(account_user, 'webhook_token', None) if account_user else None
+                            if user_token:
+                                valid_tokens.add(user_token)
+                except Exception:
+                    # 토큰 수집 실패는 검증 흐름에 영향 주지 않음
+                    pass
+
+            if not valid_tokens:
+                # 소유자/구독자 누구에게도 토큰이 없어 인증 불가
+                raise WebhookError("웹훅 토큰이 설정된 사용자가 없습니다. 전략 소유자 또는 구독자의 토큰을 생성하세요")
+
+            if token not in valid_tokens:
                 raise WebhookError("웹훅 토큰이 유효하지 않습니다")
 
             # 웹훅 타입 확인
@@ -158,14 +183,33 @@ class WebhookService:
         if not group_name:
             raise WebhookError("group_name이 필요합니다")
         
-        # 전략 조회 및 소유자 토큰 검증
+        # 전략 조회 및 토큰 검증 (공개 전략 구독자 토큰 허용)
         strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
         if not strategy:
             raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
+
+        if not token:
+            raise WebhookError("웹훅 토큰이 필요합니다")
+
+        valid_tokens = set()
         owner = strategy.user
-        if not owner or not owner.webhook_token:
-            raise WebhookError("전략 소유자의 웹훅 토큰이 설정되지 않았습니다")
-        if not token or token != owner.webhook_token:
+        if owner and getattr(owner, 'webhook_token', None):
+            valid_tokens.add(owner.webhook_token)
+        if getattr(strategy, 'is_public', False):
+            try:
+                for sa in strategy.strategy_accounts:
+                    if getattr(sa, 'is_active', True) and getattr(sa, 'account', None):
+                        account_user = getattr(sa.account, 'user', None)
+                        user_token = getattr(account_user, 'webhook_token', None) if account_user else None
+                        if user_token:
+                            valid_tokens.add(user_token)
+            except Exception:
+                pass
+
+        if not valid_tokens:
+            raise WebhookError("웹훅 토큰이 설정된 사용자가 없습니다. 전략 소유자 또는 구독자의 토큰을 생성하세요")
+
+        if token not in valid_tokens:
             raise WebhookError("웹훅 토큰이 유효하지 않습니다")
         
         logger.info(f"✅ 전략 조회 성공 - ID: {strategy.id}, 이름: {strategy.name}")

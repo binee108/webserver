@@ -819,8 +819,7 @@ class PositionService:
                 account = strategy_account.account
                 
                 orders_data.append({
-                    'id': order.id,
-                    'exchange_order_id': order.exchange_order_id,
+                    'order_id': order.exchange_order_id,  # 통일된 명명: order_id 사용 (exchange_order_id를 매핑)
                     'symbol': order.symbol,
                     'side': order.side,
                     'quantity': order.quantity,

@@ -83,15 +83,35 @@ class RealtimePositionsManager {
         
         this.logger.info(`Loading ${positionsData.length} initial positions`);
         
+        // Clear existing positions in table first
+        const positionTable = document.querySelector('#positionsTable tbody');
+        if (positionTable) {
+            const existingRows = positionTable.querySelectorAll('tr[data-position-id]');
+            existingRows.forEach(row => row.remove());
+        }
+        
+        // If no positions, show empty state
+        if (positionsData.length === 0) {
+            this.showEmptyPositionsState();
+            return;
+        }
+        
+        // Load and display each position
         positionsData.forEach(position => {
-            const positionId = position.id || position.position_id;
+            const positionId = position.position_id;  // 통일된 명명: position_id만 사용
             this.positions.set(positionId, position);
+            
+            // Display position in table
+            this.upsertPositionRow(position, true);
             
             // Initialize price subscription if price manager exists
             if (this.priceManager && this.priceManager.addPosition) {
                 this.priceManager.addPosition(position);
             }
         });
+        
+        // Update statistics
+        this.updatePositionStats();
     }
     
     /**
@@ -133,7 +153,7 @@ class RealtimePositionsManager {
      * Upsert (insert or update) a position
      */
     upsertPosition(positionData) {
-        const positionId = positionData.position_id || positionData.id;
+        const positionId = positionData.position_id;  // 통일된 명명: position_id만 사용
         
         if (!positionId) {
             this.logger.error('Position ID is missing');
@@ -210,7 +230,7 @@ class RealtimePositionsManager {
             emptyRow.remove();
         }
         
-        const positionId = positionData.position_id || positionData.id;
+        const positionId = positionData.position_id;  // 통일된 명명: position_id만 사용
         const existingRow = document.querySelector(`tr[data-position-id="${positionId}"]`);
         
         // Create new row
@@ -239,7 +259,7 @@ class RealtimePositionsManager {
     createPositionRow(positionData) {
         const row = document.createElement('tr');
         row.className = 'position-row';
-        row.setAttribute('data-position-id', positionData.position_id || positionData.id);
+        row.setAttribute('data-position-id', positionData.position_id);  // 통일된 명명: position_id만 사용
         
         const isLong = parseFloat(positionData.quantity) > 0;
         const quantity = Math.abs(parseFloat(positionData.quantity));
@@ -257,7 +277,7 @@ class RealtimePositionsManager {
         row.innerHTML = `
             <td>
                 <div class="account-info">
-                    <div class="account-avatar">
+                    <div class="account-avatar" data-exchange="${exchange.toLowerCase()}">
                         <span>${exchangeInitial}</span>
                     </div>
                     <div class="account-details">
@@ -286,18 +306,18 @@ class RealtimePositionsManager {
             <td class="text-sm text-primary entry-price">
                 ${formattedPrice}
             </td>
-            <td class="text-sm text-primary current-price" id="current-price-${positionData.position_id || positionData.id}">
+            <td class="text-sm text-primary current-price" id="current-price-${positionData.position_id}">
                 <span class="text-muted loading-price">연결 중...</span>
             </td>
-            <td class="text-sm" id="pnl-${positionData.position_id || positionData.id}">
+            <td class="text-sm" id="pnl-${positionData.position_id}">
                 <span class="text-muted">계산 중...</span>
             </td>
             <td class="text-sm text-muted">
-                <span id="last-update-${positionData.position_id || positionData.id}">방금 전</span>
+                <span id="last-update-${positionData.position_id}">방금 전</span>
             </td>
             <td>
                 ${quantity !== 0 ? `
-                    <button data-position-id="${positionData.position_id || positionData.id}" 
+                    <button data-position-id="${positionData.position_id}" 
                             class="close-position-btn btn btn-error btn-sm">
                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>

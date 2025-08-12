@@ -54,8 +54,7 @@ class StrategyService:
                     if not sa.account or sa.account.user_id != user_id:
                         continue
                     account_info = {
-                        'id': sa.account.id,
-                        'account_id': sa.account.id,
+                        'account_id': sa.account.id,  # 통일된 명명: account_id만 사용
                         'name': sa.account.name,
                         'exchange': sa.account.exchange,
                         'weight': sa.weight,
@@ -155,8 +154,7 @@ class StrategyService:
                 position_count = 0
                 for sa in strategy.strategy_accounts:
                     account_info = {
-                        'id': sa.account.id,
-                        'account_id': sa.account.id,
+                        'account_id': sa.account.id,  # 통일된 명명: account_id만 사용
                         'name': sa.account.name,
                         'exchange': sa.account.exchange,
                         'weight': sa.weight,
@@ -181,8 +179,7 @@ class StrategyService:
                 entry = strategy_id_to_data[strategy.id]
                 # 내 계좌만 추가
                 account_info = {
-                    'id': sa.account.id,
-                    'account_id': sa.account.id,
+                    'account_id': sa.account.id,  # 통일된 명명: account_id만 사용
                     'name': sa.account.name,
                     'exchange': sa.account.exchange,
                     'weight': sa.weight,

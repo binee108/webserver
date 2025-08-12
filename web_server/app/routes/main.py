@@ -116,7 +116,7 @@ def strategy_positions(strategy_id):
     positions = []
     for pos in positions_query:
         position_dict = {
-            'id': pos.id,
+            'position_id': pos.id,  # 통일된 명명: position_id 사용
             'symbol': pos.symbol,
             'quantity': float(pos.quantity) if pos.quantity else 0,
             'entry_price': float(pos.entry_price) if pos.entry_price else 0,

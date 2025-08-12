@@ -159,10 +159,10 @@
                     <tbody>
                         {% if positions %}
                             {% for position in positions %}
-                            <tr class="position-row" data-position-id="{{ position.id }}">
+                            <tr class="position-row" data-position-id="{{ position.position_id }}">
                                 <td>
                                     <div class="account-info">
-                                        <div class="account-avatar">
+                                        <div class="account-avatar" data-exchange="{{ position.account.exchange.lower() if position.account else 'unknown' }}">
                                             <span>{{ position.account.exchange.upper()[:1] if position.account else 'N' }}</span>
                                         </div>
                                         <div class="account-details">
@@ -201,18 +201,18 @@
                                 <td class="text-sm text-primary entry-price">
                                     ${{ "%.4f"|format(position.entry_price) }}
                                 </td>
-                                <td class="text-sm text-primary current-price" id="current-price-{{ position.id }}">
+                                <td class="text-sm text-primary current-price" id="current-price-{{ position.position_id }}">
                                     <span class="text-muted loading-price">연결 중...</span>
                                 </td>
-                                <td class="text-sm" id="pnl-{{ position.id }}">
+                                <td class="text-sm" id="pnl-{{ position.position_id }}">
                                     <span class="text-muted">계산 중...</span>
                                 </td>
                                 <td class="text-sm text-muted">
-                                    <span id="last-update-{{ position.id }}">실시간</span>
+                                    <span id="last-update-{{ position.position_id }}">실시간</span>
                                 </td>
                                 <td>
                                     {% if position.quantity != 0 %}
-                                    <button data-position-id="{{ position.id }}" class="close-position-btn btn btn-error btn-sm">
+                                    <button data-position-id="{{ position.position_id }}" class="close-position-btn btn btn-error btn-sm">
                                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                         </svg>

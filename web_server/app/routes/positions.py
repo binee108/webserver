@@ -298,19 +298,34 @@ def get_strategy_positions(strategy_id):
         from app.models import Strategy, StrategyPosition, StrategyAccount
         from sqlalchemy.orm import joinedload
         
-        # 사용자 권한 확인
-        strategy = Strategy.query.filter_by(id=strategy_id, user_id=current_user.id).first()
+        # 전략 존재 확인
+        strategy = Strategy.query.filter_by(id=strategy_id).first()
         if not strategy:
             return jsonify({
                 'success': False,
-                'error': '전략을 찾을 수 없거나 접근 권한이 없습니다.'
+                'error': '전략을 찾을 수 없습니다.'
             }), 404
         
-        # 해당 전략의 활성 포지션만 조회 (수량이 0이 아닌 포지션)
-        positions_query = StrategyPosition.query.join(StrategyAccount).options(
+        # 권한 확인: 소유자이거나, 해당 전략에 내 계좌가 연결되어 있어야 함
+        from app.models import Account
+        is_owner = (strategy.user_id == current_user.id)
+        if not is_owner:
+            has_subscription = StrategyAccount.query.join(Account).filter(
+                StrategyAccount.strategy_id == strategy_id,
+                Account.user_id == current_user.id
+            ).count() > 0
+            if not has_subscription:
+                return jsonify({
+                    'success': False,
+                    'error': '접근 권한이 없습니다.'
+                }), 403
+        
+        # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
+        positions_query = StrategyPosition.query.join(StrategyAccount).join(Account).options(
             joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account)
         ).filter(
             StrategyAccount.strategy_id == strategy_id,
+            Account.user_id == current_user.id,
             StrategyPosition.quantity != 0
         ).all()
         
@@ -326,8 +341,7 @@ def get_strategy_positions(strategy_id):
                     'name': pos.strategy_account.account.name if pos.strategy_account and pos.strategy_account.account else 'Unknown',
                     'exchange': pos.strategy_account.account.exchange if pos.strategy_account and pos.strategy_account.account else 'unknown'
                 } if pos.strategy_account else None,
-                'created_at': pos.created_at.isoformat() if pos.created_at else None,
-                'updated_at': pos.updated_at.isoformat() if pos.updated_at else None
+                'last_updated': pos.last_updated.isoformat() if pos.last_updated else None
             }
             positions.append(position_dict)
         
@@ -377,8 +391,7 @@ def get_my_strategy_open_orders(strategy_id):
         orders = []
         for order in open_orders:
             orders.append({
-                'id': order.id,
-                'exchange_order_id': order.exchange_order_id,
+                'order_id': order.exchange_order_id,  # 통일된 명명: order_id 사용
                 'symbol': order.symbol,
                 'side': order.side,
                 'price': float(order.price),

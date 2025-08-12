@@ -1,11 +1,213 @@
 /* Positions page scoped tweaks */
 .page-positions #connection-status { display: none; }
-.page-positions .empty-state { padding: 2rem 1rem; }
+.page-positions .empty-state {
+  padding: 2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+/* Ensure table cell provides enough space and centers content */
+.page-positions .empty-positions-row td {
+  padding: 2.5rem 1rem;
+  text-align: center;
+}
 
 /* Normalize empty state icon sizing for positions page */
 .page-positions .empty-state-icon {
   width: 3rem;  /* 48px */
   height: 3rem; /* 48px */
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+/* Account Info Styling */
+.page-positions .account-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 0.625rem;
+  background: linear-gradient(135deg, 
+    rgba(139, 92, 246, 0.05) 0%, 
+    rgba(124, 58, 237, 0.05) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.page-positions .account-info::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, 
+    rgba(139, 92, 246, 0.1) 0%, 
+    rgba(124, 58, 237, 0.1) 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.page-positions tr:hover .account-info::before {
+  opacity: 1;
+}
+
+.page-positions tr:hover .account-info {
+  transform: translateX(2px);
+  box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.15);
+}
+
+/* Account Avatar - Exchange Badge */
+.page-positions .account-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 1rem;
+  text-transform: uppercase;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.page-positions .account-avatar span {
+  position: relative;
+  z-index: 1;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Exchange-specific color themes */
+.page-positions .account-avatar[data-exchange="binance"],
+.page-positions .account-info:has(.account-exchange:contains("Binance")) .account-avatar {
+  background: linear-gradient(135deg, #F0B90B 0%, #F8D12F 100%);
+  box-shadow: 0 3px 10px rgba(240, 185, 11, 0.3);
+}
+
+.page-positions .account-avatar[data-exchange="bybit"],
+.page-positions .account-info:has(.account-exchange:contains("Bybit")) .account-avatar {
+  background: linear-gradient(135deg, #FF6838 0%, #FF8C5E 100%);
+  box-shadow: 0 3px 10px rgba(255, 104, 56, 0.3);
+}
+
+.page-positions .account-avatar[data-exchange="okx"],
+.page-positions .account-info:has(.account-exchange:contains("Okx")) .account-avatar {
+  background: linear-gradient(135deg, #000000 0%, #333333 100%);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+
+/* Default exchange color */
+.page-positions .account-avatar {
+  background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+  box-shadow: 0 3px 10px rgba(139, 92, 246, 0.3);
+}
+
+.page-positions tr:hover .account-avatar {
+  transform: scale(1.05);
+}
+
+/* Account Details */
+.page-positions .account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.page-positions .account-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+.page-positions .account-exchange {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: capitalize;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.page-positions .account-exchange::after {
+  content: '•';
+  display: inline-block;
+  margin: 0 0.25rem;
+  opacity: 0.5;
+}
+
+.page-positions .account-exchange::after:last-child {
+  display: none;
+}
+
+/* Dark theme adjustments for account info */
+[data-theme="dark"] .page-positions .account-info {
+  background: linear-gradient(135deg, 
+    rgba(139, 92, 246, 0.08) 0%, 
+    rgba(124, 58, 237, 0.08) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+[data-theme="dark"] .page-positions .account-info::before {
+  background: linear-gradient(135deg, 
+    rgba(139, 92, 246, 0.15) 0%, 
+    rgba(124, 58, 237, 0.15) 100%);
+}
+
+[data-theme="dark"] .page-positions tr:hover .account-info {
+  box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.25);
+}
+
+/* Responsive design for account info */
+@media (max-width: 640px) {
+  .page-positions .account-info {
+    gap: 0.5rem;
+    padding: 0.375rem;
+  }
+  
+  .page-positions .account-avatar {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.875rem;
+  }
+  
+  .page-positions .account-name {
+    font-size: 0.8125rem;
+  }
+  
+  .page-positions .account-exchange {
+    font-size: 0.6875rem;
+  }
+}
+
+/* Empty state typography */
+.page-positions .empty-state h3 {
+  margin: 0.25rem 0 0;
+  font-size: 1.125rem; /* ~18px */
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.page-positions .empty-state p {
+  margin: 0.125rem 0 0;
+  font-size: 0.875rem; /* ~14px */
   color: var(--text-muted);
 }
 
@@ -14,4 +216,17 @@
     width: 2.25rem;  /* 36px */
     height: 2.25rem; /* 36px */
   }
+}
+
+/* Position table enhancements */
+.page-positions .positions-table tbody tr {
+  transition: background-color 0.2s ease;
+}
+
+.page-positions .positions-table tbody tr:hover {
+  background-color: rgba(139, 92, 246, 0.02);
+}
+
+[data-theme="dark"] .page-positions .positions-table tbody tr:hover {
+  background-color: rgba(139, 92, 246, 0.05);
 }

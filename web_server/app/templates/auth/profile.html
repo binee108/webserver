@@ -76,7 +76,8 @@
                 <div class="form-group">
                     <label class="form-label">현재 웹훅 토큰</label>
                     <div class="flex space-x-2 items-center">
-                        <input type="password" class="form-input flex-1" value="{{ current_user.webhook_token or '' }}" readonly>
+                        <input id="webhookToken" type="password" class="form-input flex-1" value="{{ current_user.webhook_token or '' }}" readonly>
+                        <button type="button" onclick="toggleWebhookVisibility()" class="btn btn-secondary btn-sm">표시/숨김</button>
                         <button type="submit" name="action" value="regenerate_webhook_token" class="btn btn-warning btn-sm">
                             재발행
                         </button>
@@ -104,12 +105,11 @@
             
             <div class="p-6 space-y-6">
                 <div class="form-group">
-                    <label for="telegram_bot_token" class="form-label">텔레그램 봇 토큰 <span class="text-error">*</span></label>
+                    <label for="telegram_bot_token" class="form-label">텔레그램 봇 토큰</label>
                     <input type="password" id="telegram_bot_token" name="telegram_bot_token" 
                            value="{{ current_user.telegram_bot_token or '' }}" 
                            class="form-input" 
-                           placeholder="예: 123456789:AAE...xyz"
-                           required>
+                           placeholder="예: 123456789:AAE...xyz">
                     <div class="form-help space-y-2">
                         <p><strong>전략 및 성과 알림을 받으려면 개인 텔레그램 봇 토큰이 필요합니다.</strong></p>
                         <ol class="list-decimal list-inside space-y-1 text-sm text-muted">
@@ -122,13 +122,12 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="telegram_id" class="form-label">텔레그램 Chat ID <span class="text-error">*</span></label>
+                    <label for="telegram_id" class="form-label">텔레그램 Chat ID</label>
                     <div class="flex space-x-2">
                         <input type="text" id="telegram_id" name="telegram_id" 
                                value="{{ current_user.telegram_id or '' }}" 
                                class="form-input flex-1" 
-                               placeholder="예: 123456789"
-                               required>
+                               placeholder="예: 123456789">
                         <button type="button" id="testTelegramBtn" 
                                 onclick="testTelegramConnection()"
                                 class="btn btn-info btn-sm"
@@ -424,5 +423,12 @@ document.getElementById('telegram_bot_token').addEventListener('input', updateTe
 document.addEventListener('DOMContentLoaded', function() {
     updateTelegramTestButton();
 });
+
+// 웹훅 토큰 표시/숨김 토글
+function toggleWebhookVisibility() {
+    const input = document.getElementById('webhookToken');
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
 </script>
 {% endblock %}

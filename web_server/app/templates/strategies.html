@@ -573,8 +573,8 @@ function renderSubscribedStrategy(s) {
                   <p class="currency">USDT</p>
                 </div>
                 <div class="flex items-center space-x-2">
-                  <button class="btn btn-secondary btn-xs" onclick="openSubscribeSettings(${s.id}, ${a.account_id || a.id}, '${a.exchange.toUpperCase()} - ${a.name}')">설정</button>
-                  <button class="btn btn-error btn-xs" onclick="unsubscribeStrategy(${s.id}, ${a.account_id || a.id})">구독 해제</button>
+                  <button class="btn btn-secondary btn-xs" onclick="openSubscribeSettings(${s.id}, ${a.account_id}, '${a.exchange.toUpperCase()} - ${a.name}')">설정</button>
+                  <button class="btn btn-error btn-xs" onclick="unsubscribeStrategy(${s.id}, ${a.account_id})">구독 해제</button>
                 </div>
               </div>
             `).join('') : '<div class="text-center py-8 text-muted">연결된 계좌가 없습니다</div>'}

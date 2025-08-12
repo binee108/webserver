@@ -345,19 +345,9 @@ class RealtimeOpenOrdersManager {
         
         // Add each order
         orders.forEach(order => {
-            const orderData = {
-                order_id: order.exchange_order_id,
-                symbol: order.symbol,
-                side: order.side,
-                quantity: order.quantity,
-                price: order.price,
-                status: order.status,
-                created_at: order.created_at,
-                account: order.account
-            };
-            
-            this.openOrders.set(orderData.order_id, orderData);
-            const orderRow = this.createOrderRow(orderData);
+            // 통일된 명명: order_id만 사용 (이미 백엔드에서 매핑됨)
+            this.openOrders.set(order.order_id, order);
+            const orderRow = this.createOrderRow(order);
             tbody.appendChild(orderRow);
         });
     }

@@ -71,13 +71,13 @@ class PositionPriceManager {
      * Add a position to be tracked
      */
     addPosition(positionData) {
-        const positionKey = `${positionData.id || positionData.position_id}`;
+        const positionKey = `${positionData.position_id}`;  // 통일된 명명: position_id만 사용
         
         this.logger.debug(`Adding position for price tracking: ${positionData.symbol} (ID: ${positionKey})`);
         
         // Store position data
         const position = {
-            id: positionData.id || positionData.position_id,
+            id: positionData.position_id,  // 통일된 명명: position_id만 사용
             symbol: positionData.symbol,
             exchange: this.normalizeExchangeName(positionData),
             quantity: parseFloat(positionData.quantity),
@@ -94,7 +94,7 @@ class PositionPriceManager {
      * Dynamically add a position and update WebSocket subscriptions
      */
     addPositionDynamic(positionData) {
-        const positionKey = `${positionData.id || positionData.position_id}`;
+        const positionKey = `${positionData.position_id}`;  // 통일된 명명: position_id만 사용
         
         // Check if position already exists
         if (this.positions.has(positionKey)) {
