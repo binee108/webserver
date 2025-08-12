@@ -143,7 +143,7 @@ Content-Type: application/json
 
 ## 주문 취소 웹훅
 
-모든 미체결 주문을 취소하는 특수 웹훅입니다.
+미체결 주문을 선택적으로 취소하는 특수 웹훅입니다. 전략, 거래소, 마켓, 심볼별로 세분화하여 취소할 수 있습니다.
 
 ### 필수 필드
 | 필드명 | 타입 | 설명 | 예시 |
@@ -151,16 +151,22 @@ Content-Type: application/json
 | `group_name` | String | 전략 그룹명 | "my_strategy" |
 | `orderType` | String | 주문 타입 (고정값) | "CANCEL_ALL_ORDER" |
 
-### 선택 필드
+### 선택 필드 (필터링)
 | 필드명 | 타입 | 설명 | 기본값 | 예시 |
 |--------|------|------|-------|------|
+| `exchange` | String | 특정 거래소만 취소 | 전체 | "BINANCE", "BYBIT", "OKX" |
+| `market` | String | 특정 마켓 타입만 취소 | 전체 | "SPOT", "FUTURE" |
+| `currency` | String | 특정 통화만 (향후 확장용) | 전체 | "USDT" |
 | `symbol` | String | 특정 심볼만 취소 | 전체 | "BTCUSDT" |
-| `exchange` | String | 특정 거래소만 취소 | 전체 | "BINANCE" |
-| `market` | String | 시장 타입 | "SPOT" | "SPOT", "FUTURE" |
+
+### 필터링 동작 방식
+- 필터 조건을 지정하지 않으면 전략의 모든 주문을 취소합니다
+- 여러 필터를 조합하면 AND 조건으로 적용됩니다
+- 예: `exchange="BINANCE"` + `symbol="BTCUSDT"` = Binance 거래소의 BTCUSDT 주문만 취소
 
 ### 주문 취소 예시
 
-#### 전체 주문 취소
+#### 전체 주문 취소 (기존 방식)
 ```json
 {
     "group_name": "my_strategy",
@@ -168,7 +174,16 @@ Content-Type: application/json
 }
 ```
 
-#### 특정 심볼 주문만 취소
+#### 특정 거래소의 모든 주문 취소
+```json
+{
+    "group_name": "my_strategy",
+    "orderType": "CANCEL_ALL_ORDER",
+    "exchange": "BINANCE"
+}
+```
+
+#### 특정 심볼의 주문만 취소
 ```json
 {
     "group_name": "my_strategy",
@@ -177,13 +192,23 @@ Content-Type: application/json
 }
 ```
 
-#### 특정 거래소 선물 주문만 취소
+#### 특정 마켓의 주문만 취소
 ```json
 {
-    "group_name": "futures_strategy", 
+    "group_name": "my_strategy",
+    "orderType": "CANCEL_ALL_ORDER",
+    "market": "FUTURE"
+}
+```
+
+#### 복합 필터링: 특정 거래소+마켓+심볼
+```json
+{
+    "group_name": "my_strategy",
     "orderType": "CANCEL_ALL_ORDER",
     "exchange": "BINANCE",
-    "market": "FUTURE"
+    "market": "FUTURE",
+    "symbol": "BTCUSDT"
 }
 ```
 
@@ -391,6 +416,35 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
+    "orderType": "CANCEL_ALL_ORDER"
+  }'
+
+# 6. 특정 거래소 주문만 취소
+curl -X POST https://your-domain.com/api/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_name": "test_strategy",
+    "exchange": "BINANCE",
+    "orderType": "CANCEL_ALL_ORDER"
+  }'
+
+# 7. 특정 심볼 주문만 취소
+curl -X POST https://your-domain.com/api/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_name": "test_strategy",
+    "symbol": "BTCUSDT",
+    "orderType": "CANCEL_ALL_ORDER"
+  }'
+
+# 8. 복합 필터: 특정 거래소+마켓+심볼 주문 취소
+curl -X POST https://your-domain.com/api/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_name": "test_strategy",
+    "exchange": "BINANCE",
+    "market": "FUTURE",
+    "symbol": "BTCUSDT",
     "orderType": "CANCEL_ALL_ORDER"
   }'
 ```

@@ -129,13 +129,23 @@ class WebhookService:
     # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
     
     def process_cancel_all_orders(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
-        """모든 주문 취소 처리 - order_service를 통해 처리"""
+        """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
-        exchange = webhook_data.get('exchange')
-        symbol = webhook_data.get('symbol')
-        market = webhook_data.get('market', 'spot')  # 🆕 웹훅에서 market 타입 추출, 기본값 'spot'
+        exchange = webhook_data.get('exchange')  # 선택적: 특정 거래소만
+        market = webhook_data.get('market')  # 선택적: 특정 마켓만 (SPOT/FUTURE)
+        currency = webhook_data.get('currency')  # 선택적: 특정 통화만 (향후 확장용)
+        symbol = webhook_data.get('symbol')  # 선택적: 특정 심볼만
         
-        logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, 거래소: {exchange}, 심볼: {symbol}, 마켓: {market}")
+        # market 표준화: 값이 있으면 대문자로, 없으면 None
+        if market:
+            market = market.upper()
+            # FUTURE/FUTURES 모두 FUTURES로 통일
+            if market == 'FUTURE':
+                market = 'FUTURES'
+        
+        logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, "
+                   f"거래소: {exchange or '전체'}, 마켓: {market or '전체'}, "
+                   f"통화: {currency or '전체'}, 심볼: {symbol or '전체'}")
         
         if not group_name:
             raise WebhookError("group_name이 필요합니다")
@@ -154,7 +164,7 @@ class WebhookService:
         
         logger.info(f"📋 전략에 연결된 계좌 수: {len(strategy_accounts)}")
         
-        # 🆕 order_service를 통해 계좌별 주문 취소 처리
+        # order_service를 통해 계좌별 주문 취소 처리
         from app.services.order_service import order_service
         
         results = []
@@ -172,7 +182,7 @@ class WebhookService:
                 continue
             
             logger.info(f"🏦 계좌 정보 - ID: {account.id}, 이름: {account.name}, "
-                       f"거래소: {account.exchange}, 활성상태: {account.is_active}")
+                       f"거래소: {account.exchange}, 마켓: {account.market_type}, 활성상태: {account.is_active}")
             
             # 계좌 활성화 상태 확인
             if not account.is_active:
@@ -182,8 +192,20 @@ class WebhookService:
             
             # 거래소 필터링
             if exchange and account.exchange.upper() != exchange.upper():
-                logger.warning(f"❌ 계좌 {account.id}({account.name}): 거래소 불일치 "
-                              f"(계좌: {account.exchange}, 요청: {exchange})")
+                logger.info(f"⏭️ 계좌 {account.id}({account.name}): 거래소 불일치 - 스킵 "
+                           f"(계좌: {account.exchange}, 요청: {exchange})")
+                skipped_count += 1
+                continue
+            
+            # 마켓 타입 필터링
+            account_market = account.market_type.upper() if account.market_type else 'SPOT'
+            # FUTURE/FUTURES 통일
+            if account_market == 'FUTURE':
+                account_market = 'FUTURES'
+                
+            if market and account_market != market:
+                logger.info(f"⏭️ 계좌 {account.id}({account.name}): 마켓 타입 불일치 - 스킵 "
+                           f"(계좌: {account_market}, 요청: {market})")
                 skipped_count += 1
                 continue
             
@@ -191,12 +213,13 @@ class WebhookService:
             processed_count += 1
             
             try:
-                # 🆕 order_service를 통해 주문 취소 (자동으로 OpenOrder 레코드도 처리됨)
+                # order_service를 통해 주문 취소 (자동으로 OpenOrder 레코드도 처리됨)
                 logger.info(f"🔄 계좌 {account.id}: order_service를 통한 주문 취소 요청...")
                 cancel_result = order_service.cancel_all_orders(
                     account_id=account.id,
                     symbol=symbol,
-                    market_type=market
+                    market_type=account.market_type,  # 계좌의 실제 마켓 타입 사용
+                    exchange=account.exchange  # 거래소 정보도 전달
                 )
                 
                 if cancel_result['success']:
