@@ -11,6 +11,7 @@ from app import db
 from app.models import Strategy, WebhookLog
 from app.services.utils import normalize_webhook_data
 from app.services.exchange_service import exchange_service
+from app.constants import MarketType
 
 logger = logging.getLogger(__name__)
 
@@ -132,19 +133,16 @@ class WebhookService:
         """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
         exchange = webhook_data.get('exchange')  # 선택적: 특정 거래소만
-        market = webhook_data.get('market')  # 선택적: 특정 마켓만 (SPOT/FUTURE)
+        market_type = webhook_data.get('market_type')  # 선택적: 특정 마켓타입만 (SPOT/FUTURE)
         currency = webhook_data.get('currency')  # 선택적: 특정 통화만 (향후 확장용)
         symbol = webhook_data.get('symbol')  # 선택적: 특정 심볼만
         
-        # market 표준화: 값이 있으면 대문자로, 없으면 None
-        if market:
-            market = market.upper()
-            # FUTURE/FUTURES 모두 FUTURES로 통일
-            if market == 'FUTURE':
-                market = 'FUTURES'
+        # market_type 표준화: MarketType.normalize 사용
+        if market_type:
+            market_type = MarketType.normalize(market_type)
         
         logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, "
-                   f"거래소: {exchange or '전체'}, 마켓: {market or '전체'}, "
+                   f"거래소: {exchange or '전체'}, 마켓타입: {market_type or '전체'}, "
                    f"통화: {currency or '전체'}, 심볼: {symbol or '전체'}")
         
         if not group_name:
@@ -182,7 +180,7 @@ class WebhookService:
                 continue
             
             logger.info(f"🏦 계좌 정보 - ID: {account.id}, 이름: {account.name}, "
-                       f"거래소: {account.exchange}, 마켓: {account.market_type}, 활성상태: {account.is_active}")
+                       f"거래소: {account.exchange}, 마켓: {strategy.market_type}, 활성상태: {account.is_active}")
             
             # 계좌 활성화 상태 확인
             if not account.is_active:
@@ -197,15 +195,12 @@ class WebhookService:
                 skipped_count += 1
                 continue
             
-            # 마켓 타입 필터링
-            account_market = account.market_type.upper() if account.market_type else 'SPOT'
-            # FUTURE/FUTURES 통일
-            if account_market == 'FUTURE':
-                account_market = 'FUTURES'
+            # 마켓 타입 필터링 - Strategy의 market_type 사용
+            strategy_market = strategy.market_type.upper() if strategy.market_type else MarketType.SPOT
                 
-            if market and account_market != market:
+            if market_type and strategy_market != market_type:
                 logger.info(f"⏭️ 계좌 {account.id}({account.name}): 마켓 타입 불일치 - 스킵 "
-                           f"(계좌: {account_market}, 요청: {market})")
+                           f"(전략: {strategy_market}, 요청: {market_type})")
                 skipped_count += 1
                 continue
             
@@ -218,7 +213,7 @@ class WebhookService:
                 cancel_result = order_service.cancel_all_orders(
                     account_id=account.id,
                     symbol=symbol,
-                    market_type=account.market_type,  # 계좌의 실제 마켓 타입 사용
+                    market_type=strategy.market_type,  # 전략의 마켓 타입 사용
                     exchange=account.exchange  # 거래소 정보도 전달
                 )
                 
@@ -284,7 +279,7 @@ class WebhookService:
         return {
             'action': 'cancel_all_orders',
             'strategy': group_name,
-            'market_type': market,  # 🆕 마켓 타입 정보 추가
+            'market_type': market_type,  # 🆕 마켓 타입 정보 추가
             'results': results,
             'summary': {
                 'total_accounts': len(strategy_accounts),

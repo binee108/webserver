@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 from functools import wraps
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from app.models import Account
+from app.constants import MarketType
 from threading import Lock  # 🆕 스레드 안전한 캐싱을 위한 import 추가
 import json  # 🆕 precision 데이터 직렬화용
 
@@ -287,13 +288,13 @@ class ExchangeService:
             }
     
     @retry_on_failure(max_retries=10)
-    def get_balance(self, account: Account, currency: str = None, market_type: str = 'spot') -> Dict[str, Any]:
+    def get_balance(self, account: Account, currency: str = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """잔고 조회 (마켓 타입별 분리)"""
         exchange = self.get_exchange(account)
         
         try:
             # 마켓 타입에 따라 다른 방식으로 잔고 조회
-            if market_type == 'futures':
+            if market_type == MarketType.FUTURES:
                 # 선물 잔고 조회
                 if hasattr(exchange, 'fetch_balance') and exchange.has.get('fetchBalance'):
                     # 거래소별 선물 잔고 조회 방식
@@ -349,13 +350,13 @@ class ExchangeService:
     
     @retry_on_failure(max_retries=10)
     def create_order(self, account: Account, symbol: str, order_type: str, 
-                    side: str, amount: float, price: float = None, market_type: str = 'spot') -> Dict[str, Any]:
+                    side: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 생성"""
         exchange = self.get_exchange(account)
         
         try:
             # 마켓 타입에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -394,13 +395,13 @@ class ExchangeService:
             raise ExchangeError(f"주문 생성 실패: {str(e)}")
     
     @retry_on_failure(max_retries=10)
-    def cancel_order(self, account: Account, order_id: str, symbol: str, market_type: str = 'spot') -> Dict[str, Any]:
+    def cancel_order(self, account: Account, order_id: str, symbol: str, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 취소"""
         exchange = self.get_exchange(account)
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -425,13 +426,13 @@ class ExchangeService:
             raise ExchangeError(f"주문 취소 실패: {str(e)}")
     
     @retry_on_failure(max_retries=10)
-    def cancel_all_orders(self, account: Account, symbol: str = None, market_type: str = 'spot') -> List[Dict[str, Any]]:
+    def cancel_all_orders(self, account: Account, symbol: str = None, market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """모든 주문 취소"""
         exchange = self.get_exchange(account)
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -463,13 +464,13 @@ class ExchangeService:
             raise ExchangeError(f"주문 취소 실패: {str(e)}")
     
     @retry_on_failure(max_retries=10)
-    def get_order_status(self, account: Account, order_id: str, symbol: str, market_type: str = 'spot') -> Dict[str, Any]:
+    def get_order_status(self, account: Account, order_id: str, symbol: str, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 상태 조회"""
         exchange = self.get_exchange(account)
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -582,13 +583,13 @@ class ExchangeService:
             raise ExchangeError(f"Ticker 조회 실패: {str(e)}")
     
     @retry_on_failure(max_retries=10)
-    def fetch_open_orders(self, account: Account, symbol: str = None, market_type: str = 'spot') -> List[Dict[str, Any]]:
+    def fetch_open_orders(self, account: Account, symbol: str = None, market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """열린 주문 리스트 조회 (한 번에 모든 주문 가져오기)"""
         exchange = self.get_exchange(account)
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -631,14 +632,14 @@ class ExchangeService:
             raise ExchangeError(f"열린 주문 조회 실패: {str(e)}")
     
     @retry_on_failure(max_retries=10)
-    def fetch_open_orders_by_symbols(self, account: Account, symbols: List[str], market_type: str = 'spot') -> List[Dict[str, Any]]:
+    def fetch_open_orders_by_symbols(self, account: Account, symbols: List[str], market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """심볼별로 열린 주문 조회 (바이낸스 rate limit 회피용)"""
         exchange = self.get_exchange(account)
         all_orders = []
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type.lower() in ['future', 'futures']:
+            if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
                 if account.exchange == 'binance':
                     exchange.options['defaultType'] = 'future'
@@ -781,7 +782,7 @@ class ExchangeService:
                 
                 # 거래소별 추가 정보 제공
                 if account.exchange == 'binance':
-                    if market_type == 'future':
+                    if market_type == MarketType.FUTURES_LOWER:
                         logger.error(f"Binance 선물에서는 'SOL/USDT' 형식을 사용합니다.")
                     else:
                         logger.error(f"Binance 현물에서는 'SOL/USDT' 형식을 사용합니다.")
@@ -870,7 +871,7 @@ class ExchangeService:
         logger.warning(f"심볼 형식 변환 실패: {original_symbol}")
         return symbol
     
-    def preprocess_order_params(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = 'spot') -> tuple:
+    def preprocess_order_params(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> tuple:
         """주문 파라미터 전처리 (CCXT 내부 로직과 동일하게 조정) - Decimal 기반 정밀 연산"""
         try:
             # 🆕 입력값을 즉시 Decimal로 변환하여 정밀도 보장
@@ -1125,7 +1126,7 @@ class ExchangeService:
             logger.error(f"❌ Precision 정보 조회 실패 - {symbol}: {str(e)}")
             raise ExchangeError(f"Precision 정보 조회 실패: {str(e)}")
     
-    def preprocess_order_params_optimized(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = 'spot') -> tuple:
+    def preprocess_order_params_optimized(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> tuple:
         """🆕 주문 파라미터 전처리 최적화 (Precision 캐시 사용) - 95% 성능 향상"""
         try:
             # 🆕 입력값을 즉시 Decimal로 변환하여 정밀도 보장
@@ -1295,7 +1296,6 @@ class ExchangeService:
         """🆕 Precision 캐시 웜업 (애플리케이션 시작 시 또는 백그라운드 실행)"""
         if not account_list:
             # 모든 활성 계좌 조회
-            from app.models import Account
             account_list = Account.query.filter_by(is_active=True).all()
         
         logger.debug(f"Precision 캐시 웜업 시작 - {len(account_list)}개 계좌")

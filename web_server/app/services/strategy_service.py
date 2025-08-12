@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload  # 🆕 eager loading을 위한 import �
 from app import db
 from app.models import Strategy, Account, StrategyAccount, StrategyCapital
 from app.services.capital_service import capital_service
+from app.constants import MarketType
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,11 @@ class StrategyService:
                     raise StrategyError(f'{field} 필드가 필요합니다.')
             
             # market_type 검증
-            market_type = strategy_data.get('market_type', 'spot')
-            if market_type not in ['spot', 'futures']:
-                raise StrategyError('market_type은 "spot" 또는 "futures"만 가능합니다.')
+            market_type = strategy_data.get('market_type', MarketType.SPOT)
+            if isinstance(market_type, str):
+                market_type = market_type.upper()
+            if not MarketType.is_valid(market_type):
+                raise StrategyError(f'market_type은 {MarketType.VALID_TYPES}만 가능합니다.')
             
             # group_name 중복 확인
             existing_strategy = Strategy.query.filter_by(group_name=strategy_data['group_name']).first()

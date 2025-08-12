@@ -4,6 +4,7 @@
 
 from typing import Any
 from decimal import Decimal
+from app.constants import MarketType
 
 def to_decimal(value: Any) -> Decimal:
     """값을 Decimal로 안전하게 변환"""
@@ -58,7 +59,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'group_name': 'group_name',
         'exchange': 'exchange',
         'platform': 'exchange',  # platform을 exchange로 매핑
-        'market': 'market',
+        'market_type': 'market_type',
         'currency': 'currency',
         'symbol': 'symbol',
         'ordertype': 'orderType',
@@ -99,8 +100,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     if 'exchange' in normalized and isinstance(normalized['exchange'], str):
         normalized['exchange'] = normalized['exchange'].upper()  # 대문자로 표준화 (BINANCE, BYBIT 등)
     
-    if 'market' in normalized and isinstance(normalized['market'], str):
-        normalized['market'] = normalized['market'].upper()  # 대문자로 표준화 (SPOT, FUTURE 등)
+    if 'market_type' in normalized and isinstance(normalized['market_type'], str):
+        normalized['market_type'] = MarketType.normalize(normalized['market_type'])  # 표준 형태로 변환
     
     if 'currency' in normalized and isinstance(normalized['currency'], str):
         normalized['currency'] = normalized['currency'].upper()  # 대문자로 표준화 (USDT, KRW 등)

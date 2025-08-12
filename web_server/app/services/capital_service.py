@@ -9,6 +9,7 @@ from datetime import datetime
 from app import db
 from app.models import Account, StrategyAccount, StrategyCapital
 from app.services.exchange_service import exchange_service
+from app.constants import MarketType
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class CapitalService:
             futures_strategies = []
             
             for sa in strategy_accounts:
-                if sa.strategy.market_type == 'futures':
+                if sa.strategy.market_type == MarketType.FUTURES:
                     futures_strategies.append(sa)
                 else:  # 기본값은 spot
                     spot_strategies.append(sa)
@@ -55,12 +56,12 @@ class CapitalService:
             
             # 1. Spot 전략들 처리
             if spot_strategies:
-                if self._allocate_capital_by_market_type(account, spot_strategies, 'spot'):
+                if self._allocate_capital_by_market_type(account, spot_strategies, MarketType.SPOT_LOWER):
                     success_count += 1
             
             # 2. Futures 전략들 처리
             if futures_strategies:
-                if self._allocate_capital_by_market_type(account, futures_strategies, 'futures'):
+                if self._allocate_capital_by_market_type(account, futures_strategies, MarketType.FUTURES_LOWER):
                     success_count += 1
             
             self.session.commit()

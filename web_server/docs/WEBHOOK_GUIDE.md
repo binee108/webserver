@@ -54,7 +54,7 @@ Content-Type: application/json
 |--------|------|------|------|
 | `group_name` | String | 전략 그룹명 (전략 생성 시 설정) | "my_strategy" |
 | `exchange` | String | 거래소 | "BINANCE", "BYBIT", "OKX" |
-| `market` | String | 시장 타입 | "SPOT", "FUTURE" |
+| `market_type` | String | 시장 타입 | "SPOT", "FUTURES" |
 | `currency` | String | 결제 통화 | "USDT", "BUSD" |
 | `symbol` | String | 거래 심볼 | "BTCUSDT" |
 | `orderType` | String | 주문 타입 | "MARKET", "LIMIT" |
@@ -81,7 +81,7 @@ Content-Type: application/json
 - `orderType`: 대문자로 변환 (MARKET, LIMIT)
 - `side`: 소문자로 변환 (buy, sell, long, short)
 - `exchange`: 대문자로 변환 (BINANCE, BYBIT, OKX)
-- `market`: 대문자로 변환 (SPOT, FUTURE)
+- `market_type`: 대문자로 변환 (SPOT, FUTURES)
 - `currency`: 대문자로 변환 (USDT, BUSD)
 
 ### 거래 신호 예시
@@ -91,7 +91,7 @@ Content-Type: application/json
 {
     "group_name": "my_btc_strategy",
     "exchange": "BINANCE",
-    "market": "SPOT",
+    "market_type": "SPOT",
     "currency": "USDT",
     "symbol": "BTCUSDT",
     "orderType": "MARKET",
@@ -104,7 +104,7 @@ Content-Type: application/json
 {
     "group_name": "my_btc_strategy",
     "exchange": "BINANCE", 
-    "market": "SPOT",
+    "market_type": "SPOT",
     "currency": "USDT",
     "symbol": "BTCUSDT",
     "orderType": "LIMIT",
@@ -119,7 +119,7 @@ Content-Type: application/json
 {
     "group_name": "futures_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE", 
+    "market_type": "FUTURES", 
     "currency": "USDT",
     "symbol": "BTCUSDT",
     "orderType": "MARKET",
@@ -133,7 +133,7 @@ Content-Type: application/json
 {
     "GROUP_NAME": "test_strategy",
     "Platform": "binance",
-    "Market": "spot", 
+    "Market_Type": "spot", 
     "Currency": "usdt",
     "Symbol": "BTCUSDT",
     "order_type": "market",
@@ -155,7 +155,7 @@ Content-Type: application/json
 | 필드명 | 타입 | 설명 | 기본값 | 예시 |
 |--------|------|------|-------|------|
 | `exchange` | String | 특정 거래소만 취소 | 전체 | "BINANCE", "BYBIT", "OKX" |
-| `market` | String | 특정 마켓 타입만 취소 | 전체 | "SPOT", "FUTURE" |
+| `market_type` | String | 특정 마켓 타입만 취소 | 전체 | "SPOT", "FUTURES" |
 | `currency` | String | 특정 통화만 (향후 확장용) | 전체 | "USDT" |
 | `symbol` | String | 특정 심볼만 취소 | 전체 | "BTCUSDT" |
 
@@ -197,7 +197,7 @@ Content-Type: application/json
 {
     "group_name": "my_strategy",
     "orderType": "CANCEL_ALL_ORDER",
-    "market": "FUTURE"
+    "market_type": "FUTURES"
 }
 ```
 
@@ -207,7 +207,7 @@ Content-Type: application/json
     "group_name": "my_strategy",
     "orderType": "CANCEL_ALL_ORDER",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "symbol": "BTCUSDT"
 }
 ```
@@ -311,14 +311,14 @@ group_name = "my_strategy"
 long_condition = ta.crossover(ta.sma(close, 10), ta.sma(close, 20))
 if (long_condition)
     strategy.entry("Long", strategy.long)
-    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"buy"}'
+    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market_type":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"buy"}'
     alert(webhook_message, alert.freq_once_per_bar)
 
 // 매도 조건  
 short_condition = ta.crossunder(ta.sma(close, 10), ta.sma(close, 20))
 if (short_condition)
     strategy.close("Long")
-    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"sell"}'
+    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market_type":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"sell"}'
     alert(webhook_message, alert.freq_once_per_bar)
 ```
 
@@ -335,7 +335,7 @@ qty_percentage = 50
 long_condition = ta.crossover(ta.sma(close, 9), ta.sma(close, 21))
 if (long_condition)
     strategy.entry("Long", strategy.long)
-    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"buy","qty_per":' + str.tostring(qty_percentage) + '}'
+    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market_type":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"MARKET","side":"buy","qty_per":' + str.tostring(qty_percentage) + '}'
     alert(webhook_message, alert.freq_once_per_bar)
 
 // 지정가 매도 신호
@@ -343,7 +343,7 @@ short_condition = ta.crossunder(ta.sma(close, 9), ta.sma(close, 21))
 if (short_condition)
     strategy.close("Long")
     limit_price = close * 1.02
-    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"LIMIT","side":"sell","price":' + str.tostring(limit_price) + ',"qty_per":' + str.tostring(qty_percentage) + '}'
+    webhook_message = '{"group_name":"' + group_name + '","exchange":"BINANCE","market_type":"SPOT","currency":"USDT","symbol":"{{ticker}}","orderType":"LIMIT","side":"sell","price":' + str.tostring(limit_price) + ',"qty_per":' + str.tostring(qty_percentage) + '}'
     alert(webhook_message, alert.freq_once_per_bar)
 ```
 
@@ -359,7 +359,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
     "orderType": "MARKET",
@@ -373,7 +373,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "currency": "USDT", 
     "symbol": "BTCUSDT.P",
     "orderType": "LIMIT",
@@ -388,7 +388,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
     "orderType": "MARKET",
@@ -402,7 +402,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
     "orderType": "LIMIT",
@@ -443,7 +443,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "FUTURE",
+    "market_type": "FUTURES",
     "symbol": "BTCUSDT",
     "orderType": "CANCEL_ALL_ORDER"
   }'
@@ -513,7 +513,7 @@ JSON 파일을 생성하여 더 쉽게 테스트할 수 있습니다:
 {
   "group_name": "test_strategy",
   "exchange": "BINANCE",
-  "market": "FUTURE",
+  "market_type": "FUTURES",
   "currency": "USDT",
   "symbol": "BTCUSDT.P",
   "orderType": "MARKET",
@@ -527,7 +527,7 @@ JSON 파일을 생성하여 더 쉽게 테스트할 수 있습니다:
 {
   "group_name": "test_strategy",
   "exchange": "BINANCE",
-  "market": "FUTURE",
+  "market_type": "FUTURES",
   "currency": "USDT",
   "symbol": "BTCUSDT.P",
   "orderType": "LIMIT",
@@ -565,7 +565,7 @@ def test_webhook(data):
 test_webhook({
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "market": "SPOT",
+    "market_type": "SPOT",
     "currency": "USDT", 
     "symbol": "BTCUSDT",
     "orderType": "MARKET",

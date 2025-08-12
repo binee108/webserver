@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from app.models import Strategy, Account, Trade, OpenOrder, StrategyAccount, StrategyPosition
 from app.services.strategy_service import strategy_service, StrategyError
 from app import db
+from app.constants import MarketType
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
@@ -54,7 +55,7 @@ def dashboard():
             StrategyAccount.strategy_id.in_(strategy_ids)
         ).order_by(Trade.timestamp.desc()).limit(5).all()
     
-    return render_template('dashboard.html',
+    return render_template('dashboard.html', MarketType=MarketType,
                          strategies=active_strategies,
                          active_strategies_count=len(active_strategies),
                          today_trades_count=today_trades_count,
@@ -67,7 +68,7 @@ def accounts():
     """계좌 관리 페이지"""
     # 현재 사용자의 계좌 목록 조회
     accounts = Account.query.filter_by(user_id=current_user.id).all()
-    return render_template('accounts.html', accounts=accounts)
+    return render_template('accounts.html', accounts=accounts, MarketType=MarketType)
 
 @bp.route('/strategies')
 @login_required
@@ -76,13 +77,13 @@ def strategies():
     try:
         # strategy_service를 사용하여 가공된 데이터 조회
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
-        return render_template('strategies.html', strategies=strategies_data)
+        return render_template('strategies.html', strategies=strategies_data, MarketType=MarketType)
     except StrategyError as e:
         # 오류 발생 시 빈 목록으로 처리
-        return render_template('strategies.html', strategies=[])
+        return render_template('strategies.html', strategies=[], MarketType=MarketType)
     except Exception as e:
         # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
-        return render_template('strategies.html', strategies=[])
+        return render_template('strategies.html', strategies=[], MarketType=MarketType)
 
 @bp.route('/strategies/<int:strategy_id>/positions')
 @login_required
@@ -119,4 +120,4 @@ def strategy_positions(strategy_id):
         }
         positions.append(position_dict)
     
-    return render_template('positions.html', strategy=strategy, positions=positions) 
+    return render_template('positions.html', strategy=strategy, positions=positions, MarketType=MarketType) 

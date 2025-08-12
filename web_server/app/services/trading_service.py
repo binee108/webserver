@@ -97,14 +97,14 @@ class TradingService:
     def process_trading_signal(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """거래 신호 처리 (병렬 처리 개선)"""
         # 필수 필드 검증
-        required_fields = ['group_name', 'exchange', 'market', 'currency', 'symbol', 'orderType', 'side']
+        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'symbol', 'orderType', 'side']
         for field in required_fields:
             if field not in webhook_data:
                 raise TradingError(f"필수 필드 누락: {field}")
         
         group_name = webhook_data['group_name']
         exchange = webhook_data['exchange']
-        market = webhook_data['market']
+        market_type = webhook_data['market_type']
         currency = webhook_data['currency']
         symbol = webhook_data['symbol']
         order_type = webhook_data['orderType']
@@ -171,7 +171,7 @@ class TradingService:
         if filtered_accounts:
             logger.info(f"🚀 {len(filtered_accounts)}개 계좌에서 병렬 거래 실행 시작")
             results = self._execute_trades_parallel(
-                filtered_accounts, symbol, side, order_type, price, qty_per, currency, market
+                filtered_accounts, symbol, side, order_type, price, qty_per, currency, market_type
             )
         
         # 결과 분석
@@ -210,7 +210,7 @@ class TradingService:
     
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str, 
                                 side: str, order_type: str, price: Optional[Decimal], 
-                                qty_per: Decimal, currency: str, market: str) -> List[Dict[str, Any]]:
+                                qty_per: Decimal, currency: str, market_type: str) -> List[Dict[str, Any]]:
         """🆕 병렬로 여러 계좌에서 거래 실행"""
         results = []
         
@@ -226,7 +226,7 @@ class TradingService:
             future_to_account = {
                 executor.submit(
                     self._execute_single_trade_safe, 
-                    app, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market
+                    app, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market_type
                 ): (strategy, account, sa) 
                 for strategy, account, sa in filtered_accounts
             }
@@ -259,7 +259,7 @@ class TradingService:
     
     def _execute_single_trade_safe(self, app, strategy: Strategy, account: Account, sa: StrategyAccount,
                                   symbol: str, side: str, order_type: str, price: Optional[Decimal], 
-                                  qty_per: Decimal, currency: str, market: str) -> Dict[str, Any]:
+                                  qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """개별 거래 실행 (독립적 트랜잭션 관리)"""
         # 🔧 Flask 애플리케이션 컨텍스트 설정
         with app.app_context():
@@ -271,7 +271,7 @@ class TradingService:
                 
                 # 독립적 세션을 사용하여 거래 실행
                 result = self._execute_trade_with_session(
-                    session, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market
+                    session, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market_type
                 )
                 
                 if result.get('success'):
@@ -308,7 +308,7 @@ class TradingService:
     
     def _execute_trade_with_session(self, session, strategy: Strategy, account: Account, sa: StrategyAccount,
                                    symbol: str, side: str, order_type: str, price: Optional[Decimal], 
-                                   qty_per: Decimal, currency: str, market: str) -> Dict[str, Any]:
+                                   qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """🆕 세션을 사용하여 개별 계좌에서 거래 실행 (기존 execute_trade 로직)"""
         
         # 1. 할당 자본 조회
@@ -419,7 +419,7 @@ class TradingService:
         
         # 🆕 마켓 타입 로깅 강화
         logger.info(f"주문 실행 준비 - 계좌: {account.id}({account.name}), 심볼: {symbol}, "
-                   f"마켓타입: {market}, 사이드: {side}, 계산된 수량: {quantity}")
+                   f"마켓타입: {market_type}, 사이드: {side}, 계산된 수량: {quantity}")
         
         # 4. 주문 파라미터 전처리 및 최소 주문 금액 검증
         try:
@@ -432,7 +432,7 @@ class TradingService:
                 symbol=symbol,
                 amount=decimal_to_float(quantity),
                 price=decimal_to_float(price) if price else None,
-                market_type=market
+                market_type=market_type
             )
             
             # 🆕 성능 측정 완료
@@ -488,7 +488,7 @@ class TradingService:
                     symbol=symbol,
                     amount=decimal_to_float(quantity),
                     price=decimal_to_float(price) if price else None,
-                    market_type=market
+                    market_type=market_type
                 )
                 
                 fallback_end_time = time.perf_counter()
@@ -509,7 +509,7 @@ class TradingService:
                 final_price = price
         
         # 5. 거래소에 주문 전송 (전처리된 값 사용)
-        logger.info(f"거래소 주문 전송 - 마켓타입: {market}, 수량: {final_quantity}, 가격: {final_price}")
+        logger.info(f"거래소 주문 전송 - 마켓타입: {market_type}, 수량: {final_quantity}, 가격: {final_price}")
         
         order_result = exchange_service.create_order(
             account=account,
@@ -518,7 +518,7 @@ class TradingService:
             side=side,
             amount=decimal_to_float(final_quantity),  # 전처리된 수량 사용
             price=decimal_to_float(final_price) if final_price else None,  # 전처리된 가격 사용
-            market_type=market
+            market_type=market_type
         )
         
         # 디버깅을 위한 로깅
@@ -609,7 +609,7 @@ class TradingService:
                 fee=decimal_to_float(fee_cost),
                 pnl=decimal_to_float(realized_pnl) if realized_pnl != 0 else None,
                 is_entry=is_entry,  # 진입/청산 여부
-                market_type=market  # 마켓 타입
+                market_type=market_type  # 마켓 타입
             )
             session.add(trade)
             logger.info(f"📝 Trade 레코드 생성 - 주문ID: {order_id}, 타입: {order_type}, 상태: {filled_info['status']}")
@@ -629,7 +629,7 @@ class TradingService:
                 side=side,
                 quantity=final_quantity,  # 전처리된 수량 사용
                 price=final_price if final_price else Decimal('0'),  # 전처리된 가격 사용
-                market_type=market,
+                market_type=market_type,
                 order_type=order_type,  # 🔧 주문 타입 전달
                 session=session  # 🔧 현재 세션 전달
             )
@@ -673,7 +673,7 @@ class TradingService:
             'status': filled_info['status'],
             'realized_pnl': decimal_to_float(realized_pnl),
             'fee': decimal_to_float(fee_cost),
-            'market_type': market,  # 🆕 마켓 타입 정보
+            'market_type': market_type,  # 🆕 마켓 타입 정보
             'success': True,
             # 전처리 정보 추가
             'preprocessing_info': {
@@ -688,7 +688,7 @@ class TradingService:
 
     def execute_trade(self, strategy: Strategy, account: Account, symbol: str, 
                       side: str, order_type: str, price: Optional[Decimal], 
-                      qty_per: Decimal, currency: str, market: str) -> Dict[str, Any]:
+                      qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """단일 계좌에서 거래 실행 (전달받은 세션 사용)"""
         # StrategyAccount 조회
         strategy_account = StrategyAccount.query.filter_by(
@@ -701,7 +701,7 @@ class TradingService:
         
         # 현재 세션 사용하여 실행 (트랜잭션 경계 유지)
         return self._execute_trade_with_session(
-            self.session, strategy, account, strategy_account, symbol, side, order_type, price, qty_per, currency, market
+            self.session, strategy, account, strategy_account, symbol, side, order_type, price, qty_per, currency, market_type
         )
 
 

@@ -109,8 +109,8 @@
                             <div class="w-2 h-2 rounded-full {{ 'bg-green-400' if strategy.is_active else 'bg-gray-400' }} mr-1"></div>
                             {{ '활성' if strategy.is_active else '비활성' }}
                         </span>
-                        <span class="badge {{ 'badge-info' if strategy.market_type == 'futures' else 'badge-accent' }}">
-                            {{ '선물' if strategy.market_type == 'futures' else '현물' }}
+                        <span class="badge {{ 'badge-info' if strategy.market_type == 'FUTURES' else 'badge-accent' }}">
+                            {{ '선물' if strategy.market_type == 'FUTURES' else '현물' }}
                         </span>
                     </div>
                 </div>
