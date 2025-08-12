@@ -427,14 +427,22 @@ class TradingService:
             # 🆕 성능 측정 시작
             precision_start_time = time.perf_counter()
             
-            # 🆕 최적화된 precision 처리 사용 (95% API 호출 감소)
-            preprocessed_amount, preprocessed_price = exchange_service.preprocess_order_params_optimized(
+            # 🆕 최적화된 precision 처리 사용 (95% API 호출 감소) + 자동 조정
+            result = exchange_service.preprocess_order_params_optimized(
                 account=account,
                 symbol=symbol,
                 amount=decimal_to_float(quantity),
                 price=decimal_to_float(price) if price else None,
                 market_type=market_type
             )
+            
+            # 반환값 언패킹 (3개 값: amount, price, adjustment_info)
+            if len(result) == 3:
+                preprocessed_amount, preprocessed_price, adjustment_info = result
+            else:
+                # 이전 버전 호환성 (2개 값만 반환하는 경우)
+                preprocessed_amount, preprocessed_price = result
+                adjustment_info = None
             
             # 🆕 성능 측정 완료
             precision_end_time = time.perf_counter()
@@ -457,6 +465,18 @@ class TradingService:
                 logger.info(f"📊 Precision 처리 시간 - {precision_duration:.3f}초 (계좌: {account.id}, 심볼: {symbol})")
             else:
                 logger.debug(f"⚡ Precision 처리 최적화 성공 - {precision_duration:.3f}초 (계좌: {account.id}, 심볼: {symbol})")
+            
+            # 🆕 수량 자동 조정된 경우 텔레그램 알림
+            if adjustment_info and adjustment_info.get('was_adjusted'):
+                try:
+                    from app.services.telegram_service import telegram_service
+                    # 사용자 ID 가져오기
+                    user_id = account.user_id if hasattr(account, 'user_id') else None
+                    if user_id:
+                        telegram_service.send_order_adjustment_notification(user_id, adjustment_info)
+                        logger.info(f"📱 주문 수량 자동 조정 텔레그램 알림 전송 - 사용자: {user_id}")
+                except Exception as te:
+                    logger.warning(f"텔레그램 알림 전송 실패: {str(te)}")
                 
         except ExchangeError as e:
             # 🆕 최소 주문 금액 미달 등의 경우 주문 중단

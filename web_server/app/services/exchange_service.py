@@ -1127,10 +1127,11 @@ class ExchangeService:
             raise ExchangeError(f"Precision 정보 조회 실패: {str(e)}")
     
     def preprocess_order_params_optimized(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> tuple:
-        """🆕 주문 파라미터 전처리 최적화 (Precision 캐시 사용) - 95% 성능 향상"""
+        """🆕 주문 파라미터 전처리 최적화 (Precision 캐시 사용 + 자동 조정) - 95% 성능 향상"""
         try:
             # 🆕 입력값을 즉시 Decimal로 변환하여 정밀도 보장
             from app.services.utils import to_decimal, decimal_to_float
+            from app.constants import MinOrderAmount
             
             amount_decimal = to_decimal(amount)
             price_decimal = to_decimal(price) if price is not None else None
@@ -1177,18 +1178,89 @@ class ExchangeService:
             if price_decimal is not None:
                 adjusted_price = self._adjust_price_optimized(precision_info, price_decimal)
             
-            # 🆕 최소 주문 수량 검증 - Decimal 기반 비교
+            # 🆕 최소 주문 수량/금액 자동 조정 로직
             limits = precision_info.get('limits', {})
             min_amount = to_decimal(limits.get('amount', {}).get('min', 0))
-            if min_amount > 0 and adjusted_amount < min_amount:
-                raise ExchangeError(f"주문 수량이 최소값보다 작습니다: {adjusted_amount} < {min_amount}")
+            min_cost = to_decimal(limits.get('cost', {}).get('min', 0))
             
-            # 🆕 최소 주문 금액 검증 - Decimal 기반 연산
-            if adjusted_price:
-                cost = adjusted_amount * adjusted_price
-                min_cost = to_decimal(limits.get('cost', {}).get('min', 0))
-                if min_cost > 0 and cost < min_cost:
-                    raise ExchangeError(f"주문 금액이 최소값보다 작습니다: {cost} < {min_cost}")
+            # 조정 정보 초기화
+            adjustment_info = None
+            
+            # 현재 가격 결정 (지정가면 지정가, 시장가면 최근 시장가 필요)
+            effective_price = adjusted_price if adjusted_price else price_decimal
+            if not effective_price:
+                # 시장가 주문인 경우 현재가 조회 필요 (ticker 정보 사용)
+                ticker = self.get_ticker(account, symbol)
+                if ticker and 'last' in ticker:
+                    effective_price = to_decimal(ticker['last'])
+                else:
+                    effective_price = Decimal('1')  # fallback
+            
+            # 현재 주문 금액 계산
+            current_cost = adjusted_amount * effective_price
+            
+            # 최소 요구사항 체크 및 자동 조정
+            needs_adjustment = False
+            required_amount = adjusted_amount
+            adjustment_reason = ""
+            
+            # 1. 최소 수량 체크
+            if min_amount > 0 and adjusted_amount < min_amount:
+                required_amount_by_min = min_amount * Decimal(str(MinOrderAmount.ADJUSTMENT_MULTIPLIER))
+                required_amount = max(required_amount, required_amount_by_min)
+                needs_adjustment = True
+                adjustment_reason = f"최소 수량({min_amount:.8f}) 미달"
+            
+            # 2. 최소 금액 체크
+            if min_cost > 0 and current_cost < min_cost:
+                required_cost = min_cost * Decimal(str(MinOrderAmount.ADJUSTMENT_MULTIPLIER))
+                required_amount_by_cost = required_cost / effective_price
+                if required_amount_by_cost > required_amount:
+                    required_amount = required_amount_by_cost
+                    adjustment_reason = f"최소 금액({min_cost:.2f} USDT) 미달"
+                needs_adjustment = True
+            
+            # 3. 거래소별 하드코딩된 최소 금액 체크
+            exchange_min_cost = Decimal(str(MinOrderAmount.get_min_amount(
+                account.exchange.upper(), 
+                market_type
+            )))
+            if current_cost < exchange_min_cost:
+                required_cost = exchange_min_cost * Decimal(str(MinOrderAmount.ADJUSTMENT_MULTIPLIER))
+                required_amount_by_exchange = required_cost / effective_price
+                if required_amount_by_exchange > required_amount:
+                    required_amount = required_amount_by_exchange
+                    adjustment_reason = f"거래소 최소 금액({exchange_min_cost:.2f} USDT) 미달"
+                needs_adjustment = True
+            
+            # 자동 조정 적용
+            if needs_adjustment:
+                # precision 적용하여 조정된 수량 계산
+                final_adjusted_amount = self._adjust_amount_optimized(precision_info, required_amount)
+                final_adjusted_cost = final_adjusted_amount * effective_price
+                
+                # 조정 정보 기록
+                adjustment_info = {
+                    'was_adjusted': True,
+                    'original_amount': decimal_to_float(original_amount),
+                    'original_cost': decimal_to_float(original_amount * effective_price),
+                    'adjusted_amount': decimal_to_float(final_adjusted_amount),
+                    'adjusted_cost': decimal_to_float(final_adjusted_cost),
+                    'min_amount': decimal_to_float(min_amount) if min_amount else 0,
+                    'min_cost': decimal_to_float(min_cost) if min_cost else 0,
+                    'exchange_min_cost': decimal_to_float(exchange_min_cost),
+                    'reason': f"{adjustment_reason}, 안전 마진 2배 적용",
+                    'symbol': symbol,
+                    'exchange': account.exchange.upper(),
+                    'market_type': market_type
+                }
+                
+                logger.info(f"📊 주문 수량 자동 조정 - 심볼: {symbol}")
+                logger.info(f"  원래: {original_amount:.8f} ({original_amount * effective_price:.2f} USDT)")
+                logger.info(f"  조정: {final_adjusted_amount:.8f} ({final_adjusted_cost:.2f} USDT)")
+                logger.info(f"  사유: {adjustment_info['reason']}")
+                
+                adjusted_amount = final_adjusted_amount
             
             # 조정 여부 로깅 - Decimal 기반 비교
             amount_adjusted = abs(adjusted_amount - original_amount) > Decimal('0.00000001')
@@ -1201,10 +1273,11 @@ class ExchangeService:
                 if price_adjusted:
                     logger.debug(f"  가격 조정: {original_price} → {adjusted_price}")
             
-            # 🆕 반환값을 float로 변환 (CCXT 호환성)
+            # 🆕 반환값을 float로 변환 (CCXT 호환성), 조정 정보 포함
             return (
                 decimal_to_float(adjusted_amount),
-                decimal_to_float(adjusted_price) if adjusted_price else None
+                decimal_to_float(adjusted_price) if adjusted_price else None,
+                adjustment_info  # 조정 정보 추가
             )
             
         except Exception as e:

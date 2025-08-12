@@ -128,3 +128,74 @@ class OrderType:
         if value and isinstance(value, str):
             return value.lower()
         return value
+
+
+class MinOrderAmount:
+    """거래소별 마켓타입별 최소 거래 금액 (USDT 기준)"""
+    
+    # Binance - 공식 문서 기준
+    BINANCE_SPOT = 10.0      # 현물 10 USDT
+    BINANCE_FUTURES = 5.0    # 선물 5 USDT (일부 페어는 더 높을 수 있음)
+    
+    # Bybit - 공식 문서 기준
+    BYBIT_SPOT = 1.0         # 현물 1 USDT
+    BYBIT_FUTURES = 5.0      # 선물 5 USDT
+    
+    # OKX - 공식 문서 기준
+    OKX_SPOT = 1.0           # 현물 1 USDT
+    OKX_FUTURES = 5.0        # 선물 5 USDT
+    
+    # Upbit (KRW 기준)
+    UPBIT_SPOT = 5000        # 현물 5000 KRW
+    
+    # 조정 배수 (안전 마진 2배)
+    ADJUSTMENT_MULTIPLIER = 2.0
+    
+    @classmethod
+    def get_min_amount(cls, exchange: str, market_type: str, currency: str = 'USDT') -> float:
+        """거래소와 마켓타입에 따른 최소 금액 반환
+        
+        Args:
+            exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
+            market_type: 마켓 타입 (SPOT, FUTURES)
+            currency: 통화 (USDT, KRW 등)
+            
+        Returns:
+            최소 거래 금액
+        """
+        exchange_upper = exchange.upper()
+        market_type_upper = market_type.upper()
+        
+        # FUTURES는 모든 변형 처리
+        if market_type_upper in ['FUTURE', 'FUTURES', 'SWAP', 'LINEAR']:
+            market_type_upper = 'FUTURES'
+        
+        # 거래소별 최소 금액 매핑
+        min_amounts = {
+            'BINANCE': {
+                'SPOT': cls.BINANCE_SPOT,
+                'FUTURES': cls.BINANCE_FUTURES
+            },
+            'BYBIT': {
+                'SPOT': cls.BYBIT_SPOT,
+                'FUTURES': cls.BYBIT_FUTURES
+            },
+            'OKX': {
+                'SPOT': cls.OKX_SPOT,
+                'FUTURES': cls.OKX_FUTURES
+            },
+            'UPBIT': {
+                'SPOT': cls.UPBIT_SPOT
+            }
+        }
+        
+        # 거래소와 마켓타입에 해당하는 최소 금액 반환
+        if exchange_upper in min_amounts:
+            market_amounts = min_amounts[exchange_upper]
+            if market_type_upper in market_amounts:
+                return market_amounts[market_type_upper]
+        
+        # 기본값 (찾을 수 없는 경우)
+        if market_type_upper == 'FUTURES':
+            return 5.0  # 선물 기본값
+        return 10.0  # 현물 기본값

@@ -273,6 +273,66 @@ class TelegramService:
             logger.error(f"동기 메시지 전송 실패: {str(e)}")
             return False
     
+    def send_order_adjustment_notification(self, user_id: int, adjustment_info: Dict[str, Any]) -> bool:
+        """주문 수량 자동 조정 알림 전송"""
+        try:
+            # 사용자 정보 조회
+            from app.models import User
+            user = User.query.get(user_id)
+            if not user:
+                logger.warning(f"사용자를 찾을 수 없습니다: {user_id}")
+                return False
+            
+            # 사용자별 텔레그램 설정 확인
+            effective_bot, effective_chat_id = self.get_effective_bot_and_chat(
+                user.telegram_bot_token,
+                user.telegram_id
+            )
+            
+            if not effective_bot or not effective_chat_id:
+                logger.debug(f"사용자 {user_id}의 텔레그램 설정이 없습니다.")
+                return False
+            
+            # 알림 메시지 구성
+            message = f"""
+📊 <b>주문 수량 자동 조정 알림</b>
+
+심볼: {adjustment_info['symbol']}
+거래소: {adjustment_info['exchange']} ({adjustment_info['market_type']})
+
+❌ <b>원래 요청</b>:
+  • 수량: {adjustment_info['original_amount']:.8f}
+  • 금액: {adjustment_info['original_cost']:.2f} USDT
+
+⚠️ <b>최소 요구사항</b>:
+  • 최소 수량: {adjustment_info['min_amount']:.8f}
+  • 최소 금액: {adjustment_info['min_cost']:.2f} USDT
+  • 거래소 최소: {adjustment_info['exchange_min_cost']:.2f} USDT
+
+✅ <b>자동 조정됨</b>:
+  • 수량: {adjustment_info['adjusted_amount']:.8f}
+  • 금액: {adjustment_info['adjusted_cost']:.2f} USDT
+
+📝 사유: {adjustment_info['reason']}
+"""
+            
+            # 메시지 전송
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(effective_bot.send_message(
+                chat_id=effective_chat_id,
+                text=message,
+                parse_mode='HTML'
+            ))
+            loop.close()
+            
+            logger.info(f"주문 조정 알림 전송 성공 - 사용자: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"주문 조정 알림 전송 실패: {str(e)}")
+            return False
+    
     def send_error_alert(self, error_type: str, error_message: str, 
                         context: Optional[Dict[str, Any]] = None) -> bool:
         """오류 알림 전송"""
