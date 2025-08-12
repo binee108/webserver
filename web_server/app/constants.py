@@ -135,7 +135,7 @@ class MinOrderAmount:
     
     # Binance - 공식 문서 기준
     BINANCE_SPOT = 10.0      # 현물 10 USDT
-    BINANCE_FUTURES = 5.0    # 선물 5 USDT (일부 페어는 더 높을 수 있음)
+    BINANCE_FUTURES = 20.0   # 선물 20 USDT (바이낸스 선물 최소 notional)
     
     # Bybit - 공식 문서 기준
     BYBIT_SPOT = 1.0         # 현물 1 USDT
