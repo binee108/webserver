@@ -51,10 +51,11 @@ def calculate_is_entry(current_position_qty: Decimal, side: str) -> bool:
             return False
 
 def normalize_webhook_data(webhook_data: dict) -> dict:
-    """웹훅 데이터의 필드명을 표준화 (대소문자 구별 없이 처리)"""
+    """웹훅 데이터의 필드명을 표준화 (order_type은 정확한 필드명만 허용)"""
     normalized = {}
     
     # 필드명 매핑 (소문자 키 -> 표준 키)
+    # order_type은 제외 (정확한 필드명만 허용)
     field_mapping = {
         'group_name': 'group_name',
         'exchange': 'exchange',
@@ -62,7 +63,6 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'market_type': 'market_type',
         'currency': 'currency',
         'symbol': 'symbol',
-        'order_type': 'order_type',  # order_type만 처리
         'side': 'side',
         'price': 'price',
         'qty_per': 'qty_per'
@@ -76,9 +76,13 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         if lower_key in lower_data:
             normalized[standard_key] = lower_data[lower_key]
     
-    # 매핑되지 않은 다른 필드들도 그대로 포함
+    # order_type은 정확한 필드명만 허용
+    if 'order_type' in webhook_data:
+        normalized['order_type'] = webhook_data['order_type']
+    
+    # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 제외)
     for key, value in webhook_data.items():
-        if key.lower() not in field_mapping:
+        if key.lower() not in field_mapping and key != 'order_type' and key.lower() not in ['ordertype', 'orderType']:
             normalized[key] = value
     
     # 값들을 내부 로직에 맞게 표준화
