@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 from functools import wraps
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from app.models import Account
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 from threading import Lock  # 🆕 스레드 안전한 캐싱을 위한 import 추가
 import json  # 🆕 precision 데이터 직렬화용
 
@@ -194,11 +194,11 @@ class ExchangeService:
             }
             
             # Bybit의 경우 추가 설정
-            if account.exchange == 'bybit':
+            if account.exchange == Exchange.BYBIT_LOWER:
                 config['options'] = {'defaultType': 'linear'}  # USDT 선물
             
             # 🆕 Binance의 경우 추가 설정 (rate limit 경고 무시)
-            if account.exchange == 'binance':
+            if account.exchange == Exchange.BINANCE_LOWER:
                 config['options'] = {
                     'warnOnFetchOpenOrdersWithoutSymbol': False,  # 심볼 없는 조회 경고 무시
                     'defaultType': 'spot'  # 기본 타입 설정
@@ -260,7 +260,7 @@ class ExchangeService:
             }
             
             # Bybit의 경우 추가 설정
-            if exchange_name == 'bybit':
+            if exchange_name == Exchange.BYBIT_LOWER:
                 config['options'] = {'defaultType': 'linear'}  # USDT 선물
             
             # OKX의 경우 passphrase 필요
@@ -298,11 +298,11 @@ class ExchangeService:
                 # 선물 잔고 조회
                 if hasattr(exchange, 'fetch_balance') and exchange.has.get('fetchBalance'):
                     # 거래소별 선물 잔고 조회 방식
-                    if account.exchange == 'binance':
+                    if account.exchange == Exchange.BINANCE_LOWER:
                         # Binance 선물 잔고
                         exchange.options['defaultType'] = 'future'
                         balance = exchange.fetch_balance()
-                    elif account.exchange == 'bybit':
+                    elif account.exchange == Exchange.BYBIT_LOWER:
                         # Bybit 선물 잔고 (이미 linear로 설정됨)
                         balance = exchange.fetch_balance()
                     elif account.exchange == 'okx':
@@ -316,9 +316,9 @@ class ExchangeService:
                     raise ExchangeError(f"거래소 {account.exchange}에서 선물 잔고 조회를 지원하지 않습니다")
             else:
                 # 현물 잔고 조회 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -358,17 +358,17 @@ class ExchangeService:
             # 마켓 타입에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -403,17 +403,17 @@ class ExchangeService:
             # 🆕 market_type에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -434,17 +434,17 @@ class ExchangeService:
             # 🆕 market_type에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -472,17 +472,17 @@ class ExchangeService:
             # 🆕 market_type에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -591,17 +591,17 @@ class ExchangeService:
             # 🆕 market_type에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -641,17 +641,17 @@ class ExchangeService:
             # 🆕 market_type에 따라 거래소 설정
             if market_type == MarketType.FUTURES:
                 # 선물 거래 설정
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -781,7 +781,7 @@ class ExchangeService:
                 logger.error(f"사용 가능한 심볼 예시: {available_symbols}")
                 
                 # 거래소별 추가 정보 제공
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     if market_type == MarketType.FUTURES_LOWER:
                         logger.error(f"Binance 선물에서는 'SOL/USDT' 형식을 사용합니다.")
                     else:
@@ -891,18 +891,18 @@ class ExchangeService:
             if market_type_lower in ['future', 'futures']:
                 # 선물 거래 설정
                 logger.info(f"선물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
                 logger.info(f"현물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'
@@ -1146,18 +1146,18 @@ class ExchangeService:
             if market_type_lower in ['future', 'futures']:
                 # 선물 거래 설정
                 logger.info(f"선물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'linear'  # USDT 선물
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'swap'
             else:
                 # 현물 거래 설정 (기본값)
                 logger.info(f"현물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == 'binance':
+                if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'bybit':
+                elif account.exchange == Exchange.BYBIT_LOWER:
                     exchange.options['defaultType'] = 'spot'
                 elif account.exchange == 'okx':
                     exchange.options['defaultType'] = 'spot'

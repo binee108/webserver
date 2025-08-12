@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import db
 from app.models import OpenOrder, StrategyAccount, Trade, StrategyPosition
 from app.services.utils import to_decimal, decimal_to_float
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class OpenOrderManager:
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
                          symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = None, order_type: str = 'LIMIT', session: Optional[Session] = None) -> OpenOrder:
+                         market_type: str = None, order_type: str = OrderType.LIMIT, session: Optional[Session] = None) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성"""
         current_session = session or self.session
         
@@ -302,7 +302,7 @@ class OpenOrderManager:
                 quantity=decimal_to_float(filled_quantity),
                 order_price=decimal_to_float(to_decimal(order.price)),
                 price=decimal_to_float(average_price),
-                order_type='LIMIT',  # OpenOrder는 항상 LIMIT 주문
+                order_type=OrderType.LIMIT,  # OpenOrder는 항상 LIMIT 주문
                 timestamp=datetime.utcnow(),
                 fee=decimal_to_float(fee_cost),
                 pnl=decimal_to_float(realized_pnl) if realized_pnl != 0 else None,

@@ -4,7 +4,7 @@
 
 from typing import Any
 from decimal import Decimal
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 
 def to_decimal(value: Any) -> Decimal:
     """값을 Decimal로 안전하게 변환"""
@@ -62,8 +62,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'market_type': 'market_type',
         'currency': 'currency',
         'symbol': 'symbol',
-        'ordertype': 'orderType',
-        'order_type': 'orderType',
+        'order_type': 'order_type',  # order_type만 처리
         'side': 'side',
         'price': 'price',
         'qty_per': 'qty_per'
@@ -83,8 +82,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
             normalized[key] = value
     
     # 값들을 내부 로직에 맞게 표준화
-    if 'orderType' in normalized and isinstance(normalized['orderType'], str):
-        normalized['orderType'] = normalized['orderType'].upper()  # 대문자로 표준화 (MARKET, LIMIT 등)
+    if 'order_type' in normalized and isinstance(normalized['order_type'], str):
+        normalized['order_type'] = OrderType.normalize(normalized['order_type'])  # 표준화 (MARKET, LIMIT 등)
     
     if 'side' in normalized and isinstance(normalized['side'], str):
         # side를 BUY/SELL로 표준화
@@ -98,7 +97,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
             normalized['side'] = normalized['side'].upper()
     
     if 'exchange' in normalized and isinstance(normalized['exchange'], str):
-        normalized['exchange'] = normalized['exchange'].upper()  # 대문자로 표준화 (BINANCE, BYBIT 등)
+        normalized['exchange'] = Exchange.normalize(normalized['exchange'])  # 표준화 (BINANCE, BYBIT 등)
     
     if 'market_type' in normalized and isinstance(normalized['market_type'], str):
         normalized['market_type'] = MarketType.normalize(normalized['market_type'])  # 표준 형태로 변환

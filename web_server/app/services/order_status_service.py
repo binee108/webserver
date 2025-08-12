@@ -14,7 +14,7 @@ from app import db
 from app.models import OpenOrder, StrategyAccount, Account, Strategy
 from app.services.open_order_service import open_order_manager
 from app.services.exchange_service import exchange_service
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ class OrderStatusProcessor:
         symbols = list(set(info['order'].symbol for info in order_infos))
         
         # 바이낸스의 경우 심볼이 적으면 심볼별 조회
-        if account.exchange.lower() == 'binance' and len(symbols) <= 5:
+        if Exchange.to_lower(account.exchange) == Exchange.BINANCE_LOWER and len(symbols) <= 5:
             logger.debug(f"바이낸스 계좌 {account.id}: 심볼별 조회 사용")
             return exchange_service.fetch_open_orders_by_symbols(
                 account, symbols, market_type=market_type

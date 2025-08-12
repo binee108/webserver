@@ -57,7 +57,7 @@ Content-Type: application/json
 | `market_type` | String | 시장 타입 | "SPOT", "FUTURES" |
 | `currency` | String | 결제 통화 | "USDT", "BUSD" |
 | `symbol` | String | 거래 심볼 | "BTCUSDT" |
-| `orderType` | String | 주문 타입 | "MARKET", "LIMIT" |
+| `order_type` | String | 주문 타입 | "MARKET", "LIMIT" |
 | `side` | String | 거래 방향 | "buy", "sell", "long", "short" |
 
 ### 선택 필드
@@ -74,11 +74,11 @@ Content-Type: application/json
 ### 필드명 유연성
 시스템이 자동으로 인식하는 필드명 변형:
 - `platform` → `exchange`
-- `order_type`, `ordertype` → `orderType`
 - 모든 필드명은 대소문자 구별 없이 처리됩니다
+- **주의**: `orderType`은 더 이상 지원하지 않습니다. `order_type`만 사용해주세요.
 
 ### 자동 표준화
-- `orderType`: 대문자로 변환 (MARKET, LIMIT)
+- `order_type`: 대문자로 변환 (MARKET, LIMIT)
 - `side`: 소문자로 변환 (buy, sell, long, short)
 - `exchange`: 대문자로 변환 (BINANCE, BYBIT, OKX)
 - `market_type`: 대문자로 변환 (SPOT, FUTURES)
@@ -94,7 +94,7 @@ Content-Type: application/json
     "market_type": "SPOT",
     "currency": "USDT",
     "symbol": "BTCUSDT",
-    "orderType": "MARKET",
+    "order_type": "MARKET",
     "side": "buy"
 }
 ```
@@ -107,7 +107,7 @@ Content-Type: application/json
     "market_type": "SPOT",
     "currency": "USDT",
     "symbol": "BTCUSDT",
-    "orderType": "LIMIT",
+    "order_type": "LIMIT",
     "side": "sell",
     "price": 45000,
     "qty_per": 50
@@ -122,7 +122,7 @@ Content-Type: application/json
     "market_type": "FUTURES", 
     "currency": "USDT",
     "symbol": "BTCUSDT",
-    "orderType": "MARKET",
+    "order_type": "MARKET",
     "side": "long",
     "qty_per": 25
 }
@@ -149,7 +149,7 @@ Content-Type: application/json
 | 필드명 | 타입 | 설명 | 예시 |
 |--------|------|------|------|
 | `group_name` | String | 전략 그룹명 | "my_strategy" |
-| `orderType` | String | 주문 타입 (고정값) | "CANCEL_ALL_ORDER" |
+| `order_type` | String | 주문 타입 (고정값) | "CANCEL_ALL_ORDER" |
 
 ### 선택 필드 (필터링)
 | 필드명 | 타입 | 설명 | 기본값 | 예시 |
@@ -170,7 +170,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_strategy",
-    "orderType": "CANCEL_ALL_ORDER"
+    "order_type": "CANCEL_ALL_ORDER"
 }
 ```
 
@@ -178,7 +178,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_strategy",
-    "orderType": "CANCEL_ALL_ORDER",
+    "order_type": "CANCEL_ALL_ORDER",
     "exchange": "BINANCE"
 }
 ```
@@ -187,7 +187,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_strategy",
-    "orderType": "CANCEL_ALL_ORDER",
+    "order_type": "CANCEL_ALL_ORDER",
     "symbol": "BTCUSDT"
 }
 ```
@@ -196,7 +196,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_strategy",
-    "orderType": "CANCEL_ALL_ORDER",
+    "order_type": "CANCEL_ALL_ORDER",
     "market_type": "FUTURES"
 }
 ```
@@ -205,7 +205,7 @@ Content-Type: application/json
 ```json
 {
     "group_name": "my_strategy",
-    "orderType": "CANCEL_ALL_ORDER",
+    "order_type": "CANCEL_ALL_ORDER",
     "exchange": "BINANCE",
     "market_type": "FUTURES",
     "symbol": "BTCUSDT"
@@ -362,7 +362,7 @@ curl -X POST https://your-domain.com/api/webhook \
     "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
-    "orderType": "MARKET",
+    "order_type": "MARKET",
     "side": "buy",
     "qty_per": 5
   }'
@@ -376,7 +376,7 @@ curl -X POST https://your-domain.com/api/webhook \
     "market_type": "FUTURES",
     "currency": "USDT", 
     "symbol": "BTCUSDT.P",
-    "orderType": "LIMIT",
+    "order_type": "LIMIT",
     "side": "buy",
     "price": 94000,
     "qty_per": 5
@@ -391,7 +391,7 @@ curl -X POST https://your-domain.com/api/webhook \
     "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
-    "orderType": "MARKET",
+    "order_type": "MARKET",
     "side": "sell",
     "qty_per": 100
   }'
@@ -405,7 +405,7 @@ curl -X POST https://your-domain.com/api/webhook \
     "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTCUSDT.P",
-    "orderType": "LIMIT",
+    "order_type": "LIMIT",
     "side": "sell",
     "price": 96000,
     "qty_per": 100
@@ -416,7 +416,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "group_name": "test_strategy",
-    "orderType": "CANCEL_ALL_ORDER"
+    "order_type": "CANCEL_ALL_ORDER"
   }'
 
 # 6. 특정 거래소 주문만 취소
@@ -425,7 +425,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "exchange": "BINANCE",
-    "orderType": "CANCEL_ALL_ORDER"
+    "order_type": "CANCEL_ALL_ORDER"
   }'
 
 # 7. 특정 심볼 주문만 취소
@@ -434,7 +434,7 @@ curl -X POST https://your-domain.com/api/webhook \
   -d '{
     "group_name": "test_strategy",
     "symbol": "BTCUSDT",
-    "orderType": "CANCEL_ALL_ORDER"
+    "order_type": "CANCEL_ALL_ORDER"
   }'
 
 # 8. 복합 필터: 특정 거래소+마켓+심볼 주문 취소
@@ -445,7 +445,7 @@ curl -X POST https://your-domain.com/api/webhook \
     "exchange": "BINANCE",
     "market_type": "FUTURES",
     "symbol": "BTCUSDT",
-    "orderType": "CANCEL_ALL_ORDER"
+    "order_type": "CANCEL_ALL_ORDER"
   }'
 ```
 
@@ -454,27 +454,27 @@ curl -X POST https://your-domain.com/api/webhook \
 REM 1. 시장가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"buy\",\"qty_per\":5}"
+  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"order_type\":\"MARKET\",\"side\":\"buy\",\"qty_per\":5}"
 
 REM 2. 지정가 매수 (5% 수량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"buy\",\"price\":94000,\"qty_per\":5}"
+  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"order_type\":\"LIMIT\",\"side\":\"buy\",\"price\":94000,\"qty_per\":5}"
 
 REM 3. 시장가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"MARKET\",\"side\":\"sell\",\"qty_per\":100}"
+  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"order_type\":\"MARKET\",\"side\":\"sell\",\"qty_per\":100}"
 
 REM 4. 지정가 매도 (포지션 전량)
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"orderType\":\"LIMIT\",\"side\":\"sell\",\"price\":96000,\"qty_per\":100}"
+  -d "{\"group_name\":\"test_strategy\",\"exchange\":\"BINANCE\",\"market\":\"FUTURE\",\"currency\":\"USDT\",\"symbol\":\"BTCUSDT.P\",\"order_type\":\"LIMIT\",\"side\":\"sell\",\"price\":96000,\"qty_per\":100}"
 
 REM 5. 전체 주문 취소
 curl -X POST https://your-domain.com/api/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"group_name\":\"test_strategy\",\"orderType\":\"CANCEL_ALL_ORDER\"}"
+  -d "{\"group_name\":\"test_strategy\",\"order_type\":\"CANCEL_ALL_ORDER\"}"
 ```
 
 #### Windows (PowerShell)
@@ -516,7 +516,7 @@ JSON 파일을 생성하여 더 쉽게 테스트할 수 있습니다:
   "market_type": "FUTURES",
   "currency": "USDT",
   "symbol": "BTCUSDT.P",
-  "orderType": "MARKET",
+  "order_type": "MARKET",
   "side": "buy",
   "qty_per": 5
 }
@@ -530,7 +530,7 @@ JSON 파일을 생성하여 더 쉽게 테스트할 수 있습니다:
   "market_type": "FUTURES",
   "currency": "USDT",
   "symbol": "BTCUSDT.P",
-  "orderType": "LIMIT",
+  "order_type": "LIMIT",
   "side": "sell",
   "price": 96000,
   "qty_per": 100
@@ -568,7 +568,7 @@ test_webhook({
     "market_type": "SPOT",
     "currency": "USDT", 
     "symbol": "BTCUSDT",
-    "orderType": "MARKET",
+    "order_type": "MARKET",
     "side": "buy"
 })
 
@@ -577,7 +577,7 @@ test_webhook({
     "group_name": "test_strategy",
     "symbol": "BTCUSDT",
     "side": "buy"
-    # exchange, market, currency, orderType 누락
+    # exchange, market, currency, order_type 누락
 })
 ```
 
@@ -588,7 +588,7 @@ test_webhook({
 #### 1. "필수 필드 누락: exchange"
 - **원인**: 필수 필드가 누락됨
 - **해결**: 모든 필수 필드 포함 확인
-- **필수 필드**: `group_name`, `exchange`, `market`, `currency`, `symbol`, `orderType`, `side`
+- **필수 필드**: `group_name`, `exchange`, `market`, `currency`, `symbol`, `order_type`, `side`
 
 #### 2. "활성 전략을 찾을 수 없습니다"
 - **원인**: `group_name`이 잘못되었거나 전략이 비활성화됨

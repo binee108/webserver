@@ -14,7 +14,7 @@ from app.services.utils import to_decimal, decimal_to_float
 from app.services.exchange_service import exchange_service
 from app.services.open_order_service import open_order_manager
 from app.services.order_status_service import order_status_processor
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 
 # 백그라운드 작업용 로거 사용
 logger = logging.getLogger('trading_system.background')
@@ -101,7 +101,7 @@ class OrderService:
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
                          symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = None, order_type: str = 'LIMIT') -> OpenOrder:
+                         market_type: str = None, order_type: str = OrderType.LIMIT) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성 (중앙화된 관리)"""
         try:
             if market_type is None:

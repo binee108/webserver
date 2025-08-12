@@ -22,6 +22,7 @@ from app.models import (
 from app.services.exchange_service import exchange_service, ExchangeError
 from app.services.utils import to_decimal, decimal_to_float, calculate_is_entry
 from app.services.position_service import position_service
+from app.constants import MarketType, Exchange, OrderType
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class TradingService:
             }
             
             # 1. LIMIT 주문인 경우만 주문 이벤트 발송 (시장가 주문은 제외)
-            if order_type.upper() == 'LIMIT' and filled_info['status'] != 'FILLED':
+            if order_type == OrderType.LIMIT and filled_info['status'] != 'FILLED':
                 order_event = OrderEvent(
                     event_type='order_created',
                     order_id=order_id,
@@ -97,7 +98,7 @@ class TradingService:
     def process_trading_signal(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """거래 신호 처리 (병렬 처리 개선)"""
         # 필수 필드 검증
-        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'symbol', 'orderType', 'side']
+        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'symbol', 'order_type', 'side']
         for field in required_fields:
             if field not in webhook_data:
                 raise TradingError(f"필수 필드 누락: {field}")
@@ -107,7 +108,7 @@ class TradingService:
         market_type = webhook_data['market_type']
         currency = webhook_data['currency']
         symbol = webhook_data['symbol']
-        order_type = webhook_data['orderType']
+        order_type = webhook_data['order_type']
         side = webhook_data['side']  # 이미 normalize_webhook_data에서 소문자로 표준화됨
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
         qty_per = to_decimal(webhook_data.get('qty_per', 100))  # Decimal로 변환
@@ -294,7 +295,7 @@ class TradingService:
                             f"사이드: {side}, 주문타입: {order_type}, 가격: {price}, 수량비율: {qty_per}%")
                 
                 # 시장가 주문 실패의 경우 추가 로깅
-                if order_type.upper() == 'MARKET':
+                if order_type == OrderType.MARKET:
                     logger.error(f"🚨 MARKET 주문 완전 실패 - 포지션 업데이트 없음, SSE 이벤트 없음")
                 return {
                     'account_id': account.id,
@@ -530,7 +531,7 @@ class TradingService:
         
         # 6. 체결 정보 처리 (시장가 주문의 경우만 체결 대기)
         filled_info = None
-        if order_type.upper() == 'MARKET':
+        if order_type == OrderType.MARKET:
             # 시장가 주문의 경우 체결 대기
             try:
                 filled_order = exchange_service.wait_for_order_fill(account, order_id, symbol, timeout=30)
@@ -595,7 +596,7 @@ class TradingService:
         
         # 9. 거래 기록 저장 (주문 가격과 체결 가격 구분)
         # 🆕 MARKET 주문이거나 실제 체결된 경우에만 trades 테이블에 추가
-        if order_type.upper() == 'MARKET' or filled_info['status'] == 'FILLED':
+        if order_type == OrderType.MARKET or filled_info['status'] == 'FILLED':
             trade = Trade(
                 strategy_account_id=sa.id,
                 exchange_order_id=order_id,
@@ -618,7 +619,7 @@ class TradingService:
             logger.info(f"📋 LIMIT 주문 미체결 - 주문ID: {order_id}, OpenOrder에만 기록")
         
         # 10. 지정가 주문인 경우 미체결 주문 기록 (전처리된 정확한 값 사용)
-        if order_type.upper() == 'LIMIT':
+        if order_type == OrderType.LIMIT:
             # 🆕 중앙화된 OpenOrderManager 사용 (현재 세션 전달)
             from app.services.open_order_service import open_order_manager
             

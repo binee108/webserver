@@ -11,7 +11,7 @@ from app import db
 from app.models import Strategy, WebhookLog
 from app.services.utils import normalize_webhook_data
 from app.services.exchange_service import exchange_service
-from app.constants import MarketType
+from app.constants import MarketType, Exchange, OrderType
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class WebhookService:
             # 웹훅 데이터 표준화 (대소문자 구별 없이 처리)
             normalized_data = normalize_webhook_data(webhook_data)
             
-            logger.info(f"웹훅 처리 시작 - 타입: {normalized_data.get('orderType', 'UNKNOWN')}, "
+            logger.info(f"웹훅 처리 시작 - 타입: {normalized_data.get('order_type', 'UNKNOWN')}, "
                        f"전략: {normalized_data.get('group_name', 'UNKNOWN')}")
             
             # 웹훅 로그 기록
@@ -43,9 +43,9 @@ class WebhookService:
             self.session.commit()
             
             # 웹훅 타입 확인
-            order_type = normalized_data.get('orderType', '').upper()
+            order_type = normalized_data.get('order_type', '')
             
-            if order_type == 'CANCEL_ALL_ORDER':
+            if order_type == OrderType.CANCEL_ALL_ORDER:
                 result = self.process_cancel_all_orders(normalized_data)
             else:
                 # 거래 신호는 trading_service로 위임
