@@ -754,7 +754,7 @@ class TradingSystemManager:
             
             print(f"{Colors.WHITE}👤 기본 로그인 정보:{Colors.RESET}")
             print("   사용자명: admin")
-            print("   비밀번호: admin123\n")
+            print("   비밀번호: admin_test_0623\n")
             
             print(f"{Colors.GREEN}🔗 웹훅 접근:{Colors.RESET}")
             print("   HTTPS (로컬): https://localhost/api/webhook")
@@ -969,7 +969,7 @@ class TradingSystemManager:
             print(f"  • 새로운 SSL 인증서가 자동 생성됩니다")
             print(f"  • Docker 이미지가 다시 빌드됩니다")
             print(f"  • 완전히 새로운 데이터베이스로 시작됩니다")
-            print(f"  • 기본 관리자 계정 (admin/admin123)이 다시 생성됩니다\n")
+            print(f"  • 기본 관리자 계정 (admin/admin_test_0623)이 다시 생성됩니다\n")
             
             return True
             

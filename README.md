@@ -272,7 +272,7 @@ docker-compose exec app python init_db.py
 
 #### Step 6: 첫 로그인
 - **Username**: `admin`
-- **Password**: `admin123`
+- **Password**: `admin_test_0623`
 - ⚠️ **중요**: 첫 로그인 후 즉시 비밀번호 변경!
 
 ## 🐳 Docker Compose 상세 설명
@@ -436,7 +436,7 @@ ENABLE_SSL=false python app.py
 
 ### 기본 로그인 정보
 - Username: `admin`
-- Password: `admin123`
+- Password: `admin_test_0623`
 - ⚠️ **첫 로그인 후 반드시 비밀번호를 변경하세요!**
 
 ## 🎯 Docker 환경의 장점

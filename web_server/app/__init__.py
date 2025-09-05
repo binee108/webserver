@@ -264,10 +264,10 @@ def create_app(config_name=None):
                         is_active=True,
                         must_change_password=True  # 최초 로그인 시 비밀번호 변경 강제
                     )
-                    admin_user.set_password('admin123')  # 기본 비밀번호
+                    admin_user.set_password('admin_test_0623')  # 기본 비밀번호
                     db.session.add(admin_user)
                     db.session.commit()
-                    app.logger.info('기본 관리자 계정이 생성되었습니다. (username: admin, password: admin123)')
+                    app.logger.info('기본 관리자 계정이 생성되었습니다. (username: admin, password: admin_test_0623)')
                     app.logger.info('최초 로그인 시 비밀번호 변경이 필요합니다.')
             except Exception as e:
                 app.logger.warning(f'관리자 계정 생성 실패: {str(e)}')

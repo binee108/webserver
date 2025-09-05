@@ -52,7 +52,7 @@ def init_database():
             admin = User(
                 username='admin',
                 email='admin@example.com',
-                password_hash=generate_password_hash('admin123'),
+                password_hash=generate_password_hash('admin_test_0623'),
                 is_approved=True,
                 is_admin=True
             )
@@ -60,7 +60,7 @@ def init_database():
             db.session.commit()
             print("✅ 관리자 계정 생성 완료")
             print("   - 사용자명: admin")
-            print("   - 비밀번호: admin123")
+            print("   - 비밀번호: admin_test_0623")
             print("   - 이메일: admin@example.com")
         else:
             print("ℹ️  관리자 계정이 이미 존재합니다.")

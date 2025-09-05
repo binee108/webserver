@@ -115,7 +115,7 @@ python init_db.py
 
 초기 관리자 계정:
 - **Username**: admin
-- **Password**: admin123
+- **Password**: admin_test_0623
 - ⚠️ **중요**: 첫 로그인 시 반드시 비밀번호를 변경하세요!
 
 ## 개발 서버 실행
@@ -137,7 +137,7 @@ http://localhost:5001
 
 ### 3. 로그인
 - Username: admin
-- Password: admin123
+- Password: admin_test_0623
 - 첫 로그인 시 비밀번호 변경 필수
 
 ## 프로덕션 배포

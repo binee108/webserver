@@ -73,7 +73,7 @@ echo    Edge: '고급' → '계속'
 echo.
 echo 👤 기본 로그인 정보:
 echo    사용자명: admin
-echo    비밀번호: admin123
+echo    비밀번호: admin_test_0623
 echo.
 echo 🛑 시스템 중지: 'stop.bat' 또는 'docker-compose down'
 echo 📋 로그 확인: 'docker-compose logs -f'
