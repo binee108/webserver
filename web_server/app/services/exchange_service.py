@@ -13,6 +13,7 @@ from app.models import Account
 from app.constants import MarketType, Exchange, OrderType
 from threading import Lock  # 🆕 스레드 안전한 캐싱을 위한 import 추가
 import json  # 🆕 precision 데이터 직렬화용
+from app.services.universal_exchange import UniversalExchange, universal_exchange_manager  # 🆕 UniversalExchange 추가
 
 logger = logging.getLogger(__name__)
 
@@ -35,38 +36,70 @@ class PrecisionCache:
             'api_calls_saved': 0
         }
     
-    def get_precision_info(self, exchange_name: str, symbol: str) -> Optional[Dict[str, Any]]:
-        """precision 정보 조회 (캐시 우선)"""
-        cache_key = f"{exchange_name.lower()}_{symbol}"
+    def get_precision_info(self, exchange_name: str, symbol: str, market_type: str) -> Optional[Dict[str, Any]]:
+        """precision 정보 조회 (MarketType 상수 기반 캐시)"""
+        from app.constants import MarketType
+        
+        # market_type 정규화 (필수)
+        normalized_market_type = MarketType.normalize(market_type)
         
         with self.lock:
-            # 캐시 히트 확인
+            # MarketType 상수 기반 캐시 키 생성
+            cache_key = f"{exchange_name.lower()}_{normalized_market_type}_{symbol}"
+            
             if cache_key in self.precision_data:
                 precision_info, timestamp = self.precision_data[cache_key]
                 if time.time() - timestamp < self.cache_duration:
                     self.api_call_stats['cache_hits'] += 1
-                    logger.debug(f"📈 Precision 캐시 히트 - {cache_key}")
+                    logger.debug(f"📈 Precision 캐시 히트 (MarketType 기반) - {cache_key}")
                     return precision_info
                 else:
                     # 만료된 캐시 제거
                     del self.precision_data[cache_key]
                     logger.debug(f"⏰ Precision 캐시 만료 - {cache_key}")
             
+            # 레거시 캐시 키 확인 (점진적 마이그레이션)
+            legacy_keys = [
+                f"{exchange_name.lower()}_{symbol}",  # 기존 형식
+                f"{exchange_name.lower()}_{market_type.lower()}_{symbol}",  # 이전 비정규화 형식
+            ]
+            
+            for legacy_key in legacy_keys:
+                if legacy_key in self.precision_data:
+                    precision_info, timestamp = self.precision_data[legacy_key]
+                    if time.time() - timestamp < self.cache_duration:
+                        logger.info(f"📊 레거시 캐시 발견, 새 형식으로 마이그레이션 - {legacy_key} → {cache_key}")
+                        # 새 형식으로 저장 후 기존 키 제거
+                        self.precision_data[cache_key] = (precision_info, timestamp)
+                        del self.precision_data[legacy_key]
+                        self.api_call_stats['cache_hits'] += 1
+                        return precision_info
+                    else:
+                        # 만료된 레거시 캐시 제거
+                        del self.precision_data[legacy_key]
+            
             self.api_call_stats['cache_misses'] += 1
             return None
     
-    def set_precision_info(self, exchange_name: str, symbol: str, precision_info: Dict[str, Any]):
-        """precision 정보 캐싱"""
-        cache_key = f"{exchange_name.lower()}_{symbol}"
+    def set_precision_info(self, exchange_name: str, symbol: str, precision_info: Dict[str, Any], market_type: str):
+        """precision 정보 캐싱 (MarketType 상수 기반)"""
+        from app.constants import MarketType
+        
+        # market_type 정규화 (필수)
+        normalized_market_type = MarketType.normalize(market_type)
         
         with self.lock:
+            # MarketType 상수 기반 캐시 키로만 저장
+            cache_key = f"{exchange_name.lower()}_{normalized_market_type}_{symbol}"
             self.precision_data[cache_key] = (precision_info, time.time())
-            logger.debug(f"💾 Precision 정보 캐싱 완료 - {cache_key}")
+            logger.debug(f"💾 Precision 정보 캐싱 완료 (MarketType 기반) - {cache_key}")
     
     def update_exchange_precision_cache(self, exchange_name: str, exchange_instance) -> int:
-        """특정 거래소의 모든 precision 정보 업데이트 (백그라운드용)"""
+        """특정 거래소의 모든 precision 정보 업데이트 (MarketType 상수 기반)"""
+        from app.constants import MarketType
+        
         try:
-            logger.debug(f"{exchange_name} precision 캐시 업데이트 시작")
+            logger.debug(f"{exchange_name} precision 캐시 업데이트 시작 (MarketType 기반)")
             
             # markets 로딩 (백그라운드에서 한 번만)
             if not exchange_instance.markets:
@@ -85,13 +118,19 @@ class PrecisionCache:
                         'type': market.get('type', 'spot')
                     }
                     
-                    cache_key = f"{exchange_name.lower()}_{symbol}"
+                    # 거래소 API의 market type을 MarketType 상수로 정규화
+                    api_market_type = market.get('type', 'spot')
+                    normalized_market_type = MarketType.normalize(api_market_type)
+                    
+                    # MarketType 상수 기반 캐시 키로 저장
+                    cache_key = f"{exchange_name.lower()}_{normalized_market_type}_{symbol}"
                     self.precision_data[cache_key] = (precision_info, current_time)
+                    
                     updated_count += 1
                 
                 self.last_update[exchange_name.lower()] = current_time
             
-            logger.debug(f"{exchange_name} precision 캐시 업데이트 완료 - {updated_count}개 심볼")
+            logger.debug(f"{exchange_name} precision 캐시 업데이트 완료 - {updated_count}개 심볼 (MarketType 기반)")
             return updated_count
             
         except Exception as e:
@@ -129,6 +168,18 @@ class PrecisionCache:
                 self.precision_data.clear()
                 self.last_update.clear()
                 logger.debug("전체 precision 캐시 정리 완료")
+    
+    def clear_symbol_cache(self, exchange_name: str, symbol: str):
+        """특정 심볼의 precision 캐시 삭제 (잘못된 precision 데이터 제거용)"""
+        with self.lock:
+            keys_to_remove = [key for key in self.precision_data.keys() 
+                            if key.startswith(f"{exchange_name.lower()}_") and key.endswith(f"_{symbol}")]
+            
+            for key in keys_to_remove:
+                del self.precision_data[key]
+                
+            logger.info(f"🗑️ {exchange_name} {symbol} precision 캐시 삭제됨 ({len(keys_to_remove)}개 키)")
+            return len(keys_to_remove)
 
 def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
     """지수 백오프 재시도 데코레이터"""
@@ -139,6 +190,25 @@ def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
+                    error_msg = str(e).lower()
+                    
+                    # 재시도하지 않아야 할 에러들
+                    no_retry_patterns = [
+                        'must be greater than minimum',  # 최소 수량 에러
+                        'insufficient balance',           # 잔고 부족
+                        'invalid api key',                # API 키 오류
+                        'permission denied',              # 권한 오류
+                        'amount too small',               # 수량 너무 작음
+                        'minimum amount',                 # 최소 수량
+                        'precision',                      # precision 에러
+                        'invalid symbol',                 # 잘못된 심볼
+                    ]
+                    
+                    # 재시도하지 않을 에러인 경우 즉시 예외 발생
+                    if any(pattern in error_msg for pattern in no_retry_patterns):
+                        logger.error(f"재시도 불가 에러: {func.__name__}, 오류: {str(e)}")
+                        raise ExchangeError(f"주문 생성 실패: {str(e)}")
+                    
                     if attempt == max_retries - 1:
                         logger.error(f"최대 재시도 횟수 초과: {func.__name__}, 오류: {str(e)}")
                         raise ExchangeError(f"거래소 API 호출 실패: {str(e)}")
@@ -172,10 +242,54 @@ class ExchangeService:
         
         # 🆕 Precision 전용 고성능 캐시 시스템
         self.precision_cache = PrecisionCache()
-        logger.info("🚀 ExchangeService 초기화 완료 - PrecisionCache 시스템 활성화")
+        
+        # 🆕 UniversalExchange 매니저 (새로운 거래소 시스템)
+        self.universal_manager = universal_exchange_manager
+        
+        logger.info("🚀 ExchangeService 초기화 완료 - PrecisionCache + UniversalExchange 시스템 활성화")
     
-    def get_exchange(self, account: Account) -> ccxt.Exchange:
-        """계좌 정보로 거래소 인스턴스 생성/반환"""
+    def get_exchange(self, account: Account, market_type: str = None) -> ccxt.Exchange:
+        """계좌 정보로 거래소 인스턴스 생성/반환
+        
+        Args:
+            account: 계좌 정보
+            market_type: 마켓 타입 (MarketType.SPOT 또는 MarketType.FUTURES)
+                        None인 경우 기존 방식(SPOT) 유지 (하위 호환성)
+        
+        Returns:
+            거래소 인스턴스
+        """
+        # market_type이 지정된 경우 UniversalExchange 사용
+        if market_type is not None:
+            try:
+                # API 인증 정보 구성
+                api_credentials = {
+                    'apiKey': account.public_api,
+                    'secret': account.secret_api,
+                }
+                
+                # OKX passphrase 처리 (필요시)
+                if account.exchange == 'okx' and hasattr(account, 'passphrase') and account.passphrase:
+                    api_credentials['password'] = account.passphrase
+                
+                # UniversalExchange 인스턴스 가져오기
+                universal = self.universal_manager.get_exchange(account.exchange, api_credentials)
+                
+                # 지정된 market_type에 맞는 인스턴스 반환
+                instance = universal.get_instance(market_type)
+                
+                logger.debug(f"🔧 UniversalExchange 사용: {account.exchange} {market_type} (계좌 ID: {account.id})")
+                return instance
+                
+            except ValueError as e:
+                # UniversalExchange에서 지원하지 않는 거래소인 경우 기존 방식 사용
+                logger.warning(f"⚠️ UniversalExchange 미지원 거래소, 기존 방식 사용: {account.exchange} - {e}")
+                # 기존 방식으로 fallback
+            except Exception as e:
+                logger.error(f"❌ UniversalExchange 실패, 기존 방식 사용: {account.exchange} - {e}")
+                # 기존 방식으로 fallback
+        
+        # 기존 방식 (하위 호환성 유지)
         cache_key = f"{account.exchange}_{account.id}"
         
         if cache_key not in self._exchanges:
@@ -188,30 +302,26 @@ class ExchangeService:
             config = {
                 'apiKey': account.public_api,
                 'secret': account.secret_api,
-                'sandbox': False,  # Account 모델에 is_testnet 필드가 없으므로 기본값 False
+                'sandbox': False,
                 'enableRateLimit': True,
                 'timeout': 30000,
             }
             
             # Bybit의 경우 추가 설정
             if account.exchange == Exchange.BYBIT_LOWER:
-                config['options'] = {'defaultType': 'linear'}  # USDT 선물
+                config['options'] = {'defaultType': 'linear'}
             
-            # 🆕 Binance의 경우 추가 설정 (rate limit 경고 무시)
+            # Binance의 경우 추가 설정
             if account.exchange == Exchange.BINANCE_LOWER:
                 config['options'] = {
-                    'warnOnFetchOpenOrdersWithoutSymbol': False,  # 심볼 없는 조회 경고 무시
-                    'defaultType': 'spot'  # 기본 타입 설정
+                    'warnOnFetchOpenOrdersWithoutSymbol': False,
+                    'defaultType': 'spot'
                 }
-            
-            # OKX의 경우 passphrase 필요 (Account 모델에 passphrase 필드가 없으므로 건너뛰기)
-            # if account.exchange == 'okx' and hasattr(account, 'passphrase') and account.passphrase:
-            #     config['password'] = account.passphrase
             
             try:
                 exchange = exchange_class(config)
                 self._exchanges[cache_key] = exchange
-                logger.info(f"거래소 인스턴스 생성: {account.exchange} (계좌 ID: {account.id})")
+                logger.info(f"거래소 인스턴스 생성 (기존 방식): {account.exchange} (계좌 ID: {account.id})")
             except Exception as e:
                 raise ExchangeError(f"거래소 연결 실패: {str(e)}")
         
@@ -293,8 +403,9 @@ class ExchangeService:
         exchange = self.get_exchange(account)
         
         try:
-            # 마켓 타입에 따라 다른 방식으로 잔고 조회
-            if market_type == MarketType.FUTURES:
+            # 마켓 타입에 따라 다른 방식으로 잔고 조회 (대소문자 구분 없이)
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 잔고 조회
                 if hasattr(exchange, 'fetch_balance') and exchange.has.get('fetchBalance'):
                     # 거래소별 선물 잔고 조회 방식
@@ -326,11 +437,26 @@ class ExchangeService:
                 balance = exchange.fetch_balance()
             
             if currency:
-                return {
-                    'free': balance.get(currency, {}).get('free', 0),
-                    'used': balance.get(currency, {}).get('used', 0),
-                    'total': balance.get(currency, {}).get('total', 0)
+                # Debug logging for balance structure
+                logger.debug(f"Balance fetched for {account.exchange} {market_type}: keys={list(balance.keys())[:10]}")
+                if currency in balance:
+                    logger.debug(f"Currency {currency} balance: {balance.get(currency)}")
+                
+                currency_balance = balance.get(currency, {})
+                result = {
+                    'free': currency_balance.get('free', 0) if isinstance(currency_balance, dict) else 0,
+                    'used': currency_balance.get('used', 0) if isinstance(currency_balance, dict) else 0,
+                    'total': currency_balance.get('total', 0) if isinstance(currency_balance, dict) else 0
                 }
+                
+                # If total is 0, try to get it from the root balance object
+                if result['total'] == 0 and 'total' in balance:
+                    total_balance = balance.get('total', {})
+                    if isinstance(total_balance, dict) and currency in total_balance:
+                        result['total'] = total_balance[currency]
+                
+                logger.debug(f"Returning balance for {currency}: {result}")
+                return result
             
             return balance
             
@@ -355,8 +481,9 @@ class ExchangeService:
         exchange = self.get_exchange(account)
         
         try:
-            # 마켓 타입에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            # 마켓 타입에 따라 거래소 설정 (대소문자 구분 없이)
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -401,7 +528,8 @@ class ExchangeService:
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -432,7 +560,8 @@ class ExchangeService:
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -470,7 +599,8 @@ class ExchangeService:
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -589,7 +719,8 @@ class ExchangeService:
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -639,7 +770,8 @@ class ExchangeService:
         
         try:
             # 🆕 market_type에 따라 거래소 설정
-            if market_type == MarketType.FUTURES:
+            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 거래 설정
                 if account.exchange == Exchange.BINANCE_LOWER:
                     exchange.options['defaultType'] = 'future'
@@ -782,7 +914,7 @@ class ExchangeService:
                 
                 # 거래소별 추가 정보 제공
                 if account.exchange == Exchange.BINANCE_LOWER:
-                    if market_type == MarketType.FUTURES_LOWER:
+                    if market_type_upper in ['FUTURES', 'FUTURE']:
                         logger.error(f"Binance 선물에서는 'SOL/USDT' 형식을 사용합니다.")
                     else:
                         logger.error(f"Binance 현물에서는 'SOL/USDT' 형식을 사용합니다.")
@@ -1075,26 +1207,102 @@ class ExchangeService:
             logger.debug(f"Ticker 정보 캐싱 - 계좌: {account.id}, 심볼: {symbol}")
 
     @retry_on_failure(max_retries=10)
-    def get_precision_info_optimized(self, account: Account, symbol: str) -> Dict[str, Any]:
-        """🆕 Precision 정보 최적화 조회 (95% API 호출 감소)"""
+    def get_precision_info_optimized(self, account: Account, symbol: str, market_type: str = None) -> Dict[str, Any]:
+        """🆕 Precision 정보 최적화 조회 (MarketType 상수 기반)"""
+        from app.constants import MarketType
+        
         exchange_name = account.exchange.lower()
         
-        # 1단계: Precision 캐시에서 먼저 조회
-        precision_info = self.precision_cache.get_precision_info(exchange_name, symbol)
+        # market_type 정규화 (필수)
+        normalized_market_type = MarketType.normalize(market_type)
+        
+        # 1단계: Precision 캐시에서 먼저 조회 (MarketType 상수 기반)
+        precision_info = self.precision_cache.get_precision_info(exchange_name, symbol, normalized_market_type)
         if precision_info:
-            logger.debug(f"⚡ Precision 최적화 조회 성공 (캐시) - {symbol}")
+            logger.debug(f"⚡ Precision 최적화 조회 성공 (캐시, {normalized_market_type}) - {symbol}")
             return precision_info
         
-        # 2단계: 캐시 미스 시 개별 조회 시도
+        # 2단계: UniversalExchange를 사용하여 정확한 precision 조회
         try:
-            exchange = self.get_exchange(account)
+            # API 인증 정보 구성
+            api_credentials = {
+                'apiKey': account.public_api,
+                'secret': account.secret_api,
+            }
             
-            # 거래소에 markets 정보가 없는 경우에만 load_markets 호출
-            if not exchange.markets:
-                logger.info(f"🔄 {exchange_name} markets 초기 로딩 (precision 조회용)")
+            # OKX passphrase 처리 (필요시)
+            if account.exchange == 'okx' and hasattr(account, 'passphrase') and account.passphrase:
+                api_credentials['password'] = account.passphrase
+            
+            # UniversalExchange를 통한 정확한 precision 조회
+            try:
+                universal = self.universal_manager.get_exchange(account.exchange, api_credentials)
+                precision_result = universal.get_precision(symbol, normalized_market_type)
+                
+                if precision_result:
+                    # UniversalExchange 결과를 기존 형식으로 변환
+                    precision_info = {
+                        'amount': precision_result['amount_precision'],
+                        'price': precision_result['price_precision'],
+                        'limits': precision_result['limits'],
+                        'active': precision_result['market_info']['active'],
+                        'type': precision_result['market_type'],
+                        'symbol': precision_result['symbol'],  # 실제 사용된 심볼
+                        'original_symbol': precision_result['original_symbol'],
+                        'exchange_info': {
+                            'api_class': precision_result['api_class'],
+                            'has_separate_api': precision_result['has_separate_api']
+                        }
+                    }
+                    
+                    # 🎯 BTCUSDT FUTURES precision 특별 로깅 (문제 해결 확인)
+                    if symbol.upper() == 'BTCUSDT' and normalized_market_type == MarketType.FUTURES:
+                        logger.info(f"🎉 BTCUSDT FUTURES precision UniversalExchange 조회 성공!")
+                        logger.info(f"   Original Symbol: {symbol}")
+                        logger.info(f"   Used Symbol: {precision_result['symbol']}")
+                        logger.info(f"   Amount Precision: {precision_result['amount_precision']} ← 정확한 FUTURES precision!")
+                        logger.info(f"   API Class: {precision_result['api_class']}")
+                        logger.info(f"   Market Type: {precision_result['market_type']}")
+                        logger.info(f"   0.002 문제 해결: {precision_result['amount_precision'] == 3}")
+                    
+                    # 캐시에 저장
+                    self.precision_cache.set_precision_info(exchange_name, symbol, precision_info, normalized_market_type)
+                    
+                    logger.info(f"✅ UniversalExchange precision 조회 성공 - {symbol} ({normalized_market_type}): "
+                              f"amount={precision_info['amount']}, API={precision_result['api_class']}")
+                    
+                    return precision_info
+                
+                else:
+                    # UniversalExchange에서 심볼을 찾지 못한 경우
+                    logger.warning(f"⚠️ UniversalExchange에서 심볼 찾지 못함: {symbol} ({normalized_market_type})")
+                    
+            except ValueError as e:
+                # 지원하지 않는 거래소인 경우
+                logger.warning(f"⚠️ UniversalExchange 미지원 거래소: {account.exchange} - {e}")
+                
+            except Exception as e:
+                # UniversalExchange 오류 발생 시
+                logger.error(f"❌ UniversalExchange 오류: {account.exchange} - {e}")
+            
+            # 3단계: fallback - 기존 방식으로 조회
+            logger.info(f"🔄 기존 방식으로 fallback precision 조회: {symbol} ({normalized_market_type})")
+            
+            exchange = self.get_exchange(account)  # market_type 없이 호출 (기존 방식)
+            
+            # MarketType 상수 기반 거래소 설정
+            exchange_api_type = MarketType.to_exchange_type(normalized_market_type, account.exchange)
+            previous_type = exchange.options.get('defaultType')
+            exchange.options['defaultType'] = exchange_api_type
+            
+            # defaultType 변경 시 markets 리로드
+            if previous_type != exchange_api_type:
+                logger.info(f"🔄 {exchange_name} fallback markets 리로딩 - {previous_type} → {exchange_api_type}")
+                exchange.load_markets(reload=True)
+            elif not exchange.markets:
                 exchange.load_markets()
             
-            # 심볼이 있는지 확인
+            # 심볼 찾기
             if symbol in exchange.markets:
                 market = exchange.markets[symbol]
             else:
@@ -1106,65 +1314,51 @@ class ExchangeService:
                 else:
                     raise ExchangeError(f"심볼 {symbol}을 찾을 수 없습니다")
             
-            # precision 정보만 추출
+            # precision 정보 추출
             precision_info = {
                 'amount': market.get('precision', {}).get('amount'),
                 'price': market.get('precision', {}).get('price'),
                 'limits': market.get('limits', {}),
                 'active': market.get('active', True),
-                'type': market.get('type', 'spot')
+                'type': market.get('type', 'spot'),
+                'symbol': symbol,
+                'fallback_method': 'legacy'  # fallback 방식 표시
             }
             
             # 캐시에 저장
-            self.precision_cache.set_precision_info(exchange_name, symbol, precision_info)
-            self.precision_cache.api_call_stats['api_calls_saved'] += 1
+            self.precision_cache.set_precision_info(exchange_name, symbol, precision_info, normalized_market_type)
             
-            logger.info(f"💾 Precision 정보 개별 조회 및 캐싱 완료 - {symbol}")
+            logger.info(f"💾 Fallback precision 조회 완료 - {symbol} ({normalized_market_type}): amount={precision_info['amount']}")
             return precision_info
             
         except Exception as e:
-            logger.error(f"❌ Precision 정보 조회 실패 - {symbol}: {str(e)}")
+            logger.error(f"❌ Precision 정보 조회 완전 실패 - {symbol}: {str(e)}")
             raise ExchangeError(f"Precision 정보 조회 실패: {str(e)}")
     
-    def preprocess_order_params_optimized(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> tuple:
-        """🆕 주문 파라미터 전처리 최적화 (Precision 캐시 사용 + 자동 조정) - 95% 성능 향상"""
+    def preprocess_order_params_optimized(self, account: Account, symbol: str, amount: float, price: float = None, market_type: str = None) -> tuple:
+        """🆕 주문 파라미터 전처리 최적화 (MarketType 상수 기반) - 95% 성능 향상"""
         try:
             # 🆕 입력값을 즉시 Decimal로 변환하여 정밀도 보장
             from app.services.utils import to_decimal, decimal_to_float
-            from app.constants import MinOrderAmount
+            from app.constants import MinOrderAmount, MarketType
+            
+            # market_type 정규화 (필수)
+            normalized_market_type = MarketType.normalize(market_type)
             
             amount_decimal = to_decimal(amount)
             price_decimal = to_decimal(price) if price is not None else None
             
             # 🆕 전처리 시작 로깅
             logger.debug(f"🚀 주문 파라미터 최적화 전처리 시작 - 계좌: {account.id}({account.name}), "
-                       f"심볼: {symbol}, 마켓타입: {market_type}")
+                       f"심볼: {symbol}, 마켓타입: {normalized_market_type}")
             
-            exchange = self.get_exchange(account)
+            # 🆕 UniversalExchange 사용 (market_type 지정)
+            exchange = self.get_exchange(account, normalized_market_type)
             
-            # 🆕 market_type에 따라 거래소 설정 (precision 조회 전에 설정)
-            market_type_lower = market_type.lower()
-            if market_type_lower in ['future', 'futures']:
-                # 선물 거래 설정
-                logger.info(f"선물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == Exchange.BINANCE_LOWER:
-                    exchange.options['defaultType'] = 'future'
-                elif account.exchange == Exchange.BYBIT_LOWER:
-                    exchange.options['defaultType'] = 'linear'  # USDT 선물
-                elif account.exchange == 'okx':
-                    exchange.options['defaultType'] = 'swap'
-            else:
-                # 현물 거래 설정 (기본값)
-                logger.info(f"현물 거래 모드 설정 - 거래소: {account.exchange}")
-                if account.exchange == Exchange.BINANCE_LOWER:
-                    exchange.options['defaultType'] = 'spot'
-                elif account.exchange == Exchange.BYBIT_LOWER:
-                    exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'okx':
-                    exchange.options['defaultType'] = 'spot'
+            logger.debug(f"거래소 설정 완료 (전처리) - {account.exchange}: {normalized_market_type} (UniversalExchange 사용)")
             
-            # 🆕 최적화된 precision 정보 조회 (기존 get_market_info 대신)
-            precision_info = self.get_precision_info_optimized(account, symbol)
+            # 🆕 최적화된 precision 정보 조회 (MarketType 상수 기반)
+            precision_info = self.get_precision_info_optimized(account, symbol, normalized_market_type)
             
             # 원본 값 저장 (로깅용)
             original_amount = amount_decimal
@@ -1223,7 +1417,7 @@ class ExchangeService:
             # 3. 거래소별 하드코딩된 최소 금액 체크
             exchange_min_cost = Decimal(str(MinOrderAmount.get_min_amount(
                 account.exchange.upper(), 
-                market_type
+                normalized_market_type
             )))
             if current_cost < exchange_min_cost:
                 required_cost = exchange_min_cost * Decimal(str(MinOrderAmount.ADJUSTMENT_MULTIPLIER))
@@ -1252,7 +1446,7 @@ class ExchangeService:
                     'reason': f"{adjustment_reason}, 안전 마진 2배 적용",
                     'symbol': symbol,
                     'exchange': account.exchange.upper(),
-                    'market_type': market_type
+                    'market_type': normalized_market_type
                 }
                 
                 logger.info(f"📊 주문 수량 자동 조정 - 심볼: {symbol}")
@@ -1283,7 +1477,7 @@ class ExchangeService:
         except Exception as e:
             logger.warning(f"주문 파라미터 최적화 전처리 실패, 기존 방식으로 fallback - 심볼: {symbol}, 오류: {str(e)}")
             # 🆕 실패 시 기존 방식으로 fallback
-            return self.preprocess_order_params(account, symbol, amount, price, market_type)
+            return self.preprocess_order_params(account, symbol, amount, price, normalized_market_type)
     
     def _adjust_amount_optimized(self, precision_info: Dict[str, Any], amount: Decimal) -> Decimal:
         """🆕 수량 조정 최적화 (precision_info 직접 사용)"""

@@ -24,14 +24,44 @@ class MarketType:
     
     @classmethod
     def normalize(cls, value):
-        """값을 표준 형태로 변환"""
-        if value and isinstance(value, str):
+        """값을 표준 MarketType 상수로 변환 (모든 변형 지원)"""
+        if not value:
+            return cls.SPOT  # 기본값
+        
+        if isinstance(value, str):
             upper_value = value.upper()
-            if upper_value in ['FUTURE', 'FUTURES']:
+            # FUTURES 변형들
+            if upper_value in ['FUTURE', 'FUTURES', 'DERIVATIVE', 'DERIVATIVES']:
                 return cls.FUTURES
-            elif upper_value == 'SPOT':
+            # SPOT 변형들  
+            elif upper_value in ['SPOT', 'CASH']:
                 return cls.SPOT
-        return value
+        
+        # 이미 올바른 상수인 경우
+        if value in [cls.SPOT, cls.FUTURES]:
+            return value
+            
+        # 알 수 없는 값은 기본값
+        return cls.SPOT
+    
+    @classmethod
+    def to_exchange_type(cls, market_type, exchange_name):
+        """MarketType 상수를 거래소별 API 형식으로 변환"""
+        # 정규화된 MarketType 상수인지 확인
+        normalized_type = cls.normalize(market_type)
+        
+        if normalized_type == cls.FUTURES:
+            # 거래소별 선물 거래 설정값
+            if exchange_name in ['binance', 'BINANCE']:
+                return 'future'
+            elif exchange_name in ['bybit', 'BYBIT']:
+                return 'linear'  # USDT 선물
+            elif exchange_name in ['okx', 'OKX']:
+                return 'swap'
+            else:
+                return 'future'  # 기본값
+        else:  # SPOT
+            return 'spot'
     
     @classmethod
     def get_default(cls):
