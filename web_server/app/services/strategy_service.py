@@ -100,10 +100,9 @@ class StrategyService:
                 if not strategy_data.get(field):
                     raise StrategyError(f'{field} 필드가 필요합니다.')
             
-            # market_type 검증
+            # market_type 검증 및 정규화
             market_type = strategy_data.get('market_type', MarketType.SPOT)
-            if isinstance(market_type, str):
-                market_type = market_type.upper()
+            market_type = MarketType.normalize(market_type)
             if not MarketType.is_valid(market_type):
                 raise StrategyError(f'market_type은 {MarketType.VALID_TYPES}만 가능합니다.')
             

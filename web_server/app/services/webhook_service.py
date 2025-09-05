@@ -195,8 +195,8 @@ class WebhookService:
                 skipped_count += 1
                 continue
             
-            # 마켓 타입 필터링 - Strategy의 market_type 사용
-            strategy_market = strategy.market_type.upper() if strategy.market_type else MarketType.SPOT
+            # 마켓 타입 필터링 - Strategy의 market_type 정규화
+            strategy_market = MarketType.normalize(strategy.market_type) if strategy.market_type else MarketType.SPOT
                 
             if market_type and strategy_market != market_type:
                 logger.info(f"⏭️ 계좌 {account.id}({account.name}): 마켓 타입 불일치 - 스킵 "
