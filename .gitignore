@@ -181,3 +181,13 @@ certs/
 *.crt
 *.key
 
+# Test and debug files
+test_*.py
+*_test.py
+*_debug*.py
+check_*.py
+manual_*.py
+final_*.py
+precision_*.py
+markettype_*.py
+
