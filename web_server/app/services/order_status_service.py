@@ -14,6 +14,7 @@ from app import db
 from app.models import OpenOrder, StrategyAccount, Account, Strategy
 from app.services.open_order_service import open_order_manager
 from app.services.exchange_service import exchange_service
+from app.constants import MarketType, Exchange, OrderType
 from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,7 @@ class OrderStatusProcessor:
         
         for info in order_infos:
             strategy = info['strategy_account'].strategy
-            market_type = strategy.market_type if strategy else 'spot'
+            market_type = strategy.market_type if strategy else MarketType.SPOT
             orders_by_market[market_type].append(info)
         
         return dict(orders_by_market)
@@ -188,7 +189,7 @@ class OrderStatusProcessor:
         symbols = list(set(info['order'].symbol for info in order_infos))
         
         # 바이낸스의 경우 심볼이 적으면 심볼별 조회
-        if account.exchange.lower() == 'binance' and len(symbols) <= 5:
+        if Exchange.to_lower(account.exchange) == Exchange.BINANCE_LOWER and len(symbols) <= 5:
             logger.debug(f"바이낸스 계좌 {account.id}: 심볼별 조회 사용")
             return exchange_service.fetch_open_orders_by_symbols(
                 account, symbols, market_type=market_type
@@ -298,7 +299,7 @@ class OrderStatusProcessor:
             order = order_info['order']
             account = order_info['account']
             strategy = order_info['strategy_account'].strategy
-            market_type = strategy.market_type if strategy else 'spot'
+            market_type = strategy.market_type if strategy else MarketType.SPOT
             
             try:
                 order_stats = self._process_single_order(order, {}, account, market_type)

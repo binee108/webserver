@@ -4,6 +4,7 @@ from app import db
 from app.models import Strategy, Account, StrategyAccount, StrategyCapital
 from app.services.capital_service import capital_service
 from app.services.strategy_service import strategy_service, StrategyError
+from app.constants import MarketType
 
 bp = Blueprint('strategies', __name__, url_prefix='/api')
 
@@ -177,11 +178,11 @@ def update_strategy(strategy_id):
         
         # market_type 수정 (검증 포함)
         if 'market_type' in data:
-            market_type = data['market_type']
-            if market_type not in ['spot', 'futures']:
+            market_type = data['market_type'].upper() if isinstance(data['market_type'], str) else data['market_type']
+            if not MarketType.is_valid(market_type):
                 return jsonify({
                     'success': False,
-                    'error': 'market_type은 "spot" 또는 "futures"만 가능합니다.'
+                    'error': f'market_type은 {MarketType.VALID_TYPES}만 가능합니다.'
                 }), 400
             
             # market_type이 변경된 경우 연결된 계좌들의 자본 재할당 필요

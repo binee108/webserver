@@ -14,6 +14,7 @@ from app.services.utils import to_decimal, decimal_to_float
 from app.services.exchange_service import exchange_service
 from app.services.open_order_service import open_order_manager
 from app.services.order_status_service import order_status_processor
+from app.constants import MarketType, Exchange, OrderType
 
 # 백그라운드 작업용 로거 사용
 logger = logging.getLogger('trading_system.background')
@@ -100,9 +101,11 @@ class OrderService:
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
                          symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = 'spot', order_type: str = 'LIMIT') -> OpenOrder:
+                         market_type: str = None, order_type: str = OrderType.LIMIT) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성 (중앙화된 관리)"""
         try:
+            if market_type is None:
+                market_type = MarketType.SPOT
             order = open_order_manager.create_open_order(
                 strategy_account_id=strategy_account_id,
                 exchange_order_id=exchange_order_id,
@@ -123,7 +126,7 @@ class OrderService:
             logger.error(f"OpenOrder 생성 실패: {str(e)}")
             raise OrderError(f"주문 레코드 생성 실패: {str(e)}")
     
-    def cancel_order(self, order_id: str, symbol: str, account_id: int, market_type: str = 'spot') -> Dict[str, Any]:
+    def cancel_order(self, order_id: str, symbol: str, account_id: int, market_type: str = None) -> Dict[str, Any]:
         """주문 취소 기능 - 중앙화된 OpenOrder 관리 사용"""
         try:
             # OpenOrder 조회
@@ -191,8 +194,9 @@ class OrderService:
                 'message': f'주문 취소 실패: {error_msg}'
             }
     
-    def cancel_all_orders(self, account_id: int, symbol: str = None, market_type: str = 'spot') -> Dict[str, Any]:
-        """모든 미체결 주문 취소 - 중앙화된 OpenOrder 관리 사용"""
+    def cancel_all_orders(self, account_id: int, symbol: str = None, market_type: str = None, 
+                         exchange: str = None) -> Dict[str, Any]:
+        """모든 미체결 주문 취소 - 중앙화된 OpenOrder 관리 사용 (선택적 필터링 지원)"""
         try:
             # 해당 계좌의 미체결 주문 조회
             query = (
@@ -202,20 +206,39 @@ class OrderService:
                 .filter(Account.id == account_id, OpenOrder.status == 'OPEN')
             )
             
+            # 심볼 필터링
             if symbol:
                 query = query.filter(OpenOrder.symbol == symbol)
+                logger.debug(f"심볼 필터 적용: {symbol}")
+            
+            # 마켓 타입 필터링 (OpenOrder의 market_type 필드 사용)
+            if market_type:
+                query = query.filter(OpenOrder.market_type == market_type)
+                logger.debug(f"마켓 타입 필터 적용: {market_type}")
             
             open_orders = query.all()
             
+            # 로그 메시지 개선
+            filter_info = []
+            if symbol:
+                filter_info.append(f"심볼: {symbol}")
+            if market_type:
+                filter_info.append(f"마켓: {market_type}")
+            if exchange:
+                filter_info.append(f"거래소: {exchange}")
+            
+            filter_str = f" ({', '.join(filter_info)})" if filter_info else ""
+            
             if not open_orders:
+                logger.info(f"취소할 미체결 주문이 없습니다 - 계좌: {account_id}{filter_str}")
                 return {
                     'success': True,
                     'cancelled_orders': [],
                     'failed_orders': [],
-                    'message': '취소할 미체결 주문이 없습니다.'
+                    'message': f'취소할 미체결 주문이 없습니다{filter_str}'
                 }
             
-            logger.info(f"모든 미체결 주문 취소 시작 - 계좌: {account_id}, 대상: {len(open_orders)}개")
+            logger.info(f"모든 미체결 주문 취소 시작 - 계좌: {account_id}{filter_str}, 대상: {len(open_orders)}개")
             
             cancelled_orders = []
             failed_orders = []

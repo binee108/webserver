@@ -185,7 +185,7 @@ class PositionService:
                 side = 'BUY'
             
             # 청산 실행 전 상세 로깅
-            market_type = strategy_account.strategy.market_type.upper()
+            market_type = MarketType.normalize(strategy_account.strategy.market_type)
             logger.info(f"포지션 청산 시작 - 계좌: {strategy_account.account.id}({strategy_account.account.name}), "
                        f"심볼: {symbol}, 수량: {current_qty}, 사이드: {side}, 마켓타입: {market_type}")
             
@@ -202,7 +202,7 @@ class PositionService:
                     price=None,
                     qty_per=Decimal('-1'),  # 전체 청산 신호
                     currency='USDT',
-                    market=market_type
+                    market_type=market_type
                 )
                 
                 if result.get('success'):

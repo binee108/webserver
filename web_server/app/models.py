@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from app import db
+from app.constants import MarketType
 
 class User(UserMixin, db.Model):
     """사용자 정보 테이블"""
@@ -67,7 +68,7 @@ class Strategy(db.Model):
     name = db.Column(db.String(100), nullable=False)  # 전략명
     description = db.Column(db.Text, nullable=True)  # 전략 설명
     group_name = db.Column(db.String(100), unique=True, nullable=False)  # 웹훅 연동 키
-    market_type = db.Column(db.String(10), nullable=False, default='spot')  # 마켓 타입: 'spot' 또는 'futures'
+    market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 전략 활성화 상태
     # 공개 전략 여부: True이면 타 사용자가 구독하여 자신의 계좌로 신호를 실행할 수 있음
     is_public = db.Column(db.Boolean, default=False, nullable=False, index=True)
@@ -152,7 +153,7 @@ class Trade(db.Model):
     pnl = db.Column(db.Float, nullable=True)  # 실현 손익
     fee = db.Column(db.Float, nullable=True)  # 거래 수수료
     is_entry = db.Column(db.Boolean, nullable=True)  # 진입/청산 여부
-    market_type = db.Column(db.String(10), nullable=False, default='spot')  # 마켓 타입: 'spot' 또는 'futures'
+    market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
     
     def __repr__(self):
         return f'<Trade {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'
@@ -170,7 +171,7 @@ class OpenOrder(db.Model):
     quantity = db.Column(db.Float, nullable=False)  # 주문 수량
     filled_quantity = db.Column(db.Float, default=0.0, nullable=False)  # 체결된 수량
     status = db.Column(db.String(20), nullable=False)  # OPEN, PARTIALLY_FILLED, CANCELLED, FILLED
-    market_type = db.Column(db.String(10), nullable=False, default='spot')  # 🆕 마켓 타입: 'spot' 또는 'futures'
+    market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 🆕 마켓 타입: SPOT 또는 FUTURES
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
