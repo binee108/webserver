@@ -111,6 +111,7 @@ class TradingService:
         order_type = webhook_data['order_type']
         side = webhook_data['side']  # 이미 normalize_webhook_data에서 소문자로 표준화됨
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
+        stop_price = to_decimal(webhook_data.get('stop_price')) if webhook_data.get('stop_price') else None
         qty_per = to_decimal(webhook_data.get('qty_per', 100))  # Decimal로 변환
         
         logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 거래소: {exchange}, 심볼: {symbol}, "

@@ -25,8 +25,9 @@ class OpenOrderManager:
         self.session = session
     
     def create_open_order(self, strategy_account_id: int, exchange_order_id: str,
-                         symbol: str, side: str, quantity: Decimal, price: Decimal,
-                         market_type: str = None, order_type: str = OrderType.LIMIT, session: Optional[Session] = None) -> OpenOrder:
+                         symbol: str, side: str, quantity: Decimal, price: Decimal = None,
+                         market_type: str = None, order_type: str = OrderType.LIMIT, stop_price: Decimal = None, 
+                         session: Optional[Session] = None) -> OpenOrder:
         """새로운 OpenOrder 레코드 생성"""
         current_session = session or self.session
         
@@ -44,8 +45,10 @@ class OpenOrderManager:
                 exchange_order_id=exchange_order_id,
                 symbol=symbol,
                 side=side,  # 이미 BUY/SELL로 표준화되어 전달됨
+                order_type=order_type,
                 quantity=decimal_to_float(quantity),
-                price=decimal_to_float(price),
+                price=decimal_to_float(price) if price is not None else None,
+                stop_price=decimal_to_float(stop_price) if stop_price is not None else None,
                 status='OPEN',
                 market_type=market_type
             )

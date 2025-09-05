@@ -65,6 +65,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'symbol': 'symbol',
         'side': 'side',
         'price': 'price',
+        'stop_price': 'stop_price',  # STOP 주문용 Stop 가격
+        'stopprice': 'stop_price',   # 대안 필드명
         'qty_per': 'qty_per',
         'token': 'token',
         'user_token': 'token'

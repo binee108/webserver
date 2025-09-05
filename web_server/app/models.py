@@ -159,7 +159,7 @@ class Trade(db.Model):
         return f'<Trade {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'
 
 class OpenOrder(db.Model):
-    """미체결 지정가 주문 정보 테이블"""
+    """미체결 주문 정보 테이블"""
     __tablename__ = 'open_orders'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -167,15 +167,17 @@ class OpenOrder(db.Model):
     exchange_order_id = db.Column(db.String(100), unique=True, nullable=False)  # 거래소 주문 ID
     symbol = db.Column(db.String(20), nullable=False)
     side = db.Column(db.String(10), nullable=False)  # BUY, SELL
-    price = db.Column(db.Float, nullable=False)  # 지정가 가격
+    order_type = db.Column(db.String(20), nullable=False, default='LIMIT')  # MARKET, LIMIT, STOP_LIMIT, STOP_MARKET
+    price = db.Column(db.Float, nullable=True)  # 지정가 가격 (MARKET 주문시 null 가능)
+    stop_price = db.Column(db.Float, nullable=True)  # Stop 가격 (STOP 주문시 필수)
     quantity = db.Column(db.Float, nullable=False)  # 주문 수량
     filled_quantity = db.Column(db.Float, default=0.0, nullable=False)  # 체결된 수량
     status = db.Column(db.String(20), nullable=False)  # OPEN, PARTIALLY_FILLED, CANCELLED, FILLED
-    market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 🆕 마켓 타입: SPOT 또는 FUTURES
+    market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<OpenOrder {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'
+        return f'<OpenOrder {self.symbol} {self.side} {self.order_type} {self.quantity} @ {self.price} ({self.market_type})>'
 
 class WebhookLog(db.Model):
     """웹훅 수신 로그 테이블"""

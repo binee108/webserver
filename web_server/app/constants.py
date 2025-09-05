@@ -115,17 +115,19 @@ class OrderType:
     MARKET = 'MARKET'
     LIMIT = 'LIMIT'
     STOP_LIMIT = 'STOP_LIMIT'
+    STOP_MARKET = 'STOP_MARKET'
     CANCEL_ALL_ORDER = 'CANCEL_ALL_ORDER'
     
     # 소문자 버전 (API 연동용)
     MARKET_LOWER = 'market'
     LIMIT_LOWER = 'limit'
     STOP_LIMIT_LOWER = 'stop_limit'
+    STOP_MARKET_LOWER = 'stop_market'
     
     # 유효한 거래 주문 타입
-    VALID_TRADING_TYPES = [MARKET, LIMIT, STOP_LIMIT]
+    VALID_TRADING_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET]
     # 모든 유효한 타입 (취소 포함)
-    VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, CANCEL_ALL_ORDER]
+    VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CANCEL_ALL_ORDER]
     
     @classmethod
     def is_valid(cls, value):

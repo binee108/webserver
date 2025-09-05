@@ -233,6 +233,8 @@ class RealtimeOpenOrdersManager {
         const isBuy = side === 'BUY';
         const quantity = Math.abs(parseFloat(orderData.quantity || 0));
         const price = parseFloat(orderData.price || 0);
+        const stopPrice = parseFloat(orderData.stop_price || 0);
+        const orderType = (orderData.order_type || 'LIMIT').toUpperCase();
         
         // Account info
         const accountName = orderData.account_name || orderData.account?.name || 'Unknown';
@@ -241,7 +243,16 @@ class RealtimeOpenOrdersManager {
         
         // Format values
         const formattedQuantity = this.format ? this.format.formatQuantity(quantity) : quantity.toFixed(8);
-        const formattedPrice = this.format ? this.format.formatPrice(price) : `$${price.toFixed(4)}`;
+        const formattedPrice = price > 0 ? (this.format ? this.format.formatPrice(price) : `$${price.toFixed(4)}`) : '-';
+        const formattedStopPrice = stopPrice > 0 ? (this.format ? this.format.formatPrice(stopPrice) : `$${stopPrice.toFixed(4)}`) : '-';
+        
+        // Order type badge styling
+        const orderTypeBadgeClass = {
+            'MARKET': 'badge-info',
+            'LIMIT': 'badge-primary',
+            'STOP_LIMIT': 'badge-warning',
+            'STOP_MARKET': 'badge-error'
+        }[orderType] || 'badge-secondary';
         
         row.innerHTML = `
             <td>
@@ -259,6 +270,9 @@ class RealtimeOpenOrdersManager {
                 <div class="order-symbol">${orderData.symbol}</div>
             </td>
             <td>
+                <span class="badge ${orderTypeBadgeClass}">${orderType}</span>
+            </td>
+            <td>
                 <span class="badge ${isBuy ? 'badge-success' : 'badge-error'}">
                     <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="${isBuy
@@ -274,6 +288,9 @@ class RealtimeOpenOrdersManager {
             </td>
             <td class="text-sm text-primary">
                 ${formattedPrice}
+            </td>
+            <td class="text-sm text-primary">
+                ${formattedStopPrice}
             </td>
             <td>
                 <span class="badge badge-warning realtime-status">${orderData.status || 'NEW'}</span>
@@ -376,9 +393,11 @@ class RealtimeOpenOrdersManager {
                         <tr>
                             <th>계좌</th>
                             <th>심볼</th>
+                            <th>주문타입</th>
                             <th>주문방향</th>
                             <th>수량</th>
                             <th>주문가격</th>
+                            <th>Stop 가격</th>
                             <th>상태</th>
                             <th>액션</th>
                         </tr>
