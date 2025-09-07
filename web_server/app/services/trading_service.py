@@ -41,7 +41,7 @@ class TradingService:
     
     def _emit_trading_events(self, order_type: str, filled_info: Dict[str, Any], order_id: str,
                            symbol: str, side: str, quantity: Decimal, price: Decimal, average_price: Decimal,
-                           strategy: Strategy, account: Account, position: StrategyPosition):
+                           strategy: Strategy, account: Account, position: StrategyPosition, stop_price: Optional[Decimal] = None):
         """거래 완료 후 통합 SSE 이벤트 발송 (중앙화)"""
         try:
             from app.services.event_service import event_service, OrderEvent, PositionEvent
@@ -53,8 +53,8 @@ class TradingService:
                 'exchange': account.exchange
             }
             
-            # 1. LIMIT 주문인 경우만 주문 이벤트 발송 (시장가 주문은 제외)
-            if order_type == OrderType.LIMIT and filled_info['status'] != 'FILLED':
+            # 1. LIMIT, STOP 주문인 경우 주문 이벤트 발송 (시장가 주문은 제외)
+            if order_type in [OrderType.LIMIT, OrderType.STOP_LIMIT, OrderType.STOP_MARKET] and filled_info['status'] != 'FILLED':
                 order_event = OrderEvent(
                     event_type='order_created',
                     order_id=order_id,
@@ -63,14 +63,16 @@ class TradingService:
                     user_id=account.user_id,
                     side=side,  # 이미 BUY/SELL로 표준화되어 전달됨
                     quantity=decimal_to_float(quantity),
-                    price=decimal_to_float(price),
+                    price=decimal_to_float(price) if price is not None else 0.0,
                     status='OPEN',
                     timestamp=datetime.utcnow().isoformat(),
+                    order_type=order_type,  # 정확한 주문 타입 전달
+                    stop_price=decimal_to_float(stop_price) if stop_price is not None else None,  # Stop 가격 전달
                     # 중첩 구조로 계좌 정보 전달
                     account=account_info
                 )
                 event_service.emit_order_event(order_event)
-                logger.info(f"📤 LIMIT 주문 SSE 이벤트: {order_id} ({account.name})")
+                logger.info(f"📤 {order_type} 주문 SSE 이벤트: {order_id} ({account.name})")
             
             # 2. 체결된 경우 포지션 이벤트 발송 (시장가 주문 포함)
             if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
@@ -177,7 +179,7 @@ class TradingService:
         if filtered_accounts:
             logger.info(f"🚀 {len(filtered_accounts)}개 계좌에서 병렬 거래 실행 시작")
             results = self._execute_trades_parallel(
-                filtered_accounts, symbol, side, order_type, price, qty_per, currency, market_type
+                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, currency, market_type
             )
         
         # 결과 분석
@@ -215,7 +217,7 @@ class TradingService:
         }
     
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str, 
-                                side: str, order_type: str, price: Optional[Decimal], 
+                                side: str, order_type: str, price: Optional[Decimal], stop_price: Optional[Decimal],
                                 qty_per: Decimal, currency: str, market_type: str) -> List[Dict[str, Any]]:
         """🆕 병렬로 여러 계좌에서 거래 실행"""
         results = []
@@ -232,7 +234,7 @@ class TradingService:
             future_to_account = {
                 executor.submit(
                     self._execute_single_trade_safe, 
-                    app, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market_type
+                    app, strategy, account, sa, symbol, side, order_type, price, stop_price, qty_per, currency, market_type
                 ): (strategy, account, sa) 
                 for strategy, account, sa in filtered_accounts
             }
@@ -264,7 +266,7 @@ class TradingService:
         return results
     
     def _execute_single_trade_safe(self, app, strategy: Strategy, account: Account, sa: StrategyAccount,
-                                  symbol: str, side: str, order_type: str, price: Optional[Decimal], 
+                                  symbol: str, side: str, order_type: str, price: Optional[Decimal], stop_price: Optional[Decimal],
                                   qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """개별 거래 실행 (독립적 트랜잭션 관리)"""
         # 🔧 Flask 애플리케이션 컨텍스트 설정
@@ -277,7 +279,7 @@ class TradingService:
                 
                 # 독립적 세션을 사용하여 거래 실행
                 result = self._execute_trade_with_session(
-                    session, strategy, account, sa, symbol, side, order_type, price, qty_per, currency, market_type
+                    session, strategy, account, sa, symbol, side, order_type, price, stop_price, qty_per, currency, market_type
                 )
                 
                 if result.get('success'):
@@ -339,7 +341,7 @@ class TradingService:
                 session.close()
     
     def _execute_trade_with_session(self, session, strategy: Strategy, account: Account, sa: StrategyAccount,
-                                   symbol: str, side: str, order_type: str, price: Optional[Decimal], 
+                                   symbol: str, side: str, order_type: str, price: Optional[Decimal], stop_price: Optional[Decimal],
                                    qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """🆕 세션을 사용하여 개별 계좌에서 거래 실행 (기존 execute_trade 로직)"""
         
@@ -570,6 +572,7 @@ class TradingService:
             side=side,
             amount=decimal_to_float(final_quantity),  # 전처리된 수량 사용
             price=decimal_to_float(final_price) if final_price else None,  # 전처리된 가격 사용
+            stop_price=decimal_to_float(stop_price) if stop_price else None,  # Stop price 추가
             market_type=market_type
         )
         
@@ -666,11 +669,11 @@ class TradingService:
             session.add(trade)
             logger.info(f"📝 Trade 레코드 생성 - 주문ID: {order_id}, 타입: {order_type}, 상태: {filled_info['status']}")
         else:
-            # LIMIT 주문이고 아직 체결되지 않은 경우 trades에 추가하지 않음
-            logger.info(f"📋 LIMIT 주문 미체결 - 주문ID: {order_id}, OpenOrder에만 기록")
+            # LIMIT, STOP 주문이고 아직 체결되지 않은 경우 trades에 추가하지 않음
+            logger.info(f"📋 {order_type} 주문 미체결 - 주문ID: {order_id}, OpenOrder에만 기록")
         
-        # 10. 지정가 주문인 경우 미체결 주문 기록 (전처리된 정확한 값 사용)
-        if order_type == OrderType.LIMIT:
+        # 10. LIMIT, STOP 주문인 경우 미체결 주문 기록 (전처리된 정확한 값 사용)
+        if order_type in [OrderType.LIMIT, OrderType.STOP_LIMIT, OrderType.STOP_MARKET]:
             # 🆕 중앙화된 OpenOrderManager 사용 (현재 세션 전달)
             from app.services.open_order_service import open_order_manager
             
@@ -682,7 +685,8 @@ class TradingService:
                 quantity=final_quantity,  # 전처리된 수량 사용
                 price=final_price if final_price else Decimal('0'),  # 전처리된 가격 사용
                 market_type=market_type,
-                order_type=order_type,  # 🔧 주문 타입 전달
+                order_type=order_type,  # 🔧 주문 타입 전달 (LIMIT, STOP_LIMIT, STOP_MARKET)
+                stop_price=stop_price,  # 🔧 Stop 가격 전달
                 session=session  # 🔧 현재 세션 전달
             )
             
@@ -694,11 +698,11 @@ class TradingService:
                     'average': decimal_to_float(filled_info['average_price']),
                     'fee': filled_info.get('fee', {})
                 }, session):  # 🔧 현재 세션 전달
-                    logger.info(f"📋 LIMIT 주문 즉시 체결 및 레코드 삭제 - 주문ID: {order_id}")
+                    logger.info(f"📋 {order_type} 주문 즉시 체결 및 레코드 삭제 - 주문ID: {order_id}")
                 else:
-                    logger.info(f"📋 LIMIT 주문 즉시 체결 처리 - 주문ID: {order_id}")
+                    logger.info(f"📋 {order_type} 주문 즉시 체결 처리 - 주문ID: {order_id}")
             else:
-                logger.info(f"📋 LIMIT 주문 미체결 대기 - 주문ID: {order_id}")
+                logger.info(f"📋 {order_type} 주문 미체결 대기 - 주문ID: {order_id}")
         
         # 11. 포지션 업데이트 (체결된 경우만, 정확한 체결 정보 사용)
         if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
@@ -707,7 +711,7 @@ class TradingService:
         # 12. 통합 SSE 이벤트 발송 (중앙화)
         self._emit_trading_events(order_type, filled_info, order_id, symbol, side, 
                                 final_quantity, final_price, filled_info.get('average_price', Decimal('0')),
-                                strategy, account, position)
+                                strategy, account, position, stop_price)
 
         # 13. 텔레그램 알림: 체결된 거래만 계좌 소유자에게 전송
         try:
@@ -767,7 +771,7 @@ class TradingService:
         }
 
     def execute_trade(self, strategy: Strategy, account: Account, symbol: str, 
-                      side: str, order_type: str, price: Optional[Decimal], 
+                      side: str, order_type: str, price: Optional[Decimal], stop_price: Optional[Decimal],
                       qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """단일 계좌에서 거래 실행 (전달받은 세션 사용)"""
         # StrategyAccount 조회
@@ -781,7 +785,7 @@ class TradingService:
         
         # 현재 세션 사용하여 실행 (트랜잭션 경계 유지)
         return self._execute_trade_with_session(
-            self.session, strategy, account, strategy_account, symbol, side, order_type, price, qty_per, currency, market_type
+            self.session, strategy, account, strategy_account, symbol, side, order_type, price, stop_price, qty_per, currency, market_type
         )
 
 

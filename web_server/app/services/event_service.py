@@ -42,6 +42,8 @@ class OrderEvent:
     price: float
     status: str
     timestamp: str
+    order_type: str = 'LIMIT'  # 주문 타입 (기본값으로 하위 호환성 보장)
+    stop_price: float = None  # Stop 가격 (STOP 주문 전용, 선택적 필드)
     # 계좌 정보 (중첩 구조)
     account: Dict[str, Any] = None
 
@@ -94,7 +96,7 @@ class EventService:
             }
             
             self._emit_to_user(order_event.user_id, event_data)
-            logger.debug(f"주문 이벤트 발송: {order_event.event_type} - {order_event.symbol}")
+            logger.info(f"📤 주문 이벤트 발송: {order_event.event_type} - {order_event.symbol} ({order_event.order_id})")
             
         except Exception as e:
             logger.error(f"주문 이벤트 발송 실패: {str(e)}")

@@ -54,6 +54,8 @@ class OrderService:
                 price=float(open_order.price),
                 status='CANCELLED',
                 timestamp=datetime.utcnow().isoformat(),
+                order_type=open_order.order_type,  # DB에서 가져온 정확한 주문 타입
+                stop_price=float(open_order.stop_price) if open_order.stop_price is not None else None,  # Stop 가격 추가
                 account=account_info
             )
             

@@ -14,6 +14,7 @@ from app import db
 from app.models import StrategyPosition, StrategyAccount, StrategyCapital, Account, OpenOrder
 from app.services.utils import to_decimal, decimal_to_float
 from app.services.exchange_service import exchange_service
+from app.constants import MarketType
 
 # 백그라운드 작업용 로거 사용
 logger = logging.getLogger('trading_system.background')
@@ -168,14 +169,22 @@ class PositionService:
                 symbol=symbol
             ).first()
             
-            if not position or position.quantity == 0:
+            if not position:
                 return {
                     'success': False,
                     'error': '청산할 포지션이 없습니다.'
                 }
             
-            # 포지션 방향에 따라 청산 파라미터 계산
-            current_qty = to_decimal(position.quantity)
+            # 기존 시스템 패턴에 따라 Decimal로 변환하여 안전한 비교
+            position_qty = to_decimal(position.quantity)
+            if position_qty == 0:
+                return {
+                    'success': False,
+                    'error': '청산할 포지션이 없습니다.'
+                }
+            
+            # 포지션 방향에 따라 청산 파라미터 계산 (이미 변환된 값 재사용)
+            current_qty = position_qty
             
             if current_qty > 0:
                 # 롱 포지션 청산 (SELL)
@@ -200,6 +209,7 @@ class PositionService:
                     side=side,
                     order_type='MARKET',
                     price=None,
+                    stop_price=None,  # MARKET 주문이므로 stop_price는 None
                     qty_per=Decimal('-1'),  # 전체 청산 신호
                     currency='USDT',
                     market_type=market_type
@@ -435,7 +445,9 @@ class PositionService:
                     'error': '포지션을 찾을 수 없습니다.'
                 }
             
-            if position.quantity == 0:
+            # 기존 시스템 패턴에 따라 Decimal로 변환하여 안전한 비교
+            position_qty = to_decimal(position.quantity)
+            if position_qty == 0:
                 return {
                     'success': False,
                     'error': '청산할 포지션이 없습니다.'
@@ -824,6 +836,8 @@ class PositionService:
                     'side': order.side,
                     'quantity': order.quantity,
                     'price': order.price,
+                    'stop_price': order.stop_price,  # Stop 가격 추가
+                    'order_type': order.order_type,  # 주문 타입 추가
                     'filled_quantity': order.filled_quantity,
                     'status': order.status,
                     'market_type': order.market_type,

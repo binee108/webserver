@@ -17,7 +17,26 @@ def webhook():
         if not request.is_json:
             return jsonify({'error': 'Content-Type must be application/json'}), 400
         
-        data = request.get_json()
+        # JSON 파싱 오류를 명시적으로 처리
+        try:
+            data = request.get_json()
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON syntax: {str(e)}"
+            current_app.logger.error(f'❌ JSON 파싱 오류: {error_msg}')
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON syntax',
+                'details': str(e)
+            }), 400
+        except Exception as e:
+            error_msg = f"JSON parsing error: {str(e)}"
+            current_app.logger.error(f'❌ JSON 파싱 예상치 못한 오류: {error_msg}')
+            return jsonify({
+                'success': False,
+                'error': 'JSON parsing error',
+                'details': str(e)
+            }), 400
+        
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         

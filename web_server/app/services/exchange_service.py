@@ -202,6 +202,8 @@ def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
                         'minimum amount',                 # 최소 수량
                         'precision',                      # precision 에러
                         'invalid symbol',                 # 잘못된 심볼
+                        'notional must be no smaller',   # 최소 주문 금액 에러
+                        'Order would immediately trigger', # STOP 주문 즉시 실행 에러
                     ]
                     
                     # 재시도하지 않을 에러인 경우 즉시 예외 발생
@@ -476,7 +478,7 @@ class ExchangeService:
     
     @retry_on_failure(max_retries=10)
     def create_order(self, account: Account, symbol: str, order_type: str, 
-                    side: str, amount: float, price: float = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
+                    side: str, amount: float, price: float = None, stop_price: float = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 생성"""
         exchange = self.get_exchange(account)
         
@@ -509,6 +511,26 @@ class ExchangeService:
                 if price is None:
                     raise ExchangeError("지정가 주문에는 가격이 필요합니다")
                 order = exchange.create_limit_order(symbol, api_side, amount, price)
+            elif order_type.lower() == 'stop_limit':
+                if stop_price is None:
+                    raise ExchangeError("STOP_LIMIT 주문에는 stop_price가 필요합니다")
+                if price is None:
+                    raise ExchangeError("STOP_LIMIT 주문에는 limit price가 필요합니다")
+                # STOP_LIMIT 주문: stop_price에서 트리거되어 price로 지정가 주문 실행
+                params = {
+                    'stopPrice': stop_price,
+                    'type': 'STOP_LOSS_LIMIT' if account.exchange == 'binance' else 'StopLimit'
+                }
+                order = exchange.create_order(symbol, 'limit', api_side, amount, price, params)
+            elif order_type.lower() == 'stop_market':
+                if stop_price is None:
+                    raise ExchangeError("STOP_MARKET 주문에는 stop_price가 필요합니다")
+                # STOP_MARKET 주문: stop_price에서 트리거되어 시장가 주문 실행
+                params = {
+                    'stopPrice': stop_price,
+                    'type': 'STOP_LOSS' if account.exchange == 'binance' else 'StopMarket'
+                }
+                order = exchange.create_order(symbol, 'market', api_side, amount, None, params)
             else:
                 raise ExchangeError(f"지원하지 않는 주문 타입: {order_type}")
             
