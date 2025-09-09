@@ -181,6 +181,115 @@ class PrecisionCache:
             logger.info(f"🗑️ {exchange_name} {symbol} precision 캐시 삭제됨 ({len(keys_to_remove)}개 키)")
             return len(keys_to_remove)
 
+# 🆕 Rate Limit 관리 클래스
+class RateLimitManager:
+    """거래소별 Rate Limit 관리"""
+    
+    # 거래소별 Rate Limit 설정
+    EXCHANGE_LIMITS = {
+        'binance': {
+            'orders_per_second': 10,       # 초당 주문 수
+            'orders_per_minute': 1200,     # 분당 주문 수
+            'weight_per_minute': 6000,     # 분당 Weight
+            'burst_allowance': 5           # 순간적 버스트 허용
+        },
+        'bybit': {
+            'orders_per_second': 10,
+            'orders_per_minute': 100,
+            'burst_allowance': 3
+        },
+        'okx': {
+            'orders_per_second': 60,       # OKX는 상대적으로 관대
+            'orders_per_minute': 2400,
+            'burst_allowance': 10
+        }
+    }
+    
+    def __init__(self):
+        self.request_history = {}  # {exchange: [timestamps]}
+        self.locks = {}            # {exchange: Lock}
+    
+    def _get_exchange_lock(self, exchange: str) -> Lock:
+        """거래소별 Lock 반환"""
+        if exchange not in self.locks:
+            self.locks[exchange] = Lock()
+        return self.locks[exchange]
+    
+    def get_delay_for_orders(self, exchange: str, order_count: int) -> float:
+        """배치 주문에 필요한 지연 시간 계산"""
+        exchange_lower = exchange.lower()
+        limits = self.EXCHANGE_LIMITS.get(exchange_lower, {})
+        
+        # 기본값 설정 (보수적으로)
+        orders_per_second = limits.get('orders_per_second', 5)
+        burst_allowance = limits.get('burst_allowance', 2)
+        
+        if order_count <= burst_allowance:
+            # 버스트 허용량 이하면 최소 지연
+            return 0.1
+        else:
+            # 초당 주문 제한에 맞춰 지연 시간 계산 (20% 여유)
+            return (1.0 / orders_per_second) * 1.2
+    
+    def calculate_batch_delays(self, exchange: str, order_count: int) -> List[float]:
+        """배치 주문들 간의 지연 시간 리스트 계산"""
+        base_delay = self.get_delay_for_orders(exchange, order_count)
+        delays = []
+        
+        exchange_lower = exchange.lower()
+        limits = self.EXCHANGE_LIMITS.get(exchange_lower, {})
+        burst_allowance = limits.get('burst_allowance', 2)
+        
+        for i in range(order_count):
+            if i == 0:
+                # 첫 번째 주문은 지연 없음
+                delays.append(0.0)
+            elif i < burst_allowance:
+                # 버스트 허용량 내에서는 짧은 지연
+                delays.append(0.1)
+            else:
+                # 이후는 계산된 지연 시간 적용
+                delays.append(base_delay)
+        
+        return delays
+    
+    def wait_if_needed(self, exchange: str, weight: int = 1):
+        """필요시 대기하여 rate limit 준수"""
+        exchange_lower = exchange.lower()
+        limits = self.EXCHANGE_LIMITS.get(exchange_lower, {})
+        
+        if not limits:
+            # 알려지지 않은 거래소는 보수적으로 대기
+            time.sleep(0.2)
+            return
+        
+        lock = self._get_exchange_lock(exchange_lower)
+        
+        with lock:
+            current_time = time.time()
+            
+            # 요청 히스토리 초기화
+            if exchange_lower not in self.request_history:
+                self.request_history[exchange_lower] = []
+            
+            history = self.request_history[exchange_lower]
+            
+            # 1분 이전 요청들 제거
+            history[:] = [t for t in history if current_time - t < 60]
+            
+            # 분당 요청 수 체크
+            orders_per_minute = limits.get('orders_per_minute', 100)
+            if len(history) >= orders_per_minute:
+                # 가장 오래된 요청 시간 기준으로 대기 시간 계산
+                oldest_request = min(history)
+                wait_time = 60 - (current_time - oldest_request) + 0.1  # 여유시간 0.1초
+                if wait_time > 0:
+                    logger.info(f"Rate limit 대기: {exchange} - {wait_time:.2f}초")
+                    time.sleep(wait_time)
+            
+            # 현재 요청 시간 기록
+            self.request_history[exchange_lower].append(current_time)
+
 def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
     """지수 백오프 재시도 데코레이터"""
     def decorator(func):

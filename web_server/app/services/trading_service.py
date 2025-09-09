@@ -788,6 +788,287 @@ class TradingService:
             self.session, strategy, account, strategy_account, symbol, side, order_type, price, stop_price, qty_per, currency, market_type
         )
 
+    def process_batch_trading_signal(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """배치 주문 처리 메인 로직"""
+        # 필수 필드 검증
+        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'symbol', 'order_type', 'side', 'orders']
+        for field in required_fields:
+            if field not in webhook_data:
+                raise TradingError(f"필수 필드 누락: {field}")
+        
+        # 배치 주문 검증
+        orders = webhook_data.get('orders', [])
+        if not orders or not isinstance(orders, list):
+            raise TradingError("배치 주문 리스트가 비어있거나 잘못된 형식입니다")
+        
+        group_name = webhook_data['group_name']
+        exchange = webhook_data['exchange']
+        market_type = webhook_data['market_type']
+        currency = webhook_data['currency']
+        symbol = webhook_data['symbol']
+        order_type = webhook_data['order_type']
+        side = webhook_data['side']
+        
+        logger.info(f"배치 주문 처리 시작 - 전략: {group_name}, 거래소: {exchange}, 심볼: {symbol}, "
+                   f"사이드: {side}, 주문타입: {order_type}, 주문 수: {len(orders)}")
+        
+        # 전략 조회 (기존 로직 재사용)
+        strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
+        if not strategy:
+            raise TradingError(f"활성 전략을 찾을 수 없습니다: {group_name}")
+        
+        logger.info(f"전략 조회 성공 - ID: {strategy.id}, 이름: {strategy.name}")
+        
+        # 전략에 연결된 계좌들 조회 및 필터링 (기존 로직 재사용)
+        strategy_accounts = strategy.strategy_accounts
+        if not strategy_accounts:
+            raise TradingError(f"전략에 연결된 계좌가 없습니다: {group_name}")
+        
+        logger.info(f"전략에 연결된 계좌 수: {len(strategy_accounts)}")
+        
+        # 계좌 필터링 (기존 로직과 동일)
+        filtered_accounts = []
+        inactive_accounts = []
+        exchange_mismatch_accounts = []
+        
+        for sa in strategy_accounts:
+            account = sa.account
+            
+            # 전략-계좌 링크 활성화 확인
+            if hasattr(sa, 'is_active') and not sa.is_active:
+                logger.debug(f"전략 링크 비활성화로 제외 - StrategyAccount {sa.id}")
+                continue
+            
+            if not account:
+                logger.warning(f"전략계좌 {sa.id}: 연결된 계좌가 없음")
+                continue
+                
+            if not account.is_active:
+                inactive_accounts.append(f"계좌 {account.id}({account.name})")
+                logger.debug(f"계좌 {account.id}({account.name}): 비활성화 상태로 제외")
+                continue
+            
+            # 거래소 필터링
+            if account.exchange.upper() != exchange.upper():
+                exchange_mismatch_accounts.append(f"계좌 {account.id}({account.name}): {account.exchange}")
+                logger.debug(f"계좌 {account.id}({account.name}): 거래소 불일치")
+                continue
+            
+            filtered_accounts.append((strategy, account, sa))
+        
+        # 필터링 결과 로깅
+        logger.info(f"배치 주문 계좌 필터링 결과:")
+        logger.info(f"  - 총 연결된 계좌: {len(strategy_accounts)}")
+        logger.info(f"  - 배치 주문 실행 대상: {len(filtered_accounts)}")
+        if inactive_accounts:
+            logger.warning(f"  - 비활성화된 계좌: {len(inactive_accounts)}")
+        if exchange_mismatch_accounts:
+            logger.warning(f"  - 거래소 불일치 계좌: {len(exchange_mismatch_accounts)}")
+        
+        # 배치 주문 병렬 실행
+        results = []
+        if filtered_accounts:
+            logger.info(f"🚀 {len(filtered_accounts)}개 계좌에서 배치 주문 병렬 실행 시작")
+            results = self._execute_batch_trades_parallel(
+                filtered_accounts, webhook_data
+            )
+        
+        # 결과 분석
+        successful_accounts = [r for r in results if r.get('success', False)]
+        failed_accounts = [r for r in results if not r.get('success', False)]
+        
+        # 주문별 통계 계산
+        total_orders_requested = len(orders) * len(filtered_accounts)
+        total_orders_successful = sum(r.get('successful_orders', 0) for r in successful_accounts)
+        total_orders_failed = sum(r.get('failed_orders', 0) for r in results)
+        
+        logger.info(f"✅ 배치 주문 처리 완료 - 계좌 성공: {len(successful_accounts)}, 실패: {len(failed_accounts)}")
+        logger.info(f"   주문 통계: 요청 {total_orders_requested}개, 성공 {total_orders_successful}개, 실패 {total_orders_failed}개")
+        
+        return {
+            'action': 'batch_trading_signal',
+            'strategy': group_name,
+            'symbol': symbol,
+            'side': side,
+            'order_type': order_type,
+            'total_orders': len(orders),
+            'accounts': results,
+            'summary': {
+                'total_accounts': len(strategy_accounts),
+                'executed_accounts': len(filtered_accounts),
+                'successful_accounts': len(successful_accounts),
+                'failed_accounts': len(failed_accounts),
+                'total_orders_requested': total_orders_requested,
+                'total_orders_successful': total_orders_successful,
+                'total_orders_failed': total_orders_failed,
+                'inactive_accounts': len(inactive_accounts),
+                'exchange_mismatch_accounts': len(exchange_mismatch_accounts)
+            }
+        }
+    
+    def _execute_batch_trades_parallel(self, filtered_accounts: List[tuple], webhook_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """배치 주문을 계좌별 병렬로 실행"""
+        results = []
+        
+        # Flask 애플리케이션 컨텍스트
+        from flask import current_app
+        app = current_app._get_current_object()
+        
+        # 병렬 처리를 위한 최대 스레드 수
+        max_workers = min(len(filtered_accounts), 4)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 각 계좌별로 배치 주문 실행 작업 제출
+            future_to_account = {
+                executor.submit(
+                    self._execute_batch_for_account,
+                    app, strategy, account, sa, webhook_data
+                ): (strategy, account, sa) 
+                for strategy, account, sa in filtered_accounts
+            }
+            
+            # 완료된 작업들 수집
+            for future in as_completed(future_to_account):
+                strategy, account, sa = future_to_account[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    
+                    if result.get('success', False):
+                        logger.info(f"✅ 계좌 {account.id}({account.name}) 배치 주문 완료 - "
+                                   f"성공: {result.get('successful_orders', 0)}, 실패: {result.get('failed_orders', 0)}")
+                    else:
+                        logger.error(f"❌ 계좌 {account.id}({account.name}) 배치 주문 실패")
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"❌ 계좌 {account.id}({account.name}) 배치 주문 실행 중 예외: {error_msg}")
+                    results.append({
+                        'account_id': account.id,
+                        'account_name': account.name,
+                        'exchange': account.exchange,
+                        'error': f"배치 실행 실패: {error_msg}",
+                        'success': False,
+                        'successful_orders': 0,
+                        'failed_orders': 0,
+                        'orders': []
+                    })
+        
+        logger.info(f"🏁 배치 주문 병렬 실행 완료 - 총 {len(results)}개 계좌 결과")
+        return results
+    
+    def _execute_batch_for_account(self, app, strategy: Strategy, account: Account, sa: StrategyAccount,
+                                  webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """단일 계좌에서 배치 주문 순차 실행 (Rate Limit 준수)"""
+        # Flask 애플리케이션 컨텍스트 설정
+        with app.app_context():
+            # 독립적 세션 생성
+            session = self.SessionLocal()
+            
+            try:
+                orders = webhook_data['orders']
+                symbol = webhook_data['symbol']
+                side = webhook_data['side']
+                order_type = webhook_data['order_type']
+                currency = webhook_data['currency']
+                market_type = webhook_data['market_type']
+                
+                logger.info(f"🔄 계좌 {account.id}({account.name}) 배치 주문 시작 - "
+                           f"{len(orders)}개 주문, 스레드: {threading.current_thread().name}")
+                
+                # Rate Limit Manager 초기화
+                from app.services.exchange_service import RateLimitManager
+                rate_limiter = RateLimitManager()
+                
+                # 지연 시간 계산
+                delays = rate_limiter.calculate_batch_delays(account.exchange, len(orders))
+                
+                account_result = {
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'exchange': account.exchange,
+                    'orders': [],
+                    'successful_orders': 0,
+                    'failed_orders': 0,
+                    'success': True  # 전체 성공 여부는 나중에 계산
+                }
+                
+                # 각 주문 순차 처리 (Rate Limit 준수)
+                for idx, order_data in enumerate(orders):
+                    # Rate Limit 지연 적용
+                    if delays[idx] > 0:
+                        logger.debug(f"Rate limit 지연: {delays[idx]:.2f}초")
+                        time.sleep(delays[idx])
+                    
+                    try:
+                        # 기존 단일 주문 실행 로직 재사용
+                        order_result = self._execute_trade_with_session(
+                            session, strategy, account, sa,
+                            symbol, side, order_type,
+                            to_decimal(order_data.get('price')) if order_data.get('price') else None,
+                            to_decimal(order_data.get('stop_price')) if order_data.get('stop_price') else None,
+                            to_decimal(order_data.get('qty_per', 100)),
+                            currency, market_type
+                        )
+                        
+                        # 주문 결과에 인덱스 및 요청 정보 추가
+                        order_result['order_index'] = idx
+                        order_result['requested_price'] = order_data.get('price')
+                        order_result['requested_qty_per'] = float(order_data.get('qty_per', 100))
+                        
+                        account_result['orders'].append(order_result)
+                        
+                        if order_result.get('success'):
+                            account_result['successful_orders'] += 1
+                            logger.debug(f"주문 {idx+1}/{len(orders)} 성공 - 가격: {order_data.get('price')}")
+                        else:
+                            account_result['failed_orders'] += 1
+                            logger.warning(f"주문 {idx+1}/{len(orders)} 실패 - {order_result.get('error')}")
+                            
+                    except Exception as e:
+                        error_msg = str(e)
+                        logger.error(f"주문 {idx+1}/{len(orders)} 실행 실패: {error_msg}")
+                        
+                        account_result['orders'].append({
+                            'order_index': idx,
+                            'requested_price': order_data.get('price'),
+                            'requested_qty_per': float(order_data.get('qty_per', 100)),
+                            'success': False,
+                            'error': error_msg
+                        })
+                        account_result['failed_orders'] += 1
+                
+                # 전체 성공 여부 판단
+                account_result['success'] = account_result['failed_orders'] == 0
+                
+                # 성공시 세션 커밋, 실패시 롤백
+                if account_result['successful_orders'] > 0:
+                    session.commit()
+                    logger.info(f"✅ 계좌 {account.id}({account.name}) 배치 주문 커밋 완료")
+                else:
+                    session.rollback()
+                    logger.warning(f"❌ 계좌 {account.id}({account.name}) 모든 배치 주문 실패 후 롤백")
+                
+                return account_result
+                
+            except Exception as e:
+                session.rollback()
+                error_msg = str(e)
+                logger.error(f"계좌 {account.id}({account.name}) 배치 주문 처리 중 예외: {error_msg}")
+                
+                return {
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'exchange': account.exchange,
+                    'error': f"배치 처리 실패: {error_msg}",
+                    'success': False,
+                    'successful_orders': 0,
+                    'failed_orders': len(webhook_data.get('orders', [])),
+                    'orders': []
+                }
+            finally:
+                session.close()
+
 
 # 전역 인스턴스 생성
 trading_service = TradingService() 

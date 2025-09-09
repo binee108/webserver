@@ -92,7 +92,14 @@ class WebhookService:
             else:
                 # 거래 신호는 trading_service로 위임
                 from app.services.trading_service import trading_service
-                result = trading_service.process_trading_signal(normalized_data)
+                
+                # 🆕 배치 모드 감지 및 라우팅
+                if normalized_data.get('batch_mode'):
+                    logger.info(f"📦 배치 주문 모드 감지 - {len(normalized_data.get('orders', []))}개 주문")
+                    result = trading_service.process_batch_trading_signal(normalized_data)
+                else:
+                    # 기존 단일 주문 처리
+                    result = trading_service.process_trading_signal(normalized_data)
                 
                 # 🆕 거래 신호 처리 결과 분석 및 로깅
                 self._analyze_trading_result(result, normalized_data)

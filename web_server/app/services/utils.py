@@ -84,9 +84,35 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     if 'order_type' in webhook_data:
         normalized['order_type'] = webhook_data['order_type']
     
-    # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 제외)
+    # 🆕 배치 주문 감지 및 처리
+    if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
+        normalized['batch_mode'] = True
+        normalized['orders'] = []
+        
+        for order in webhook_data['orders']:
+            if isinstance(order, dict):
+                batch_order = {
+                    'price': order.get('price'),
+                    'qty_per': to_decimal(order.get('qty_per', 100)),
+                }
+                # STOP 주문 지원
+                if 'stop_price' in order:
+                    batch_order['stop_price'] = order.get('stop_price')
+                
+                normalized['orders'].append(batch_order)
+        
+        # 배치 주문이 감지되면 기본 price, qty_per 제거 (혼동 방지)
+        normalized.pop('price', None)
+        normalized.pop('qty_per', None)
+    else:
+        normalized['batch_mode'] = False
+    
+    # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 및 orders 제외)
     for key, value in webhook_data.items():
-        if key.lower() not in field_mapping and key != 'order_type' and key.lower() not in ['ordertype', 'orderType']:
+        if (key.lower() not in field_mapping and 
+            key != 'order_type' and 
+            key.lower() not in ['ordertype', 'orderType'] and
+            key != 'orders'):
             normalized[key] = value
     
     # 값들을 내부 로직에 맞게 표준화
