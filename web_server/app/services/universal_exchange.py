@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UniversalExchange - 거래소별 SPOT/FUTURES API를 통일된 인터페이스로 제공
+UniversalExchange - 거래소별 SPOT/FUTURES API를 통일된 인터페이스로 제공 (Enhanced Factory 지원)
 
 모든 거래소의 SPOT/FUTURES API 차이를 추상화하여
 일관된 방식으로 precision 정보를 조회할 수 있도록 합니다.
@@ -11,6 +11,7 @@ UniversalExchange - 거래소별 SPOT/FUTURES API를 통일된 인터페이스�
 - OKX, Bybit 등: 통합 API (defaultType으로 구분)
 - 자동 심볼 형식 변환
 - 거래소별 특성 고려
+- Enhanced Factory 우선 사용 (Feature Flag 기반)
 """
 
 import ccxt
@@ -20,6 +21,17 @@ import logging
 from app.constants import MarketType
 
 logger = logging.getLogger(__name__)
+
+# Enhanced Factory import (optional)
+try:
+    from web_server.app.exchanges.enhanced_factory import enhanced_factory
+    from web_server.app.exchanges.config import should_use_custom_exchange
+    ENHANCED_FACTORY_AVAILABLE = True
+    logger.info("✅ UniversalExchange: Enhanced Factory 사용 가능")
+except ImportError as e:
+    ENHANCED_FACTORY_AVAILABLE = False
+    enhanced_factory = None
+    logger.warning(f"⚠️ UniversalExchange: Enhanced Factory 사용 불가 (레거시 모드): {e}")
 
 class UniversalExchange:
     """거래소별 SPOT/FUTURES API를 통일된 인터페이스로 제공하는 클래스"""
@@ -203,7 +215,31 @@ class UniversalExchange:
         return all_formats
     
     def get_precision(self, symbol: str, market_type: str) -> Optional[Dict[str, Any]]:
-        """심볼의 precision 정보 반환"""
+        """심볼의 precision 정보 반환 (Enhanced Factory 우선 지원)"""
+        
+        # Enhanced Factory 우선 시도 (Feature Flag 기반)
+        if (ENHANCED_FACTORY_AVAILABLE and 
+            should_use_custom_exchange is not None and 
+            should_use_custom_exchange(self.exchange_name)):
+            try:
+                logger.info(f"🔄 Enhanced Factory를 사용하여 {self.exchange_name} precision 조회")
+                enhanced_instance = enhanced_factory.create_exchange(
+                    exchange_name=self.exchange_name,
+                    market_type=market_type,
+                    api_key=self.api_credentials.get('apiKey'),
+                    api_secret=self.api_credentials.get('secret'),
+                    testnet=False  # 기본값
+                )
+                
+                if hasattr(enhanced_instance, 'markets') and enhanced_instance.markets:
+                    logger.info(f"✅ Enhanced Factory precision 조회 성공: {self.exchange_name}")
+                    # Enhanced Factory 결과를 기존 형식으로 변환
+                    return self._convert_enhanced_precision_format(enhanced_instance, symbol, market_type)
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Enhanced Factory precision 조회 실패, 레거시로 폴백: {e}")
+        
+        # 레거시 방식 (기존 코드)
         try:
             instance = self.get_instance(market_type)
             test_symbols = self._generate_symbol_formats(symbol, market_type)
@@ -294,6 +330,38 @@ class UniversalExchange:
             self._futures_instance = None
         
         logger.debug(f"🔒 {self.exchange_name} UniversalExchange 리소스 정리 완료")
+    
+    def _convert_enhanced_precision_format(self, enhanced_instance, symbol: str, market_type: str) -> Optional[Dict[str, Any]]:
+        """Enhanced Factory 결과를 기존 UniversalExchange 형식으로 변환"""
+        try:
+            test_symbols = self._generate_symbol_formats(symbol, market_type)
+            
+            for test_symbol in test_symbols:
+                if hasattr(enhanced_instance, 'markets') and test_symbol in enhanced_instance.markets:
+                    market = enhanced_instance.markets[test_symbol]
+                    
+                    return {
+                        'amount_precision': market.get('precision', {}).get('amount', 8),
+                        'price_precision': market.get('precision', {}).get('price', 8),
+                        'limits': market.get('limits', {}),
+                        'symbol': test_symbol,
+                        'original_symbol': symbol,
+                        'market_type': market_type,
+                        'market_info': {
+                            'active': market.get('active', True),
+                            'base': market.get('base'),
+                            'quote': market.get('quote'),
+                            'type': market.get('type')
+                        },
+                        'api_class': enhanced_instance.__class__.__name__,
+                        'has_separate_api': self._config.get('has_separate_api', False)
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Enhanced Factory 결과 변환 실패: {e}")
+            return None
     
     def __del__(self):
         """소멸자"""

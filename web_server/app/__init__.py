@@ -274,9 +274,17 @@ def create_app(config_name=None):
             
             # APScheduler 초기화 및 백그라운드 작업 등록
             init_scheduler(app)
+
+            # 서비스 의존성 초기화 (순환 의존성 해결)
+            try:
+                from app.services import initialize_services
+                services = initialize_services()
+                app.logger.info('서비스 의존성 초기화 완료')
+            except Exception as e:
+                app.logger.error(f'서비스 의존성 초기화 실패: {str(e)}')
     else:
         app.logger.info('Flask CLI 명령어 실행 중 - 데이터베이스 초기화 및 스케줄러 건너뜀')
-    
+
     return app
 
 def init_scheduler(app):

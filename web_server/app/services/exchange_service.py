@@ -1,6 +1,6 @@
 """
-거래소 연동 서비스 모듈
-CCXT를 사용하여 다중 거래소 지원
+거래소 연동 서비스 모듈 (Enhanced Factory 지원)
+Enhanced Factory를 통한 차세대 거래소 관리 + 레거시 CCXT 호환성 유지
 """
 
 import ccxt
@@ -11,14 +11,36 @@ from functools import wraps
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from app.models import Account
 from app.constants import MarketType, Exchange, OrderType
-from threading import Lock  # 🆕 스레드 안전한 캐싱을 위한 import 추가
-import json  # 🆕 precision 데이터 직렬화용
-from app.services.universal_exchange import UniversalExchange, universal_exchange_manager  # 🆕 UniversalExchange 추가
+from threading import Lock  # 스레드 안전한 캐싱을 위한 import 추가
+import json  # precision 데이터 직렬화용
+from app.services.universal_exchange import UniversalExchange, universal_exchange_manager  # UniversalExchange 추가
 
 logger = logging.getLogger(__name__)
 
+# Enhanced Factory 및 새로운 아키텍처 import
+try:
+    from app.exchanges.enhanced_factory import enhanced_factory
+    from app.exchanges.config import should_use_custom_exchange, get_config
+    ENHANCED_FACTORY_AVAILABLE = True
+    logger.info("✅ Enhanced Factory 사용 가능")
+except ImportError as e:
+    ENHANCED_FACTORY_AVAILABLE = False
+    enhanced_factory = None
+    should_use_custom_exchange = None
+    logger.warning(f"⚠️ Enhanced Factory 사용 불가 (레거시 모드): {e}")
+
 class ExchangeError(Exception):
     """거래소 관련 오류"""
+    pass
+
+
+class OrderAlreadyCreatedError(ExchangeError):
+    """주문이 이미 생성된 후 발생한 에러"""
+    pass
+
+
+class OrderParsingError(ExchangeError):
+    """주문 응답 파싱 중 발생한 에러"""
     pass
 
 # 🆕 Precision 정보 전용 캐시 클래스
@@ -291,16 +313,20 @@ class RateLimitManager:
             self.request_history[exchange_lower].append(current_time)
 
 def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
-    """지수 백오프 재시도 데코레이터"""
+    """개선된 재시도 데코레이터"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
+                except (OrderAlreadyCreatedError, OrderParsingError) as e:
+                    # 주문은 생성됐지만 파싱만 실패한 경우 - 재시도 하지 않음
+                    logger.error(f"주문 후처리 실패 (재시도 안함): {str(e)}")
+                    raise
                 except Exception as e:
                     error_msg = str(e).lower()
-                    
+
                     # 재시도하지 않아야 할 에러들
                     no_retry_patterns = [
                         'must be greater than minimum',  # 최소 수량 에러
@@ -313,17 +339,20 @@ def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
                         'invalid symbol',                 # 잘못된 심볼
                         'notional must be no smaller',   # 최소 주문 금액 에러
                         'Order would immediately trigger', # STOP 주문 즉시 실행 에러
+                        'keyerror',                       # KeyError (타임스탬프 누락 등)
+                        "'time'",                         # time 키 누락
+                        'missing required field',        # 필수 필드 누락
                     ]
-                    
+
                     # 재시도하지 않을 에러인 경우 즉시 예외 발생
                     if any(pattern in error_msg for pattern in no_retry_patterns):
                         logger.error(f"재시도 불가 에러: {func.__name__}, 오류: {str(e)}")
                         raise ExchangeError(f"주문 생성 실패: {str(e)}")
-                    
+
                     if attempt == max_retries - 1:
                         logger.error(f"최대 재시도 횟수 초과: {func.__name__}, 오류: {str(e)}")
                         raise ExchangeError(f"거래소 API 호출 실패: {str(e)}")
-                    
+
                     wait_time = delay * (2 ** attempt)
                     logger.warning(f"재시도 {attempt + 1}/{max_retries}: {func.__name__}, 대기시간: {wait_time}초")
                     time.sleep(wait_time)
@@ -354,91 +383,144 @@ class ExchangeService:
         # 🆕 Precision 전용 고성능 캐시 시스템
         self.precision_cache = PrecisionCache()
         
+        # 🆕 통합 거래소 인스턴스 캐시 (Custom/CCXT 통합)
+        self._unified_exchange_cache = {}  # {cache_key: exchange_instance}
+        
         # 🆕 UniversalExchange 매니저 (새로운 거래소 시스템)
         self.universal_manager = universal_exchange_manager
         
         logger.info("🚀 ExchangeService 초기화 완료 - PrecisionCache + UniversalExchange 시스템 활성화")
     
-    def get_exchange(self, account: Account, market_type: str = None) -> ccxt.Exchange:
-        """계좌 정보로 거래소 인스턴스 생성/반환
+    def get_exchange(self, account: Account, market_type: str = None):
+        """통합 거래소 인스턴스 생성/반환 (Native/CCXT 자동 선택 및 호환성 처리)
         
         Args:
             account: 계좌 정보
             market_type: 마켓 타입 (MarketType.SPOT 또는 MarketType.FUTURES)
-                        None인 경우 기존 방식(SPOT) 유지 (하위 호환성)
         
         Returns:
-            거래소 인스턴스
+            거래소 인스턴스 (implementation_type 메타데이터 포함)
         """
-        # market_type이 지정된 경우 UniversalExchange 사용
-        if market_type is not None:
+        from ..exchanges.sync_wrapper import SyncExchangeWrapper
+        from ..exchanges.base import BaseExchange
+        
+        # 캐시 키 생성
+        cache_key = f"{account.id}_{market_type or 'spot'}"
+        
+        # 캐시된 인스턴스가 있으면 반환
+        if cache_key in self._unified_exchange_cache:
+            cached_instance = self._unified_exchange_cache[cache_key]
+            logger.debug(f"🚀 캐시된 거래소 인스턴스 사용: {getattr(cached_instance, '_implementation_type', 'unknown')}")
+            return cached_instance
+        
+        # 새 인스턴스 생성
+        exchange = None
+        implementation_type = "ccxt"  # 기본값
+        
+        # 1. Native 구현 우선 시도 (Registry 기반)
+        if (ENHANCED_FACTORY_AVAILABLE and 
+            should_use_custom_exchange is not None and 
+            should_use_custom_exchange(account.exchange)):
             try:
-                # API 인증 정보 구성
-                api_credentials = {
-                    'apiKey': account.public_api,
-                    'secret': account.secret_api,
-                }
+                logger.info(f"🔄 Native 구현을 사용하여 {account.exchange} 인스턴스 생성")
                 
-                # OKX passphrase 처리 (필요시)
-                if account.exchange == 'okx' and hasattr(account, 'passphrase') and account.passphrase:
-                    api_credentials['password'] = account.passphrase
+                # Enhanced Factory를 통해 인스턴스 생성
+                raw_exchange = enhanced_factory.create_exchange(
+                    exchange_name=account.exchange,
+                    market_type=(market_type or "spot").lower(),
+                    api_key=account.public_api,
+                    api_secret=account.secret_api,
+                    testnet=getattr(account, 'is_testnet', False),
+                    prefer_custom=True
+                )
                 
-                # UniversalExchange 인스턴스 가져오기
-                universal = self.universal_manager.get_exchange(account.exchange, api_credentials)
+                # 실제 반환된 인스턴스 타입 확인 및 처리
+                if isinstance(raw_exchange, BaseExchange):
+                    # Native async 구현: SyncWrapper로 감싸기
+                    exchange = SyncExchangeWrapper(raw_exchange)
+                    implementation_type = "custom"
+                    logger.info(f"✅ Native 구현 사용 (SyncWrapper 적용): {account.exchange}")
+                    
+                elif hasattr(raw_exchange, '__module__') and 'ccxt' in str(raw_exchange.__module__):
+                    # Enhanced Factory가 CCXT 반환한 경우
+                    exchange = raw_exchange
+                    implementation_type = "ccxt"
+                    logger.info(f"✅ Enhanced Factory에서 CCXT 반환: {account.exchange}")
+                    
+                else:
+                    # 기타 경우 - 타입 추론
+                    exchange = raw_exchange
+                    implementation_type = "custom" if hasattr(raw_exchange, '_async_exchange') else "ccxt"
+                    logger.info(f"✅ Enhanced Factory 성공 (타입: {implementation_type}): {account.exchange}")
                 
-                # 지정된 market_type에 맞는 인스턴스 반환
-                instance = universal.get_instance(market_type)
-                
-                logger.debug(f"🔧 UniversalExchange 사용: {account.exchange} {market_type} (계좌 ID: {account.id})")
-                return instance
-                
-            except ValueError as e:
-                # UniversalExchange에서 지원하지 않는 거래소인 경우 기존 방식 사용
-                logger.warning(f"⚠️ UniversalExchange 미지원 거래소, 기존 방식 사용: {account.exchange} - {e}")
-                # 기존 방식으로 fallback
             except Exception as e:
-                logger.error(f"❌ UniversalExchange 실패, 기존 방식 사용: {account.exchange} - {e}")
-                # 기존 방식으로 fallback
+                logger.warning(f"⚠️ Enhanced Factory 실패, CCXT로 폴백: {e}")
+                exchange = None
         
-        # 기존 방식 (하위 호환성 유지)
-        cache_key = f"{account.exchange}_{account.id}"
-        
-        if cache_key not in self._exchanges:
-            if account.exchange not in self.SUPPORTED_EXCHANGES:
-                raise ExchangeError(f"지원하지 않는 거래소: {account.exchange}")
-            
-            exchange_class = self.SUPPORTED_EXCHANGES[account.exchange]
-            
-            # 거래소별 설정
-            config = {
-                'apiKey': account.public_api,
-                'secret': account.secret_api,
-                'sandbox': False,
-                'enableRateLimit': True,
-                'timeout': 30000,
-            }
-            
-            # Bybit의 경우 추가 설정
-            if account.exchange == Exchange.BYBIT_LOWER:
-                config['options'] = {'defaultType': 'linear'}
-            
-            # Binance의 경우 추가 설정
-            if account.exchange == Exchange.BINANCE_LOWER:
-                config['options'] = {
-                    'warnOnFetchOpenOrdersWithoutSymbol': False,
-                    'defaultType': 'spot'
-                }
-            
+        # 2. CCXT 폴백 (Custom 실패하거나 비활성화된 경우)
+        if exchange is None:
             try:
-                exchange = exchange_class(config)
-                self._exchanges[cache_key] = exchange
-                logger.info(f"거래소 인스턴스 생성 (기존 방식): {account.exchange} (계좌 ID: {account.id})")
+                # market_type이 지정된 경우 UniversalExchange 사용
+                if market_type is not None:
+                    # API 인증 정보 구성
+                    api_credentials = {
+                        'apiKey': account.public_api,
+                        'secret': account.secret_api,
+                    }
+                    
+                    # OKX passphrase 처리
+                    if account.exchange == 'okx' and hasattr(account, 'passphrase') and account.passphrase:
+                        api_credentials['password'] = account.passphrase
+                    
+                    # UniversalExchange 사용
+                    universal = self.universal_manager.get_exchange(account.exchange, api_credentials)
+                    exchange = universal.get_instance(market_type)
+                    logger.debug(f"🔧 UniversalExchange 사용: {account.exchange} {market_type}")
+                    
+                else:
+                    # 기존 CCXT 방식
+                    if account.exchange not in self.SUPPORTED_EXCHANGES:
+                        raise ExchangeError(f"지원하지 않는 거래소: {account.exchange}")
+                    
+                    exchange_class = self.SUPPORTED_EXCHANGES[account.exchange]
+                    config = {
+                        'apiKey': account.public_api,
+                        'secret': account.secret_api,
+                        'sandbox': getattr(account, 'is_testnet', False),
+                        'enableRateLimit': True,
+                        'timeout': 30000,
+                    }
+                    
+                    # 거래소별 추가 설정
+                    if account.exchange == Exchange.BYBIT_LOWER:
+                        config['options'] = {'defaultType': 'linear'}
+                    elif account.exchange == Exchange.BINANCE_LOWER:
+                        config['options'] = {
+                            'warnOnFetchOpenOrdersWithoutSymbol': False,
+                            'defaultType': 'spot'
+                        }
+                    
+                    exchange = exchange_class(config)
+                    logger.debug(f"🔧 CCXT 기존 방식 사용: {account.exchange}")
+                
+                implementation_type = "ccxt"
+                
             except Exception as e:
                 raise ExchangeError(f"거래소 연결 실패: {str(e)}")
         
-        return self._exchanges[cache_key]
+        # 메타데이터 추가
+        if exchange:
+            exchange._implementation_type = implementation_type
+            exchange._account_id = account.id
+            exchange._market_type = market_type or "spot"
+            
+            # 캐시에 저장
+            self._unified_exchange_cache[cache_key] = exchange
+            logger.info(f"✅ 거래소 인스턴스 생성 완료: {account.exchange} ({implementation_type})")
+        
+        return exchange
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def test_connection(self, account: Account) -> Dict[str, Any]:
         """거래소 연결 테스트"""
         try:
@@ -462,7 +544,7 @@ class ExchangeService:
                 'message': f'연결 실패: {str(e)}'
             }
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def test_connection_simple(self, exchange_name: str, public_api: str, secret_api: str, passphrase: str = None) -> Dict[str, Any]:
         """간단한 거래소 연결 테스트 (계좌 생성 시 사용)"""
         try:
@@ -508,14 +590,33 @@ class ExchangeService:
                 'message': f'연결 실패: {str(e)}'
             }
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_balance(self, account: Account, currency: str = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
-        """잔고 조회 (마켓 타입별 분리)"""
-        exchange = self.get_exchange(account)
+        """잔고 조회 (Enhanced Service + 마켓 타입별 분리)"""
+        
+        # 통합 거래소 인스턴스 가져오기 (Custom/CCXT 자동 선택)
+        exchange = self.get_exchange(account, market_type)
+        implementation_type = getattr(exchange, '_implementation_type', 'unknown')
         
         try:
-            # 마켓 타입에 따라 다른 방식으로 잔고 조회 (대소문자 구분 없이)
-            market_type_upper = market_type.upper() if market_type else 'SPOT'
+            # Custom 구현과 CCXT 구분 처리
+            if implementation_type == "custom":
+                # Custom 구현: async 메소드 사용
+                import asyncio
+                logger.info(f"🎯 Custom 구현으로 잔액 조회")
+                balance = asyncio.run(exchange.get_balance())
+                if balance:
+                    logger.info(f"✅ Custom 구현 잔액 조회 성공")
+                    # currency가 지정된 경우 해당 통화만 반환
+                    if currency:
+                        return balance.get(currency, {})
+                    return balance
+            else:
+                # CCXT 구현: 기존 방식
+                logger.info(f"🔧 CCXT로 잔액 조회")
+                
+                # 마켓 타입에 따라 다른 방식으로 잔고 조회 (대소문자 구분 없이)
+                market_type_upper = market_type.upper() if market_type else 'SPOT'
             if market_type_upper in ['FUTURES', 'FUTURE']:
                 # 선물 잔고 조회
                 if hasattr(exchange, 'fetch_balance') and exchange.has.get('fetchBalance'):
@@ -575,7 +676,7 @@ class ExchangeService:
             logger.error(f"잔고 조회 실패 - 계좌: {account.id}, 마켓: {market_type}, 오류: {str(e)}")
             raise ExchangeError(f"잔고 조회 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_balance_by_market_type(self, account: Account, market_type: str, currency: str = 'USDT') -> float:
         """마켓 타입별 특정 통화 잔고 조회 (자본 할당용)"""
         try:
@@ -585,66 +686,103 @@ class ExchangeService:
             logger.error(f"마켓별 잔고 조회 실패 - 계좌: {account.id}, 마켓: {market_type}, 통화: {currency}, 오류: {str(e)}")
             return 0.0
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def create_order(self, account: Account, symbol: str, order_type: str, 
                     side: str, amount: float, price: float = None, stop_price: float = None, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
-        """주문 생성"""
-        exchange = self.get_exchange(account)
+        """주문 생성 (Enhanced Service 지원)"""
+        import time
+        
+        # 성능 측정 시작
+        start_time = time.time()
+        implementation_type = None
+        
+        # 통합 거래소 인스턴스 가져오기 (Custom/CCXT 자동 선택)
+        exchange = self.get_exchange(account, market_type)
+        implementation_type = getattr(exchange, '_implementation_type', 'unknown')
         
         try:
-            # 마켓 타입에 따라 거래소 설정 (대소문자 구분 없이)
-            market_type_upper = market_type.upper() if market_type else 'SPOT'
-            if market_type_upper in ['FUTURES', 'FUTURE']:
-                # 선물 거래 설정
-                if account.exchange == Exchange.BINANCE_LOWER:
-                    exchange.options['defaultType'] = 'future'
-                elif account.exchange == Exchange.BYBIT_LOWER:
-                    exchange.options['defaultType'] = 'linear'  # USDT 선물
-                elif account.exchange == 'okx':
-                    exchange.options['defaultType'] = 'swap'
+            # Custom 구현과 CCXT 구분 처리
+            if implementation_type == "custom":
+                # Custom 구현: async 메소드 사용
+                import asyncio
+                logger.info(f"🎯 Custom 구현으로 주문 생성: {symbol} {side} {order_type}")
+                # Custom 구현의 create_order 매개변수 매핑
+                params = {}
+                if stop_price is not None:
+                    params['stopPrice'] = stop_price
+                
+                order = asyncio.run(exchange.create_order(
+                    symbol=symbol,
+                    type=order_type.lower(),
+                    side=side.lower(),
+                    amount=amount,
+                    price=price,
+                    params=params
+                ))
             else:
-                # 현물 거래 설정 (기본값)
-                if account.exchange == Exchange.BINANCE_LOWER:
-                    exchange.options['defaultType'] = 'spot'
-                elif account.exchange == Exchange.BYBIT_LOWER:
-                    exchange.options['defaultType'] = 'spot'
-                elif account.exchange == 'okx':
-                    exchange.options['defaultType'] = 'spot'
+                # CCXT 구현: 기존 방식
+                logger.info(f"🔧 CCXT로 주문 생성: {symbol} {side} {order_type}")
+                
+                # 마켓 타입에 따라 거래소 설정 (대소문자 구분 없이)
+                market_type_upper = market_type.upper() if market_type else 'SPOT'
+                if market_type_upper in ['FUTURES', 'FUTURE']:
+                    # 선물 거래 설정
+                    if account.exchange == Exchange.BINANCE_LOWER:
+                        exchange.options['defaultType'] = 'future'
+                    elif account.exchange == Exchange.BYBIT_LOWER:
+                        exchange.options['defaultType'] = 'linear'  # USDT 선물
+                    elif account.exchange == 'okx':
+                        exchange.options['defaultType'] = 'swap'
+                else:
+                    # 현물 거래 설정 (기본값)
+                    if account.exchange == Exchange.BINANCE_LOWER:
+                        exchange.options['defaultType'] = 'spot'
+                    elif account.exchange == Exchange.BYBIT_LOWER:
+                        exchange.options['defaultType'] = 'spot'
+                    elif account.exchange == 'okx':
+                        exchange.options['defaultType'] = 'spot'
+                
+                # side를 거래소 API 형식으로 변환 (BUY/SELL -> buy/sell)
+                api_side = side.lower() if isinstance(side, str) else side
+                
+                if order_type.lower() == 'market':
+                    order = exchange.create_market_order(symbol, api_side, amount)
+                elif order_type.lower() == 'limit':
+                    if price is None:
+                        raise ExchangeError("지정가 주문에는 가격이 필요합니다")
+                    order = exchange.create_limit_order(symbol, api_side, amount, price)
+                elif order_type.lower() == 'stop_limit':
+                    if stop_price is None:
+                        raise ExchangeError("STOP_LIMIT 주문에는 stop_price가 필요합니다")
+                    if price is None:
+                        raise ExchangeError("STOP_LIMIT 주문에는 limit price가 필요합니다")
+                    # STOP_LIMIT 주문: stop_price에서 트리거되어 price로 지정가 주문 실행
+                    params = {
+                        'stopPrice': stop_price,
+                        'type': 'STOP_LOSS_LIMIT' if account.exchange == 'binance' else 'StopLimit'
+                    }
+                    order = exchange.create_order(symbol, 'limit', api_side, amount, price, params)
+                elif order_type.lower() == 'stop_market':
+                    if stop_price is None:
+                        raise ExchangeError("STOP_MARKET 주문에는 stop_price가 필요합니다")
+                    # STOP_MARKET 주문: stop_price에서 트리거되어 시장가 주문 실행
+                    params = {
+                        'stopPrice': stop_price,
+                        'type': 'STOP_LOSS' if account.exchange == 'binance' else 'StopMarket'
+                    }
+                    order = exchange.create_order(symbol, 'market', api_side, amount, None, params)
+                else:
+                    raise ExchangeError(f"지원하지 않는 주문 타입: {order_type}")
             
-            # side를 거래소 API 형식으로 변환 (BUY/SELL -> buy/sell)
-            api_side = side.lower() if isinstance(side, str) else side
-            
-            if order_type.lower() == 'market':
-                order = exchange.create_market_order(symbol, api_side, amount)
-            elif order_type.lower() == 'limit':
-                if price is None:
-                    raise ExchangeError("지정가 주문에는 가격이 필요합니다")
-                order = exchange.create_limit_order(symbol, api_side, amount, price)
-            elif order_type.lower() == 'stop_limit':
-                if stop_price is None:
-                    raise ExchangeError("STOP_LIMIT 주문에는 stop_price가 필요합니다")
-                if price is None:
-                    raise ExchangeError("STOP_LIMIT 주문에는 limit price가 필요합니다")
-                # STOP_LIMIT 주문: stop_price에서 트리거되어 price로 지정가 주문 실행
-                params = {
-                    'stopPrice': stop_price,
-                    'type': 'STOP_LOSS_LIMIT' if account.exchange == 'binance' else 'StopLimit'
-                }
-                order = exchange.create_order(symbol, 'limit', api_side, amount, price, params)
-            elif order_type.lower() == 'stop_market':
-                if stop_price is None:
-                    raise ExchangeError("STOP_MARKET 주문에는 stop_price가 필요합니다")
-                # STOP_MARKET 주문: stop_price에서 트리거되어 시장가 주문 실행
-                params = {
-                    'stopPrice': stop_price,
-                    'type': 'STOP_LOSS' if account.exchange == 'binance' else 'StopMarket'
-                }
-                order = exchange.create_order(symbol, 'market', api_side, amount, None, params)
-            else:
-                raise ExchangeError(f"지원하지 않는 주문 타입: {order_type}")
+            # 성능 메타데이터 추가
+            execution_time_ms = round((time.time() - start_time) * 1000, 2)
+            order['_metadata'] = {
+                'implementation': implementation_type,
+                'execution_time_ms': execution_time_ms
+            }
             
             logger.info(f"주문 생성 성공 - 계좌: {account.id}, 심볼: {symbol}, "
-                       f"타입: {order_type}, 사이드: {side}, 수량: {amount}, 마켓: {market_type}")
+                       f"타입: {order_type}, 사이드: {side}, 수량: {amount}, 마켓: {market_type} ({execution_time_ms}ms)")
             
             return order
             
@@ -652,7 +790,7 @@ class ExchangeService:
             logger.error(f"주문 생성 실패 - 계좌: {account.id}, 오류: {str(e)}")
             raise ExchangeError(f"주문 생성 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def cancel_order(self, account: Account, order_id: str, symbol: str, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 취소"""
         exchange = self.get_exchange(account)
@@ -684,7 +822,7 @@ class ExchangeService:
             logger.error(f"주문 취소 실패 - 계좌: {account.id}, 주문 ID: {order_id}, 마켓: {market_type}, 오류: {str(e)}")
             raise ExchangeError(f"주문 취소 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def cancel_all_orders(self, account: Account, symbol: str = None, market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """모든 주문 취소"""
         exchange = self.get_exchange(account)
@@ -723,7 +861,7 @@ class ExchangeService:
             logger.error(f"주문 취소 실패 - 계좌: {account.id}, 심볼: {symbol or 'ALL'}, 마켓: {market_type}, 오류: {str(e)}")
             raise ExchangeError(f"주문 취소 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_order_status(self, account: Account, order_id: str, symbol: str, market_type: str = MarketType.SPOT) -> Dict[str, Any]:
         """주문 상태 조회"""
         exchange = self.get_exchange(account)
@@ -754,7 +892,7 @@ class ExchangeService:
             logger.error(f"주문 상태 조회 실패 - 계좌: {account.id}, 주문 ID: {order_id}, 마켓: {market_type}, 오류: {str(e)}")
             raise ExchangeError(f"주문 상태 조회 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_order_fills(self, account: Account, order_id: str, symbol: str) -> List[Dict[str, Any]]:
         """주문 체결 내역 조회"""
         exchange = self.get_exchange(account)
@@ -791,7 +929,7 @@ class ExchangeService:
             logger.error(f"주문 체결 내역 조회 실패 - 계좌: {account.id}, 주문 ID: {order_id}, 오류: {str(e)}")
             raise ExchangeError(f"주문 체결 내역 조회 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def wait_for_order_fill(self, account: Account, order_id: str, symbol: str, timeout: int = 30) -> Dict[str, Any]:
         """주문 체결 대기 (시장가 주문용)"""
         exchange = self.get_exchange(account)
@@ -815,7 +953,7 @@ class ExchangeService:
             logger.error(f"주문 체결 대기 실패 - 계좌: {account.id}, 주문 ID: {order_id}, 오류: {str(e)}")
             raise ExchangeError(f"주문 체결 대기 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_ticker(self, account: Account, symbol: str) -> Dict[str, Any]:
         """현재가 정보 조회 (캐싱 적용)"""
         try:
@@ -831,19 +969,26 @@ class ExchangeService:
             
             # 🆕 기존 방식대로 직접 fetch_ticker 호출 (심볼 변환 불필요)
             ticker = exchange.fetch_ticker(symbol)
-            
+
+            # Native 구현체의 Ticker 객체를 딕셔너리로 변환
+            if hasattr(ticker, 'to_dict'):
+                ticker_dict = ticker.to_dict()
+                logger.debug(f"Native Ticker 객체를 딕셔너리로 변환: {symbol}")
+            else:
+                ticker_dict = ticker  # 이미 딕셔너리 (CCXT)
+
             # 🆕 결과 캐싱
-            self._cache_ticker(account, symbol, ticker)
-            
-            logger.debug(f"Ticker 조회 완료 - 계좌: {account.id}, 심볼: {symbol}, 가격: {ticker.get('last')}")
-            
-            return ticker
+            self._cache_ticker(account, symbol, ticker_dict)
+
+            logger.debug(f"Ticker 조회 완료 - 계좌: {account.id}, 심볼: {symbol}, 가격: {ticker_dict.get('last')}")
+
+            return ticker_dict
             
         except Exception as e:
             logger.error(f"Ticker 조회 실패 - 계좌: {account.id}, 심볼: {symbol}, 오류: {str(e)}")
             raise ExchangeError(f"Ticker 조회 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def fetch_open_orders(self, account: Account, symbol: str = None, market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """열린 주문 리스트 조회 (한 번에 모든 주문 가져오기)"""
         exchange = self.get_exchange(account)
@@ -893,7 +1038,7 @@ class ExchangeService:
             logger.error(f"열린 주문 조회 실패 - 계좌 ID: {account.id}, 심볼: {symbol}, 마켓: {market_type}, 오류: {str(e)}")
             raise ExchangeError(f"열린 주문 조회 실패: {str(e)}")
     
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def fetch_open_orders_by_symbols(self, account: Account, symbols: List[str], market_type: str = MarketType.SPOT) -> List[Dict[str, Any]]:
         """심볼별로 열린 주문 조회 (바이낸스 rate limit 회피용)"""
         exchange = self.get_exchange(account)
@@ -984,7 +1129,7 @@ class ExchangeService:
             'cache_duration_hours': self._cache_duration / 3600
         }
 
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_market_info(self, account: Account, symbol: str) -> Dict[str, Any]:
         """심볼의 market 정보 조회 및 캐싱"""
         cache_key = f"{account.exchange}_{symbol}"
@@ -1337,15 +1482,31 @@ class ExchangeService:
             }
             logger.debug(f"Ticker 정보 캐싱 - 계좌: {account.id}, 심볼: {symbol}")
 
-    @retry_on_failure(max_retries=10)
+    @retry_on_failure(max_retries=3)
     def get_precision_info_optimized(self, account: Account, symbol: str, market_type: str = None) -> Dict[str, Any]:
-        """🆕 Precision 정보 최적화 조회 (MarketType 상수 기반)"""
+        """🆕 Precision 정보 최적화 조회 (Enhanced Factory + MarketType 상수 기반)"""
         from app.constants import MarketType
         
         exchange_name = account.exchange.lower()
         
         # market_type 정규화 (필수)
         normalized_market_type = MarketType.normalize(market_type)
+        
+        # 통합 거래소 인스턴스 가져오기 (Custom/CCXT 자동 선택)
+        try:
+            exchange = self.get_exchange(account, normalized_market_type)
+            implementation_type = getattr(exchange, '_implementation_type', 'unknown')
+            
+            # Custom 구현 시도
+            if implementation_type == "custom" and hasattr(exchange, 'get_precision_info'):
+                import asyncio
+                logger.info(f"🎯 Custom 구현으로 {symbol} precision 조회")
+                precision_info = asyncio.run(exchange.get_precision_info(symbol))
+                if precision_info:
+                    logger.info(f"✅ Custom precision 조회 성공: {symbol}")
+                    return precision_info
+        except Exception as e:
+            logger.warning(f"⚠️ Custom precision 조회 실패, 캐시/UniversalExchange로 폴백: {e}")
         
         # 1단계: Precision 캐시에서 먼저 조회 (MarketType 상수 기반)
         precision_info = self.precision_cache.get_precision_info(exchange_name, symbol, normalized_market_type)

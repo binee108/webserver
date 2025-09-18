@@ -200,7 +200,8 @@ class PositionService:
             
             # 청산 거래 실행 (기존 세션 사용, 병렬 처리 없이)
             try:
-                # 전체 청산을 위해 qty_per = -1 사용하되, 단일 계좌이므로 직접 execute_trade 호출
+                # 오케스트레이터를 통한 거래 실행 (순환 의존성 해결)
+                # TODO: 향후 오케스트레이터로 완전 통합, 현재는 lazy import로 순환 의존성 회피
                 from app.services.trading_service import trading_service
                 result = trading_service.execute_trade(
                     strategy=strategy_account.strategy,

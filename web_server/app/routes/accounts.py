@@ -88,7 +88,7 @@ def get_account(account_id):
             'public_api': account.public_api,  # 수정 시 전체 키가 필요
             'passphrase': account.passphrase if account.passphrase else '',  # passphrase 포함
             'is_active': account.is_active,
-            'is_testnet': getattr(account, 'is_testnet', False),  # 테스트넷 여부
+            'is_testnet': account.is_testnet,  # 테스트넷 여부
             'created_at': account.created_at.isoformat(),
             'updated_at': account.updated_at.isoformat() if account.updated_at else None
         }

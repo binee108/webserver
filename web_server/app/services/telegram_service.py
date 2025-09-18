@@ -10,8 +10,9 @@ from datetime import datetime
 from telegram import Bot
 from telegram.error import TelegramError
 import os
+from app.utils.logging_security import get_secure_logger
 
-logger = logging.getLogger(__name__)
+logger = get_secure_logger(__name__)
 
 class TelegramService:
     """텔레그램 알림 서비스 클래스"""

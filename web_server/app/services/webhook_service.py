@@ -4,6 +4,7 @@
 """
 
 import logging
+import time
 from typing import Dict, Any
 from datetime import datetime
 
@@ -12,8 +13,9 @@ from app.models import Strategy, WebhookLog
 from app.services.utils import normalize_webhook_data
 from app.services.exchange_service import exchange_service
 from app.constants import MarketType, Exchange, OrderType
+from app.utils.logging_security import get_secure_logger
 
-logger = logging.getLogger(__name__)
+logger = get_secure_logger(__name__)
 
 class WebhookError(Exception):
     """웹훅 관련 오류"""
@@ -27,6 +29,9 @@ class WebhookService:
     
     def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """웹훅 데이터 처리 메인 함수"""
+        # 웹훅 수신 시간 기록
+        webhook_start_time = time.time()
+        
         try:
             # 웹훅 데이터 표준화 (대소문자 구별 없이 처리)
             normalized_data = normalize_webhook_data(webhook_data)
@@ -110,6 +115,13 @@ class WebhookService:
             self.session.commit()
             
             # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
+            
+            # 웹훅 처리 시간 정보 추가
+            if isinstance(result, dict):
+                result['webhook_timing'] = {
+                    'received_at': webhook_start_time,
+                    'received_timestamp': datetime.fromtimestamp(webhook_start_time).isoformat()
+                }
             
             return result
             
@@ -363,6 +375,10 @@ class WebhookService:
                 'failed_accounts': len(failed_results),
                 'total_cancelled_orders': sum(r.get('cancelled_orders', 0) for r in successful_results),
                 'total_failed_orders': sum(r.get('failed_orders', 0) for r in successful_results)
+            },
+            'webhook_timing': {
+                'received_at': webhook_start_time,
+                'received_timestamp': datetime.fromtimestamp(webhook_start_time).isoformat()
             }
         }
 

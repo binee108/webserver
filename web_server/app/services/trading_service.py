@@ -21,8 +21,8 @@ from app.models import (
 )
 from app.services.exchange_service import exchange_service, ExchangeError
 from app.services.utils import to_decimal, decimal_to_float, calculate_is_entry
-from app.services.position_service import position_service
 from app.constants import MarketType, Exchange, OrderType
+from app.services.security_service import require_trading_permission
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,43 @@ class TradingService:
         self.session = db.session
         # 🆕 스레드 로컬 세션 팩토리 생성
         self.SessionLocal = sessionmaker(bind=db.engine)
-    
+        # 순환 의존성 해결을 위한 lazy import
+        self._orchestrator = None
+
+    def set_orchestrator(self, orchestrator):
+        """오케스트레이터 설정 (의존성 주입)"""
+        self._orchestrator = orchestrator
+
+    def _update_position_via_orchestrator(self, position: StrategyPosition, side: str, quantity: Decimal, price: Decimal):
+        """오케스트레이터를 통한 포지션 업데이트"""
+        try:
+            if self._orchestrator:
+                # 오케스트레이터의 순수 계산 로직 사용
+                new_position_data = self._orchestrator.calculate_position_after_trade(
+                    position=position,
+                    trade_side=side,
+                    trade_quantity=quantity,
+                    trade_price=price
+                )
+
+                # 포지션 직접 업데이트 (DB 로직만)
+                position.quantity = new_position_data['quantity']
+                position.entry_price = new_position_data['entry_price']
+                position.last_updated = datetime.utcnow()
+
+                try:
+                    self.session.commit()
+                    logger.debug(f"포지션 업데이트 완료: {position.symbol} - 수량: {position.quantity}, 진입가: {position.entry_price}")
+                except Exception as e:
+                    self.session.rollback()
+                    logger.error(f"포지션 업데이트 DB 커밋 실패: {e}")
+                    raise
+            else:
+                logger.warning("오케스트레이터가 설정되지 않아 포지션 업데이트를 건너뜁니다.")
+        except Exception as e:
+            logger.error(f"오케스트레이터를 통한 포지션 업데이트 실패: {e}")
+            raise
+
     def _emit_trading_events(self, order_type: str, filled_info: Dict[str, Any], order_id: str,
                            symbol: str, side: str, quantity: Decimal, price: Decimal, average_price: Decimal,
                            strategy: Strategy, account: Account, position: StrategyPosition, stop_price: Optional[Decimal] = None):
@@ -115,6 +151,13 @@ class TradingService:
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
         stop_price = to_decimal(webhook_data.get('stop_price')) if webhook_data.get('stop_price') else None
         qty_per = to_decimal(webhook_data.get('qty_per', 100))  # Decimal로 변환
+        
+        # 🆕 STOP_LIMIT 주문 필수 필드 검증
+        if order_type == 'STOP_LIMIT':
+            if not stop_price:
+                raise TradingError("STOP_LIMIT 주문: stop_price가 필수입니다")
+            if not price:
+                raise TradingError("STOP_LIMIT 주문: price가 필수입니다")
         
         logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 거래소: {exchange}, 심볼: {symbol}, "
                    f"사이드: {side}, 주문타입: {order_type}, 수량비율: {qty_per}%")
@@ -434,7 +477,12 @@ class TradingService:
         elif side == 'BUY':
             # 롱 포지션 진입/추가
             target_value = allocated_capital * (qty_per / Decimal('100')) * leverage
-            current_ticker = exchange_service.get_ticker(account, symbol)
+            # get_exchange에서 market_type 정보를 사용하도록 개선
+            exchange = exchange_service.get_exchange(account, market_type=market_type)
+            current_ticker = exchange.fetch_ticker(symbol)
+            # Ticker 객체를 딕셔너리로 변환
+            if hasattr(current_ticker, 'to_dict'):
+                current_ticker = current_ticker.to_dict()
             current_price = to_decimal(current_ticker['last'])
             quantity = target_value / current_price
         elif side == 'SELL':
@@ -445,7 +493,12 @@ class TradingService:
             else:
                 # 숏 포지션 진입
                 target_value = allocated_capital * (qty_per / Decimal('100')) * leverage
-                current_ticker = exchange_service.get_ticker(account, symbol)
+                # get_exchange에서 market_type 정보를 사용하도록 개선
+                exchange = exchange_service.get_exchange(account, market_type=market_type)
+                current_ticker = exchange.fetch_ticker(symbol)
+                # Ticker 객체를 딕셔너리로 변환
+                if hasattr(current_ticker, 'to_dict'):
+                    current_ticker = current_ticker.to_dict()
                 current_price = to_decimal(current_ticker['last'])
                 quantity = target_value / current_price
         else:
@@ -579,6 +632,11 @@ class TradingService:
         # 디버깅을 위한 로깅
         logger.info(f"주문 결과: {order_result}")
         
+        # 성능 메타데이터 추출
+        performance_metadata = order_result.get('_metadata', {})
+        implementation_type = performance_metadata.get('implementation', 'unknown')
+        order_execution_time_ms = performance_metadata.get('execution_time_ms', 0)
+        
         order_id = order_result.get('id')
         if not order_id:
             raise TradingError("주문 ID를 받지 못했습니다")
@@ -706,7 +764,8 @@ class TradingService:
         
         # 11. 포지션 업데이트 (체결된 경우만, 정확한 체결 정보 사용)
         if filled_info['status'] == 'FILLED' and filled_info['filled_quantity'] > 0:
-            position_service.update_position(position, side, filled_info['filled_quantity'], filled_info['average_price'])
+            # 오케스트레이터를 통한 포지션 업데이트 (순환 의존성 해결)
+            self._update_position_via_orchestrator(position, side, filled_info['filled_quantity'], filled_info['average_price'])
         
         # 12. 통합 SSE 이벤트 발송 (중앙화)
         self._emit_trading_events(order_type, filled_info, order_id, symbol, side, 
@@ -767,10 +826,15 @@ class TradingService:
                 'api_calls_saved': True,  # 전처리로 인한 API 호출 절약
                 'optimization_used': True,  # 🆕 최적화 사용 여부
                 'processing_time_seconds': precision_duration if 'precision_duration' in locals() else 0.0  # 🆕 처리 시간
+            },
+            'performance': {
+                'implementation': implementation_type,
+                'order_execution_time_ms': order_execution_time_ms
             }
         }
 
-    def execute_trade(self, strategy: Strategy, account: Account, symbol: str, 
+    @require_trading_permission(account_param='account', symbol_param='symbol')
+    def execute_trade(self, strategy: Strategy, account: Account, symbol: str,
                       side: str, order_type: str, price: Optional[Decimal], stop_price: Optional[Decimal],
                       qty_per: Decimal, currency: str, market_type: str) -> Dict[str, Any]:
         """단일 계좌에서 거래 실행 (전달받은 세션 사용)"""
@@ -800,6 +864,23 @@ class TradingService:
         orders = webhook_data.get('orders', [])
         if not orders or not isinstance(orders, list):
             raise TradingError("배치 주문 리스트가 비어있거나 잘못된 형식입니다")
+        
+        # 주문 타입별 필수 필드 검증
+        order_type = webhook_data['order_type']
+        if order_type == 'STOP_LIMIT':
+            for idx, order in enumerate(orders):
+                if not order.get('stop_price'):
+                    raise TradingError(f"STOP_LIMIT 주문 {idx+1}번째: stop_price가 필수입니다")
+                if not order.get('price'):
+                    raise TradingError(f"STOP_LIMIT 주문 {idx+1}번째: price가 필수입니다")
+        elif order_type == 'STOP_MARKET':
+            for idx, order in enumerate(orders):
+                if not order.get('stop_price'):
+                    raise TradingError(f"STOP_MARKET 주문 {idx+1}번째: stop_price가 필수입니다")
+        elif order_type == 'LIMIT':
+            for idx, order in enumerate(orders):
+                if not order.get('price'):
+                    raise TradingError(f"LIMIT 주문 {idx+1}번째: price가 필수입니다")
         
         group_name = webhook_data['group_name']
         exchange = webhook_data['exchange']
@@ -1001,6 +1082,19 @@ class TradingService:
                         time.sleep(delays[idx])
                     
                     try:
+                        # 개별 주문 검증 (배치 내 항목별)
+                        if order_type == 'STOP_LIMIT':
+                            if not order_data.get('stop_price'):
+                                raise TradingError(f"주문 {idx+1}: STOP_LIMIT 주문에 stop_price가 필수입니다")
+                            if not order_data.get('price'):
+                                raise TradingError(f"주문 {idx+1}: STOP_LIMIT 주문에 price가 필수입니다")
+                        elif order_type == 'STOP_MARKET':
+                            if not order_data.get('stop_price'):
+                                raise TradingError(f"주문 {idx+1}: STOP_MARKET 주문에 stop_price가 필수입니다")
+                        elif order_type == 'LIMIT':
+                            if not order_data.get('price'):
+                                raise TradingError(f"주문 {idx+1}: LIMIT 주문에 price가 필수입니다")
+                        
                         # 기존 단일 주문 실행 로직 재사용
                         order_result = self._execute_trade_with_session(
                             session, strategy, account, sa,
@@ -1025,16 +1119,55 @@ class TradingService:
                             account_result['failed_orders'] += 1
                             logger.warning(f"주문 {idx+1}/{len(orders)} 실패 - {order_result.get('error')}")
                             
-                    except Exception as e:
+                    except TradingError as e:
+                        # 명확한 실패 - 재시도 불필요
                         error_msg = str(e)
-                        logger.error(f"주문 {idx+1}/{len(orders)} 실행 실패: {error_msg}")
+                        logger.error(f"주문 {idx+1}/{len(orders)} 검증 실패 (재시도 안함): {error_msg}")
                         
                         account_result['orders'].append({
                             'order_index': idx,
                             'requested_price': order_data.get('price'),
+                            'requested_stop_price': order_data.get('stop_price'),
                             'requested_qty_per': float(order_data.get('qty_per', 100)),
                             'success': False,
-                            'error': error_msg
+                            'error': error_msg,
+                            'retry_possible': False
+                        })
+                        account_result['failed_orders'] += 1
+                        
+                    except (ConnectionError, TimeoutError) as e:
+                        # 불명확한 실패 - 네트워크 관련
+                        error_msg = f"네트워크 오류: {str(e)}"
+                        logger.warning(f"주문 {idx+1}/{len(orders)} 네트워크 오류 (재시도 가능): {error_msg}")
+                        
+                        account_result['orders'].append({
+                            'order_index': idx,
+                            'requested_price': order_data.get('price'),
+                            'requested_stop_price': order_data.get('stop_price'),
+                            'requested_qty_per': float(order_data.get('qty_per', 100)),
+                            'success': False,
+                            'error': error_msg,
+                            'retry_possible': True
+                        })
+                        account_result['failed_orders'] += 1
+                        
+                    except Exception as e:
+                        # 기타 예외 - 상황에 따라 재시도 판단
+                        error_msg = str(e)
+                        is_retryable = not any(keyword in error_msg.lower() for keyword in 
+                                             ['필수', '누락', '잘못된', 'invalid', 'missing', 'required'])
+                        
+                        log_level = "warning" if is_retryable else "error"
+                        getattr(logger, log_level)(f"주문 {idx+1}/{len(orders)} 실행 실패: {error_msg}")
+                        
+                        account_result['orders'].append({
+                            'order_index': idx,
+                            'requested_price': order_data.get('price'),
+                            'requested_stop_price': order_data.get('stop_price'),
+                            'requested_qty_per': float(order_data.get('qty_per', 100)),
+                            'success': False,
+                            'error': error_msg,
+                            'retry_possible': is_retryable
                         })
                         account_result['failed_orders'] += 1
                 

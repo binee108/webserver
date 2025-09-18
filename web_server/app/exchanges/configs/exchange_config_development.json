@@ -1,0 +1,9 @@
+{
+  "environment": "development",
+  "performance": {
+    "cache_ttl_seconds": 60
+  },
+  "features": {
+    "enable_detailed_logging": true
+  }
+}

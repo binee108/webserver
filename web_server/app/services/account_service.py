@@ -94,6 +94,7 @@ class AccountService:
                 public_api=account_data['public_api'],
                 secret_api=account_data['secret_api'],
                 passphrase=account_data.get('passphrase', ''),  # passphrase 처리
+                is_testnet=account_data.get('is_testnet', False),  # 테스트넷 여부
                 is_active=account_data.get('is_active', True)
             )
             
@@ -129,7 +130,7 @@ class AccountService:
                 raise AccountError('계좌를 찾을 수 없습니다.')
             
             # 수정 가능한 필드들
-            updatable_fields = ['name', 'public_api', 'secret_api', 'passphrase', 'is_active']
+            updatable_fields = ['name', 'public_api', 'secret_api', 'passphrase', 'is_testnet', 'is_active']
             
             for field in updatable_fields:
                 if field in update_data:

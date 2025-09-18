@@ -49,12 +49,14 @@ class Account(db.Model):
     public_api = db.Column(db.Text, nullable=False)  # 기존 필드 유지
     secret_api = db.Column(db.Text, nullable=False)
     passphrase = db.Column(db.Text, nullable=True)  # OKX 등에서 필요한 passphrase
+    is_testnet = db.Column(db.Boolean, default=False, nullable=False)  # 테스트넷 사용 여부
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 활성화 상태
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 마지막 업데이트
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='account', lazy=True, cascade='all, delete-orphan')
+    daily_summaries = db.relationship('DailyAccountSummary', backref='account_ref', lazy=True, cascade='all, delete-orphan')
     
     def __repr__(self):
         return f'<Account {self.name} ({self.exchange})>'
