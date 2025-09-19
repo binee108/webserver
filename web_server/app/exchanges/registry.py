@@ -448,43 +448,8 @@ class ExchangeRegistry:
             logger.info("🧹 모든 인스턴스 캐시 정리 완료")
     
     def _register_basic_ccxt_exchanges(self):
-        """기본 CCXT 구현체들 수동 등록"""
-        try:
-            import ccxt
-            
-            # 기본 CCXT 거래소들 등록
-            basic_exchanges = [
-                ("binance_ccxt", "Binance (CCXT)", ["spot", "futures"]),
-                ("bybit_ccxt", "Bybit (CCXT)", ["spot", "futures"]),
-                ("okx_ccxt", "OKX (CCXT)", ["spot", "futures"])
-            ]
-            
-            for name, display_name, supported_markets in basic_exchanges:
-                try:
-                    metadata = ExchangeMetadata(
-                        name=name,
-                        display_name=display_name,
-                        exchange_type=ExchangeType.CCXT,
-                        capabilities=ExchangeCapability(),  # 기본 capabilities
-                        supported_markets=supported_markets,
-                        api_endpoints={},  # 빈 딕셔너리
-                        rate_limits={},    # 빈 딕셔너리
-                        implementation_class=None,  # CCXT는 동적 생성
-                        priority=1
-                    )
-                    
-                    self._exchanges[name] = metadata
-                    logger.info(f"✅ CCXT 구현체 등록: {display_name}")
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ {display_name} 등록 실패: {e}")
-            
-            logger.info(f"🚀 기본 CCXT 구현체 {len(basic_exchanges)}개 등록 완료")
-            
-        except ImportError:
-            logger.error("❌ CCXT 모듈을 찾을 수 없음")
-        except Exception as e:
-            logger.error(f"❌ 기본 CCXT 구현체 등록 실패: {e}")
+        """CCXT 제거됨 - Native 구현만 사용"""
+        pass
 
 # 전역 레지스트리 인스턴스
 exchange_registry = ExchangeRegistry()

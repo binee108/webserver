@@ -3,7 +3,7 @@
 Enhanced Factory를 통한 차세대 거래소 관리 + 레거시 CCXT 호환성 유지
 """
 
-import ccxt
+# ccxt 제거됨 - Native 구현만 사용
 import time
 import logging
 from typing import Dict, Any, Optional, List
@@ -13,7 +13,7 @@ from app.models import Account
 from app.constants import MarketType, Exchange, OrderType
 from threading import Lock  # 스레드 안전한 캐싱을 위한 import 추가
 import json  # precision 데이터 직렬화용
-from app.services.universal_exchange import UniversalExchange, universal_exchange_manager  # UniversalExchange 추가
+# universal_exchange 제거됨 - Enhanced Factory만 사용
 
 logger = logging.getLogger(__name__)
 
@@ -364,15 +364,10 @@ def retry_on_failure(max_retries: int = 3, delay: float = 0.25):
 class ExchangeService:
     """거래소 서비스 클래스"""
     
-    # 지원하는 거래소 목록
-    SUPPORTED_EXCHANGES = {
-        'binance': ccxt.binance,
-        'bybit': ccxt.bybit,
-        'okx': ccxt.okx
-    }
+    # Enhanced Factory에서 지원하는 거래소 관리
     
     def __init__(self):
-        self._exchanges: Dict[str, ccxt.Exchange] = {}
+        self._exchanges: Dict[str, Any] = {}
         self._market_cache: Dict[str, tuple] = {}  # 🆕 market 정보 캐시 추가
         self._cache_duration = 3600  # 🆕 캐시 유지 시간 (1시간)
         # 🆕 ticker 정보 캐싱을 위한 딕셔너리 및 락 추가
@@ -386,10 +381,7 @@ class ExchangeService:
         # 🆕 통합 거래소 인스턴스 캐시 (Custom/CCXT 통합)
         self._unified_exchange_cache = {}  # {cache_key: exchange_instance}
         
-        # 🆕 UniversalExchange 매니저 (새로운 거래소 시스템)
-        self.universal_manager = universal_exchange_manager
-        
-        logger.info("🚀 ExchangeService 초기화 완료 - PrecisionCache + UniversalExchange 시스템 활성화")
+        logger.info("🚀 ExchangeService 초기화 완료 - Enhanced Factory 시스템 활성화")
     
     def get_exchange(self, account: Account, market_type: str = None):
         """통합 거래소 인스턴스 생성/반환 (Native/CCXT 자동 선택 및 호환성 처리)

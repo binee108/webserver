@@ -342,32 +342,4 @@ def legacy_error_response(error: str, details: Optional[str] = None) -> Dict[str
     return response
 
 
-# 마이그레이션 도우미 함수
-def is_legacy_mode() -> bool:
-    """레거시 모드 여부 확인 (환경변수 또는 설정으로 제어)"""
-    import os
-    return os.getenv('USE_LEGACY_RESPONSE_FORMAT', 'false').lower() == 'true'
-
-
-def adaptive_response(success: bool = True, **kwargs) -> tuple:
-    """레거시/신규 형식 자동 선택 응답"""
-
-    if is_legacy_mode():
-        # 레거시 형식 사용
-        if success:
-            data = legacy_success_response(
-                data=kwargs.get('data'),
-                message=kwargs.get('message', 'Success')
-            )
-            return jsonify(data), 200
-        else:
-            data = legacy_error_response(
-                error=kwargs.get('message', 'Error'),
-                details=kwargs.get('details')
-            )
-            error_code = kwargs.get('error_code', ErrorCode.UNKNOWN_ERROR)
-            http_status = ERROR_HTTP_STATUS_MAPPING.get(error_code, 500)
-            return jsonify(data), http_status
-    else:
-        # 신규 형식 사용
-        return create_response(success=success, **kwargs)
+# 레거시 관련 함수들은 제거됨 - 신규 형식만 사용

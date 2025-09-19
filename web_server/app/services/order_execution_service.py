@@ -109,21 +109,25 @@ class OrderExecutionService:
             if not precision_info:
                 # 캐시에 없으면 거래소에서 직접 조회
                 try:
-                    markets = exchange_instance.load_markets()
-                    if symbol in markets:
-                        market_info = markets[symbol]
-                        precision_info = {
-                            'amount': market_info['precision'].get('amount', 8),
-                            'price': market_info['precision'].get('price', 8),
-                            'limits': market_info.get('limits', {})
-                        }
-                        # 캐시에 저장
+                    # Native 구현체에서 precision 정보 조회
+                    if hasattr(exchange_instance, 'get_symbol_info'):
+                        symbol_info = exchange_instance.get_symbol_info(symbol)
+                        if symbol_info:
+                            precision_info = {
+                                'amount': symbol_info.get('baseAssetPrecision', 8),
+                                'price': symbol_info.get('quotePrecision', 8),
+                                'limits': symbol_info.get('filters', {})
+                            }
+                        else:
+                            precision_info = {'amount': 8, 'price': 8, 'limits': {}}
+                    else:
+                        precision_info = {'amount': 8, 'price': 8, 'limits': {}}
+
+                    # 캐시에 저장
+                    if precision_info:
                         precision_cache_service.set_precision_info(
                             exchange_name, symbol, market_type, precision_info
                         )
-                    else:
-                        # 기본 정밀도 사용
-                        precision_info = {'amount': 8, 'price': 8, 'limits': {}}
                 except Exception as e:
                     logger.warning(f"Precision 정보 조회 실패, 기본값 사용: {e}")
                     precision_info = {'amount': 8, 'price': 8, 'limits': {}}
@@ -207,53 +211,29 @@ class OrderExecutionService:
         """거래소별 주문 실행"""
         try:
             # 마켓 타입에 따른 거래소 설정
-            if market_type == MarketType.FUTURES:
-                if hasattr(exchange_instance, 'set_sandbox_mode'):
-                    exchange_instance.options['defaultType'] = 'future'
+            # Native 구현체는 초기화시 마켓 타입이 설정되므로 추가 설정 불필요
 
-            # CCXT 파라미터 구성
-            ccxt_params = {
+            # Native 파라미터 구성
+            order_params = {
                 'symbol': symbol,
-                'type': order_type.lower(),
-                'side': side.lower(),
-                'amount': float(quantity)
+                'side': side.upper(),
+                'quantity': quantity,
+                'type': order_type.upper()
             }
 
             # 가격 설정
             if order_type in ['LIMIT', 'STOP_LIMIT'] and price:
-                ccxt_params['price'] = float(price)
+                order_params['price'] = price
 
             # 스탑 가격 설정
             if order_type in ['STOP_MARKET', 'STOP_LIMIT'] and stop_price:
-                if exchange_name.lower() == 'binance':
-                    ccxt_params['stopPrice'] = float(stop_price)
-                elif exchange_name.lower() in ['bybit', 'okx']:
-                    ccxt_params['triggerPrice'] = float(stop_price)
+                order_params['stopPrice'] = stop_price
 
             # 주문 실행
             logger.info(f"🔄 주문 실행 중 - {exchange_name}: {symbol} {side} {quantity} {order_type}")
 
-            if order_type == 'MARKET':
-                if side.upper() == 'BUY':
-                    order_result = exchange_instance.create_market_buy_order(
-                        ccxt_params['symbol'],
-                        ccxt_params['amount']
-                    )
-                else:
-                    order_result = exchange_instance.create_market_sell_order(
-                        ccxt_params['symbol'],
-                        ccxt_params['amount']
-                    )
-            elif order_type == 'LIMIT':
-                order_result = exchange_instance.create_limit_order(
-                    ccxt_params['symbol'],
-                    ccxt_params['side'],
-                    ccxt_params['amount'],
-                    ccxt_params['price']
-                )
-            else:
-                # STOP 주문들은 통합 create_order 사용
-                order_result = exchange_instance.create_order(**ccxt_params)
+            # Native 구현체 주문 실행
+            order_result = exchange_instance.create_order(**order_params)
 
             # 결과 파싱
             return self._parse_order_result(order_result, exchange_name)

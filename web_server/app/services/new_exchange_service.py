@@ -12,7 +12,7 @@ from app.services.security_service import require_trading_permission
 from app.utils.logging_security import get_secure_logger
 
 # 분리된 서비스들 import
-from app.services.exchange_connection_service import exchange_connection_service
+# exchange_connection_service 제거됨 - Enhanced Factory 사용
 from app.services.precision_cache_service import precision_cache_service
 from app.services.order_execution_service import order_execution_service
 from app.services.rate_limit_service import rate_limit_service
@@ -28,22 +28,17 @@ class NewExchangeService:
     """
 
     def __init__(self):
-        # 의존성 주입 설정
-        order_execution_service.set_connection_service(exchange_connection_service)
+        # Enhanced Factory만 사용
         logger.info("✅ 새로운 거래소 서비스 초기화 완료")
 
     # === 거래소 연결 관련 메서드 ===
 
     def get_exchange(self, account: Account) -> Optional[Any]:
-        """거래소 인스턴스 또는 어댑터 반환"""
+        """Enhanced Factory 어댑터 반환"""
         try:
-            # Enhanced Factory 또는 CCXT 어댑터 반환
-            adapter = exchange_adapter_factory.get_adapter(account, exchange_connection_service)
-            if adapter:
-                return adapter
-
-            # Fallback: CCXT 인스턴스 직접 반환
-            return exchange_connection_service.get_exchange_instance(account)
+            # Enhanced Factory 사용
+            adapter = exchange_adapter_factory.get_adapter(account)
+            return adapter
 
         except Exception as e:
             logger.error(f"거래소 인스턴스 획득 실패: {e}")
@@ -212,7 +207,6 @@ class NewExchangeService:
     def get_service_stats(self) -> Dict[str, Any]:
         """전체 서비스 통계"""
         return {
-            'connection_stats': exchange_connection_service.get_connection_stats(),
             'precision_cache_stats': precision_cache_service.get_cache_stats(),
             'rate_limit_stats': rate_limit_service.get_rate_limit_stats(),
             'adapter_stats': exchange_adapter_factory.get_adapter_stats()
@@ -220,7 +214,6 @@ class NewExchangeService:
 
     def clear_all_caches(self):
         """모든 캐시 클리어"""
-        exchange_connection_service.clear_all_instances()
         precision_cache_service.clear_cache()
         rate_limit_service.clear_history()
         exchange_adapter_factory.clear_all_adapters()
@@ -228,7 +221,6 @@ class NewExchangeService:
 
     def refresh_account(self, account: Account):
         """특정 계정 관련 캐시 새로고침"""
-        exchange_connection_service.clear_instance(account.id)
         exchange_adapter_factory.clear_adapter(account.id)
         rate_limit_service.clear_history(account.exchange)
         logger.info(f"🔄 계정 {account.id}({account.exchange}) 캐시 새로고침 완료")

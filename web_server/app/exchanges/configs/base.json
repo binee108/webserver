@@ -20,8 +20,8 @@
   },
   "exchanges": {
     "binance": {
-      "preferred_implementation": "custom",
-      "fallback_implementation": "ccxt",
+      "preferred_implementation": "native",
+      "fallback_implementation": "native",
       "rate_limit_mode": "conservative",
       "market_data_source": "primary",
       "order_execution_mode": "safe"

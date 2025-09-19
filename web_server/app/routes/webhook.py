@@ -8,7 +8,7 @@ from app.services.webhook_service import webhook_service, WebhookError
 from app.services.telegram_service import telegram_service
 from app.utils.response_formatter import (
     create_success_response, create_error_response, exception_to_error_response,
-    ErrorCode, adaptive_response
+    ErrorCode
 )
 
 bp = Blueprint('webhook', __name__, url_prefix='/api')
@@ -86,7 +86,7 @@ def webhook():
             performance_summary['total_processing_time_ms'] = total_processing_time_ms
             
             # 구현 타입별 통계 수집
-            implementation_stats = {'custom': 0, 'ccxt': 0, 'unknown': 0}
+            implementation_stats = {'native': 0, 'unknown': 0}
             total_order_time_ms = 0
             order_count = 0
             

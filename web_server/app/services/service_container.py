@@ -29,7 +29,7 @@ class ServiceContainer:
             ['precision_cache_service', 'rate_limit_service'],
 
             # Layer 2: 연결 서비스
-            ['exchange_connection_service', 'exchange_adapter_factory'],
+            ['exchange_adapter_factory'],
 
             # Layer 3: 실행 서비스
             ['order_execution_service'],

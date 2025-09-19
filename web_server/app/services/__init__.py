@@ -88,26 +88,19 @@ def _register_service_factories(container):
 
     # === Layer 2: 연결 서비스 ===
 
-    def create_exchange_connection_service():
-        from app.services.exchange_connection_service import exchange_connection_service
-        return exchange_connection_service
-
     def create_exchange_adapter_factory():
         from app.services.exchange_adapter_factory import exchange_adapter_factory
         return exchange_adapter_factory
 
-    container.register_service('exchange_connection_service', create_exchange_connection_service)
     container.register_service('exchange_adapter_factory', create_exchange_adapter_factory)
 
     # === Layer 3: 실행 서비스 ===
 
-    def create_order_execution_service(exchange_connection_service):
+    def create_order_execution_service():
         from app.services.order_execution_service import order_execution_service
-        order_execution_service.set_connection_service(exchange_connection_service)
         return order_execution_service
 
-    container.register_service('order_execution_service', create_order_execution_service,
-                             ['exchange_connection_service'])
+    container.register_service('order_execution_service', create_order_execution_service)
 
     # === Layer 4: 복합 서비스 ===
 

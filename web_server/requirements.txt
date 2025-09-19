@@ -4,7 +4,7 @@ Flask-SQLAlchemy==3.1.1
 Flask-WTF==1.2.1
 WTForms==3.1.1
 Werkzeug==2.3.7
-ccxt==4.1.64
+# ccxt==4.1.64 # 제거됨 - Native 구현만 사용
 APScheduler==3.10.4
 python-telegram-bot==20.7
 python-dotenv==1.0.0

@@ -67,8 +67,8 @@ class FeatureFlags:
 @dataclass
 class ExchangeSettings:
     """거래소별 설정"""
-    preferred_implementation: str = "auto"  # auto, custom, ccxt
-    fallback_implementation: str = "ccxt"
+    preferred_implementation: str = "native"  # native only
+    fallback_implementation: str = "native"
     rate_limit_mode: str = "conservative"  # conservative, aggressive, adaptive
     market_data_source: str = "primary"  # primary, fallback, hybrid
     order_execution_mode: str = "safe"  # safe, fast, balanced
