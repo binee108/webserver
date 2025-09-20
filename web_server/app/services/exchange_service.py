@@ -17,17 +17,15 @@ import json  # precision 데이터 직렬화용
 
 logger = logging.getLogger(__name__)
 
-# Enhanced Factory 및 새로운 아키텍처 import
+# 단순화된 거래소 팩토리 import
 try:
-    from app.exchanges.enhanced_factory import enhanced_factory
-    from app.exchanges.config import should_use_custom_exchange, get_config
-    ENHANCED_FACTORY_AVAILABLE = True
-    logger.info("✅ Enhanced Factory 사용 가능")
+    from app.exchanges.factory import exchange_factory
+    FACTORY_AVAILABLE = True
+    logger.info("✅ 단순화된 거래소 팩토리 사용 가능")
 except ImportError as e:
-    ENHANCED_FACTORY_AVAILABLE = False
-    enhanced_factory = None
-    should_use_custom_exchange = None
-    logger.warning(f"⚠️ Enhanced Factory 사용 불가 (레거시 모드): {e}")
+    FACTORY_AVAILABLE = False
+    exchange_factory = None
+    logger.warning(f"⚠️ 거래소 팩토리 사용 불가: {e}")
 
 class ExchangeError(Exception):
     """거래소 관련 오류"""
@@ -393,51 +391,35 @@ class ExchangeService:
         Returns:
             거래소 인스턴스 (implementation_type 메타데이터 포함)
         """
-        from ..exchanges.sync_wrapper import SyncExchangeWrapper
-        from ..exchanges.base import BaseExchange
-        
         # 캐시 키 생성
         cache_key = f"{account.id}_{market_type or 'spot'}"
-        
+
         # 캐시된 인스턴스가 있으면 반환
         if cache_key in self._unified_exchange_cache:
             cached_instance = self._unified_exchange_cache[cache_key]
-            logger.debug(f"🚀 캐시된 거래소 인스턴스 사용: {getattr(cached_instance, '_implementation_type', 'unknown')}")
+            logger.debug(f"🚀 캐시된 거래소 인스턴스 사용: {getattr(cached_instance, '_implementation_type', 'native')}")
             return cached_instance
-        
+
         # 새 인스턴스 생성
         exchange = None
-        implementation_type = "ccxt"  # 기본값
-        
-        # 1. Native 구현 우선 시도 (Registry 기반)
-        if (ENHANCED_FACTORY_AVAILABLE and 
-            should_use_custom_exchange is not None and 
-            should_use_custom_exchange(account.exchange)):
+        implementation_type = "native"  # Native 구현만 사용
+
+        # 단순화된 팩토리 사용
+        if FACTORY_AVAILABLE and exchange_factory:
             try:
                 logger.info(f"🔄 Native 구현을 사용하여 {account.exchange} 인스턴스 생성")
-                
-                # Enhanced Factory를 통해 인스턴스 생성
-                raw_exchange = enhanced_factory.create_exchange(
+
+                # 단순화된 팩토리를 통해 인스턴스 생성
+                exchange = exchange_factory.create_exchange(
                     exchange_name=account.exchange,
-                    market_type=(market_type or "spot").lower(),
                     api_key=account.public_api,
-                    api_secret=account.secret_api,
-                    testnet=getattr(account, 'is_testnet', False),
-                    prefer_custom=True
+                    secret=account.secret_api,
+                    testnet=getattr(account, 'is_testnet', False)
                 )
-                
-                # 실제 반환된 인스턴스 타입 확인 및 처리
-                if isinstance(raw_exchange, BaseExchange):
-                    # Native async 구현: SyncWrapper로 감싸기
-                    exchange = SyncExchangeWrapper(raw_exchange)
-                    implementation_type = "custom"
-                    logger.info(f"✅ Native 구현 사용 (SyncWrapper 적용): {account.exchange}")
-                    
-                elif hasattr(raw_exchange, '__module__') and 'ccxt' in str(raw_exchange.__module__):
-                    # Enhanced Factory가 CCXT 반환한 경우
-                    exchange = raw_exchange
-                    implementation_type = "ccxt"
-                    logger.info(f"✅ Enhanced Factory에서 CCXT 반환: {account.exchange}")
+
+                if exchange:
+                    implementation_type = "native"
+                    logger.info(f"✅ Native 구현 사용: {account.exchange}")
                     
                 else:
                     # 기타 경우 - 타입 추론
