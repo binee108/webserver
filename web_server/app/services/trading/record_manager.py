@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
@@ -242,6 +242,10 @@ class RecordManager:
                         order_id,
                         execution_quantity,
                     )
+
+                    # Phase 3.2: 실시간 성과 업데이트 Hook
+                    self._trigger_performance_update(strategy_account.strategy_id)
+
                     return {
                         'success': True,
                         'trade_execution_id': existing_execution.id,
@@ -293,6 +297,9 @@ class RecordManager:
                 execution_quantity,
                 execution_price,
             )
+
+            # Phase 3.2: 실시간 성과 업데이트 Hook
+            self._trigger_performance_update(strategy_account.strategy_id)
 
             response: Dict[str, Any] = {
                 'success': True,
@@ -460,3 +467,36 @@ class RecordManager:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("진입/청산 판단 예상치 못한 오류: %s, 기본값(진입) 반환", exc)
             return True
+
+    def _trigger_performance_update(self, strategy_id: int) -> None:
+        """
+        Phase 3.2: 거래 기록 후 실시간 성과 업데이트 Hook
+
+        거래 실행 기록이 생성/업데이트될 때 자동으로 당일 성과를 재계산합니다.
+        """
+        try:
+            from app.services.performance_tracking import performance_tracking_service
+
+            today = date.today()
+            performance = performance_tracking_service.calculate_daily_performance(
+                strategy_id=strategy_id,
+                target_date=today
+            )
+
+            if performance:
+                logger.info(
+                    "📈 실시간 성과 업데이트 완료: 전략 %s, 일일 PnL: %s, 누적 PnL: %s",
+                    strategy_id,
+                    performance.daily_pnl,
+                    performance.cumulative_pnl
+                )
+            else:
+                logger.warning("실시간 성과 업데이트 실패: 전략 %s", strategy_id)
+
+        except Exception as exc:
+            # 성과 업데이트 실패는 거래 기록에 영향을 주지 않음 (비침습적 hook)
+            logger.error(
+                "실시간 성과 업데이트 중 오류 발생 (전략: %s): %s",
+                strategy_id,
+                exc
+            )
