@@ -6,7 +6,7 @@
 
 import logging
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from app import db
@@ -97,13 +97,17 @@ class CapitalAllocationService:
 
             old_capital = capital.allocated_capital if capital else 0
 
+            rebalance_time = datetime.utcnow()
+
             if capital:
                 capital.allocated_capital = float(allocated)
-                capital.last_updated = datetime.utcnow()
+                capital.last_updated = rebalance_time
+                capital.last_rebalance_at = rebalance_time  # 리밸런싱 시각 기록
             else:
                 capital = StrategyCapital(
                     strategy_account_id=sa.id,
-                    allocated_capital=float(allocated)
+                    allocated_capital=float(allocated),
+                    last_rebalance_at=rebalance_time  # 최초 배분 시각 기록
                 )
                 self.session.add(capital)
 
@@ -228,6 +232,114 @@ class CapitalAllocationService:
             logger.error(f"포지션 상태 조회 실패 - 계좌 {account_id}: {e}")
             # 예외 발생 시 안전하게 True 반환 (리밸런싱 방지)
             return True
+
+    def should_rebalance(self, account_id: int, min_interval_hours: int = 1) -> Dict[str, Any]:
+        """
+        자동 리밸런싱 실행 여부를 판단합니다.
+
+        조건:
+        1. 모든 포지션이 청산된 상태여야 함 (has_open_positions == False)
+        2. 마지막 리밸런싱 이후 최소 시간이 경과했어야 함 (기본 1시간)
+
+        Args:
+            account_id: 계좌 ID
+            min_interval_hours: 최소 리밸런싱 간격 (시간 단위, 기본값: 1)
+
+        Returns:
+            Dict[str, Any]:
+                - should_rebalance: bool (리밸런싱 실행 여부)
+                - reason: str (판단 근거)
+                - has_positions: bool (포지션 존재 여부)
+                - last_rebalance_at: datetime or None (마지막 리밸런싱 시각)
+                - time_since_last: float or None (마지막 리밸런싱 이후 경과 시간, 시간 단위)
+        """
+        try:
+            # 조건 1: 포지션 존재 여부 확인
+            has_positions = self.has_open_positions(account_id)
+
+            if has_positions:
+                logger.debug(f"🔒 계좌 {account_id} 리밸런싱 불가: 열린 포지션 존재")
+                return {
+                    'should_rebalance': False,
+                    'reason': '열린 포지션이 존재하여 리밸런싱 불가',
+                    'has_positions': True,
+                    'last_rebalance_at': None,
+                    'time_since_last': None
+                }
+
+            # 조건 2: 마지막 리밸런싱 시간 확인
+            # 해당 계좌의 전략들에 대한 StrategyCapital 조회
+            strategy_capitals = db.session.query(StrategyCapital).join(
+                StrategyAccount
+            ).filter(
+                StrategyAccount.account_id == account_id,
+                StrategyAccount.is_active == True
+            ).all()
+
+            if not strategy_capitals:
+                logger.debug(f"ℹ️  계좌 {account_id} 리밸런싱 가능: 전략 자본 레코드 없음 (최초 배분)")
+                return {
+                    'should_rebalance': True,
+                    'reason': '최초 자본 배분 필요',
+                    'has_positions': False,
+                    'last_rebalance_at': None,
+                    'time_since_last': None
+                }
+
+            # 가장 최근 리밸런싱 시각 찾기
+            last_rebalance_times = [
+                sc.last_rebalance_at for sc in strategy_capitals
+                if sc.last_rebalance_at is not None
+            ]
+
+            if not last_rebalance_times:
+                logger.debug(f"✅ 계좌 {account_id} 리밸런싱 가능: 리밸런싱 기록 없음")
+                return {
+                    'should_rebalance': True,
+                    'reason': '리밸런싱 기록 없음',
+                    'has_positions': False,
+                    'last_rebalance_at': None,
+                    'time_since_last': None
+                }
+
+            last_rebalance_at = max(last_rebalance_times)
+            time_since_last = (datetime.utcnow() - last_rebalance_at).total_seconds() / 3600  # 시간 단위
+
+            if time_since_last < min_interval_hours:
+                logger.debug(
+                    f"🔒 계좌 {account_id} 리밸런싱 불가: "
+                    f"최소 간격 미달 ({time_since_last:.2f}시간 < {min_interval_hours}시간)"
+                )
+                return {
+                    'should_rebalance': False,
+                    'reason': f'최소 리밸런싱 간격 미달 ({time_since_last:.2f}시간 < {min_interval_hours}시간)',
+                    'has_positions': False,
+                    'last_rebalance_at': last_rebalance_at,
+                    'time_since_last': time_since_last
+                }
+
+            logger.info(
+                f"✅ 계좌 {account_id} 리밸런싱 가능: "
+                f"포지션 청산 완료, 마지막 리밸런싱 이후 {time_since_last:.2f}시간 경과"
+            )
+            return {
+                'should_rebalance': True,
+                'reason': f'리밸런싱 조건 충족 (마지막 리밸런싱 이후 {time_since_last:.2f}시간 경과)',
+                'has_positions': False,
+                'last_rebalance_at': last_rebalance_at,
+                'time_since_last': time_since_last
+            }
+
+        except Exception as e:
+            logger.error(f"리밸런싱 조건 검증 실패 - 계좌 {account_id}: {e}")
+            # 예외 발생 시 안전하게 False 반환 (리밸런싱 방지)
+            return {
+                'should_rebalance': False,
+                'reason': f'검증 중 오류 발생: {str(e)}',
+                'has_positions': None,
+                'last_rebalance_at': None,
+                'time_since_last': None
+            }
 
 
 # 싱글톤 인스턴스

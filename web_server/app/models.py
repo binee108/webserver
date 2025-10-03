@@ -231,13 +231,14 @@ class StrategyAccount(db.Model):
 class StrategyCapital(db.Model):
     """전략별 할당 자본 관리 테이블"""
     __tablename__ = 'strategy_capital'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), unique=True, nullable=False)
     allocated_capital = db.Column(db.Float, default=0.0, nullable=False)  # 할당된 자본
     current_pnl = db.Column(db.Float, default=0.0, nullable=False)  # 현재 미실현 손익
     last_updated = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    last_rebalance_at = db.Column(db.DateTime, nullable=True)  # 마지막 리밸런싱 시각 (자동 리밸런싱 트리거용)
+
     def __repr__(self):
         return f'<StrategyCapital {self.strategy_account.strategy.group_name}: {self.allocated_capital}>'
 
