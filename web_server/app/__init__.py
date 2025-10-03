@@ -477,6 +477,18 @@ def register_background_jobs(app):
         max_instances=1
     )
 
+    # Phase 4: 자동 리밸런싱 (매시 17분 - 소수 시간대)
+    scheduler.add_job(
+        func=auto_rebalance_all_accounts_with_context,
+        args=[app],
+        trigger="cron",
+        minute=17,
+        id='auto_rebalance_accounts',
+        name='Auto Rebalance Accounts',
+        replace_existing=True,
+        max_instances=1
+    )
+
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
 
 def warm_up_precision_cache_with_context(app):
@@ -725,6 +737,82 @@ def send_daily_summary_with_context(app):
                     telegram_service.send_error_alert(
                         "백그라운드 작업 오류",
                         f"일일 요약 보고서 전송 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
+
+def auto_rebalance_all_accounts_with_context(app):
+    """
+    Phase 4: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
+
+    모든 활성 계좌에 대해 리밸런싱 조건을 확인하고,
+    조건 충족 시 자동으로 자본 재배분을 실행합니다.
+    매시 17분에 실행됩니다 (소수 시간대).
+    """
+    with app.app_context():
+        try:
+            from app.services.capital_service import capital_allocation_service
+            from app.models import Account
+
+            app.logger.info('🔄 자동 리밸런싱 작업 시작')
+
+            # 모든 활성 계좌 조회
+            accounts = Account.query.filter_by(is_active=True).all()
+
+            if not accounts:
+                app.logger.info('  ℹ️  활성 계좌가 없습니다')
+                return
+
+            rebalanced_count = 0
+            skipped_count = 0
+            failed_count = 0
+
+            for account in accounts:
+                try:
+                    # 리밸런싱 조건 확인
+                    check_result = capital_allocation_service.should_rebalance(
+                        account_id=account.id,
+                        min_interval_hours=1  # 최소 1시간 간격
+                    )
+
+                    if not check_result['should_rebalance']:
+                        app.logger.debug(
+                            f'  ⏭️  계좌 {account.id} ({account.name}): 리밸런싱 건너뜀 - {check_result["reason"]}'
+                        )
+                        skipped_count += 1
+                        continue
+
+                    # 리밸런싱 실행 (실시간 잔고 사용)
+                    rebalance_result = capital_allocation_service.recalculate_strategy_capital(
+                        account_id=account.id,
+                        use_live_balance=True
+                    )
+
+                    app.logger.info(
+                        f'  ✅ 계좌 {account.id} ({account.name}): 리밸런싱 완료 - '
+                        f'{len(rebalance_result.get("allocations", []))}개 전략, '
+                        f'총 자본 {rebalance_result.get("total_capital", 0):.2f} USDT'
+                    )
+                    rebalanced_count += 1
+
+                except Exception as e:
+                    app.logger.error(f'  ❌ 계좌 {account.id} 리밸런싱 실패: {e}')
+                    failed_count += 1
+
+            app.logger.info(
+                f'✅ 자동 리밸런싱 작업 완료 - '
+                f'성공: {rebalanced_count}, 건너뜀: {skipped_count}, 실패: {failed_count}'
+            )
+
+        except Exception as e:
+            app.logger.error(f'❌ 자동 리밸런싱 작업 실패: {e}')
+            # 텔레그램 알림 (선택사항)
+            try:
+                from app.services.telegram import telegram_service
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"자동 리밸런싱 실패: {str(e)}"
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
