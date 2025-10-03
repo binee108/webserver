@@ -84,28 +84,6 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("이벤트 발송 실패: %s", exc)
 
-    def emit_trade_event(
-        self,
-        strategy: Strategy,
-        symbol: str,
-        side: str,
-        quantity: Decimal,
-        order_result: Dict[str, object],
-    ) -> None:
-        """Emit the trade executed event."""
-        self.emit_trading_event('trade_executed', strategy, symbol, side, quantity, order_result)
-
-    def emit_order_event(
-        self,
-        strategy: Strategy,
-        symbol: str,
-        side: str,
-        quantity: Decimal,
-        order_result: Dict[str, object],
-    ) -> None:
-        """Emit the order filled event for legacy compatibility."""
-        self.emit_trading_event(OrderEventType.ORDER_FILLED, strategy, symbol, side, quantity, order_result)
-
     def emit_order_events_smart(
         self,
         strategy: Strategy,

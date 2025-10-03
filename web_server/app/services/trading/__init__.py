@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import db
 from app.models import Account, Strategy, StrategyAccount
+from app.services.utils import to_decimal
 
 from .core import TradingCore
 from .event_emitter import EventEmitter
@@ -96,7 +97,7 @@ class TradingService:
         )
 
     def _to_decimal(self, value: Any, default: Decimal = Decimal('0')) -> Decimal:
-        return self.core._to_decimal(value, default)
+        return to_decimal(value, default)
 
     def _merge_order_with_exchange(self, account: Account, symbol: str,
                                    market_type: str, order_result: Dict[str, Any]) -> Dict[str, Any]:

@@ -22,6 +22,7 @@ from app.models import (
     StrategyAccount, User, StrategyCapital, DailyAccountSummary, TradeExecution
 )
 from app.services.security import security_service
+from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
 class AnalyticsError(Exception):
@@ -616,7 +617,7 @@ class AnalyticsService:
                     sa_id = sa.id
 
                     capital_obj = strategy_capitals.get(sa_id)
-                    allocated_capital = self._to_decimal(
+                    allocated_capital = to_decimal(
                         capital_obj.allocated_capital if capital_obj else 0
                     )
                     strategy_capital += allocated_capital
@@ -631,7 +632,7 @@ class AnalyticsService:
                     for position in positions:
                         unrealized_value = getattr(position, 'unrealized_pnl', None)
                         if unrealized_value not in (None, ''):
-                            account_unrealized_pnl += self._to_decimal(unrealized_value)
+                            account_unrealized_pnl += to_decimal(unrealized_value)
 
                     strategy_unrealized_pnl += account_unrealized_pnl
 
@@ -641,7 +642,7 @@ class AnalyticsService:
                     strategy_exit_trades.extend(account_exit_trades)
 
                     account_realized_pnl = sum(
-                        (self._to_decimal(trade.pnl) for trade in account_trades),
+                        (to_decimal(trade.pnl) for trade in account_trades),
                         Decimal('0')
                     )
                     strategy_realized_pnl += account_realized_pnl
@@ -766,15 +767,6 @@ class AnalyticsService:
             logger.error(f"대시보드 통계 조회 실패: {e}")
             raise AnalyticsError(f"대시보드 통계 조회 실패: {str(e)}")
 
-    def _to_decimal(self, value: Any) -> Decimal:
-        """안전하게 Decimal 변환"""
-        try:
-            if value in (None, ''):
-                return Decimal('0')
-            return Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            return Decimal('0')
-
     def _filter_exit_trades(self, trades: List[Trade]) -> List[Trade]:
         """청산(Exit) 거래 필터링 - 없으면 전체 거래 반환"""
         exit_trades = [trade for trade in trades if trade.is_entry is False]
@@ -804,7 +796,7 @@ class AnalyticsService:
         )
 
         pnl_values = [
-            self._to_decimal(trade.pnl)
+            to_decimal(trade.pnl)
             for trade in sorted_trades
             if trade.pnl is not None
         ]
@@ -847,7 +839,7 @@ class AnalyticsService:
         current_losses = 0
 
         for trade in sorted_trades:
-            pnl_value = self._to_decimal(trade.pnl)
+            pnl_value = to_decimal(trade.pnl)
             if pnl_value > 0:
                 current_wins += 1
                 current_losses = 0
@@ -877,7 +869,7 @@ class AnalyticsService:
 
     def _calculate_risk_metrics(self, trades: List[Trade], allocated_capital: Decimal) -> Dict[str, float]:
         """전략 리스크 메트릭 계산"""
-        capital_decimal = self._to_decimal(allocated_capital)
+        capital_decimal = to_decimal(allocated_capital)
         if not trades or capital_decimal <= 0:
             return {
                 'mdd': 0.0,
@@ -895,7 +887,7 @@ class AnalyticsService:
 
     def _calculate_timeframe_metrics(self, trades: List[Trade], allocated_capital: Decimal, period_days: int = 30) -> Dict[str, Any]:
         """기간 기반 메트릭 계산 (기본 30일)"""
-        capital_decimal = self._to_decimal(allocated_capital)
+        capital_decimal = to_decimal(allocated_capital)
         metrics = {
             'pnl_30d': 0.0,
             'roi_30d': 0.0,
@@ -925,7 +917,7 @@ class AnalyticsService:
             return metrics
 
         pnl_sum = sum(
-            (self._to_decimal(trade.pnl) for trade in trades_in_period),
+            (to_decimal(trade.pnl) for trade in trades_in_period),
             Decimal('0')
         )
         metrics['pnl_30d'] = float(pnl_sum)
@@ -947,7 +939,7 @@ class AnalyticsService:
         period_days: Optional[int] = None
     ) -> List[float]:
         """일별 수익률(%) 리스트 계산"""
-        capital_decimal = self._to_decimal(allocated_capital)
+        capital_decimal = to_decimal(allocated_capital)
         if capital_decimal <= 0:
             return []
 
@@ -976,13 +968,13 @@ class AnalyticsService:
             trade_date = trade.timestamp.date()
             if cutoff_date and trade_date < cutoff_date:
                 continue
-            daily_pnl[trade_date] += self._to_decimal(trade.pnl)
+            daily_pnl[trade_date] += to_decimal(trade.pnl)
 
         return daily_pnl
 
     def _calculate_drawdown(self, trades: List[Trade], allocated_capital: Decimal) -> float:
         """최대 낙폭 계산"""
-        capital_decimal = self._to_decimal(allocated_capital)
+        capital_decimal = to_decimal(allocated_capital)
         if not trades or capital_decimal <= 0:
             return 0.0
 
@@ -991,7 +983,7 @@ class AnalyticsService:
         max_drawdown = Decimal('0')
 
         for trade in sorted(trades, key=lambda t: t.timestamp or datetime.min):
-            pnl_value = self._to_decimal(trade.pnl)
+            pnl_value = to_decimal(trade.pnl)
             cumulative += pnl_value
             if cumulative > peak:
                 peak = cumulative

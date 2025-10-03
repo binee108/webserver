@@ -71,7 +71,7 @@ class RecordManager:
             side_upper = side.upper()
 
             if existing_trade:
-                previous_quantity = self._to_decimal(existing_trade.quantity)
+                previous_quantity = to_decimal(existing_trade.quantity)
                 quantity_delta = quantity - previous_quantity
 
                 changed = False
@@ -184,11 +184,11 @@ class RecordManager:
             if not order_id:
                 return {'success': False, 'error': 'missing_order_id'}
 
-            filled_decimal = self._to_decimal(order_result.get('filled_quantity'))
+            filled_decimal = to_decimal(order_result.get('filled_quantity'))
             if filled_decimal <= Decimal('0'):
                 return {'success': False, 'reason': 'no_fill'}
 
-            execution_price_decimal = self._to_decimal(
+            execution_price_decimal = to_decimal(
                 order_result.get('average_price')
                 or order_result.get('adjusted_average_price')
                 or order_result.get('price')
@@ -428,17 +428,6 @@ class RecordManager:
     def _get_strategy_account_ids(self, strategy_id: int) -> List[int]:
         accounts = StrategyAccount.query.filter_by(strategy_id=strategy_id).all()
         return [account.id for account in accounts]
-
-    @staticmethod
-    def _to_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
-        if isinstance(value, Decimal):
-            return value
-        if value is None:
-            return default
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            return default
 
     def _calculate_is_entry_for_trade(
         self,
