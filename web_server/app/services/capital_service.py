@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, List
 
 from app import db
-from app.models import Account, StrategyAccount, StrategyCapital, DailyAccountSummary
+from app.models import Account, StrategyAccount, StrategyCapital, DailyAccountSummary, StrategyPosition
 from app.services.exchange import exchange_service
 from app.utils.logging_security import get_secure_logger
 
@@ -184,6 +184,50 @@ class CapitalAllocationService:
         except Exception as e:
             logger.error(f"❌ 잔고 조회 실패: {e}")
             raise CapitalAllocationError(f"잔고를 조회할 수 없습니다: {e}")
+
+    def has_open_positions(self, account_id: int) -> bool:
+        """
+        계좌의 모든 전략에 대해 열린 포지션이 있는지 확인합니다.
+
+        Args:
+            account_id: 계좌 ID
+
+        Returns:
+            bool: True = 포지션 존재, False = 모든 포지션 청산됨
+        """
+        try:
+            # 해당 계좌와 연결된 모든 StrategyAccount 조회
+            strategy_account_ids = [
+                sa.id for sa in StrategyAccount.query.filter_by(
+                    account_id=account_id,
+                    is_active=True
+                ).all()
+            ]
+
+            if not strategy_account_ids:
+                logger.debug(f"계좌 {account_id}에 활성 전략이 없습니다")
+                return False
+
+            # 해당 전략들에 대해 포지션 수량이 0이 아닌 레코드 조회
+            open_position_count = StrategyPosition.query.filter(
+                StrategyPosition.strategy_account_id.in_(strategy_account_ids),
+                StrategyPosition.quantity != 0
+            ).count()
+
+            has_positions = open_position_count > 0
+
+            logger.debug(
+                f"📊 계좌 {account_id} 포지션 상태: "
+                f"{'열린 포지션 존재' if has_positions else '모든 포지션 청산됨'} "
+                f"(포지션 수: {open_position_count})"
+            )
+
+            return has_positions
+
+        except Exception as e:
+            logger.error(f"포지션 상태 조회 실패 - 계좌 {account_id}: {e}")
+            # 예외 발생 시 안전하게 True 반환 (리밸런싱 방지)
+            return True
 
 
 # 싱글톤 인스턴스
