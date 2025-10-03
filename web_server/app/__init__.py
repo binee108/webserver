@@ -369,7 +369,7 @@ def init_scheduler(app):
         
         # 텔레그램 시스템 시작 알림
         try:
-            from app.services.telegram_service import telegram_service
+            from app.services.telegram import telegram_service
             if telegram_service.is_enabled():
                 telegram_service.send_system_status('startup', 'APScheduler 백그라운드 작업 시스템이 시작되었습니다.')
             else:
@@ -386,15 +386,20 @@ def register_background_jobs(app):
     # 🆕 애플리케이션 시작 시 Precision 캐시 웜업을 직접 실행 (한 번만)
     # Flask 개발 서버의 자동 재시작으로 인한 중복 실행 방지
     if not os.environ.get('WERKZEUG_RUN_MAIN'):
-        # 메인 프로세스가 아닌 경우 (Flask 개발 서버의 reloader 프로세스) 웜업 건너뛰기
-        app.logger.info('🔄 Flask reloader 프로세스에서는 Precision 캐시 웜업을 건너뜁니다')
+        # 메인 프로세스가 아닌 경우 (Flask 개발 서버의 reloader 프로세스) 웜업 건너뜁니다
+        app.logger.info('🔄 Flask reloader 프로세스에서는 초기 캐시 웜업을 건너뜁니다')
     else:
         try:
-            # 웜업을 직접 실행 (스케줄러에 등록하지 않음)
             warm_up_precision_cache_with_context(app)
             app.logger.info('✅ 애플리케이션 시작 시 Precision 캐시 웜업 완료')
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 Precision 캐시 웜업 실패: {str(e)}')
+
+        try:
+            warm_up_market_caches_with_context(app)
+            app.logger.info('✅ 애플리케이션 시작 시 캐시 웜업 완료')
+        except Exception as e:
+            app.logger.error(f'❌ 애플리케이션 시작 시 캐시 웜업 실패: {str(e)}')
     
     # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시)
     scheduler.add_job(
@@ -409,6 +414,18 @@ def register_background_jobs(app):
         max_instances=1
     )
     
+    
+    # 🆕 가격 캐시 업데이트 (31초마다, 소수 주기로 정각 집중 트래픽 회피)
+    scheduler.add_job(
+        func=update_price_cache_with_context,
+        args=[app],
+        trigger="interval",
+        seconds=31,
+        id='update_price_cache',
+        name='Update Price Cache',
+        replace_existing=True,
+        max_instances=1
+    )
     # 미체결 주문 상태 업데이트 (30초마다)
     scheduler.add_job(
         func=update_open_orders_with_context,
@@ -452,7 +469,7 @@ def warm_up_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""
     with app.app_context():
         try:
-            from app.services.exchange_service import exchange_service
+            from app.services.exchange import exchange_service
             
             app.logger.info('🔥 Precision 캐시 웜업 시작')
             
@@ -470,7 +487,7 @@ def update_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 주기적 업데이트"""
     with app.app_context():
         try:
-            from app.services.exchange_service import exchange_service
+            from app.services.exchange import exchange_service
             from app.models import Account
             
             app.logger.info('🔄 Precision 캐시 주기적 업데이트 시작')
@@ -511,17 +528,132 @@ def update_precision_cache_with_context(app):
         except Exception as e:
             app.logger.error(f'❌ Precision 캐시 주기적 업데이트 실패: {str(e)}')
 
+def _refresh_price_cache(app, *, source: str = 'scheduler') -> dict:
+    """가격 캐시 갱신 핵심 로직 (앱 컨텍스트 내에서 호출 전제)"""
+    from collections import defaultdict
+
+    from app.services.price_cache import price_cache
+    from app.services.exchange import exchange_service
+    from app.models import StrategyPosition
+    from app.constants import Exchange, MarketType
+
+    logger = app.logger
+    logger.debug('💰 가격 캐시 갱신 시작 (source=%s)', source)
+
+    supported_exchanges = exchange_service.get_supported_exchanges()
+    if not supported_exchanges:
+        supported_exchanges = [Exchange.BINANCE]
+
+    # 1) 거래소/마켓 전체 시세 갱신
+    for exchange_name in supported_exchanges:
+        normalized_exchange = Exchange.normalize(exchange_name) or Exchange.BINANCE
+
+        for market_type in (MarketType.SPOT, MarketType.FUTURES):
+            quotes = exchange_service.get_price_quotes(
+                exchange=normalized_exchange,
+                market_type=market_type,
+                symbols=None
+            )
+
+            if not quotes:
+                continue
+
+            for quote in quotes.values():
+                price_cache.set_price(
+                    symbol=quote.symbol,
+                    price=quote.last_price,
+                    exchange=normalized_exchange,
+                    market_type=market_type
+                )
+
+            logger.debug(
+                '📦 가격 캐시 갱신: exchange=%s market=%s symbols=%s (source=%s)',
+                normalized_exchange,
+                market_type,
+                len(quotes),
+                source
+            )
+
+    # 2) 활성 포지션 심볼 우선 갱신
+    active_positions = StrategyPosition.query.filter(
+        StrategyPosition.quantity != 0
+    ).all()
+
+    symbol_groups = defaultdict(set)
+
+    for position in active_positions:
+        strategy_account = position.strategy_account
+        if not strategy_account:
+            continue
+
+        account = strategy_account.account
+        strategy = strategy_account.strategy
+        if not account or not strategy:
+            continue
+
+        exchange_name = account.exchange or Exchange.BINANCE
+        market_type = strategy.market_type or account.market_type or MarketType.SPOT
+
+        normalized_exchange = Exchange.normalize(exchange_name) or Exchange.BINANCE
+        normalized_market = MarketType.normalize(market_type) if market_type else MarketType.SPOT
+
+        symbol_groups[(normalized_exchange, normalized_market)].add(position.symbol.upper())
+
+    if symbol_groups:
+        for (exchange_name, market_type), symbols in symbol_groups.items():
+            symbol_list = sorted(symbols)
+            if not symbol_list:
+                continue
+
+            updated = price_cache.update_batch_prices(
+                symbols=symbol_list,
+                exchange=exchange_name,
+                market_type=market_type
+            )
+            logger.debug(
+                '%s %s 가격 캐시 추가 갱신: %s개 심볼 (source=%s)',
+                exchange_name,
+                market_type,
+                len(updated),
+                source
+            )
+    else:
+        logger.debug('활성 포지션이 없어 추가 갱신 단계는 건너뜁니다 (source=%s)', source)
+
+    stats = price_cache.get_stats()
+    return stats
+
+
+def warm_up_market_caches_with_context(app):
+    """애플리케이션 초기 구동 시 캐시를 일괄 웜업"""
+    with app.app_context():
+        try:
+            stats = _refresh_price_cache(app, source='startup')
+            app.logger.info('✅ 가격 캐시 초기 웜업 완료 - 통계: %s', stats)
+        except Exception as e:
+            app.logger.error(f'❌ 가격 캐시 초기 웜업 실패: {str(e)}')
+
+
+def update_price_cache_with_context(app):
+    """주기적으로 가격 캐시를 갱신"""
+    with app.app_context():
+        try:
+            stats = _refresh_price_cache(app, source='scheduler')
+            app.logger.debug(f'💰 가격 캐시 통계: {stats}')
+        except Exception as e:
+            app.logger.error(f'❌ 가격 캐시 업데이트 실패: {str(e)}')
+
 def update_open_orders_with_context(app):
     """Flask 앱 컨텍스트 내에서 미체결 주문 상태 업데이트"""
     with app.app_context():
         try:
-            from app.services.order_service import order_service
+            from app.services.trading import trading_service as order_service
             order_service.update_open_orders_status()
             app.logger.debug('미체결 주문 상태 업데이트 완료')
         except Exception as e:
             app.logger.error(f'미체결 주문 상태 업데이트 실패: {str(e)}')
             try:
-                from app.services.telegram_service import telegram_service
+                from app.services.telegram import telegram_service
                 if telegram_service.is_enabled():
                     telegram_service.send_error_alert(
                         "백그라운드 작업 오류",
@@ -534,13 +666,13 @@ def calculate_unrealized_pnl_with_context(app):
     """Flask 앱 컨텍스트 내에서 미실현 손익 계산"""
     with app.app_context():
         try:
-            from app.services.position_service import position_service
+            from app.services.trading import trading_service as position_service
             position_service.calculate_unrealized_pnl()
             app.logger.debug('미실현 손익 계산 완료')
         except Exception as e:
             app.logger.error(f'미실현 손익 계산 실패: {str(e)}')
             try:
-                from app.services.telegram_service import telegram_service
+                from app.services.telegram import telegram_service
                 if telegram_service.is_enabled():
                     telegram_service.send_error_alert(
                         "백그라운드 작업 오류",
@@ -553,8 +685,8 @@ def send_daily_summary_with_context(app):
     """Flask 앱 컨텍스트 내에서 일일 요약 보고서 전송"""
     with app.app_context():
         try:
-            from app.services.analytics_service import analytics_service
-            from app.services.telegram_service import telegram_service
+            from app.services.analytics import analytics_service
+            from app.services.telegram import telegram_service
             from app.models import Account
             
             # 모든 활성 계정에 대한 일일 요약 데이터 생성
@@ -573,7 +705,7 @@ def send_daily_summary_with_context(app):
         except Exception as e:
             app.logger.error(f'일일 요약 보고서 전송 실패: {str(e)}')
             try:
-                from app.services.telegram_service import telegram_service
+                from app.services.telegram import telegram_service
                 if telegram_service.is_enabled():
                     telegram_service.send_error_alert(
                         "백그라운드 작업 오류",

@@ -34,7 +34,7 @@ def test_telegram():
                 'error': '관리자 권한이 필요합니다.'
             }), 403
         
-        from app.services.telegram_service import telegram_service
+        from app.services.telegram import telegram_service
         result = telegram_service.test_connection()
         return jsonify(result), 200 if result['success'] else 400
     except Exception as e:
@@ -156,10 +156,10 @@ def trigger_job():
     """특정 백그라운드 작업 수동 실행"""
     try:
         from app import scheduler
-        from app.services.order_service import order_service
-        from app.services.position_service import position_service
-        from app.services.analytics_service import analytics_service
-        from app.services.telegram_service import telegram_service
+        from app.services.trading import trading_service as order_service
+        from app.services.trading import trading_service as position_service
+        from app.services.analytics import analytics_service
+        from app.services.telegram import telegram_service
         
         if not current_user.is_admin:
             return jsonify({
@@ -224,7 +224,7 @@ def cache_stats():
                 'error': '관리자 권한이 필요합니다.'
             }), 403
         
-        from app.services.exchange_service import exchange_service
+        from app.services.exchange import exchange_service
         
         stats = exchange_service.get_cache_stats()
         
@@ -251,7 +251,7 @@ def clear_cache():
                 'error': '관리자 권한이 필요합니다.'
             }), 403
         
-        from app.services.exchange_service import exchange_service
+        from app.services.exchange import exchange_service
         
         data = request.get_json() or {}
         exchange_name = data.get('exchange')

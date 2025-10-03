@@ -52,6 +52,18 @@ class RealtimeOpenOrdersManager {
     }
     
     /**
+     * Get strategy ID from URL (same logic as in positions template)
+     */
+    getStrategyIdFromUrl() {
+        const pathParts = window.location.pathname.split('/');
+        const strategiesIndex = pathParts.indexOf('strategies');
+        if (strategiesIndex !== -1 && pathParts[strategiesIndex + 1]) {
+            return parseInt(pathParts[strategiesIndex + 1]);
+        }
+        return null;
+    }
+
+    /**
      * Register SSE event handlers
      */
     registerEventHandlers() {
@@ -75,7 +87,15 @@ class RealtimeOpenOrdersManager {
      */
     async loadOpenOrders() {
         try {
-            const response = await fetch('/api/open-orders');
+            // Get strategy ID from URL (same as positions use)
+            const strategyId = this.getStrategyIdFromUrl();
+            if (!strategyId) {
+                this.showOpenOrdersError('전략 ID를 찾을 수 없습니다.');
+                return;
+            }
+
+            // Use strategy-specific endpoint for proper data isolation
+            const response = await fetch(`/api/strategies/${strategyId}/my/open-orders`);
             const data = await response.json();
             
             if (data.success) {
@@ -232,19 +252,21 @@ class RealtimeOpenOrdersManager {
         const side = (orderData.side || '').toUpperCase();
         const isBuy = side === 'BUY';
         const quantity = Math.abs(parseFloat(orderData.quantity || 0));
-        const price = parseFloat(orderData.price || 0);
-        const stopPrice = parseFloat(orderData.stop_price || 0);
+
+        // Safe price parsing (handle null/undefined values)
+        const price = orderData.price !== null && orderData.price !== undefined ? parseFloat(orderData.price) : 0;
+        const stopPrice = orderData.stop_price !== null && orderData.stop_price !== undefined ? parseFloat(orderData.stop_price) : 0;
         const orderType = (orderData.order_type || 'LIMIT').toUpperCase();
-        
+
         // Account info
         const accountName = orderData.account_name || orderData.account?.name || 'Unknown';
         const exchange = orderData.exchange || orderData.account?.exchange || 'unknown';
         const exchangeInitial = exchange.toUpperCase().charAt(0);
-        
-        // Format values
+
+        // Format values with null/NaN checks
         const formattedQuantity = this.format ? this.format.formatQuantity(quantity) : quantity.toFixed(8);
-        const formattedPrice = price > 0 ? (this.format ? this.format.formatPrice(price) : `$${price.toFixed(4)}`) : '-';
-        const formattedStopPrice = stopPrice > 0 ? (this.format ? this.format.formatPrice(stopPrice) : `$${stopPrice.toFixed(4)}`) : '-';
+        const formattedPrice = (price > 0 && !isNaN(price)) ? (this.format ? this.format.formatPrice(price) : `$${price.toFixed(4)}`) : '-';
+        const formattedStopPrice = (stopPrice > 0 && !isNaN(stopPrice)) ? (this.format ? this.format.formatPrice(stopPrice) : `$${stopPrice.toFixed(4)}`) : '-';
         
         // Order type badge styling
         const orderTypeBadgeClass = {
@@ -499,15 +521,26 @@ class RealtimeOpenOrdersManager {
             'order_cancelled': '주문 취소',
             'order_updated': '주문 업데이트'
         };
-        
+
         const eventTypeText = eventTypeMap[eventType] || '주문 업데이트';
-        const toastType = eventType === 'order_filled' ? 'success' : 
-                         eventType === 'order_cancelled' ? 'warning' : 'info';
-        
         const side = (data.side || '').toUpperCase();
+
+        // 색상 타입 결정
+        let toastType;
+        if (eventType === 'order_filled') {
+            // 체결: 매수면 buy(초록), 매도면 sell(빨강)
+            toastType = side === 'BUY' ? 'buy' : 'sell';
+        } else if (eventType === 'order_cancelled') {
+            toastType = 'warning';
+        } else if (eventType === 'order_created') {
+            toastType = 'info';
+        } else {
+            toastType = 'info';
+        }
+
         const quantity = Math.abs(data.quantity || 0);
         const message = `${eventTypeText}: ${data.symbol} ${side} ${quantity}`;
-        
+
         if (window.showToast) {
             window.showToast(message, toastType, 2000);
         }
@@ -561,6 +594,14 @@ class RealtimeOpenOrdersManager {
         
         try {
             const csrfToken = window.getCSRFToken ? window.getCSRFToken() : '';
+            const strategyId = this.getStrategyIdFromUrl();
+
+            if (!strategyId) {
+                if (window.showToast) {
+                    window.showToast('전략 ID를 확인할 수 없습니다.', 'error');
+                }
+                return;
+            }
             
             const response = await fetch('/api/open-orders/cancel-all', {
                 method: 'POST',
@@ -568,7 +609,7 @@ class RealtimeOpenOrdersManager {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': csrfToken
                 },
-                body: JSON.stringify({})
+                body: JSON.stringify({ strategy_id: strategyId })
             });
             
             const data = await response.json();

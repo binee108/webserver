@@ -2,7 +2,7 @@
 거래소 API 공통 데이터 모델
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Sequence
 from decimal import Decimal
 from datetime import datetime
@@ -200,8 +200,8 @@ class Position:
 @dataclass
 class Order:
     """주문 정보 모델"""
+    # 필수 필드 (기본값 없음)
     id: str
-    client_order_id: str
     symbol: str
     side: str
     type: str
@@ -209,12 +209,17 @@ class Order:
     amount: Decimal
     filled: Decimal
     remaining: Decimal
-    price: Optional[Decimal]
-    average: Optional[Decimal]
-    cost: Decimal
-    fee: Decimal
     timestamp: datetime
-    last_trade_timestamp: Optional[datetime]
+
+    # 선택 필드 (기본값 있음)
+    price: Optional[Decimal] = None
+    stop_price: Optional[Decimal] = None  # STOP 주문의 트리거 가격
+    market_type: Optional[str] = None
+    client_order_id: Optional[str] = None
+    average: Optional[Decimal] = None
+    cost: Optional[Decimal] = None
+    fee: Optional[Decimal] = None
+    last_trade_timestamp: Optional[datetime] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """CCXT 호환 딕셔너리로 변환"""
@@ -229,6 +234,7 @@ class Order:
             'timeInForce': None,
             'amount': float(self.amount),
             'price': float(self.price) if self.price else None,
+            'stopPrice': float(self.stop_price) if self.stop_price else None,
             'average': float(self.average) if self.average else None,
             'filled': float(self.filled),
             'remaining': float(self.remaining),
@@ -271,6 +277,7 @@ class Order:
             filled=Decimal(data['executedQty']),
             remaining=Decimal(data['origQty']) - Decimal(data['executedQty']),
             price=Decimal(data['price']) if data.get('price') else None,
+            stop_price=Decimal(data['stopPrice']) if data.get('stopPrice') else None,
             average=Decimal(data.get('avgPrice', '0')) if data.get('avgPrice') else None,
             cost=Decimal(data.get('cummulativeQuoteQty', '0')),
             fee=Decimal('0'),  # 별도 조회 필요
@@ -327,6 +334,35 @@ class Ticker:
             change_percent=Decimal(data['priceChangePercent']),
             timestamp=datetime.now()
         )
+
+
+@dataclass
+class PriceQuote:
+    """표준화된 현재가 정보 (거래소 무관 공통 포맷)"""
+    symbol: str
+    exchange: str
+    market_type: str
+    last_price: Decimal
+    bid_price: Optional[Decimal] = None
+    ask_price: Optional[Decimal] = None
+    volume: Optional[Decimal] = None
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    raw: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """사전 포맷으로 변환"""
+        return {
+            'symbol': self.symbol,
+            'exchange': self.exchange,
+            'market_type': self.market_type,
+            'last_price': float(self.last_price),
+            'bid_price': float(self.bid_price) if self.bid_price is not None else None,
+            'ask_price': float(self.ask_price) if self.ask_price is not None else None,
+            'volume': float(self.volume) if self.volume is not None else None,
+            'timestamp': self.timestamp.isoformat(),
+            'raw': self.raw
+        }
+
 
 # Enhanced Exchange Service에서 사용하는 추가 모델들
 @dataclass

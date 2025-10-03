@@ -1,9 +1,11 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 
-from app.services.position_service import position_service
+from app.constants import OrderStatus
+from app.models import Strategy
+from app.services.trading import trading_service as position_service
 from app.services.strategy_service import strategy_service
-from app.services.order_service import order_service
+from app.services.trading import trading_service as order_service
 
 bp = Blueprint('positions', __name__, url_prefix='/api')
 
@@ -105,25 +107,55 @@ def cancel_all_open_orders():
             current_app.logger.warning(f'JSON 파싱 실패, 빈 딕셔너리 사용: {str(json_error)}')
             data = {}
         
+        strategy_id = data.get('strategy_id')
+        if strategy_id is None:
+            return jsonify({
+                'success': False,
+                'error': 'strategy_id가 필요합니다.'
+            }), 400
+
+        try:
+            strategy_id = int(strategy_id)
+        except (TypeError, ValueError):
+            return jsonify({
+                'success': False,
+                'error': 'strategy_id 형식이 올바르지 않습니다.'
+            }), 400
+
+        strategy = Strategy.query.filter_by(id=strategy_id, user_id=current_user.id).first()
+        if not strategy:
+            return jsonify({
+                'success': False,
+                'error': '해당 전략에 대한 권한이 없습니다.'
+            }), 403
+
+        account_id = data.get('account_id')
+        if account_id is not None:
+            try:
+                account_id = int(account_id)
+            except (TypeError, ValueError):
+                return jsonify({
+                    'success': False,
+                    'error': 'account_id 형식이 올바르지 않습니다.'
+                }), 400
+
         # Service 계층을 통한 일괄 취소
         result = order_service.cancel_all_orders_by_user(
             user_id=current_user.id,
-            account_id=data.get('account_id'),
-            symbol=data.get('symbol'),
-            strategy_id=data.get('strategy_id')
+            strategy_id=strategy_id,
+            account_id=account_id,
+            symbol=data.get('symbol')
         )
         
+        success_count = len(result.get('cancelled_orders', []))
+        failed_count = len(result.get('failed_orders', []))
+        current_app.logger.info(f'일괄 주문 취소 결과: 성공 {success_count}개, 실패 {failed_count}개')
+
         if result.get('success'):
-            success_count = len(result.get('cancelled_orders', []))
-            failed_count = len(result.get('failed_orders', []))
-            current_app.logger.info(f'일괄 주문 취소 완료: 성공 {success_count}개, 실패 {failed_count}개')
-            
             return jsonify(result)
-        else:
-            return jsonify({
-                'success': False,
-                'error': result.get('error', '일괄 취소에 실패했습니다.')
-            }), 400
+
+        status_code = 207 if failed_count and success_count else 400
+        return jsonify(result), status_code
             
     except Exception as e:
         current_app.logger.error(f'일괄 주문 취소 오류: {str(e)}')
@@ -383,7 +415,7 @@ def get_my_strategy_open_orders(strategy_id):
             .filter(
                 StrategyAccount.strategy_id == strategy_id,
                 Account.user_id == current_user.id,
-                OpenOrder.status == 'OPEN'
+                OpenOrder.status.in_(OrderStatus.get_open_statuses())
             )
             .all()
         )
@@ -394,12 +426,16 @@ def get_my_strategy_open_orders(strategy_id):
                 'order_id': order.exchange_order_id,  # 통일된 명명: order_id 사용
                 'symbol': order.symbol,
                 'side': order.side,
-                'price': float(order.price),
-                'quantity': float(order.quantity),
-                'filled_quantity': float(order.filled_quantity),
+                'order_type': order.order_type,
+                'price': float(order.price) if order.price is not None else None,
+                'stop_price': float(order.stop_price) if order.stop_price is not None else None,
+                'quantity': float(order.quantity) if order.quantity is not None else 0.0,
+                'filled_quantity': float(order.filled_quantity) if order.filled_quantity is not None else 0.0,
                 'status': order.status,
                 'market_type': order.market_type,
                 'created_at': order.created_at.isoformat() if order.created_at else None,
+                'account_name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
+                'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown',
                 'account': {
                     'name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
                     'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown'

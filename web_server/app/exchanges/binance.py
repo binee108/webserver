@@ -11,14 +11,17 @@ import hmac
 import json
 import logging
 import time
-from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal, InvalidOperation
+from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urlencode
 
 import aiohttp
+import requests
 
 from .base import BaseExchange, ExchangeError, InvalidOrder, InsufficientFunds
-from .models import MarketInfo, Balance, Order, Ticker, Position
+from .models import MarketInfo, Balance, Order, Ticker, Position, PriceQuote
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,9 @@ class BinanceExchange(BaseExchange):
         self.cache_time = {}
         self.cache_ttl = 300  # 5분
 
+        # 주문 타입 매핑 추적 (거래소 특수성 캡슐화)
+        self.order_type_mappings = {}  # order_id -> original_order_type
+
         # HTTP 세션
         self.session = None
 
@@ -140,6 +146,38 @@ class BinanceExchange(BaseExchange):
         else:
             return SpotEndpoints
 
+    def _convert_to_binance_format(self, order_type: str, side: str) -> str:
+        """프로젝트 주문 타입을 Binance API 형식으로 변환"""
+        if order_type.upper() == 'STOP_LIMIT':
+            # Binance Futures에서 STOP_LIMIT는 STOP 타입으로 구현 (트리거 후 지정가 주문)
+            logger.info(f"🔄 주문 타입 변환: STOP_LIMIT → STOP")
+            return 'STOP'
+        return order_type
+
+    def _convert_from_binance_format(self, binance_type: str, order_id: str = None) -> str:
+        """Binance 타입을 프로젝트 표준으로 변환"""
+        # 로컬 메모리에서 원본 타입 조회
+        if order_id and order_id in self.order_type_mappings:
+            original_type = self.order_type_mappings[order_id]
+            logger.debug(f"🔄 타입 복원: {binance_type} → {original_type} (order_id: {order_id})")
+            return original_type
+
+        # 일반적인 변환
+        if binance_type == 'STOP':
+            return 'STOP_LIMIT'
+        return binance_type.lower()
+
+    def _store_order_mapping(self, order_id: str, original_type: str):
+        """주문 타입 매핑을 로컬 메모리에 저장"""
+        self.order_type_mappings[order_id] = original_type
+        logger.debug(f"💾 주문 매핑 저장: {order_id} → {original_type}")
+
+    def _cleanup_order_mapping(self, order_id: str):
+        """완료된 주문의 매핑 정보 정리"""
+        if order_id in self.order_type_mappings:
+            del self.order_type_mappings[order_id]
+            logger.debug(f"🗑️ 주문 매핑 정리: {order_id}")
+
     def _create_signature(self, params: Dict[str, Any]) -> str:
         """API 서명 생성"""
         query_string = urlencode(params)
@@ -149,8 +187,8 @@ class BinanceExchange(BaseExchange):
             hashlib.sha256
         ).hexdigest()
 
-    async def _request(self, method: str, url: str, params: Dict[str, Any] = None,
-                      signed: bool = False) -> Dict[str, Any]:
+    async def _request_async(self, method: str, url: str, params: Dict[str, Any] = None,
+                            signed: bool = False) -> Dict[str, Any]:
         """HTTP 요청 실행"""
         await self._init_session()
 
@@ -163,9 +201,11 @@ class BinanceExchange(BaseExchange):
 
         if signed:
             params['timestamp'] = int(time.time() * 1000)
+            params['recvWindow'] = 5000  # 5초 허용 시간차 (시간 동기화 문제 해결)
             params['signature'] = self._create_signature(params)
 
         try:
+            response = None
             if method.upper() == 'GET':
                 async with self.session.get(url, params=params, headers=headers) as response:
                     data = await response.json()
@@ -186,10 +226,108 @@ class BinanceExchange(BaseExchange):
         except aiohttp.ClientError as e:
             raise ExchangeError(f"네트워크 오류: {str(e)}")
         except json.JSONDecodeError as e:
-            raise ExchangeError(f"JSON 파싱 오류: {str(e)}")
+            # 응답이 JSON이 아닌 경우 (HTML 오류 페이지 등)
+            try:
+                raw_text = await response.text()
+                logger.error(f"Binance API 비정상 응답 (상태: {response.status}): {raw_text[:200]}")
+            except:
+                logger.error(f"Binance API 응답 읽기 실패 (상태: {getattr(response, 'status', 'unknown')})")
+            raise ExchangeError(f"Binance API 응답 형식 오류: {str(e)}")
+        except Exception as e:
+            # 모든 기타 오류를 포착하여 상세 정보 제공
+            error_details = {
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'url': url,
+                'method': method,
+                'signed': signed
+            }
 
-    async def load_markets(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
-        """마켓 정보 로드"""
+            if 'response' in locals() and response:
+                error_details['response_status'] = response.status
+
+            if 'data' in locals():
+                error_details['response_data'] = data
+
+            logger.error(f"Binance API 요청 실패: {error_details}")
+            raise ExchangeError(f"Binance API 오류: {str(e)}")
+
+    def _request(self, method: str, url: str, params: Dict[str, Any] = None,
+                signed: bool = False) -> Dict[str, Any]:
+        """HTTP 요청 실행 (동기 버전)"""
+        if params is None:
+            params = {}
+
+        headers = {
+            'User-Agent': 'Binance-Native-Client/1.0',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+
+        if signed:
+            params['timestamp'] = int(time.time() * 1000)
+            params['recvWindow'] = 5000  # 5초 허용 시간차 (시간 동기화 문제 해결)
+            params['signature'] = self._create_signature(params)
+
+        try:
+            response = None
+            if method.upper() == 'GET':
+                response = requests.get(url, params=params, headers=headers, timeout=30)
+            elif method.upper() == 'POST':
+                response = requests.post(url, data=params, headers=headers, timeout=30)
+            elif method.upper() == 'DELETE':
+                response = requests.delete(url, params=params, headers=headers, timeout=30)
+            else:
+                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
+            # HTTP 400 에러의 경우 Binance 에러 메시지 먼저 읽기
+            if response.status_code >= 400:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('msg', 'Unknown error')
+                    error_code = error_data.get('code', response.status_code)
+                    logger.error(f"❌ Binance API 에러 [{error_code}]: {error_msg}")
+                    raise ExchangeError(f"Binance API Error [{error_code}]: {error_msg}")
+                except (ValueError, KeyError):
+                    # JSON 파싱 실패시 기본 에러 처리
+                    response.raise_for_status()
+
+            data = response.json()
+
+            if 'code' in data and data['code'] != 200:
+                raise ExchangeError(f"Binance API 오류: {data.get('msg', 'Unknown error')}")
+
+            return data
+
+        except requests.RequestException as e:
+            raise ExchangeError(f"네트워크 오류: {str(e)}")
+        except json.JSONDecodeError as e:
+            # 응답이 JSON이 아닌 경우 (HTML 오류 페이지 등)
+            try:
+                raw_text = response.text if response else "No response"
+                logger.error(f"Binance API 비정상 응답 (상태: {response.status_code if response else 'unknown'}): {raw_text[:200]}")
+            except:
+                logger.error(f"Binance API 응답 읽기 실패")
+            raise ExchangeError(f"Binance API 응답 형식 오류: {str(e)}")
+        except Exception as e:
+            # 모든 기타 오류를 포착하여 상세 정보 제공
+            error_details = {
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'url': url,
+                'method': method,
+                'signed': signed
+            }
+
+            if response:
+                error_details['response_status'] = response.status_code
+
+            logger.error(f"Binance API 요청 실패: {error_details}")
+            raise ExchangeError(f"Binance API 오류: {str(e)}")
+
+    def load_markets_impl(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+        """마켓 정보 로드 (동기 구현)"""
         cache_key = f"{market_type}_markets"
 
         # 캐시 확인
@@ -201,7 +339,7 @@ class BinanceExchange(BaseExchange):
         endpoints = self._get_endpoints(market_type)
 
         url = f"{base_url}{endpoints.EXCHANGE_INFO}"
-        data = await self._request('GET', url)
+        data = self._request('GET', url)
 
         markets = {}
         for symbol_info in data.get('symbols', []):
@@ -209,16 +347,12 @@ class BinanceExchange(BaseExchange):
                 continue
 
             symbol = symbol_info['symbol']
-            markets[symbol] = MarketInfo(
-                id=symbol,
-                symbol=symbol,
-                base=symbol_info['baseAsset'],
-                quote=symbol_info['quoteAsset'],
-                active=True,
-                amount_precision=symbol_info.get('baseAssetPrecision', 8),
-                price_precision=symbol_info.get('quotePrecision', 8),
-                market_type=market_type.upper()
-            )
+
+            # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
+            if market_type.lower() == 'spot':
+                markets[symbol] = MarketInfo.from_binance_spot(symbol_info)
+            else:  # futures
+                markets[symbol] = MarketInfo.from_binance_futures(symbol_info)
 
         # 캐시 업데이트
         if market_type == 'spot':
@@ -231,38 +365,231 @@ class BinanceExchange(BaseExchange):
         logger.info(f"✅ {market_type.title()} 마켓 정보 로드 완료: {len(markets)}개")
         return markets
 
-    async def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회"""
+    def fetch_price_quotes(self, market_type: str = 'spot',
+                           symbols: Optional[List[str]] = None) -> Dict[str, PriceQuote]:
+        """표준화된 현재가 정보 조회"""
+        market_type_lower = (market_type or 'spot').lower()
+        base_url = self._get_base_url(market_type_lower)
+        endpoints = self._get_endpoints(market_type_lower)
+        url = f"{base_url}{endpoints.TICKER_PRICE}"
+
+        try:
+            response = self._request('GET', url)
+        except Exception as e:
+            logger.error(f"Binance 가격 조회 실패: market_type={market_type_lower} error={e}")
+            return {}
+
+        if isinstance(response, dict):
+            data_items = [response]
+        else:
+            data_items = response or []
+
+        symbol_filter = {s.upper() for s in symbols} if symbols else None
+        timestamp = datetime.utcnow()
+        standard_market_type = 'FUTURES' if market_type_lower == 'futures' else 'SPOT'
+
+        quotes: Dict[str, PriceQuote] = {}
+        for item in data_items:
+            symbol = item.get('symbol')
+            price = item.get('price')
+            if not symbol or price is None:
+                continue
+
+            symbol_upper = symbol.upper()
+            if symbol_filter and symbol_upper not in symbol_filter:
+                continue
+
+            last_price = Decimal(str(price))
+            bid_value = item.get('bidPrice', price)
+            ask_value = item.get('askPrice', price)
+            volume_value = item.get('volume')
+
+            quotes[symbol_upper] = PriceQuote(
+                symbol=symbol_upper,
+                exchange='BINANCE',
+                market_type=standard_market_type,
+                last_price=last_price,
+                bid_price=Decimal(str(bid_value)) if bid_value is not None else None,
+                ask_price=Decimal(str(ask_value)) if ask_value is not None else None,
+                volume=Decimal(str(volume_value)) if volume_value is not None else None,
+                timestamp=timestamp,
+                raw=item
+            )
+
+        return quotes
+
+    def fetch_balance_impl(self, market_type: str = 'spot') -> Dict[str, Balance]:
+        """잔액 조회 (동기 구현)"""
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
         url = f"{base_url}{endpoints.ACCOUNT}"
-        data = await self._request('GET', url, signed=True)
+        data = self._request('GET', url, signed=True)
 
         balances = {}
         balance_key = 'balances' if market_type == 'spot' else 'assets'
 
         for balance_info in data.get(balance_key, []):
-            asset = balance_info['asset']
-            free = Decimal(balance_info['free'])
-            locked = Decimal(balance_info.get('locked', '0'))
+            asset = balance_info.get('asset') or balance_info.get('currency')
+            if not asset:
+                continue
 
-            if free > 0 or locked > 0:
+            if market_type.lower() == 'futures':
+                wallet_balance = Decimal(balance_info.get('walletBalance', '0'))
+                available_balance = Decimal(balance_info.get('availableBalance', '0'))
+                initial_margin = Decimal(balance_info.get('initialMargin', '0'))
+                maint_margin = Decimal(balance_info.get('maintMargin', '0'))
+
+                free = available_balance
+                locked = initial_margin + maint_margin
+                total = wallet_balance
+            else:
+                # Spot API 필드 매핑
+                free = Decimal(balance_info.get('free', '0'))
+                locked = Decimal(balance_info.get('locked', '0'))
+                total = free + locked
+
+            # 0이 아닌 잔액만 포함
+            if total > 0:
                 balances[asset] = Balance(
-                    currency=asset,
+                    asset=asset,
                     free=free,
-                    used=locked,
-                    total=free + locked
+                    locked=locked,
+                    total=total
                 )
 
+        logger.info(f"✅ {market_type.title()} 잔액 조회 완료: {len(balances)}개")
         return balances
 
-    async def fetch_positions(self) -> List[Position]:
-        """포지션 조회 (Futures 전용)"""
+    def create_order_impl(self, symbol: str, order_type: str, side: str,
+                         amount: Decimal, price: Optional[Decimal] = None,
+                         market_type: str = 'spot', **params) -> Order:
+        """주문 생성 (동기 구현)"""
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
+        original_order_type = order_type
+        binance_order_type = self._convert_to_binance_format(order_type, side)
+
+        order_params = {
+            'symbol': symbol,
+            'side': side.upper(),
+            'type': binance_order_type.upper(),  # 변환된 타입 사용
+        }
+
+        # 수량 설정 (Spot: quantity, Futures: quantity)
+        order_params['quantity'] = str(amount)
+
+
+        # OrderType별 파라미터 설정 - 체계적인 timeInForce 처리
+        from app.constants import OrderType
+
+        # 1. 기본 파라미터 설정 (원본 타입 기준)
+        if original_order_type.upper() == OrderType.MARKET:
+            # MARKET: timeInForce 불필요, price 불필요
+            logger.info("🔄 MARKET 주문: timeInForce, price 파라미터 제외")
+            
+        elif original_order_type.upper() == OrderType.LIMIT:
+            # LIMIT: price 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            order_params['price'] = str(price)
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 LIMIT 주문: price={price}, timeInForce=GTC")
+            
+        elif original_order_type.upper() == OrderType.STOP_MARKET:
+            # STOP_MARKET: stopPrice 필수, price 불필요, timeInForce 불필요
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['stopPrice'] = str(params['stopPrice'])
+            logger.info(f"🔄 STOP_MARKET 주문: stopPrice={params['stopPrice']}, timeInForce 제외")
+            
+        elif original_order_type.upper() == OrderType.STOP_LIMIT:
+            # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"STOP_LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['price'] = str(price)
+            order_params['stopPrice'] = str(params['stopPrice'])
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 STOP_LIMIT 주문: price={price}, stopPrice={params['stopPrice']}, timeInForce=GTC")
+            
+        else:
+            raise InvalidOrder(f"지원하지 않는 주문 타입: {original_order_type}")
+
+        # 2. 추가 파라미터 처리 (이미 처리된 것들 제외)
+        processed_keys = {'stopPrice'}  # 이미 처리된 키들
+        remaining_params = {k: v for k, v in params.items() if k not in processed_keys}
+        order_params.update(remaining_params)
+
+        url = f"{base_url}{endpoints.ORDER}"
+        logger.info(f"🔍 바이낸스 API 호출: {url}")
+        logger.info(f"🔍 주문 파라미터: {order_params}")
+        data = self._request('POST', url, order_params, signed=True)
+        logger.info(f"🔍 바이낸스 API 응답: {data}")
+
+        # 시장가 주문의 경우 즉시 주문 상태 재조회 (체결 정보 확인)
+        if order_type.upper() == 'MARKET' and data.get('status') == 'NEW':
+            logger.info(f"🔄 시장가 주문 상태 재조회: {data.get('orderId')}")
+            try:
+                # 잠시 대기 후 주문 상태 조회
+                import time
+                time.sleep(0.1)  # 100ms 대기
+
+                order_status_url = f"{base_url}{endpoints.ORDER}"
+                status_params = {
+                    'symbol': symbol,
+                    'orderId': data.get('orderId')
+                }
+
+                updated_data = self._request('GET', order_status_url, status_params, signed=True)
+                logger.info(f"🔍 재조회된 주문 상태: {updated_data}")
+
+                # 체결량이 있으면 업데이트된 데이터 사용
+                if float(updated_data.get('executedQty', '0')) > 0:
+                    data = updated_data
+                    logger.info(f"✅ 시장가 주문 체결 확인: 체결량={updated_data.get('executedQty')}")
+
+            except Exception as e:
+                logger.warning(f"⚠️ 주문 상태 재조회 실패: {e}")
+
+        # 2. 주문 매핑 저장 (로컬 메모리)
+        order_id = str(data.get('orderId'))
+        if order_id and original_order_type != binance_order_type:
+            self._store_order_mapping(order_id, original_order_type)
+
+        # 3. 응답 변환: Binance 응답 → 프로젝트 표준 형식
+        return self._parse_order(data, market_type, original_order_type)
+
+    def cancel_order_impl(self, order_id: str, symbol: str, market_type: str = 'spot') -> Dict[str, Any]:
+        """주문 취소 (동기 구현)"""
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        params = {
+            'symbol': symbol,
+            'orderId': order_id
+        }
+
+        url = f"{base_url}{endpoints.ORDER}"
+        data = self._request('DELETE', url, params, signed=True)
+
+        return {
+            'success': True,
+            'order_id': str(data.get('orderId')),
+            'symbol': data.get('symbol'),
+            'status': data.get('status'),
+            'message': f"주문 {order_id} 취소 완료"
+        }
+
+    def fetch_positions_impl(self) -> List[Position]:
+        """포지션 조회 (Futures 전용, 동기 구현)"""
         base_url = self._get_base_url('futures')
 
         url = f"{base_url}{FuturesEndpoints.POSITION_RISK}"
-        data = await self._request('GET', url, signed=True)
+        data = self._request('GET', url, signed=True)
 
         positions = []
         for pos_info in data:
@@ -274,41 +601,242 @@ class BinanceExchange(BaseExchange):
                     size=abs(size),
                     entry_price=Decimal(pos_info['entryPrice']),
                     unrealized_pnl=Decimal(pos_info['unRealizedProfit']),
-                    percentage=Decimal(pos_info['percentage'])
+                    mark_price=Decimal(pos_info.get('markPrice', '0')),
+                    margin=Decimal(pos_info.get('initialMargin', '0'))
                 ))
 
         return positions
 
-    async def create_order(self, symbol: str, order_type: str, side: str,
+    def fetch_open_orders_impl(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
+        """미체결 주문 조회 (동기 구현)"""
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        params = {}
+        if symbol:
+            params['symbol'] = symbol
+
+        url = f"{base_url}{endpoints.OPEN_ORDERS}"
+        data = self._request('GET', url, params, signed=True)
+
+        return [self._parse_order(order_data, market_type) for order_data in data]
+
+    def fetch_order_impl(self, symbol: str, order_id: str, market_type: str = 'spot') -> Order:
+        """단일 주문 상세 조회 (동기 구현)"""
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        params = {
+            'symbol': symbol,
+            'orderId': order_id
+        }
+
+        url = f"{base_url}{endpoints.ORDER}"
+        data = self._request('GET', url, params, signed=True)
+
+        logger.debug(f"🔍 주문 상세 조회 완료: order_id={order_id}, market_type={market_type}")
+        return self._parse_order(data, market_type)
+
+    async def load_markets_async(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+        """마켓 정보 로드"""
+        cache_key = f"{market_type}_markets"
+
+        # 캐시 확인
+        if not reload and cache_key in self.cache_time:
+            if time.time() - self.cache_time[cache_key] < self.cache_ttl:
+                return getattr(self, f"{market_type}_markets_cache", {})
+
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        url = f"{base_url}{endpoints.EXCHANGE_INFO}"
+        data = await self._request_async('GET', url)
+
+        markets = {}
+        for symbol_info in data.get('symbols', []):
+            if symbol_info['status'] != 'TRADING':
+                continue
+
+            symbol = symbol_info['symbol']
+
+            # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
+            if market_type.lower() == 'spot':
+                markets[symbol] = MarketInfo.from_binance_spot(symbol_info)
+            else:  # futures
+                markets[symbol] = MarketInfo.from_binance_futures(symbol_info)
+
+        # 캐시 업데이트
+        if market_type == 'spot':
+            self.spot_markets_cache = markets
+        else:
+            self.futures_markets_cache = markets
+
+        self.cache_time[cache_key] = time.time()
+
+        logger.info(f"✅ {market_type.title()} 마켓 정보 로드 완료: {len(markets)}개")
+        return markets
+
+    async def fetch_balance_async(self, market_type: str = 'spot') -> Dict[str, Balance]:
+        """잔액 조회"""
+        base_url = self._get_base_url(market_type)
+        endpoints = self._get_endpoints(market_type)
+
+        url = f"{base_url}{endpoints.ACCOUNT}"
+        data = await self._request_async('GET', url, signed=True)
+
+        # 디버깅을 위해 API 응답 로깅
+        logger.info(f"🔍 Balance API Response ({market_type}): {json.dumps(data, indent=2, default=str)}")
+
+        balances = {}
+        balance_key = 'balances' if market_type == 'spot' else 'assets'
+
+        for balance_info in data.get(balance_key, []):
+            asset = balance_info.get('asset') or balance_info.get('currency')
+            if not asset:
+                continue
+
+            # 디버깅을 위해 개별 자산 정보 로깅
+            logger.info(f"🔍 Processing asset {asset}: {json.dumps(balance_info, indent=2, default=str)}")
+
+            if market_type.lower() == 'futures':
+                # Binance Futures API 필드 매핑 (/fapi/v2/account)
+                # availableBalance: 사용 가능한 잔고
+                # walletBalance: 전체 지갑 잔고
+                # marginBalance: 마진 잔고 (unrealizedProfit 포함)
+                # initialMargin: 사용 중인 초기 마진
+                
+                wallet_balance = Decimal(balance_info.get('walletBalance', '0'))
+                available_balance = Decimal(balance_info.get('availableBalance', '0'))
+                initial_margin = Decimal(balance_info.get('initialMargin', '0'))
+                maint_margin = Decimal(balance_info.get('maintMargin', '0'))
+                
+                # Futures에서는 walletBalance가 total, availableBalance가 free
+                free = available_balance
+                locked = initial_margin + maint_margin
+                total = wallet_balance
+                
+                logger.info(f"🔍 Futures balance for {asset}: wallet={wallet_balance}, available={available_balance}, "
+                           f"initial_margin={initial_margin}, maint_margin={maint_margin}")
+                logger.info(f"🔍 Calculated: free={free}, locked={locked}, total={total}")
+                
+            else:
+                # Spot API 필드 매핑 (/api/v3/account)
+                free = Decimal(balance_info.get('free', '0'))
+                locked = Decimal(balance_info.get('locked', '0'))
+                total = free + locked
+
+            # 0이 아닌 잔고만 포함 (total 기준으로 판단)
+            if total > 0:
+                balances[asset] = Balance(
+                    asset=asset,
+                    free=free,
+                    locked=locked,
+                    total=total
+                )
+                logger.info(f"✅ Added {asset} balance: free={free}, locked={locked}, total={total}")
+            else:
+                logger.debug(f"⏭️ Skipped {asset} (total=0): free={free}, locked={locked}")
+
+        logger.info(f"✅ Total balances found ({market_type}): {len(balances)}")
+        return balances
+
+    async def fetch_positions_async(self) -> List[Position]:
+        """포지션 조회 (Futures 전용)"""
+        base_url = self._get_base_url('futures')
+
+        url = f"{base_url}{FuturesEndpoints.POSITION_RISK}"
+        data = await self._request_async('GET', url, signed=True)
+
+        positions = []
+        for pos_info in data:
+            size = Decimal(pos_info['positionAmt'])
+            if size != 0:  # 포지션이 있는 경우만
+                positions.append(Position(
+                    symbol=pos_info['symbol'],
+                    side='long' if size > 0 else 'short',
+                    size=abs(size),
+                    entry_price=Decimal(pos_info['entryPrice']),
+                    unrealized_pnl=Decimal(pos_info['unRealizedProfit']),
+                    mark_price=Decimal(pos_info.get('markPrice', '0')),
+                    margin=Decimal(pos_info.get('initialMargin', '0'))
+                ))
+
+        return positions
+
+    async def create_order_async(self, symbol: str, order_type: str, side: str,
                           amount: Decimal, price: Optional[Decimal] = None,
                           market_type: str = 'spot', **params) -> Order:
         """주문 생성"""
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
+        original_order_type = order_type
+        binance_order_type = self._convert_to_binance_format(order_type, side)
+
         order_params = {
             'symbol': symbol,
             'side': side.upper(),
-            'type': order_type.upper(),
+            'type': binance_order_type.upper(),  # 변환된 타입 사용
         }
 
-        # 수량 설정 (Spot: quantity, Futures: quantity)
+        # 수량 설정
         order_params['quantity'] = str(amount)
 
-        # 가격 설정 (LIMIT 주문의 경우)
-        if order_type.upper() == 'LIMIT' and price:
-            order_params['price'] = str(price)
-            order_params['timeInForce'] = 'GTC'  # Good Till Canceled
+        # OrderType별 파라미터 설정 - 체계적인 timeInForce 처리 (동기 버전과 동일)
+        from app.constants import OrderType
 
-        # 추가 파라미터
-        order_params.update(params)
+        # 1. 기본 파라미터 설정 (원본 타입 기준)
+        if original_order_type.upper() == OrderType.MARKET:
+            # MARKET: timeInForce 불필요, price 불필요
+            logger.info("🔄 MARKET 주문: timeInForce, price 파라미터 제외")
+            
+        elif original_order_type.upper() == OrderType.LIMIT:
+            # LIMIT: price 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            order_params['price'] = str(price)
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 LIMIT 주문: price={price}, timeInForce=GTC")
+            
+        elif original_order_type.upper() == OrderType.STOP_MARKET:
+            # STOP_MARKET: stopPrice 필수, price 불필요, timeInForce 불필요
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['stopPrice'] = str(params['stopPrice'])
+            logger.info(f"🔄 STOP_MARKET 주문: stopPrice={params['stopPrice']}, timeInForce 제외")
+            
+        elif original_order_type.upper() == OrderType.STOP_LIMIT:
+            # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"STOP_LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['price'] = str(price)
+            order_params['stopPrice'] = str(params['stopPrice'])
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 STOP_LIMIT 주문: price={price}, stopPrice={params['stopPrice']}, timeInForce=GTC")
+            
+        else:
+            raise InvalidOrder(f"지원하지 않는 주문 타입: {original_order_type}")
+
+        # 2. 추가 파라미터 처리 (이미 처리된 것들 제외)
+        processed_keys = {'stopPrice'}  # 이미 처리된 키들
+        remaining_params = {k: v for k, v in params.items() if k not in processed_keys}
+        order_params.update(remaining_params)
+
 
         url = f"{base_url}{endpoints.ORDER}"
-        data = await self._request('POST', url, order_params, signed=True)
+        data = await self._request_async('POST', url, order_params, signed=True)
 
-        return self._parse_order(data, market_type)
+        # 주문 매핑 저장 (동기 버전과 동일)
+        order_id = str(data.get('orderId'))
+        if order_id and original_order_type != binance_order_type:
+            self._store_order_mapping(order_id, original_order_type)
 
-    async def cancel_order(self, order_id: str, symbol: str,
+        return self._parse_order(data, market_type, original_order_type)
+
+    async def cancel_order_async(self, order_id: str, symbol: str,
                           market_type: str = 'spot') -> Dict[str, Any]:
         """주문 취소"""
         base_url = self._get_base_url(market_type)
@@ -320,9 +848,9 @@ class BinanceExchange(BaseExchange):
         }
 
         url = f"{base_url}{endpoints.ORDER}"
-        return await self._request('DELETE', url, params, signed=True)
+        return await self._request_async('DELETE', url, params, signed=True)
 
-    async def fetch_open_orders(self, symbol: Optional[str] = None,
+    async def fetch_open_orders_async(self, symbol: Optional[str] = None,
                                market_type: str = 'spot') -> List[Order]:
         """미체결 주문 조회"""
         base_url = self._get_base_url(market_type)
@@ -333,68 +861,125 @@ class BinanceExchange(BaseExchange):
             params['symbol'] = symbol
 
         url = f"{base_url}{endpoints.OPEN_ORDERS}"
-        data = await self._request('GET', url, params, signed=True)
+        data = await self._request_async('GET', url, params, signed=True)
 
         return [self._parse_order(order_data, market_type) for order_data in data]
 
-    def _parse_order(self, order_data: Dict[str, Any], market_type: str) -> Order:
-        """주문 데이터 파싱"""
+    def _parse_order(self, order_data: Dict[str, Any], market_type: str, original_type: str = None) -> Order:
+        """주문 데이터 파싱 - Binance 응답을 프로젝트 표준으로 변환"""
+        # timestamp 필드 처리 - 다양한 필드명 지원
+        timestamp = order_data.get('time') or order_data.get('updateTime') or order_data.get('transactTime', 0)
+
+        # 주문 타입 변환: Binance → 프로젝트 표준
+        order_id = str(order_data['orderId'])
+        binance_type = order_data['type']
+
+        if original_type:
+            # 주문 생성시 전달받은 원본 타입 사용
+            converted_type = original_type.lower()
+        else:
+            # 일반 변환 (조회 등에서 사용)
+            converted_type = self._convert_from_binance_format(binance_type, order_id)
+
+        # 시장가 주문의 경우 평균 체결가 계산
+        executed_qty = Decimal(order_data.get('executedQty', '0'))
+        cumulative_quote = Decimal(order_data.get('cummulativeQuoteQty', '0'))
+        avg_price = None
+
+        avg_price_field = order_data.get('avgPrice')
+        if avg_price_field:
+            try:
+                avg_price = Decimal(avg_price_field)
+            except (InvalidOperation, TypeError):
+                avg_price = None
+
+        if (avg_price is None or avg_price <= 0) and cumulative_quote > 0 and executed_qty > 0:
+            avg_price = cumulative_quote / executed_qty
+            logger.debug(
+                "📊 평균가 계산 (누적 체결 기반): %s / %s = %s",
+                cumulative_quote,
+                executed_qty,
+                avg_price
+            )
+
+        limit_price = None
+        if order_data.get('price') and order_data['price'] != '0':
+            try:
+                limit_price = Decimal(order_data['price'])
+            except (InvalidOperation, TypeError):
+                limit_price = None
+
         return Order(
-            id=str(order_data['orderId']),
+            id=order_id,
             symbol=order_data['symbol'],
             side=order_data['side'].lower(),
             amount=Decimal(order_data['origQty']),
-            price=Decimal(order_data['price']) if order_data['price'] != '0' else None,
-            filled=Decimal(order_data['executedQty']),
-            remaining=Decimal(order_data['origQty']) - Decimal(order_data['executedQty']),
-            status=self._normalize_order_status(order_data['status']),
-            timestamp=order_data['time'],
-            type=order_data['type'].lower(),
-            market_type=market_type.upper()
+            price=limit_price,
+            stop_price=Decimal(order_data['stopPrice']) if order_data.get('stopPrice') else None,
+            filled=executed_qty,
+            remaining=Decimal(order_data['origQty']) - executed_qty,
+            status=order_data['status'],  # 원본 거래소 상태 유지
+            timestamp=timestamp,
+            type=converted_type,  # 변환된 타입 사용
+            market_type=market_type.upper(),
+            average=avg_price if avg_price and avg_price > 0 else None,
+            cost=cumulative_quote if cumulative_quote > 0 else None
         )
 
-    def _normalize_order_status(self, status: str) -> str:
-        """주문 상태 정규화"""
-        status_map = {
-            'NEW': 'open',
-            'PARTIALLY_FILLED': 'open',
-            'FILLED': 'closed',
-            'CANCELED': 'canceled',
-            'REJECTED': 'rejected',
-            'EXPIRED': 'expired'
-        }
-        return status_map.get(status, status.lower())
 
     # CCXT 호환 메서드들 (동기)
-    def fetch_balance_sync(self, market_type: str = 'spot') -> Dict[str, Balance]:
+    def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
         """잔액 조회 (동기)"""
-        return asyncio.run(self.fetch_balance(market_type))
+        return self.fetch_balance_impl(market_type)
 
     def create_market_order(self, symbol: str, side: str, amount: float,
                            market_type: str = 'spot') -> Order:
         """시장가 주문 (동기 래퍼)"""
-        return asyncio.run(self.create_order(
+        return self.create_order_impl(
             symbol, OrderType.MARKET, side, Decimal(str(amount)),
             market_type=market_type
-        ))
+        )
 
     def create_limit_order(self, symbol: str, side: str, amount: float,
                           price: float, market_type: str = 'spot') -> Order:
         """지정가 주문 (동기 래퍼)"""
-        return asyncio.run(self.create_order(
+        return self.create_order_impl(
             symbol, OrderType.LIMIT, side, Decimal(str(amount)),
             Decimal(str(price)), market_type=market_type
-        ))
+        )
 
-    def load_markets_sync(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+
+    def create_order(self, symbol: str, order_type: str, side: str,
+                         amount: Decimal, price: Optional[Decimal] = None,
+                         market_type: str = 'spot', **params) -> Order:
+        """주문 생성 (동기 래퍼)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
+
+    def load_markets(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
         """마켓 정보 로드 (동기)"""
-        return asyncio.run(self.load_markets(market_type, reload))
+        return self.load_markets_impl(market_type, reload)
 
+
+    def cancel_order(self, order_id: str, symbol: str, market_type: str = 'spot') -> Dict[str, Any]:
+        """주문 취소 (동기)"""
+        return self.cancel_order_impl(order_id, symbol, market_type)
+
+    def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
+        """미체결 주문 조회 (동기)"""
+        return self.fetch_open_orders_impl(symbol, market_type)
+
+    def fetch_order(self, symbol: str, order_id: str, market_type: str = 'spot') -> Order:
+        """단일 주문 상세 조회 (동기)"""
+        return self.fetch_order_impl(symbol, order_id, market_type)
+
+    def fetch_positions(self) -> List[Position]:
+        """포지션 조회 (동기)"""
+        return self.fetch_positions_impl()
     # 심볼 정보 조회 (precision 서비스용)
     def get_symbol_info(self, symbol: str, market_type: str = 'spot') -> Optional[Dict[str, Any]]:
         """심볼 정보 조회"""
         try:
-            markets = self.load_markets_sync(market_type)
+            markets = self.load_markets(market_type)
             if symbol in markets:
                 market_info = markets[symbol]
                 return {
@@ -406,6 +991,7 @@ class BinanceExchange(BaseExchange):
             logger.warning(f"심볼 정보 조회 실패 {symbol}: {e}")
 
         return None
+
 
 
 # 편의를 위한 별칭

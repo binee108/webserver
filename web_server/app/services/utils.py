@@ -91,7 +91,11 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         
         for order in webhook_data['orders']:
             if isinstance(order, dict):
+                # 개별 주문의 모든 필드를 포함 (웹훅 레벨 값 폴백)
                 batch_order = {
+                    'symbol': order.get('symbol') or webhook_data.get('symbol'),
+                    'side': order.get('side') or webhook_data.get('side'),
+                    'order_type': order.get('order_type') or webhook_data.get('order_type', 'MARKET'),
                     'price': order.get('price'),
                     'qty_per': to_decimal(order.get('qty_per', 100)),
                 }
@@ -139,4 +143,4 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     if 'currency' in normalized and isinstance(normalized['currency'], str):
         normalized['currency'] = normalized['currency'].upper()  # 대문자로 표준화 (USDT, KRW 등)
     
-    return normalized 
+    return normalized

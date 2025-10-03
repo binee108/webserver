@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PositionEvent:
     """포지션 이벤트 데이터 클래스"""
-    event_type: str  # 'position_updated', 'position_closed'
+    event_type: str  # 'position_created', 'position_updated', 'position_closed'
     position_id: int
     symbol: str
     strategy_id: int
@@ -26,8 +26,11 @@ class PositionEvent:
     quantity: float
     entry_price: float
     timestamp: str
+    previous_quantity: Optional[float] = None
     # 계좌 정보 (중첩 구조)
-    account: Dict[str, Any] = None
+    account: Optional[Dict[str, Any]] = None
+    account_name: Optional[str] = None
+    exchange: Optional[str] = None
 
 @dataclass
 class OrderEvent:

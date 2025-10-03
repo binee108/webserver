@@ -6,7 +6,7 @@ from app import db
 from app.constants import MarketType
 from datetime import datetime, timedelta
 from sqlalchemy import func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 bp = Blueprint('main', __name__)
 
@@ -66,8 +66,26 @@ def dashboard():
 @login_required
 def accounts():
     """계좌 관리 페이지"""
-    # 현재 사용자의 계좌 목록 조회
-    accounts = Account.query.filter_by(user_id=current_user.id).all()
+    accounts = (
+        Account.query
+        .options(selectinload(Account.daily_summaries))
+        .filter_by(user_id=current_user.id)
+        .all()
+    )
+
+    for account in accounts:
+        latest_summary = None
+        if account.daily_summaries:
+            try:
+                latest_summary = max(account.daily_summaries, key=lambda s: s.date)
+            except ValueError:
+                latest_summary = None
+
+        account.latest_balance = float(latest_summary.ending_balance) if latest_summary else None
+        account.latest_spot_balance = float(latest_summary.spot_balance) if latest_summary else None
+        account.latest_futures_balance = float(latest_summary.futures_balance) if latest_summary else None
+        account.latest_balance_date = latest_summary.date if latest_summary else None
+
     return render_template('accounts.html', accounts=accounts, MarketType=MarketType)
 
 @bp.route('/strategies')

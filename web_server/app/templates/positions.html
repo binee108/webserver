@@ -540,13 +540,21 @@ async function cancelAllOpenOrders() {
     }
     
     try {
+        const strategyId = getStrategyIdFromUrl();
+        if (!strategyId) {
+            showToast('전략 ID를 확인할 수 없습니다.', 'error');
+            return;
+        }
+
         const response = await fetch('/api/open-orders/cancel-all', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRFToken': getCSRFToken()
             },
-            body: JSON.stringify({})  // 빈 JSON 객체 전송하여 파싱 에러 방지
+            body: JSON.stringify({
+                strategy_id: strategyId
+            })
         });
         const data = await response.json();
         
@@ -1000,14 +1008,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.logger && window.logger.debugMode) {
         setTimeout(showDebugHelp, 1000);
     }
-    
-    // 청산 버튼 이벤트 리스너 추가
-    document.querySelectorAll('.close-position-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const positionId = this.getAttribute('data-position-id');
-            closePosition(positionId);
-        });
-    });
 });
 
 // Cleanup on page unload

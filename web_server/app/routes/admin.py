@@ -3,10 +3,11 @@ from flask_login import login_required, current_user
 from functools import wraps
 from app import db, csrf
 from app.models import User, Account, Strategy, StrategyAccount
-from app.services.telegram_service import telegram_service
+from app.services.telegram import telegram_service
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from sqlalchemy import func
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -411,7 +412,7 @@ def system():
     """시스템 모니터링 페이지"""
     try:
         from app import scheduler
-        from app.services.exchange_service import exchange_service  # 🆕 precision 캐시 통계용
+        from app.services.exchange import exchange_service  # 🆕 precision 캐시 통계용
         
         # 스케줄러 상태
         scheduler_running = scheduler.running if scheduler else False
@@ -462,7 +463,7 @@ def system():
 def clear_precision_cache():
     """🆕 Precision 캐시 수동 정리"""
     try:
-        from app.services.exchange_service import exchange_service
+        from app.services.exchange import exchange_service
         
         exchange_name = request.json.get('exchange_name') if request.is_json else None
         
@@ -488,7 +489,7 @@ def clear_precision_cache():
 def warmup_precision_cache():
     """🆕 Precision 캐시 수동 웜업"""
     try:
-        from app.services.exchange_service import exchange_service
+        from app.services.exchange import exchange_service
         
         # 백그라운드 웜업 실행
         exchange_service.warm_up_precision_cache()
@@ -514,7 +515,7 @@ def warmup_precision_cache():
 def get_precision_cache_stats():
     """🆕 Precision 캐시 통계 실시간 조회"""
     try:
-        from app.services.exchange_service import exchange_service
+        from app.services.exchange import exchange_service
         
         stats = exchange_service.get_precision_cache_stats()
         
@@ -736,3 +737,209 @@ def test_global_telegram():
             'success': False,
             'message': f'테스트 중 오류가 발생했습니다: {str(e)}'
         }), 500 
+# ============================================
+# Phase 1: 주문 추적 시스템 관련 엔드포인트
+# ============================================
+
+@bp.route('/system/order-tracking')
+@login_required
+@admin_required
+def order_tracking():
+    """주문 추적 시스템 관리 페이지"""
+    try:
+        from app.services.order_tracking import order_tracking_service
+        from app.services.trade_record import trade_record_service
+        from app.services.performance_tracking import performance_tracking_service
+        from app.models import OrderTrackingSession, TradeExecution, StrategyPerformance
+        
+        # 세션 통계
+        session_stats = order_tracking_service.get_session_stats()
+        
+        # 최근 추적 세션 (최근 10개)
+        recent_sessions = OrderTrackingSession.query.order_by(
+            OrderTrackingSession.started_at.desc()
+        ).limit(10).all()
+        
+        # 최근 체결 내역 (최근 20개)
+        recent_executions = TradeExecution.query.order_by(
+            TradeExecution.execution_time.desc()
+        ).limit(20).all()
+        
+        # 오늘의 성과 요약
+        today = date.today()
+        today_performances = StrategyPerformance.query.filter_by(date=today).all()
+        
+        performance_summary = {
+            'total_strategies': len(today_performances),
+            'total_pnl': sum(p.daily_pnl for p in today_performances),
+            'total_trades': sum(p.total_trades for p in today_performances),
+            'avg_win_rate': sum(p.win_rate for p in today_performances) / len(today_performances) if today_performances else 0
+        }
+        
+        return render_template('admin/order_tracking.html',
+                             session_stats=session_stats,
+                             recent_sessions=recent_sessions,
+                             recent_executions=recent_executions,
+                             performance_summary=performance_summary)
+                             
+    except Exception as e:
+        flash(f'주문 추적 정보 조회 중 오류가 발생했습니다: {str(e)}', 'error')
+        return redirect(url_for('admin.system'))
+
+@bp.route('/system/order-tracking/sync-orders', methods=['POST'])
+@login_required
+@admin_required
+@admin_verification_required
+def sync_open_orders():
+    """미체결 주문 수동 동기화"""
+    try:
+        from app.services.order_tracking import order_tracking_service
+        
+        account_id = request.json.get('account_id')
+        if not account_id:
+            return jsonify({
+                'success': False,
+                'message': '계좌 ID가 필요합니다.'
+            }), 400
+        
+        result = order_tracking_service.sync_open_orders(account_id)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': f"{result['synced_count']}개 주문이 동기화되었습니다.",
+                'data': result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f"동기화 실패: {result['error']}"
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'동기화 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+@bp.route('/system/order-tracking/calculate-performance', methods=['POST'])
+@login_required
+@admin_required
+@admin_verification_required
+def calculate_performance():
+    """성과 메트릭 수동 계산"""
+    try:
+        from app.services.performance_tracking import performance_tracking_service
+        from datetime import date
+        
+        data = request.get_json()
+        strategy_id = data.get('strategy_id')
+        target_date = data.get('date')
+        
+        if strategy_id:
+            # 특정 전략 계산
+            if target_date:
+                target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+            else:
+                target_date = date.today()
+            
+            performance = performance_tracking_service.calculate_daily_performance(
+                strategy_id, target_date
+            )
+            
+            if performance:
+                return jsonify({
+                    'success': True,
+                    'message': f'전략 {strategy_id}의 {target_date} 성과가 계산되었습니다.',
+                    'data': {
+                        'daily_pnl': performance.daily_pnl,
+                        'total_trades': performance.total_trades,
+                        'win_rate': performance.win_rate
+                    }
+                })
+        else:
+            # 배치 계산
+            days_back = data.get('days_back', 7)
+            result = performance_tracking_service.batch_calculate(days_back)
+            
+            return jsonify({
+                'success': True,
+                'message': f"{result['processed']}개 성과가 계산되었습니다.",
+                'data': result
+            })
+        
+        return jsonify({
+            'success': False,
+            'message': '계산 실패'
+        }), 400
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'성과 계산 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+@bp.route('/system/order-tracking/cleanup-sessions', methods=['POST'])
+@login_required
+@admin_required
+@admin_verification_required
+def cleanup_tracking_sessions():
+    """오래된 추적 세션 정리"""
+    try:
+        from app.services.order_tracking import order_tracking_service
+        
+        timeout_minutes = request.json.get('timeout_minutes', 5)
+        order_tracking_service.cleanup_stale_sessions(timeout_minutes)
+        
+        return jsonify({
+            'success': True,
+            'message': f'{timeout_minutes}분 이상 비활성 세션이 정리되었습니다.'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'세션 정리 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+@bp.route('/system/order-tracking/stats')
+@login_required
+@admin_required
+def get_tracking_stats():
+    """추적 시스템 통계 API"""
+    try:
+        from app.services.order_tracking import order_tracking_service
+        from app.services.trade_record import trade_record_service
+        from app.models import TrackingLog
+        from datetime import datetime, timedelta
+        
+        # 세션 통계
+        session_stats = order_tracking_service.get_session_stats()
+        
+        # 체결 통계 (최근 24시간)
+        start_date = datetime.utcnow() - timedelta(days=1)
+        execution_stats = trade_record_service.get_execution_stats(start_date=start_date)
+        
+        # 로그 통계
+        log_stats = db.session.query(
+            TrackingLog.severity,
+            func.count(TrackingLog.id)
+        ).filter(
+            TrackingLog.created_at > start_date
+        ).group_by(TrackingLog.severity).all()
+        
+        log_summary = {severity: count for severity, count in log_stats}
+        
+        return jsonify({
+            'success': True,
+            'session_stats': session_stats,
+            'execution_stats': execution_stats,
+            'log_stats': log_summary,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'통계 조회 중 오류가 발생했습니다: {str(e)}'
+        }), 500

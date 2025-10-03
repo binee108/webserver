@@ -4,6 +4,16 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/accounts.css') }}">
+<style>
+.highlight-update {
+    animation: flash-balance 0.6s ease;
+}
+
+@keyframes flash-balance {
+    from { background-color: rgba(34, 197, 94, 0.2); }
+    to { background-color: transparent; }
+}
+</style>
 {% endblock %}
 
 {% block content %}
@@ -118,14 +128,24 @@
 
     <!-- 계좌 목록 -->
     <div class="card">
-        <div class="px-6 py-4 border-b border-color">
-            <h2 class="text-xl font-semibold text-primary flex items-center">
-                <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
-                </svg>
-                등록된 계좌
-            </h2>
-            <p class="text-sm text-muted mt-1">거래소 API 키를 관리하고 연결 상태를 확인하세요</p>
+        <div class="px-6 py-4 border-b border-color flex items-center justify-between">
+            <div>
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                    등록된 계좌
+                </h2>
+                <p class="text-sm text-muted mt-1">거래소 API 키를 관리하고 연결 상태를 확인하세요</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button onclick="refreshAllBalances(event)" class="btn btn-secondary">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    잔고 새로고침
+                </button>
+            </div>
         </div>
         <div class="p-6">
             {% if accounts %}
@@ -136,13 +156,16 @@
                                 <th>거래소</th>
                                 <th>계좌명</th>
                                 <th>상태</th>
-                                <th>마지막 확인</th>
+                                <th>현물 잔고 (USDT)</th>
+                                <th>선물 잔고 (USDT)</th>
+                                <th>스냅샷 시간</th>
+                                <th>마지막 수정</th>
                                 <th>작업</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for account in accounts %}
-                            <tr>
+                            <tr data-account-id="{{ account.id }}">
                                 <td>
                                     <div class="flex items-center">
                                         <div class="flex-shrink-0 h-10 w-10">
@@ -187,27 +210,51 @@
                                         </span>
                                     {% endif %}
                                 </td>
-                                <td class="text-sm text-muted">
+                                <td class="text-sm font-medium text-primary" id="account-spot-balance-{{ account.id }}">
+                                    {% if account.latest_spot_balance is not none %}
+                                        ${{ '%.2f'|format(account.latest_spot_balance) }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm font-medium text-primary" id="account-futures-balance-{{ account.id }}">
+                                    {% if account.latest_futures_balance is not none %}
+                                        ${{ '%.2f'|format(account.latest_futures_balance) }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm text-muted" id="account-balance-date-{{ account.id }}">
+                                    {% if account.latest_balance_date %}
+                                        {{ account.latest_balance_date.strftime('%Y-%m-%d') }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm text-muted" id="account-updated-{{ account.id }}">
                                     {{ account.updated_at.strftime('%Y-%m-%d %H:%M') if account.updated_at else '없음' }}
                                 </td>
                                 <td class="table-actions">
                                     <div class="flex space-x-2">
-                                        <button onclick="testConnection('{{ account.id }}')" 
-                                                class="btn btn-primary btn-sm">
+                                        <button onclick="testConnection(event, '{{ account.id }}')"
+                                                class="btn btn-primary btn-sm"
+                                                title="연결 테스트">
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
                                             </svg>
                                             테스트
                                         </button>
-                                        <button onclick="editAccount('{{ account.id }}')" 
-                                                class="btn btn-secondary btn-sm">
+                                        <button onclick="editAccount(event, '{{ account.id }}')"
+                                                class="btn btn-secondary btn-sm"
+                                                title="계좌 수정">
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path>
                                             </svg>
                                             수정
                                         </button>
-                                        <button onclick="deleteAccount('{{ account.id }}')" 
-                                                class="btn btn-error btn-sm">
+                                        <button onclick="deleteAccount(event, '{{ account.id }}')"
+                                                class="btn btn-error btn-sm"
+                                                title="계좌 삭제">
                                             <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd"></path>
                                                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
@@ -324,13 +371,21 @@
                     <div class="form-group">
                         <label for="public_api" class="form-label">API Key</label>
                         <input type="text" id="public_api" name="public_api" required 
-                               class="form-input">
+                               class="form-input"
+                               autocomplete="off" 
+                               spellcheck="false"
+                               maxlength="100"
+                               pattern="[A-Za-z0-9]{20,100}">
                     </div>
                     
                     <div class="form-group">
                         <label for="secret_api" class="form-label">API Secret</label>
-                        <input type="password" id="secret_api" name="secret_api" required 
+                        <input type="password" id="secret_api" name="secret_api"
                                class="form-input"
+                               autocomplete="new-password"
+                               spellcheck="false" 
+                               maxlength="200"
+                               pattern="[A-Za-z0-9+/=]{40,200}"
                                placeholder="변경하지 않으려면 비워두세요">
                     </div>
                     
@@ -338,9 +393,11 @@
                         <label for="passphrase" class="form-label">Passphrase (OKX만 해당)</label>
                         <input type="password" id="passphrase" name="passphrase" 
                                class="form-input"
+                               autocomplete="new-password"
+                               spellcheck="false"
+                               maxlength="50"
                                placeholder="변경하지 않으려면 비워두세요">
-                    </div>
-                    
+                    </div>                    
                     <div class="flex items-center">
                         <input type="checkbox" id="is_testnet" name="is_testnet" 
                                class="rounded border-color text-accent shadow-sm focus:border-accent focus:ring focus:ring-accent focus:ring-opacity-50">
@@ -363,248 +420,5 @@
     </div>
 </div>
 
-<script>
-function showToast(message, type = 'info') {
-    const toastContainer = document.getElementById('toast-container') || createToastContainer();
-    
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    
-    toast.innerHTML = `
-        <div class="toast-content">
-            <span>${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="toast-close">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                </svg>
-            </button>
-        </div>
-    `;
-    
-    toastContainer.appendChild(toast);
-    
-    setTimeout(() => toast.remove(), 5000);
-}
-
-function createToastContainer() {
-    const container = document.createElement('div');
-    container.id = 'toast-container';
-    container.className = 'fixed top-4 right-4 z-50 space-y-2';
-    document.body.appendChild(container);
-    return container;
-}
-
-// CSRF 토큰 가져오기
-function getCSRFToken() {
-    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-}
-
-function openAddAccountModal() {
-    document.getElementById('modalTitle').textContent = '계좌 추가';
-    document.getElementById('accountForm').reset();
-    document.getElementById('accountId').value = '';
-    
-    const apiSecretField = document.getElementById('secret_api');
-    apiSecretField.required = true;
-    apiSecretField.placeholder = '';
-    
-    const passphraseField = document.getElementById('passphrase');
-    passphraseField.placeholder = '';
-    
-    document.getElementById('accountModal').classList.remove('hidden');
-}
-
-function closeAccountModal() {
-    document.getElementById('accountModal').classList.add('hidden');
-}
-
-function editAccount(accountId) {
-    showToast('계좌 정보를 불러오는 중...', 'info');
-    
-    fetch(`/api/accounts/${accountId}`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            document.getElementById('modalTitle').textContent = '계좌 수정';
-            document.getElementById('accountId').value = accountId;
-            
-            document.getElementById('exchange').value = data.account.exchange || '';
-            document.getElementById('name').value = data.account.name || '';
-            document.getElementById('public_api').value = data.account.public_api || '';
-            
-            const apiSecretField = document.getElementById('secret_api');
-            const passphraseField = document.getElementById('passphrase');
-            
-            apiSecretField.value = '';
-            apiSecretField.placeholder = '변경하지 않으려면 비워두세요';
-            apiSecretField.required = false;
-            
-            passphraseField.value = '';
-            passphraseField.placeholder = '변경하지 않으려면 비워두세요';
-            
-            document.getElementById('is_testnet').checked = data.account.is_testnet || false;
-            document.getElementById('accountModal').classList.remove('hidden');
-        } else {
-            showToast('계좌 정보를 불러오는데 실패했습니다: ' + data.error, 'error');
-        }
-    })
-    .catch(error => {
-        showToast('계좌 정보를 불러오는 중 오류가 발생했습니다: ' + error.message, 'error');
-    });
-}
-
-function deleteAccount(accountId) {
-    if (confirm('정말로 이 계좌를 삭제하시겠습니까?')) {
-        const button = event.target.closest('button');
-        const originalContent = button.innerHTML;
-        
-        button.disabled = true;
-        button.innerHTML = '<div class="loading-spinner"></div>삭제 중...';
-        
-        fetch(`/api/accounts/${accountId}`, {
-            method: 'DELETE',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCSRFToken()
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showToast('계좌가 성공적으로 삭제되었습니다.', 'success');
-                setTimeout(() => location.reload(), 1500);
-            } else {
-                showToast('삭제 중 오류가 발생했습니다: ' + data.error, 'error');
-            }
-        })
-        .catch(error => {
-            showToast('삭제 중 오류가 발생했습니다: ' + error.message, 'error');
-        })
-        .finally(() => {
-            button.disabled = false;
-            button.innerHTML = originalContent;
-        });
-    }
-}
-
-function testConnection(accountId) {
-    const button = event.target.closest('button');
-    const originalContent = button.innerHTML;
-    
-    button.disabled = true;
-    button.innerHTML = '<div class="loading-spinner"></div>테스트 중...';
-    
-    fetch(`/api/accounts/${accountId}/test`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showToast('연결 테스트가 성공했습니다!', 'success');
-        } else {
-            showToast('연결 테스트 실패: ' + data.error, 'error');
-        }
-    })
-    .catch(error => {
-        showToast('연결 테스트 중 오류가 발생했습니다: ' + error.message, 'error');
-    })
-    .finally(() => {
-        button.disabled = false;
-        button.innerHTML = originalContent;
-    });
-}
-
-function submitAccount(event) {
-    event.preventDefault();
-    
-    const form = document.getElementById('accountForm');
-    const formData = new FormData(form);
-    const accountId = document.getElementById('accountId').value;
-    
-    const apiSecret = formData.get('secret_api');
-    const passphrase = formData.get('passphrase');
-    
-    if (!accountId && (!apiSecret || apiSecret.trim() === '')) {
-        showToast('새 계좌 추가 시 API Secret은 필수입니다.', 'error');
-        return;
-    }
-    
-    const data = {
-        name: formData.get('name'),
-        exchange: formData.get('exchange'),
-        public_api: formData.get('public_api'),
-        is_testnet: formData.get('is_testnet') === 'on'
-    };
-    
-    if (!accountId) {
-        data.secret_api = apiSecret;
-        data.passphrase = passphrase || '';
-    } else {
-        if (apiSecret && apiSecret.trim() !== '') {
-            data.secret_api = apiSecret;
-        }
-        if (passphrase && passphrase.trim() !== '') {
-            data.passphrase = passphrase;
-        }
-    }
-    
-    const url = accountId ? `/api/accounts/${accountId}` : '/api/accounts';
-    const method = accountId ? 'PUT' : 'POST';
-    
-    const submitButton = form.querySelector('button[type="submit"]');
-    const originalText = submitButton.innerHTML;
-    submitButton.disabled = true;
-    submitButton.innerHTML = '<div class="loading-spinner"></div>저장 중...';
-    
-    fetch(url, {
-        method: method,
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showToast('계좌가 성공적으로 저장되었습니다.', 'success');
-            closeAccountModal();
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast('저장 중 오류가 발생했습니다: ' + data.error, 'error');
-        }
-    })
-    .catch(error => {
-        showToast('저장 중 오류가 발생했습니다: ' + error.message, 'error');
-    })
-    .finally(() => {
-        submitButton.disabled = false;
-        submitButton.innerHTML = originalText;
-    });
-}
-
-// 모달 외부 클릭 시 닫기
-document.getElementById('accountModal').addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeAccountModal();
-    }
-});
-
-// ESC 키로 모달 닫기
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        closeAccountModal();
-    }
-});
-</script>
+<script src="{{ url_for('static', filename='js/accounts.js') }}"></script>
 {% endblock %} 

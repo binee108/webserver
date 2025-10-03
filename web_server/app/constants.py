@@ -2,6 +2,8 @@
 애플리케이션 전역 상수 정의
 """
 
+from typing import List, Optional
+
 class MarketType:
     """마켓 타입 상수"""
     SPOT = 'SPOT'
@@ -111,38 +113,94 @@ class Exchange:
 
 
 class OrderType:
-    """주문 타입 상수"""
+    """통합 주문 타입 관리"""
+    # 기본 주문 타입
     MARKET = 'MARKET'
     LIMIT = 'LIMIT'
-    STOP_LIMIT = 'STOP_LIMIT'
     STOP_MARKET = 'STOP_MARKET'
+    STOP_LIMIT = 'STOP_LIMIT'
+
+    # 취소 타입
+    CANCEL = 'CANCEL'
     CANCEL_ALL_ORDER = 'CANCEL_ALL_ORDER'
-    
+
     # 소문자 버전 (API 연동용)
     MARKET_LOWER = 'market'
     LIMIT_LOWER = 'limit'
     STOP_LIMIT_LOWER = 'stop_limit'
     STOP_MARKET_LOWER = 'stop_market'
-    
+
+    # STOP 주문 그룹 (stopPrice 필요)
+    STOP_ORDERS = [STOP_MARKET, STOP_LIMIT]
+
+    # LIMIT 주문 그룹 (price 필요)
+    LIMIT_ORDERS = [LIMIT, STOP_LIMIT]
+
     # 유효한 거래 주문 타입
     VALID_TRADING_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET]
     # 모든 유효한 타입 (취소 포함)
-    VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CANCEL_ALL_ORDER]
-    
+    VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CANCEL, CANCEL_ALL_ORDER]
+
     @classmethod
     def is_valid(cls, value):
         """값이 유효한 order_type인지 확인"""
         if not value:
             return False
         return value.upper() in cls.VALID_TYPES
-    
+
     @classmethod
     def is_trading_type(cls, value):
         """값이 거래 주문 타입인지 확인"""
         if not value:
             return False
         return value.upper() in cls.VALID_TRADING_TYPES
-    
+
+    @classmethod
+    def requires_stop_price(cls, order_type):
+        """STOP 가격이 필요한 주문 타입 확인"""
+        if not order_type:
+            return False
+        return order_type.upper() in cls.STOP_ORDERS
+
+    @classmethod
+    def requires_price(cls, order_type):
+        """지정가가 필요한 주문 타입 확인"""
+        if not order_type:
+            return False
+        return order_type.upper() in cls.LIMIT_ORDERS
+
+    @classmethod
+    def to_exchange_format(cls, order_type, exchange):
+        """거래소별 주문 타입 변환"""
+        if not order_type or not exchange:
+            return order_type
+
+        # 표준화된 매핑 테이블
+        mapping = {
+            'binance': {
+                cls.STOP_MARKET: 'STOP_MARKET',
+                cls.STOP_LIMIT: 'STOP_LIMIT',
+                cls.MARKET: 'MARKET',
+                cls.LIMIT: 'LIMIT'
+            },
+            'upbit': {
+                cls.STOP_MARKET: 'stop_market',
+                cls.STOP_LIMIT: 'stop_limit',
+                cls.MARKET: 'market',
+                cls.LIMIT: 'limit'
+            },
+            'bybit': {
+                cls.STOP_MARKET: 'Market',
+                cls.STOP_LIMIT: 'Limit',
+                cls.MARKET: 'Market',
+                cls.LIMIT: 'Limit'
+            }
+        }
+
+        normalized_type = order_type.upper()
+        exchange_mapping = mapping.get(exchange.lower(), {})
+        return exchange_mapping.get(normalized_type, normalized_type)
+
     @classmethod
     def normalize(cls, value):
         """값을 표준 대문자 형태로 변환"""
@@ -153,13 +211,54 @@ class OrderType:
             if upper_value in cls.VALID_TYPES:
                 return upper_value
         return value
-    
+
     @classmethod
     def to_lower(cls, value):
         """값을 소문자로 변환 (API 호출용)"""
         if value and isinstance(value, str):
             return value.lower()
         return value
+
+    @classmethod
+    def get_required_params(cls, order_type):
+        """주문 타입별 필수 파라미터 반환
+
+        Returns:
+            dict: {'price': bool, 'stop_price': bool, 'quantity': bool}
+        """
+        if not order_type:
+            return {'price': False, 'stop_price': False, 'quantity': True}
+
+        normalized_type = order_type.upper()
+
+        return {
+            'price': normalized_type in cls.LIMIT_ORDERS,
+            'stop_price': normalized_type in cls.STOP_ORDERS,
+            'quantity': normalized_type in cls.VALID_TRADING_TYPES
+        }
+
+    @classmethod
+    def validate_params(cls, order_type, price=None, stop_price=None, quantity=None):
+        """주문 타입에 필요한 파라미터가 제공되었는지 검증
+
+        Returns:
+            tuple: (is_valid: bool, error_message: str or None)
+        """
+        if not order_type:
+            return False, "order_type이 필요합니다"
+
+        required = cls.get_required_params(order_type)
+
+        if required['price'] and price is None:
+            return False, f"{order_type} 주문에는 price가 필수입니다"
+
+        if required['stop_price'] and stop_price is None:
+            return False, f"{order_type} 주문에는 stop_price가 필수입니다"
+
+        if required['quantity'] and quantity is None:
+            return False, f"{order_type} 주문에는 quantity가 필수입니다"
+
+        return True, None
 
 
 class MinOrderAmount:
@@ -231,3 +330,136 @@ class MinOrderAmount:
         if market_type_upper == 'FUTURES':
             return 5.0  # 선물 기본값
         return 10.0  # 현물 기본값
+
+
+class OrderStatus:
+    """통합 주문 상태 (거래소 독립적)"""
+    # 기본 상태
+    NEW = 'NEW'                      # 신규 주문
+    OPEN = 'OPEN'                    # 미체결
+    PARTIALLY_FILLED = 'PARTIALLY_FILLED'  # 부분 체결
+    FILLED = 'FILLED'                # 완전 체결
+    CANCELLED = 'CANCELLED'          # 취소됨
+    REJECTED = 'REJECTED'            # 거부됨
+    EXPIRED = 'EXPIRED'              # 만료됨
+
+    # 미체결 상태 그룹
+    OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED]
+    # 완료 상태 그룹
+    CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED]
+
+    @classmethod
+    def from_exchange(cls, status: str, exchange: str) -> str:
+        """거래소별 상태를 통합 상태로 변환"""
+        if not status or not exchange:
+            return status
+
+        # 이미 통합 상태인 경우 바로 반환
+        if status in [cls.NEW, cls.OPEN, cls.PARTIALLY_FILLED, cls.FILLED, cls.CANCELLED, cls.REJECTED, cls.EXPIRED]:
+            return status
+
+        # 소문자 정규화된 상태 처리 (fallback for legacy normalized values)
+        normalized_fallback = {
+            'open': cls.OPEN,
+            'closed': cls.FILLED,
+            'canceled': cls.CANCELLED,
+            'cancelled': cls.CANCELLED,
+            'rejected': cls.REJECTED,
+            'expired': cls.EXPIRED,
+            'new': cls.NEW
+        }
+
+        if status.lower() in normalized_fallback:
+            return normalized_fallback[status.lower()]
+
+        # 거래소별 원본 상태 매핑
+        mapper = {
+            'BINANCE': {
+                'NEW': cls.NEW,
+                'PARTIALLY_FILLED': cls.PARTIALLY_FILLED,
+                'FILLED': cls.FILLED,
+                'CANCELED': cls.CANCELLED,  # 바이낸스는 CANCELED 사용
+                'CANCELLED': cls.CANCELLED,
+                'REJECTED': cls.REJECTED,
+                'EXPIRED': cls.EXPIRED
+            },
+            'BYBIT': {
+                'Created': cls.NEW,
+                'New': cls.OPEN,
+                'PartiallyFilled': cls.PARTIALLY_FILLED,
+                'Filled': cls.FILLED,
+                'Cancelled': cls.CANCELLED,
+                'Canceled': cls.CANCELLED,
+                'Rejected': cls.REJECTED
+            },
+            'UPBIT': {
+                'wait': cls.OPEN,
+                'done': cls.FILLED,
+                'cancel': cls.CANCELLED
+            },
+            'OKX': {
+                'live': cls.OPEN,
+                'partially_filled': cls.PARTIALLY_FILLED,
+                'filled': cls.FILLED,
+                'canceled': cls.CANCELLED
+            }
+        }
+
+        exchange_upper = exchange.upper()
+        if exchange_upper in mapper:
+            return mapper[exchange_upper].get(status, status)
+        return status
+
+    @classmethod
+    def is_open(cls, status: str) -> bool:
+        """미체결 상태인지 확인"""
+        return status in cls.OPEN_STATUSES
+
+    @classmethod
+    def is_closed(cls, status: str) -> bool:
+        """완료 상태인지 확인"""
+        return status in cls.CLOSED_STATUSES
+
+    @classmethod
+    def get_open_statuses(cls) -> list:
+        """미체결 상태 목록 반환"""
+        return cls.OPEN_STATUSES.copy()
+
+    @classmethod
+    def get_closed_statuses(cls) -> list:
+        """완료 상태 목록 반환"""
+        return cls.CLOSED_STATUSES.copy()
+
+
+class OrderEventType:
+    """주문 이벤트 타입"""
+    ORDER_CREATED = 'order_created'     # 주문 생성
+    ORDER_UPDATED = 'order_updated'     # 주문 업데이트
+    ORDER_FILLED = 'order_filled'       # 주문 체결
+    ORDER_CANCELLED = 'order_cancelled' # 주문 취소
+    TRADE_EXECUTED = 'trade_executed'   # 거래 실행
+    POSITION_UPDATED = 'position_updated' # 포지션 업데이트
+
+    # 유효한 이벤트 타입
+    VALID_TYPES = [
+        ORDER_CREATED, ORDER_UPDATED, ORDER_FILLED,
+        ORDER_CANCELLED, TRADE_EXECUTED, POSITION_UPDATED
+    ]
+
+    @classmethod
+    def is_valid(cls, event_type: str) -> bool:
+        """유효한 이벤트 타입인지 확인"""
+        return event_type in cls.VALID_TYPES
+
+    @classmethod
+    def get_display_text(cls, event_type: str) -> str:
+        """이벤트 타입의 한국어 표시 텍스트 반환"""
+        display_map = {
+            cls.ORDER_CREATED: '새 주문',
+            cls.ORDER_UPDATED: '주문 업데이트',
+            cls.ORDER_FILLED: '주문 체결',
+            cls.ORDER_CANCELLED: '주문 취소',
+            cls.TRADE_EXECUTED: '거래 실행',
+            cls.POSITION_UPDATED: '포지션 업데이트'
+        }
+        return display_map.get(event_type, event_type)

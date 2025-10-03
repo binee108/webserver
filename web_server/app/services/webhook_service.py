@@ -5,13 +5,13 @@
 
 import logging
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 from app import db
 from app.models import Strategy, WebhookLog
 from app.services.utils import normalize_webhook_data
-from app.services.exchange_service import exchange_service
+from app.services.exchange import exchange_service
 from app.constants import MarketType, Exchange, OrderType
 from app.utils.logging_security import get_secure_logger
 
@@ -27,32 +27,93 @@ class WebhookService:
     def __init__(self):
         self.session = db.session
     
-    def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+    def process_webhook(self, webhook_data: Dict[str, Any], webhook_received_at: Optional[float] = None) -> Dict[str, Any]:
         """웹훅 데이터 처리 메인 함수"""
-        # 웹훅 수신 시간 기록
-        webhook_start_time = time.time()
+        # 웹훅 수신 시간 기록 (표준화된 변수명)
+        if webhook_received_at is None:
+            webhook_received_at = time.time()
+        # 하위 호환성을 위한 기존 변수명 유지
+        webhook_start_time = webhook_received_at
         
         try:
             # 웹훅 데이터 표준화 (대소문자 구별 없이 처리)
             normalized_data = normalize_webhook_data(webhook_data)
+
+            # 검증 완료 시점 기록
+            webhook_validated_at = time.time()
             
             logger.info(f"웹훅 처리 시작 - 타입: {normalized_data.get('order_type', 'UNKNOWN')}, "
                        f"전략: {normalized_data.get('group_name', 'UNKNOWN')}")
             
-            # 웹훅 로그 기록
+            # 웹훅 로그 기록 (타이밍 정보 포함)
             webhook_log = WebhookLog(
                 payload=str(webhook_data),  # 원본 데이터 기록
-                status='processing'
+                status='processing',
+                webhook_received_at=webhook_received_at  # 수신 시점 저장
             )
             self.session.add(webhook_log)
             self.session.commit()
             
-            # 전략 소유자 토큰 검증 (group_name 소유자 확인)
+            # 전략 정보 초기 추출
             group_name = normalized_data.get('group_name')
             token = normalized_data.get('token')
             if not group_name:
                 raise WebhookError("group_name이 필요합니다")
+            
+            # 🧪 테스트 모드 검증 우회
+            test_mode = normalized_data.get("test_mode", False)
+            if test_mode:
+                logger.info("🧪 테스트 모드: 전략 및 토큰 검증 우회")
+                # 테스트용 가상 전략 객체 생성
+                class TestStrategy:
+                    def __init__(self):
+                        self.id = normalized_data.get("strategy_id", 999)
+                        self.name = f"test_strategy_{self.id}"
+                        self.group_name = group_name
+                        self.is_active = True
+                        self.user = None
+                strategy = TestStrategy()
+                # 바로 거래 처리로 이동
+                # 거래 신호는 trading_service로 위임
+                from app.services.trading import trading_service
+                # order_type 변수 정의 (테스트 모드에서 필요)
+                order_type = normalized_data.get('order_type', '')
+                # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
+                if not normalized_data.get('batch_mode'):
+                    # STOP 주문 타입 검증
+                    if OrderType.requires_stop_price(order_type):
+                        if not normalized_data.get('stop_price'):
+                            raise WebhookError(f"{order_type} 주문에는 stop_price가 필수입니다")
+                        logger.info(f"✅ {order_type} 주문 stop_price 검증 완료: {normalized_data.get('stop_price')}")
+                    
+                    # LIMIT 주문 타입 검증
+                    if OrderType.requires_price(order_type):
+                        if not normalized_data.get('price'):
+                            raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
+                        logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
+                    
+                    # MARKET 주문은 price나 stop_price 불필요
+                    if order_type == OrderType.MARKET:
+                        if normalized_data.get('stop_price'):
+                            logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
+                            normalized_data.pop('stop_price', None)
+                        if normalized_data.get('price'):
+                            logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
+                            normalized_data.pop('price', None)
 
+                
+                # 배치 모드 감지 및 라우팅
+                if normalized_data.get("batch_mode"):
+                    result = trading_service.process_batch_trading_signal(normalized_data)
+                else:
+                    # 기존 단일 주문 처리
+                    result = trading_service.process_trading_signal(normalized_data)
+                webhook_log.status = "success"
+                webhook_log.message = str(result)
+                self.session.commit()
+                return result
+            
+            # 전략 소유자 토큰 검증 (group_name 소유자 확인)
             strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
             if not strategy:
                 raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
@@ -91,47 +152,140 @@ class WebhookService:
 
             # 웹훅 타입 확인
             order_type = normalized_data.get('order_type', '')
-            
+
+            # 거래 처리 시작 시점 기록
+            trade_started_at = time.time()
+
             if order_type == OrderType.CANCEL_ALL_ORDER:
-                result = self.process_cancel_all_orders(normalized_data)
+                result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
+            elif order_type == OrderType.CANCEL:
+                result = self.process_cancel_order(normalized_data, webhook_received_at)
             else:
                 # 거래 신호는 trading_service로 위임
-                from app.services.trading_service import trading_service
-                
+                from app.services.trading import trading_service
+                # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
+                if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
+                    # STOP 주문 타입 검증
+                    if OrderType.requires_stop_price(order_type):
+                        if not normalized_data.get('stop_price'):
+                            raise WebhookError(f"{order_type} 주문에는 stop_price가 필수입니다")
+                        logger.info(f"✅ {order_type} 주문 stop_price 검증 완료: {normalized_data.get('stop_price')}")
+                    
+                    # LIMIT 주문 타입 검증
+                    if OrderType.requires_price(order_type):
+                        if not normalized_data.get('price'):
+                            raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
+                        logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
+                    
+                    # MARKET 주문은 price나 stop_price 불필요
+                    if order_type == OrderType.MARKET:
+                        if normalized_data.get('stop_price'):
+                            logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
+                            normalized_data.pop('stop_price', None)
+                        if normalized_data.get('price'):
+                            logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
+                            normalized_data.pop('price', None)
+
+
+
+                # 타이밍 컨텍스트 준비
+                timing_context = {
+                    'webhook_received_at': webhook_received_at,
+                    'webhook_validated_at': webhook_validated_at,
+                    'trade_started_at': trade_started_at
+                }
+
+                # 전략 ID를 거래 데이터에 추가
+                normalized_data['strategy_id'] = strategy.id
+                normalized_data['strategy_name'] = strategy.name
+
                 # 🆕 배치 모드 감지 및 라우팅
                 if normalized_data.get('batch_mode'):
-                    logger.info(f"📦 배치 주문 모드 감지 - {len(normalized_data.get('orders', []))}개 주문")
-                    result = trading_service.process_batch_trading_signal(normalized_data)
+                    orders = normalized_data.get('orders', [])
+                    logger.info(f"📦 배치 주문 모드 감지 - {len(orders)}개 주문")
+                    # 디버깅: 정규화된 주문 데이터 로깅
+                    for i, order in enumerate(orders):
+                        logger.debug(f"  주문 {i+1}: symbol={order.get('symbol')}, side={order.get('side')}, "
+                                   f"order_type={order.get('order_type')}, qty_per={order.get('qty_per')}")
+                    result = trading_service.process_batch_trading_signal(normalized_data, timing_context)
                 else:
                     # 기존 단일 주문 처리
-                    result = trading_service.process_trading_signal(normalized_data)
+                    result = trading_service.process_trading_signal(normalized_data, timing_context)
                 
                 # 🆕 거래 신호 처리 결과 분석 및 로깅
                 self._analyze_trading_result(result, normalized_data)
             
-            # 성공 시 로그 업데이트
+            # 성공 시 로그 업데이트 (모든 타이밍 정보 저장)
             webhook_log.status = 'success'
             webhook_log.message = str(result)
+            webhook_log.webhook_validated_at = webhook_validated_at
+            webhook_log.trade_started_at = trade_started_at
+
+            # 거래 결과에서 타이밍 정보 추출 (있는 경우)
+            if isinstance(result, dict) and 'timing' in result:
+                timing_info = result['timing']
+                webhook_log.trade_requested_at = timing_info.get('trade_requested_at')
+                webhook_log.trade_responded_at = timing_info.get('trade_responded_at')
+
             self.session.commit()
             
             # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
             
-            # 웹훅 처리 시간 정보 추가
+            # 웹훅 처리 완료 시점 기록
+            webhook_completed_at = time.time()
+
+            # 성능 메트릭 계산
+            validation_time_ms = round((webhook_validated_at - webhook_received_at) * 1000, 2)
+            preprocessing_time_ms = round((trade_started_at - webhook_validated_at) * 1000, 2)
+            total_processing_time_ms = round((webhook_completed_at - webhook_received_at) * 1000, 2)
+
+            # 웹훅 로그에 완료 시점과 성능 메트릭 저장
+            webhook_log.webhook_completed_at = webhook_completed_at
+            webhook_log.validation_time_ms = validation_time_ms
+            webhook_log.preprocessing_time_ms = preprocessing_time_ms
+            webhook_log.total_processing_time_ms = total_processing_time_ms
+
+            # 거래 처리 시간도 저장 (있는 경우)
+            if isinstance(result, dict) and 'timing' in result:
+                timing_info = result['timing']
+                if timing_info.get('trade_processing_time_ms'):
+                    webhook_log.trade_processing_time_ms = timing_info['trade_processing_time_ms']
+
+            # 최종 커밋
+            self.session.commit()
+
+            # 성능 메트릭만 유지 (사용자에게 필요한 정보)
             if isinstance(result, dict):
-                result['webhook_timing'] = {
-                    'received_at': webhook_start_time,
-                    'received_timestamp': datetime.fromtimestamp(webhook_start_time).isoformat()
+                result['performance_metrics'] = {
+                    'validation_time_ms': validation_time_ms,
+                    'preprocessing_time_ms': preprocessing_time_ms,
+                    'total_processing_time_ms': total_processing_time_ms
                 }
             
             return result
             
         except Exception as e:
-            # 실패 시 로그 업데이트
+            # 실패 시 로그 업데이트 (타이밍 정보 포함)
             if 'webhook_log' in locals():
+                error_time = time.time()
                 webhook_log.status = 'failed'
                 webhook_log.message = str(e)
+                webhook_log.webhook_completed_at = error_time
+
+                # 검증 및 전처리 시간이 기록된 경우 저장
+                if 'webhook_validated_at' in locals():
+                    webhook_log.webhook_validated_at = webhook_validated_at
+                    webhook_log.validation_time_ms = round((webhook_validated_at - webhook_received_at) * 1000, 2)
+
+                    if 'trade_started_at' in locals():
+                        webhook_log.trade_started_at = trade_started_at
+                        webhook_log.preprocessing_time_ms = round((trade_started_at - webhook_validated_at) * 1000, 2)
+
+                # 총 처리 시간 계산
+                webhook_log.total_processing_time_ms = round((error_time - webhook_received_at) * 1000, 2)
+
                 self.session.commit()
-            
+
             logger.error(f"웹훅 처리 실패: {str(e)}")
             raise WebhookError(f"웹훅 처리 실패: {str(e)}")
     
@@ -190,7 +344,7 @@ class WebhookService:
     
     # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
     
-    def process_cancel_all_orders(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+    def process_cancel_all_orders(self, webhook_data: Dict[str, Any], webhook_received_at: float) -> Dict[str, Any]:
         """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
         token = webhook_data.get('token')
@@ -249,7 +403,7 @@ class WebhookService:
         logger.info(f"📋 전략에 연결된 계좌 수: {len(strategy_accounts)}")
         
         # order_service를 통해 계좌별 주문 취소 처리
-        from app.services.order_service import order_service
+        from app.services.trading import trading_service as order_service
         
         results = []
         processed_count = 0
@@ -297,27 +451,41 @@ class WebhookService:
                 # order_service를 통해 주문 취소 (자동으로 OpenOrder 레코드도 처리됨)
                 logger.info(f"🔄 계좌 {account.id}: order_service를 통한 주문 취소 요청...")
                 cancel_result = order_service.cancel_all_orders(
-                    account_id=account.id,
+                    strategy_id=strategy.id,
                     symbol=symbol,
-                    market_type=strategy.market_type,  # 전략의 마켓 타입 사용
-                    exchange=account.exchange  # 거래소 정보도 전달
+                    timing_context={'webhook_received_at': webhook_received_at}
                 )
                 
                 if cancel_result['success']:
-                    cancelled_orders = cancel_result.get('cancelled_orders', [])
-                    failed_orders = cancel_result.get('failed_orders', [])
-                    
+                    cancelled_orders_raw = cancel_result.get('cancelled_orders', [])
+                    failed_orders_raw = cancel_result.get('failed_orders', [])
+
+                    # 정수 또는 리스트로 처리 (trading.py에서 정수로 반환하는 경우 고려)
+                    if isinstance(cancelled_orders_raw, int):
+                        cancelled_count = cancelled_orders_raw
+                        cancelled_orders_details = []
+                    else:
+                        cancelled_count = len(cancelled_orders_raw)
+                        cancelled_orders_details = cancelled_orders_raw
+
+                    if isinstance(failed_orders_raw, int):
+                        failed_count = failed_orders_raw
+                        failed_orders_details = []
+                    else:
+                        failed_count = len(failed_orders_raw)
+                        failed_orders_details = failed_orders_raw
+
                     logger.info(f"✅ 계좌 {account.id}({account.name}) 주문 취소 완료 - "
-                               f"성공: {len(cancelled_orders)}개, 실패: {len(failed_orders)}개")
-                    
+                               f"성공: {cancelled_count}개, 실패: {failed_count}개")
+
                     results.append({
                         'account_id': account.id,
                         'account_name': account.name,
                         'exchange': account.exchange,
-                        'cancelled_orders': len(cancelled_orders),
-                        'failed_orders': len(failed_orders),
-                        'cancelled_order_details': cancelled_orders,
-                        'failed_order_details': failed_orders,
+                        'cancelled_orders': cancelled_count,
+                        'failed_orders': failed_count,
+                        'cancelled_order_details': cancelled_orders_details,
+                        'failed_order_details': failed_orders_details,
                         'success': True,
                         'message': cancel_result.get('message', '주문 취소 완료')
                     })
@@ -377,8 +545,115 @@ class WebhookService:
                 'total_failed_orders': sum(r.get('failed_orders', 0) for r in successful_results)
             },
             'webhook_timing': {
-                'received_at': webhook_start_time,
-                'received_timestamp': datetime.fromtimestamp(webhook_start_time).isoformat()
+                'received_at': webhook_received_at,
+                'received_timestamp': datetime.fromtimestamp(webhook_received_at).isoformat()
+            }
+        }
+
+    def process_cancel_order(self, normalized_data: Dict[str, Any], webhook_received_at: float) -> Dict[str, Any]:
+        """개별 주문 취소 처리"""
+        from app.services.trading import trading_service
+        from app.models import Strategy, StrategyAccount
+
+        group_name = normalized_data.get('group_name')
+        symbol = normalized_data.get('symbol')
+        order_id = normalized_data.get('order_id')  # CANCEL 주문 시 필요한 order_id
+
+        logger.info(f"🔄 개별 주문 취소 처리 시작 - 전략: {group_name}, 주문: {order_id}")
+
+        # 전략 조회
+        strategy = Strategy.query.filter_by(name=group_name).first()
+        if not strategy:
+            return {
+                'action': 'cancel_order',
+                'success': False,
+                'error': f'전략을 찾을 수 없습니다: {group_name}'
+            }
+
+        # 연결된 계좌 조회
+        strategy_accounts = StrategyAccount.query.filter_by(strategy_id=strategy.id).all()
+        if not strategy_accounts:
+            return {
+                'action': 'cancel_order',
+                'success': False,
+                'error': f'전략 {group_name}에 연결된 계좌가 없습니다'
+            }
+
+        results = []
+
+        for strategy_account in strategy_accounts:
+            account = strategy_account.account
+            if not account or not account.is_active:
+                continue
+
+            try:
+                logger.info(f"🔄 계좌 {account.id}({account.name}): 주문 {order_id} 취소 중...")
+
+                # 개별 주문 취소
+                cancel_result = trading_service.cancel_order_by_user(
+                    user_id=strategy.user_id,
+                    order_id=order_id,
+                    symbol=symbol
+                )
+
+                if cancel_result['success']:
+                    logger.info(f"✅ 계좌 {account.id}({account.name}) 주문 {order_id} 취소 완료")
+                    results.append({
+                        'account_id': account.id,
+                        'account_name': account.name,
+                        'exchange': account.exchange,
+                        'order_id': order_id,
+                        'success': True,
+                        'message': '주문 취소 완료'
+                    })
+                else:
+                    error_msg = cancel_result.get('error', '알 수 없는 오류')
+                    logger.error(f"❌ 계좌 {account.id}({account.name}) 주문 {order_id} 취소 실패: {error_msg}")
+                    results.append({
+                        'account_id': account.id,
+                        'account_name': account.name,
+                        'exchange': account.exchange,
+                        'order_id': order_id,
+                        'error': error_msg,
+                        'success': False
+                    })
+
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"❌ 계좌 {account.id}({account.name}) 주문 취소 처리 중 예외 발생: {error_msg}")
+                results.append({
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'exchange': account.exchange,
+                    'order_id': order_id,
+                    'error': f"처리 중 예외: {error_msg}",
+                    'success': False
+                })
+
+        # 결과 요약
+        successful_results = [r for r in results if r.get('success', False)]
+        failed_results = [r for r in results if not r.get('success', False)]
+
+        logger.info(f"📊 개별 주문 취소 처리 완료:")
+        logger.info(f"   처리 대상: {len(results)}")
+        logger.info(f"   성공: {len(successful_results)}")
+        logger.info(f"   실패: {len(failed_results)}")
+
+        return {
+            'action': 'cancel_order',
+            'strategy': group_name,
+            'order_id': order_id,
+            'symbol': symbol,
+            'results': results,
+            'summary': {
+                'total_accounts': len(strategy_accounts),
+                'processed_accounts': len(results),
+                'successful_accounts': len(successful_results),
+                'failed_accounts': len(failed_results)
+            },
+            'webhook_timing': {
+                'received_at': webhook_received_at,
+                'received_timestamp': datetime.fromtimestamp(webhook_received_at).isoformat()
             }
         }
 

@@ -3,7 +3,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from app import db, csrf
 from app.models import User
 import secrets
-from app.services.telegram_service import telegram_service
+from app.services.telegram import telegram_service
 from datetime import datetime
 
 bp = Blueprint('auth', __name__, url_prefix='/auth')

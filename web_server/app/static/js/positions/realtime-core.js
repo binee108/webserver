@@ -53,33 +53,12 @@ const RealtimeLogger = {
 // Toast Notification System
 // ========================================
 
-function showToast(message, type = 'info', duration = 3000) {
-    // 기존 토스트 제거
-    const existingToast = document.querySelector('.toast-notification');
-    if (existingToast) {
-        existingToast.remove();
-    }
-    
-    // 새 토스트 생성
-    const toast = document.createElement('div');
-    toast.className = `toast-notification ${type}`;
-    toast.textContent = message;
-    
-    // 페이지에 추가
-    document.body.appendChild(toast);
-    
-    // 자동 제거
-    setTimeout(() => {
-        if (toast.parentNode) {
-            toast.style.animation = 'slideOutRight 0.3s ease-out';
-            setTimeout(() => toast.remove(), 300);
-        }
-    }, duration);
-}
-
+// showToast는 toast.js에서 전역으로 제공됨
 // Legacy support
 function showNotification(message, type = 'info') {
-    showToast(message, type);
+    if (typeof window.showToast === 'function') {
+        window.showToast(message, type);
+    }
 }
 
 // ========================================

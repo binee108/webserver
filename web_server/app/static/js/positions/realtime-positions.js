@@ -131,7 +131,7 @@ class RealtimePositionsManager {
                     break;
                     
                 case 'position_closed':
-                    this.removePosition(data.position_id || data.id);
+                    this.removePosition(data.position_id);
                     break;
                     
                 default:

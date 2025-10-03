@@ -421,8 +421,13 @@ class PositionPriceManager {
         }
         
         // Calculate and update P&L
-        const pnl = (currentPrice - entryPrice) * quantity;
-        const pnlPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+        const priceDiff = currentPrice - entryPrice;
+        const quantityDirection = quantity < 0 ? -1 : (quantity > 0 ? 1 : 0);
+        const absQuantity = Math.abs(quantity);
+        const pnl = priceDiff * absQuantity * quantityDirection;
+        const pnlPercent = (entryPrice !== 0 && quantityDirection !== 0)
+            ? (priceDiff / entryPrice) * quantityDirection * 100
+            : 0;
         
         const pnlElement = row.querySelector(`#pnl-${positionId}`);
         if (pnlElement) {
@@ -663,7 +668,7 @@ class PositionPriceManager {
         this.positions.forEach((position) => {
             const latestPrice = this.getLatestPrice(position.exchange, position.symbol);
             diagnostics.positions.push({
-                id: position.id,
+                id: position.position_id,
                 symbol: position.symbol,
                 exchange: position.exchange,
                 marketType: position.marketType,

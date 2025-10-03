@@ -17,7 +17,10 @@
     
     <!-- Custom CSS - Main Unified Stylesheet -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
-    
+
+    <!-- Toast Notification System -->
+    <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+
     <!-- Additional head content from child templates -->
     {% block head %}{% endblock %}
 </head>

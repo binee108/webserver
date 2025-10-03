@@ -1,7 +1,7 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
-from app.services.capital_service import capital_service
+from app.services.analytics import analytics_service as capital_service
 from app.services.strategy_service import strategy_service, StrategyError
 
 bp = Blueprint('capital', __name__, url_prefix='/api')

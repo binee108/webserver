@@ -443,6 +443,76 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+// API 응답 처리 유틸리티 함수들
+function handleApiResponse(response) {
+    if (!response.ok) {
+        throw new Error(`API 호출 실패: ${response.status} ${response.statusText}`);
+    }
+    return response.json();
+}
+
+function handleApiError(error, operation) {
+    console.error(`${operation} 실패:`, error);
+    const message = error.message || `${operation} 중 오류가 발생했습니다.`;
+    showToast(message, 'error');
+    return null;
+}
+
+function getPayload(responseJson) {
+    if (!responseJson || typeof responseJson !== 'object') {
+        return {};
+    }
+    return responseJson.data || {};
+}
+
+function getErrorMessage(responseJson, fallback = '알 수 없는 오류가 발생했습니다.') {
+    if (!responseJson || typeof responseJson !== 'object') {
+        return fallback;
+    }
+
+    const error = responseJson.error;
+    if (typeof error === 'string') {
+        return error;
+    }
+    if (error && typeof error === 'object' && error.message) {
+        return error.message;
+    }
+
+    return responseJson.message || fallback;
+}
+
+function showLoadingState(element, message = '로딩 중...') {
+    element.innerHTML = `
+        <div class="loading-container">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">${message}</div>
+        </div>
+    `;
+}
+
+function showErrorState(element, message, retryFunction = null) {
+    const retryButton = retryFunction ? `
+        <button onclick="${retryFunction}" class="btn btn-primary btn-sm">
+            다시 시도
+        </button>
+    ` : '';
+    
+    element.innerHTML = `
+        <div class="text-center py-8">
+            <div class="text-error mb-4">
+                <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <p class="text-lg font-medium">오류 발생</p>
+            </div>
+            <p class="text-muted mb-4">${message}</p>
+            ${retryButton}
+        </div>
+    `;
+}
+
+
+
 function switchTab(tab) {
     const sections = {
         my: document.getElementById('section-my'),
@@ -462,14 +532,15 @@ function switchTab(tab) {
 
 function loadSubscribedStrategies() {
     fetch('/api/strategies/accessibles', { headers: { 'X-CSRFToken': getCSRFToken() }})
-        .then(r => r.json())
+        .then(handleApiResponse)
         .then(data => {
             const container = document.getElementById('subscribed-strategies');
             if (!data.success) {
-                container.innerHTML = '<div class="text-error">구독 전략을 불러오지 못했습니다.</div>';
+                container.innerHTML = `<div class="text-error">${getErrorMessage(data, '구독 전략을 불러오지 못했습니다.')}</div>`;
                 return;
             }
-            const items = (data.strategies || []).filter(s => s.ownership === 'subscriber');
+            const payload = getPayload(data);
+            const items = (payload.strategies || []).filter(s => s.ownership === 'subscriber');
             if (items.length === 0) {
                 container.innerHTML = '<div class="text-muted">구독 중인 전략이 없습니다.</div>';
                 return;
@@ -586,14 +657,15 @@ function renderSubscribedStrategy(s) {
 
 function loadPublicStrategies() {
     fetch('/api/strategies/public', { headers: { 'X-CSRFToken': getCSRFToken() }})
-        .then(r => r.json())
+        .then(handleApiResponse)
         .then(data => {
             const container = document.getElementById('public-strategies');
             if (!data.success) {
-                container.innerHTML = '<div class="text-error">공개 전략을 불러오지 못했습니다.</div>';
+                container.innerHTML = `<div class="text-error">${getErrorMessage(data, '공개 전략을 불러오지 못했습니다.')}</div>`;
                 return;
             }
-            const items = data.strategies || [];
+            const payload = getPayload(data);
+            const items = payload.strategies || [];
             if (items.length === 0) {
                 container.innerHTML = '<div class="text-muted">공개된 전략이 없습니다.</div>';
                 return;
@@ -633,13 +705,16 @@ function renderSubscribeAccountPicker(strategyId) {
     
     // 내 계좌 목록만 불러옴
     fetch('/api/accounts', { headers: { 'X-CSRFToken': getCSRFToken() }})
-      .then(r => r.json())
+      .then(handleApiResponse)
       .then(data => {
+        console.log('계좌 목록 로드 결과:', data);
+
         if (!data.success) {
-          modalContent.innerHTML = '<div class="text-center py-8 text-error">계좌 목록을 불러오지 못했습니다.</div>';
-          return;
+          throw new Error(getErrorMessage(data, '계좌 목록을 불러올 수 없습니다.'));
         }
-        const accounts = data.accounts || [];
+
+        const payload = getPayload(data);
+        const accounts = payload.accounts || [];
         let html = `
         <div class="space-y-6">
           <div class="bg-info bg-opacity-10 border border-info rounded-lg p-4">
@@ -675,8 +750,24 @@ function renderSubscribeAccountPicker(strategyId) {
         html += '</div>';
         modalContent.innerHTML = html;
       })
-      .catch(() => {
-        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다.</div>';
+      .catch(error => {
+        console.error('계좌 목록 로드 실패:', error);
+        const errorMessage = error.message || '계좌 목록을 불러오는 중 오류가 발생했습니다.';
+        modalContent.innerHTML = `
+          <div class="text-center py-8">
+            <div class="text-error mb-4">
+              <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+              </svg>
+              <p class="text-lg font-medium">계좌 로드 실패</p>
+            </div>
+            <p class="text-muted mb-4">${errorMessage}</p>
+            <button onclick="renderSubscribeAccountPicker(${strategyId})" class="btn btn-primary btn-sm">
+              다시 시도
+            </button>
+          </div>
+        `;
+        showToast('계좌 로드 실패: ' + errorMessage, 'error');
       });
 }
 
@@ -748,14 +839,15 @@ function submitSubscribeSettings(event, strategyId, accountId) {
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
         body: JSON.stringify(body)
     })
-    .then(r => r.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
+            const payload = getPayload(data);
             showToast('구독이 완료되었습니다.', 'success');
             closeAccountModal();
             loadSubscribedStrategies();
         } else {
-            showToast('구독 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+            showToast('구독 실패: ' + getErrorMessage(data), 'error');
         }
     })
     .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
@@ -797,15 +889,16 @@ function subscribeStrategy(strategyId, accountId) {
         },
         body: JSON.stringify(body)
     })
-    .then(r => r.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
+            const payload = getPayload(data);
             showToast('구독이 완료되었습니다.', 'success');
             closeAccountModal();
             // 갱신
             loadSubscribedStrategies();
         } else {
-            showToast('구독 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+            showToast('구독 실패: ' + getErrorMessage(data), 'error');
         }
     })
     .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
@@ -820,13 +913,13 @@ function unsubscribeStrategy(strategyId, accountId) {
             'X-CSRFToken': getCSRFToken()
         }
     })
-    .then(r => r.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
             showToast('구독이 해제되었습니다.', 'success');
             loadSubscribedStrategies();
         } else {
-            showToast('구독 해제 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+            showToast('구독 해제 실패: ' + getErrorMessage(data), 'error');
         }
     })
     .catch(err => showToast('구독 해제 중 오류: ' + err.message, 'error'));
@@ -838,13 +931,18 @@ function openPublicDetail(strategyId) {
     const modalContent = document.getElementById('accountModalContent');
     modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
     fetch(`/api/strategies/public/${strategyId}`, { headers: { 'X-CSRFToken': getCSRFToken() }})
-      .then(r => r.json())
+      .then(handleApiResponse)
       .then(data => {
         if (!data.success) {
-            modalContent.innerHTML = '<div class="text-center py-8 text-error">전략 정보를 불러오지 못했습니다.</div>';
+            modalContent.innerHTML = `<div class="text-center py-8 text-error">${getErrorMessage(data, '전략 정보를 불러오지 못했습니다.')}</div>`;
             return;
         }
-        const s = data.strategy;
+        const payload = getPayload(data);
+        const s = payload.strategy;
+        if (!s) {
+            modalContent.innerHTML = '<div class="text-center py-8 text-error">전략 정보를 찾을 수 없습니다.</div>';
+            return;
+        }
         modalContent.innerHTML = `
             <div class="space-y-4">
                 <div>
@@ -883,23 +981,27 @@ function editStrategy(strategyId) {
             'X-CSRFToken': getCSRFToken()
         }
     })
-    .then(response => response.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
-            const strategy = data.strategy;
+            const payload = getPayload(data);
+            const strategy = payload.strategy;
+            if (!strategy) {
+                throw new Error('전략 데이터를 찾을 수 없습니다.');
+            }
             
             document.getElementById('strategyModalTitle').textContent = '전략 수정';
             document.getElementById('strategyId').value = strategy.id;
             document.getElementById('name').value = strategy.name || '';
             document.getElementById('description').value = strategy.description || '';
             document.getElementById('group_name').value = strategy.group_name || '';
-            document.getElementById('market_type').value = strategy.market_type || '';
+            document.getElementById('market_type').value = strategy.market_type ? strategy.market_type.toLowerCase() : '';
             document.getElementById('is_active').checked = strategy.is_active || false;
             document.getElementById('is_public').checked = strategy.is_public || false;
             
             document.getElementById('strategyModal').classList.remove('hidden');
         } else {
-            showToast('전략 정보를 불러오는데 실패했습니다: ' + data.error, 'error');
+            throw new Error(getErrorMessage(data, '전략 정보를 불러오지 못했습니다.'));
         }
     })
     .catch(error => {
@@ -916,13 +1018,13 @@ function deleteStrategy(strategyId) {
                 'X-CSRFToken': getCSRFToken()
             }
         })
-        .then(response => response.json())
+        .then(handleApiResponse)
         .then(data => {
             if (data.success) {
                 showToast('전략이 성공적으로 삭제되었습니다.', 'success');
                 setTimeout(() => location.reload(), 1500);
             } else {
-                showToast('전략 삭제 실패: ' + data.error, 'error');
+                showToast('전략 삭제 실패: ' + getErrorMessage(data), 'error');
             }
         })
         .catch(error => {
@@ -963,14 +1065,14 @@ function submitStrategy(event) {
         },
         body: JSON.stringify(data)
     })
-    .then(response => response.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
             showToast(strategyId ? '전략이 성공적으로 수정되었습니다.' : '전략이 성공적으로 생성되었습니다.', 'success');
             closeStrategyModal();
             setTimeout(() => location.reload(), 1500);
         } else {
-            showToast('저장 실패: ' + data.error, 'error');
+            showToast('저장 실패: ' + getErrorMessage(data), 'error');
         }
     })
     .catch(error => {
@@ -999,20 +1101,43 @@ function loadStrategyAccountModal(strategyId) {
     Promise.all([
         fetch('/api/accounts', {
             headers: { 'X-CSRFToken': getCSRFToken() }
-        }).then(r => r.json()),
+        }).then(handleApiResponse),
         fetch(`/api/strategies/${strategyId}/accounts`, {
             headers: { 'X-CSRFToken': getCSRFToken() }
-        }).then(r => r.json())
+        }).then(handleApiResponse)
     ])
     .then(([accountsResult, strategyAccountsResult]) => {
-        if (accountsResult.success && strategyAccountsResult.success) {
-            renderAccountModal(strategyId, accountsResult.accounts || [], strategyAccountsResult.accounts || []);
-        } else {
-            modalContent.innerHTML = '<div class="text-center py-8 text-error">데이터를 불러오는데 실패했습니다.</div>';
+        console.log('계좌 정보 로드 결과:', { accountsResult, strategyAccountsResult });
+        
+        if (!accountsResult.success) {
+            throw new Error(`계좌 정보 조회 오류: ${getErrorMessage(accountsResult)}`);
         }
+        if (!strategyAccountsResult.success) {
+            throw new Error(`전략 계좌 정보 조회 오류: ${getErrorMessage(strategyAccountsResult)}`);
+        }
+        
+        const allAccounts = getPayload(accountsResult).accounts || [];
+        const linkedAccounts = getPayload(strategyAccountsResult).accounts || [];
+        renderAccountModal(strategyId, allAccounts, linkedAccounts);
     })
     .catch(error => {
-        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다: ' + error.message + '</div>';
+        console.error('계좌 정보 로드 실패:', error);
+        const errorMessage = error.message || '계좌 정보를 불러오는 중 오류가 발생했습니다.';
+        modalContent.innerHTML = `
+            <div class="text-center py-8">
+                <div class="text-error mb-4">
+                    <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                    </svg>
+                    <p class="text-lg font-medium">데이터 로드 실패</p>
+                </div>
+                <p class="text-muted mb-4">${errorMessage}</p>
+                <button onclick="loadStrategyAccountModal(${strategyId})" class="btn btn-primary btn-sm">
+                    다시 시도
+                </button>
+            </div>
+        `;
+        showToast('계좌 정보 로드 실패: ' + errorMessage, 'error');
     });
 }
 
@@ -1192,18 +1317,19 @@ function submitConnection(event, strategyId, accountId, mode) {
         },
         body: JSON.stringify(data)
     })
-    .then(response => response.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
             showToast(mode === 'edit' ? '연결 설정이 성공적으로 수정되었습니다.' : '계좌가 성공적으로 연결되었습니다.', 'success');
             loadStrategyAccountModal(strategyId);
             
             // 전략 카드의 계좌 정보 업데이트
-            if (data.updated_strategy) {
-                updateStrategyCard(data.updated_strategy);
+            const payload = getPayload(data);
+            if (payload.updated_strategy) {
+                updateStrategyCard(payload.updated_strategy);
             }
         } else {
-            showToast('처리 실패: ' + data.error, 'error');
+            showToast('처리 실패: ' + getErrorMessage(data), 'error');
         }
     })
     .catch(error => {
@@ -1224,18 +1350,19 @@ function disconnectAccount(strategyId, accountId) {
                 'X-CSRFToken': getCSRFToken()
             }
         })
-        .then(response => response.json())
+        .then(handleApiResponse)
         .then(data => {
             if (data.success) {
                 showToast('계좌 연결이 성공적으로 해제되었습니다.', 'success');
                 loadStrategyAccountModal(strategyId);
                 
                 // 전략 카드의 계좌 정보 업데이트
-                if (data.updated_strategy) {
-                    updateStrategyCard(data.updated_strategy);
+                const payload = getPayload(data);
+                if (payload.updated_strategy) {
+                    updateStrategyCard(payload.updated_strategy);
                 }
             } else {
-                showToast('연결 해제 실패: ' + data.error, 'error');
+                showToast('연결 해제 실패: ' + getErrorMessage(data), 'error');
             }
         })
         .catch(error => {
@@ -1260,12 +1387,13 @@ function loadCapitalModal(strategyId) {
     fetch(`/api/strategies/${strategyId}/accounts`, {
         headers: { 'X-CSRFToken': getCSRFToken() }
     })
-    .then(response => response.json())
+    .then(handleApiResponse)
     .then(data => {
         if (data.success) {
-            renderCapitalModal(strategyId, data.accounts || []);
+            const payload = getPayload(data);
+            renderCapitalModal(strategyId, payload.accounts || []);
         } else {
-            modalContent.innerHTML = '<div class="text-center py-8 text-error">데이터를 불러오는데 실패했습니다.</div>';
+            modalContent.innerHTML = `<div class="text-center py-8 text-error">${getErrorMessage(data, '데이터를 불러오는데 실패했습니다.')}</div>`;
         }
     })
     .catch(error => {
@@ -1297,6 +1425,8 @@ function renderCapitalModal(strategyId, accounts) {
         html += '<div class="space-y-4">';
         
         accounts.forEach(account => {
+            const allocated = Number(account.allocated_capital ?? 0);
+            const currentPnl = Number(account.current_pnl ?? 0);
             html += `
                 <div class="card-inner">
                     <div class="flex items-center justify-between mb-3">
@@ -1310,28 +1440,28 @@ function renderCapitalModal(strategyId, accounts) {
                             </div>
                         </div>
                         <div class="text-right">
-                            <div class="badge badge-success">$${account.allocated_capital.toFixed(2)}</div>
+                            <div class="badge badge-success">$${allocated.toFixed(2)}</div>
                             <div class="text-sm text-muted mt-1">할당된 자본</div>
                         </div>
                     </div>
                     
-                    ${account.current_pnl !== 0 ? `
+                    ${currentPnl !== 0 ? `
                         <div class="flex items-center justify-between">
                             <span class="text-sm text-muted">현재 PnL</span>
-                            <span class="badge ${account.current_pnl >= 0 ? 'badge-success' : 'badge-error'}">
-                                ${account.current_pnl >= 0 ? '+' : ''}$${account.current_pnl.toFixed(2)}
+                            <span class="badge ${currentPnl >= 0 ? 'badge-success' : 'badge-error'}">
+                                ${currentPnl >= 0 ? '+' : ''}$${currentPnl.toFixed(2)}
                             </span>
                         </div>
                     ` : ''}
                 </div>
             `;
         });
-        
+
         html += '</div>';
         
         // 총 할당 자본 표시
-        const totalAllocated = accounts.reduce((sum, acc) => sum + acc.allocated_capital, 0);
-        const totalPnl = accounts.reduce((sum, acc) => sum + acc.current_pnl, 0);
+        const totalAllocated = accounts.reduce((sum, acc) => sum + (Number(acc.allocated_capital) || 0), 0);
+        const totalPnl = accounts.reduce((sum, acc) => sum + (Number(acc.current_pnl) || 0), 0);
         
         html += `
             <div class="border-t border-color pt-4">
@@ -1363,6 +1493,7 @@ function updateStrategyCard(strategy) {
         if (strategy.connected_accounts && strategy.connected_accounts.length > 0) {
             let accountsHtml = '';
             strategy.connected_accounts.forEach(account => {
+                const allocated = Number(account.allocated_capital ?? 0);
                 accountsHtml += `
                     <div class="strategy-account-item">
                         <div class="strategy-account-info">
@@ -1370,7 +1501,7 @@ function updateStrategyCard(strategy) {
                             <p>가중치: ${account.weight} | ${account.max_symbols ? `최대: ${account.max_symbols}개` : '최대: -'} | 레버리지: ${account.leverage}x</p>
                         </div>
                         <div class="strategy-account-amount">
-                            <p class="amount tabular-nums">$${account.allocated_capital.toFixed(2)}</p>
+                            <p class="amount tabular-nums">$${allocated.toFixed(2)}</p>
                             <p class="currency">USDT${account.exchange === 'upbit' ? ' 환산' : ''}</p>
                         </div>
                     </div>
@@ -1393,7 +1524,8 @@ function updateStrategyCard(strategy) {
         const accountCount = strategyCard.querySelector('.account-count .highlight');
         
         if (summaryAmount) {
-            summaryAmount.textContent = `$${strategy.total_allocated_capital.toFixed(2)}`;
+            const totalAllocated = Number(strategy.total_allocated_capital ?? 0);
+            summaryAmount.textContent = `$${totalAllocated.toFixed(2)}`;
         }
         if (accountCount) {
             accountCount.textContent = `${strategy.connected_accounts.length}개`;
@@ -1407,6 +1539,7 @@ document.addEventListener('DOMContentLoaded', function() {
         toggle.addEventListener('change', function() {
             const strategyId = this.dataset.strategyId;
             const isActive = this.checked;
+            const toggleElement = this;
             
             fetch(`/api/strategies/${strategyId}/toggle`, {
                 method: 'POST',
@@ -1415,7 +1548,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     'X-CSRFToken': getCSRFToken()
                 }
             })
-            .then(response => response.json())
+            .then(handleApiResponse)
             .then(data => {
                 if (data.success) {
                     showToast(data.message, 'success');
@@ -1424,26 +1557,29 @@ document.addEventListener('DOMContentLoaded', function() {
                     const strategyCard = document.getElementById(`strategy-card-${strategyId}`);
                     if (strategyCard) {
                         const statusBadge = strategyCard.querySelector('.status-badge');
-                        const statusDot = statusBadge.querySelector('.status-dot');
-                        
-                        if (data.is_active) {
-                            statusBadge.className = 'status-badge active';
-                            statusBadge.innerHTML = '<div class="status-dot active"></div>활성';
-                        } else {
-                            statusBadge.className = 'status-badge inactive';
-                            statusBadge.innerHTML = '<div class="status-dot inactive"></div>비활성';
+                        const payload = getPayload(data);
+                        const activeState = typeof payload.is_active === 'boolean' ? payload.is_active : isActive;
+
+                        if (statusBadge) {
+                            if (activeState) {
+                                statusBadge.className = 'status-badge active';
+                                statusBadge.innerHTML = '<div class="status-dot active"></div>활성';
+                            } else {
+                                statusBadge.className = 'status-badge inactive';
+                                statusBadge.innerHTML = '<div class="status-dot inactive"></div>비활성';
+                            }
                         }
                     }
                 } else {
-                    showToast('상태 변경 실패: ' + data.error, 'error');
+                    showToast('상태 변경 실패: ' + getErrorMessage(data), 'error');
                     // 토글 상태 되돌리기
-                    this.checked = !isActive;
+                    toggleElement.checked = !isActive;
                 }
             })
             .catch(error => {
                 showToast('상태 변경 중 오류가 발생했습니다: ' + error.message, 'error');
                 // 토글 상태 되돌리기
-                this.checked = !isActive;
+                toggleElement.checked = !isActive;
             });
         });
     });
