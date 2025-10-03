@@ -81,11 +81,27 @@ class QuantityCalculator:
         market_type: str = 'futures',
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
+        side: Optional[str] = None,
     ) -> Decimal:
         """Return the order quantity derived from allocated capital."""
         try:
             qty_per_decimal = Decimal(str(qty_per))
-            if qty_per_decimal < 0 or qty_per_decimal > 100:
+
+            # 음수 qty_per: 포지션 청산 로직으로 위임
+            if qty_per_decimal < 0:
+                logger.info("🔄 청산 모드 감지: qty_per=%s%%, calculate_quantity_from_percentage 호출", qty_per_decimal)
+                return self.calculate_quantity_from_percentage(
+                    strategy_account=strategy_account,
+                    qty_per=qty_per_decimal,
+                    symbol=symbol,
+                    market_type=market_type,
+                    price=price,
+                    order_type=order_type,
+                    stop_price=stop_price,
+                    side=side
+                )
+
+            if qty_per_decimal > 100:
                 logger.error("qty_per 범위 오류: %s%% (0-100 필요)", qty_per_decimal)
                 return Decimal('0')
 
@@ -171,6 +187,9 @@ class QuantityCalculator:
 
             return adjusted_quantity
 
+        except QuantityCalculationError:
+            # 청산 관련 예외는 그대로 전파하여 정확한 에러 메시지 제공
+            raise
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("수량 계산 실패: %s", exc)
             return Decimal('0')
@@ -187,6 +206,7 @@ class QuantityCalculator:
         side: Optional[str] = None,
     ) -> Decimal:
         """Convert qty_per into an absolute quantity for entry or exit."""
+        # NOTE: 현재 미사용 - 향후 청산 로직에 활용 예정
         try:
             qty_per_decimal = Decimal(str(qty_per))
         except (InvalidOperation, ValueError, TypeError) as exc:
@@ -263,17 +283,20 @@ class QuantityCalculator:
             symbol=symbol,
         ).first()
 
-        if not position or not position.quantity:
-            raise QuantityCalculationError('보유 포지션이 없습니다.')
+        # 포지션 수량 확인
+        position_qty = Decimal('0')
+        if position and position.quantity:
+            position_qty = Decimal(str(position.quantity))
 
-        position_qty = Decimal(str(position.quantity))
-
+        # Side에 따른 청산 가능 여부 검증
         side_normalized = str(side or '').upper()
         if side_normalized == 'BUY':
+            # BUY 청산 = 숏 포지션 청산
             if position_qty >= 0:
                 raise QuantityCalculationError('보유한 숏 포지션이 없습니다.')
             base_quantity = abs(position_qty)
         elif side_normalized == 'SELL':
+            # SELL 청산 = 롱 포지션 청산
             if position_qty <= 0:
                 raise QuantityCalculationError('보유한 롱 포지션이 없습니다.')
             base_quantity = position_qty
@@ -341,7 +364,7 @@ class QuantityCalculator:
                 exchange=exchange_name,
                 symbol=symbol,
                 market_type=market_type,
-                quantity=quantity.copy_abs(),
+                quantity=abs(quantity),
                 price=None,
             )
 
@@ -357,7 +380,7 @@ class QuantityCalculator:
                     return Decimal('0'), None, step_size, min_notional
                 return quantity, None, None, None
 
-            adjusted_quantity = validation.get('adjusted_quantity', quantity.copy_abs())
+            adjusted_quantity = validation.get('adjusted_quantity', abs(quantity))
             min_quantity = validation.get('min_quantity')
             step_size = validation.get('step_size')
             min_notional = validation.get('min_notional')

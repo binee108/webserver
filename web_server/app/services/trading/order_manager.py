@@ -700,7 +700,7 @@ class OrderManager:
                     from app.services.exchange import exchange_service
                     market_type = strategy.market_type.lower() if strategy.market_type else 'spot'
 
-                    order_info = exchange_service.get_order(
+                    order_info = exchange_service.fetch_order(
                         account=account,
                         order_id=open_order.exchange_order_id,
                         symbol=open_order.symbol,

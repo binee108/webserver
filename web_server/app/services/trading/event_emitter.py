@@ -166,6 +166,16 @@ class EventEmitter:
         elif status == OrderStatus.CANCELLED:
             events_to_emit.append((OrderEventType.ORDER_CANCELLED, quantity))
 
+
+        # DB 업데이트를 먼저 수행
+        if (
+            existing_order
+            and status in (OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCELLED)
+            and self.service is not None
+        ):
+            self.service.order_manager.update_open_order_status(order_id, order_result)  # noqa: SLF001
+
+        # 그 다음 이벤트 발행
         for event_type, event_quantity in events_to_emit:
             self.emit_trading_event(event_type, strategy, symbol, side, event_quantity, order_result)
             logger.debug(
@@ -175,13 +185,6 @@ class EventEmitter:
                 side,
                 event_quantity,
             )
-
-        if (
-            existing_order
-            and status in (OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCELLED)
-            and self.service is not None
-        ):
-            self.service.order_manager.update_open_order_status(order_id, order_result)  # noqa: SLF001
 
     def emit_position_event(
         self,
@@ -261,9 +264,34 @@ class EventEmitter:
     ) -> None:
         """Emit the order cancelled notification."""
         try:
-            from app.services.event_service import event_service
+            from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
 
-            event_service.emit_order_cancelled(order_id, symbol, account_id)
+            # 계좌 정보 조회
+            account = Account.query.get(account_id)
+            if not account:
+                logger.warning("계좌를 찾을 수 없어 이벤트 발송 스킵: %s", account_id)
+                return
+
+            # OrderEvent 객체 생성
+            from datetime import datetime
+
+            order_event = OrderEvent(
+                event_type='order_cancelled',
+                order_id=order_id,
+                symbol=symbol,
+                strategy_id=0,  # 취소 이벤트는 전략 ID 불필요
+                user_id=account.user_id,
+                side='',  # 취소 이벤트는 방향 불필요
+                quantity=0.0,
+                price=0.0,
+                status='CANCELED',
+                timestamp=datetime.utcnow().isoformat(),
+                order_type='',  # 취소 이벤트는 주문 타입 불필요
+                stop_price=None
+            )
+
+            event_service.emit_order_event(order_event)
             logger.info("✅ 주문 취소 이벤트 발송 완료: %s", order_id)
 
         except Exception as exc:  # pragma: no cover - defensive logging

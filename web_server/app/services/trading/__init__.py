@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import sessionmaker
 
@@ -140,8 +140,9 @@ class TradingService:
         return self.order_manager.cancel_all_orders(strategy_id, symbol, timing_context)
 
     def cancel_all_orders_by_user(self, user_id: int, strategy_id: int,
+                                  account_id: Optional[int] = None,
                                   symbol: Optional[str] = None) -> Dict[str, Any]:
-        return self.order_manager.cancel_all_orders_by_user(user_id, strategy_id, symbol)
+        return self.order_manager.cancel_all_orders_by_user(user_id, strategy_id, account_id, symbol)
 
     def get_user_open_orders(self, user_id: int, strategy_id: Optional[int] = None,
                              symbol: Optional[str] = None) -> Dict[str, Any]:
@@ -168,6 +169,31 @@ class TradingService:
 
     def process_order_fill(self, strategy_account, order_id: str, **kwargs) -> Dict[str, Any]:
         return self.position_manager.process_order_fill(strategy_account, order_id, **kwargs)
+
+
+    # Trade record queries
+    def get_trade_history(self, strategy_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """전략의 거래 내역 조회
+        
+        Args:
+            strategy_id: 전략 ID
+            limit: 조회할 최대 거래 수 (기본 100)
+            
+        Returns:
+            거래 내역 리스트 (최신순)
+        """
+        return self.record_manager.get_trade_history(strategy_id, limit)
+    
+    def get_trading_stats(self, strategy_id: int) -> Dict[str, Any]:
+        """전략의 거래 통계 조회
+        
+        Args:
+            strategy_id: 전략 ID
+            
+        Returns:
+            Dict with keys: total_trades, active_positions, open_orders, last_trade_time
+        """
+        return self.record_manager.get_trading_stats(strategy_id)
 
 trading_service = TradingService()
 

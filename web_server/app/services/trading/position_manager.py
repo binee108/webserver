@@ -21,7 +21,6 @@ from app.models import (
     StrategyPosition,
     Trade,
 )
-from app.services.security import security_service
 from app.services.utils import decimal_to_float, to_decimal
 
 logger = logging.getLogger(__name__)
@@ -260,13 +259,6 @@ class PositionManager:
 
             if should_emit_events:
                 self.service.event_emitter.emit_order_events_smart(
-                    strategy=strategy,
-                    symbol=symbol_value,
-                    side=side_value,
-                    quantity=filled_decimal,
-                    order_result=merged_order
-                )
-                self.service.event_emitter.emit_trade_event(
                     strategy=strategy,
                     symbol=symbol_value,
                     side=side_value,
@@ -892,7 +884,7 @@ class PositionManager:
                     'symbol': pos.symbol,
                     'quantity': to_decimal(pos.quantity),
                     'entry_price': to_decimal(pos.entry_price),
-                    'unrealized_pnl': self._calculate_unrealized_pnl(pos),
+                    'unrealized_pnl': Decimal('0'),
                     'updated_at': pos.last_updated
                 }
                 for pos in positions
@@ -901,15 +893,6 @@ class PositionManager:
         except Exception as e:
             logger.error(f"포지션 조회 실패: {e}")
             return []
-
-    def _calculate_unrealized_pnl(self, position: StrategyPosition) -> Decimal:
-        """미실현 손익 계산 (간단 구현)"""
-        try:
-            # 실제 구현에서는 현재 시장가를 가져와야 함
-            # 여기서는 기본값 0 반환
-            return Decimal('0')
-        except Exception:
-            return Decimal('0')
 
     def calculate_unrealized_pnl(self) -> None:
         """백그라운드 작업: 모든 포지션의 미실현 손익 계산 및 업데이트"""
