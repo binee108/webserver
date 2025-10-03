@@ -401,20 +401,20 @@ def register_background_jobs(app):
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 캐시 웜업 실패: {str(e)}')
     
-    # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시)
+    # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시 7분 - 소수 시간대)
     scheduler.add_job(
         func=update_precision_cache_with_context,
         args=[app],
         trigger="cron",
         hour=3,
-        minute=0,
+        minute=7,
         id='precision_cache_update',
         name='Daily Precision Cache Update',
         replace_existing=True,
         max_instances=1
     )
-    
-    
+
+
     # 🆕 가격 캐시 업데이트 (31초마다, 소수 주기로 정각 집중 트래픽 회피)
     scheduler.add_job(
         func=update_price_cache_with_context,
@@ -426,51 +426,51 @@ def register_background_jobs(app):
         replace_existing=True,
         max_instances=1
     )
-    # 미체결 주문 상태 업데이트 (30초마다)
+    # 미체결 주문 상태 업데이트 (29초마다 - 소수 주기)
     scheduler.add_job(
         func=update_open_orders_with_context,
         args=[app],
         trigger="interval",
-        seconds=30,
+        seconds=29,
         id='update_open_orders',
         name='Update Open Orders Status',
         replace_existing=True,
         max_instances=1
     )
-    
-    # 미실현 손익 계산 (5분마다)
+
+    # 미실현 손익 계산 (307초마다 ≈ 5분 7초 - 소수 주기)
     scheduler.add_job(
         func=calculate_unrealized_pnl_with_context,
         args=[app],
         trigger="interval",
-        minutes=5,
+        seconds=307,
         id='calculate_unrealized_pnl',
         name='Calculate Unrealized PnL',
         replace_existing=True,
         max_instances=1
     )
-    
-    # 일일 요약 전송 (매일 저녁 9시)
+
+    # 일일 요약 전송 (매일 저녁 9시 3분 - 소수 시간대)
     scheduler.add_job(
         func=send_daily_summary_with_context,
         args=[app],
         trigger="cron",
         hour=21,
-        minute=0,
+        minute=3,
         id='send_daily_summary',
         name='Send Daily Summary',
         replace_existing=True,
         max_instances=1
     )
 
-    # Phase 3.4: 일일 성과 계산 (매일 자정 30초 후)
+    # Phase 3.4: 일일 성과 계산 (매일 00:00:13 - 소수 시간대)
     scheduler.add_job(
         func=calculate_daily_performance_with_context,
         args=[app],
         trigger="cron",
         hour=0,
         minute=0,
-        second=30,
+        second=13,
         id='calculate_daily_performance',
         name='Calculate Daily Strategy Performance',
         replace_existing=True,
