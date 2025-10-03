@@ -23,10 +23,90 @@ class WebhookError(Exception):
 
 class WebhookService:
     """웹훅 서비스 클래스"""
-    
+
     def __init__(self):
         self.session = db.session
-    
+
+    def _validate_order_type_params(self, normalized_data: Dict[str, Any]) -> None:
+        """주문 타입별 필수 파라미터 검증 (단일 소스)
+
+        Args:
+            normalized_data: 정규화된 웹훅 데이터
+
+        Raises:
+            WebhookError: 필수 파라미터 누락 시
+        """
+        order_type = normalized_data.get('order_type', '')
+
+        # STOP 주문 타입 검증
+        if OrderType.requires_stop_price(order_type):
+            if not normalized_data.get('stop_price'):
+                raise WebhookError(f"{order_type} 주문에는 stop_price가 필수입니다")
+            logger.info(f"✅ {order_type} 주문 stop_price 검증 완료: {normalized_data.get('stop_price')}")
+
+        # LIMIT 주문 타입 검증
+        if OrderType.requires_price(order_type):
+            if not normalized_data.get('price'):
+                raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
+            logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
+
+        # MARKET 주문은 price나 stop_price 불필요
+        if order_type == OrderType.MARKET:
+            if normalized_data.get('stop_price'):
+                logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
+                normalized_data.pop('stop_price', None)
+            if normalized_data.get('price'):
+                logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
+                normalized_data.pop('price', None)
+
+    def _validate_strategy_token(self, group_name: str, token: str) -> Strategy:
+        """전략 조회 및 토큰 검증 (단일 소스)
+
+        Args:
+            group_name: 전략 그룹명
+            token: 웹훅 토큰
+
+        Returns:
+            Strategy: 검증된 전략 객체
+
+        Raises:
+            WebhookError: 전략을 찾을 수 없거나 토큰이 유효하지 않은 경우
+        """
+        strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
+        if not strategy:
+            raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
+
+        if not token:
+            raise WebhookError("웹훅 토큰이 필요합니다")
+
+        # 허용되는 토큰 집합 구성
+        valid_tokens = set()
+        owner = strategy.user
+        if owner and getattr(owner, 'webhook_token', None):
+            valid_tokens.add(owner.webhook_token)
+
+        # 공개 전략의 경우: 전략을 구독(연결)한 사용자들의 토큰도 허용
+        if getattr(strategy, 'is_public', False):
+            try:
+                for sa in strategy.strategy_accounts:
+                    # 전략-계좌 링크 활성 + 계좌/사용자/토큰 존재 시 수집
+                    if getattr(sa, 'is_active', True) and getattr(sa, 'account', None):
+                        account_user = getattr(sa.account, 'user', None)
+                        user_token = getattr(account_user, 'webhook_token', None) if account_user else None
+                        if user_token:
+                            valid_tokens.add(user_token)
+            except Exception:
+                # 토큰 수집 실패는 검증 흐름에 영향 주지 않음
+                pass
+
+        if not valid_tokens:
+            raise WebhookError("웹훅 토큰이 설정된 사용자가 없습니다. 전략 소유자 또는 구독자의 토큰을 생성하세요")
+
+        if token not in valid_tokens:
+            raise WebhookError("웹훅 토큰이 유효하지 않습니다")
+
+        return strategy
+
     def process_webhook(self, webhook_data: Dict[str, Any], webhook_received_at: Optional[float] = None) -> Dict[str, Any]:
         """웹훅 데이터 처리 메인 함수"""
         # 웹훅 수신 시간 기록 (표준화된 변수명)
@@ -77,29 +157,9 @@ class WebhookService:
                 # 거래 신호는 trading_service로 위임
                 from app.services.trading import trading_service
                 # order_type 변수 정의 (테스트 모드에서 필요)
-                order_type = normalized_data.get('order_type', '')
                 # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
                 if not normalized_data.get('batch_mode'):
-                    # STOP 주문 타입 검증
-                    if OrderType.requires_stop_price(order_type):
-                        if not normalized_data.get('stop_price'):
-                            raise WebhookError(f"{order_type} 주문에는 stop_price가 필수입니다")
-                        logger.info(f"✅ {order_type} 주문 stop_price 검증 완료: {normalized_data.get('stop_price')}")
-                    
-                    # LIMIT 주문 타입 검증
-                    if OrderType.requires_price(order_type):
-                        if not normalized_data.get('price'):
-                            raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
-                        logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
-                    
-                    # MARKET 주문은 price나 stop_price 불필요
-                    if order_type == OrderType.MARKET:
-                        if normalized_data.get('stop_price'):
-                            logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
-                            normalized_data.pop('stop_price', None)
-                        if normalized_data.get('price'):
-                            logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
-                            normalized_data.pop('price', None)
+                    self._validate_order_type_params(normalized_data)
 
                 
                 # 배치 모드 감지 및 라우팅
@@ -112,43 +172,9 @@ class WebhookService:
                 webhook_log.message = str(result)
                 self.session.commit()
                 return result
-            
-            # 전략 소유자 토큰 검증 (group_name 소유자 확인)
-            strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
-            if not strategy:
-                raise WebhookError(f"활성 전략을 찾을 수 없습니다: {group_name}")
 
-            # 사용자 토큰 검증
-            owner = strategy.user
-            if not token:
-                # 토큰 미제공 시 명확한 오류 반환
-                raise WebhookError("웹훅 토큰이 필요합니다")
-
-            # 허용되는 토큰 집합 구성
-            valid_tokens = set()
-            if owner and getattr(owner, 'webhook_token', None):
-                valid_tokens.add(owner.webhook_token)
-
-            # 공개 전략의 경우: 전략을 구독(연결)한 사용자들의 토큰도 허용
-            if getattr(strategy, 'is_public', False):
-                try:
-                    for sa in strategy.strategy_accounts:
-                        # 전략-계좌 링크 활성 + 계좌/사용자/토큰 존재 시 수집
-                        if getattr(sa, 'is_active', True) and getattr(sa, 'account', None):
-                            account_user = getattr(sa.account, 'user', None)
-                            user_token = getattr(account_user, 'webhook_token', None) if account_user else None
-                            if user_token:
-                                valid_tokens.add(user_token)
-                except Exception:
-                    # 토큰 수집 실패는 검증 흐름에 영향 주지 않음
-                    pass
-
-            if not valid_tokens:
-                # 소유자/구독자 누구에게도 토큰이 없어 인증 불가
-                raise WebhookError("웹훅 토큰이 설정된 사용자가 없습니다. 전략 소유자 또는 구독자의 토큰을 생성하세요")
-
-            if token not in valid_tokens:
-                raise WebhookError("웹훅 토큰이 유효하지 않습니다")
+            # 전략 조회 및 토큰 검증 (단일 소스)
+            strategy = self._validate_strategy_token(group_name, token)
 
             # 웹훅 타입 확인
             order_type = normalized_data.get('order_type', '')
@@ -165,26 +191,7 @@ class WebhookService:
                 from app.services.trading import trading_service
                 # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
                 if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
-                    # STOP 주문 타입 검증
-                    if OrderType.requires_stop_price(order_type):
-                        if not normalized_data.get('stop_price'):
-                            raise WebhookError(f"{order_type} 주문에는 stop_price가 필수입니다")
-                        logger.info(f"✅ {order_type} 주문 stop_price 검증 완료: {normalized_data.get('stop_price')}")
-                    
-                    # LIMIT 주문 타입 검증
-                    if OrderType.requires_price(order_type):
-                        if not normalized_data.get('price'):
-                            raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
-                        logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
-                    
-                    # MARKET 주문은 price나 stop_price 불필요
-                    if order_type == OrderType.MARKET:
-                        if normalized_data.get('stop_price'):
-                            logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
-                            normalized_data.pop('stop_price', None)
-                        if normalized_data.get('price'):
-                            logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
-                            normalized_data.pop('price', None)
+                    self._validate_order_type_params(normalized_data)
 
 
 
