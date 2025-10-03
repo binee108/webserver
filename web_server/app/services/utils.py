@@ -6,13 +6,34 @@ from typing import Any
 from decimal import Decimal
 from app.constants import MarketType, Exchange, OrderType
 
-def to_decimal(value: Any) -> Decimal:
-    """값을 Decimal로 안전하게 변환"""
-    if value is None:
-        return Decimal('0')
+def to_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
+    """값을 Decimal로 안전하게 변환
+
+    Args:
+        value: 변환할 값 (int, float, str, Decimal 등)
+        default: 변환 실패 시 기본값 (기본값: Decimal('0'))
+
+    Returns:
+        Decimal 타입의 값
+
+    Examples:
+        >>> to_decimal(100)
+        Decimal('100')
+        >>> to_decimal('123.45')
+        Decimal('123.45')
+        >>> to_decimal(None)
+        Decimal('0')
+        >>> to_decimal('invalid', Decimal('999'))
+        Decimal('999')
+    """
+    if value is None or value == '':
+        return default
     if isinstance(value, Decimal):
         return value
-    return Decimal(str(value))
+    try:
+        return Decimal(str(value))
+    except (Exception, ValueError, TypeError):
+        return default
 
 def decimal_to_float(value: Decimal) -> float:
     """Decimal을 float로 변환 (거래소 API 호출용)"""

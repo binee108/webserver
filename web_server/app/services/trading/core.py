@@ -17,6 +17,7 @@ from app.models import Account, Strategy, StrategyAccount
 from app.constants import Exchange, MarketType, OrderType
 from app.services.exchange import exchange_service
 from app.services.security import security_service
+from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -598,34 +599,3 @@ class TradingCore:
             logger.warning(f"거래소 주문 병합 실패: {e}, 원본 결과 사용")
             return order_result
 
-    def _to_decimal(self, value: Any, default: Decimal = Decimal('0')) -> Decimal:
-        """
-        값을 안전하게 Decimal로 변환합니다.
-        
-        Args:
-            value: 변환할 값 (int, float, str, Decimal 등)
-            default: 변환 실패 시 기본값
-            
-        Returns:
-            Decimal 타입의 값
-            
-        Example:
-            >>> self._to_decimal(100)
-            Decimal('100')
-            >>> self._to_decimal('50.5')
-            Decimal('50.5')
-            >>> self._to_decimal(None)
-            Decimal('0')
-            >>> self._to_decimal('invalid', Decimal('999'))
-            Decimal('999')
-        """
-        from app.services.utils import to_decimal as utils_to_decimal
-        
-        if value is None:
-            return default
-        
-        try:
-            return utils_to_decimal(value)
-        except (ValueError, TypeError, InvalidOperation) as e:
-            logger.debug(f"Decimal 변환 실패: {value} (타입: {type(value).__name__}), 기본값 사용: {default}")
-            return default
