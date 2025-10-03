@@ -568,3 +568,222 @@ def update_strategy_account(strategy_id, account_id):
     except Exception as e:
         current_app.logger.error(f'계좌 설정 업데이트 오류: {str(e)}')
         return exception_to_error_response(e)
+
+
+# ============================================================
+# Phase 3.3: 전략 성과 조회 API 엔드포인트
+# ============================================================
+
+@bp.route('/strategies/<int:strategy_id>/performance/roi', methods=['GET'])
+@login_required
+def get_strategy_roi(strategy_id):
+    """
+    전략의 ROI 및 손익 분석 조회
+
+    Query Parameters:
+        - days (optional): 분석 기간 (일 단위). 지정하지 않으면 전체 기간
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "roi": 12.5,
+                "total_pnl": 1250.50,
+                "invested_capital": 10000.0,
+                "profit_factor": 1.67,
+                "avg_win": 75.30,
+                "avg_loss": -45.20
+            }
+        }
+    """
+    try:
+        from app.services.performance_tracking import performance_tracking_service
+
+        # 권한 확인
+        strategy = Strategy.query.get(strategy_id)
+        if not strategy:
+            return create_error_response(
+                error_code=ErrorCode.STRATEGY_NOT_FOUND,
+                message='전략을 찾을 수 없습니다.'
+            )
+
+        if strategy.user_id != current_user.id:
+            return create_error_response(
+                error_code=ErrorCode.PERMISSION_DENIED,
+                message='해당 전략에 접근할 권한이 없습니다.'
+            )
+
+        # Query 파라미터 파싱
+        days = request.args.get('days', type=int)
+
+        # ROI 계산
+        roi_data = performance_tracking_service.calculate_roi(
+            strategy_id=strategy_id,
+            days=days
+        )
+
+        return create_success_response(
+            data=roi_data,
+            message='ROI 조회에 성공했습니다.'
+        )
+
+    except Exception as e:
+        current_app.logger.error(f'ROI 조회 오류: {str(e)}')
+        return exception_to_error_response(e)
+
+
+@bp.route('/strategies/<int:strategy_id>/performance/summary', methods=['GET'])
+@login_required
+def get_strategy_performance_summary(strategy_id):
+    """
+    전략의 성과 요약 조회
+
+    Query Parameters:
+        - days (optional): 분석 기간 (일 단위, 기본값: 30)
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "period_days": 30,
+                "total_return": 12.5,
+                "total_pnl": 1250.50,
+                "avg_daily_pnl": 41.68,
+                "best_day": 250.00,
+                "worst_day": -150.00,
+                "total_trades": 45,
+                "avg_win_rate": 65.5,
+                "max_drawdown": -8.2
+            }
+        }
+    """
+    try:
+        from app.services.performance_tracking import performance_tracking_service
+
+        # 권한 확인
+        strategy = Strategy.query.get(strategy_id)
+        if not strategy:
+            return create_error_response(
+                error_code=ErrorCode.STRATEGY_NOT_FOUND,
+                message='전략을 찾을 수 없습니다.'
+            )
+
+        if strategy.user_id != current_user.id:
+            return create_error_response(
+                error_code=ErrorCode.PERMISSION_DENIED,
+                message='해당 전략에 접근할 권한이 없습니다.'
+            )
+
+        # Query 파라미터 파싱 (기본값: 30일)
+        days = request.args.get('days', default=30, type=int)
+
+        # 성과 요약 조회
+        summary = performance_tracking_service.get_performance_summary(
+            strategy_id=strategy_id,
+            days=days
+        )
+
+        return create_success_response(
+            data=summary,
+            message='성과 요약 조회에 성공했습니다.'
+        )
+
+    except Exception as e:
+        current_app.logger.error(f'성과 요약 조회 오류: {str(e)}')
+        return exception_to_error_response(e)
+
+
+@bp.route('/strategies/<int:strategy_id>/performance/daily', methods=['GET'])
+@login_required
+def get_strategy_daily_performance(strategy_id):
+    """
+    전략의 일일 성과 조회
+
+    Query Parameters:
+        - date (optional): 조회할 날짜 (YYYY-MM-DD 형식). 지정하지 않으면 오늘
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "date": "2025-10-03",
+                "daily_return": 0.5,
+                "cumulative_return": 12.5,
+                "daily_pnl": 50.00,
+                "cumulative_pnl": 1250.50,
+                "total_trades": 5,
+                "winning_trades": 3,
+                "losing_trades": 2,
+                "win_rate": 60.0,
+                "sharpe_ratio": 1.5,
+                "sortino_ratio": 2.1,
+                "volatility": 0.8,
+                "max_drawdown": -5.2
+            }
+        }
+    """
+    try:
+        from app.services.performance_tracking import performance_tracking_service
+        from datetime import datetime, date
+
+        # 권한 확인
+        strategy = Strategy.query.get(strategy_id)
+        if not strategy:
+            return create_error_response(
+                error_code=ErrorCode.STRATEGY_NOT_FOUND,
+                message='전략을 찾을 수 없습니다.'
+            )
+
+        if strategy.user_id != current_user.id:
+            return create_error_response(
+                error_code=ErrorCode.PERMISSION_DENIED,
+                message='해당 전략에 접근할 권한이 없습니다.'
+            )
+
+        # Query 파라미터 파싱
+        date_str = request.args.get('date')
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else date.today()
+
+        # 일일 성과 조회
+        performance = performance_tracking_service.calculate_daily_performance(
+            strategy_id=strategy_id,
+            target_date=target_date
+        )
+
+        if not performance:
+            return create_error_response(
+                error_code=ErrorCode.DATA_NOT_FOUND,
+                message='해당 날짜의 성과 데이터가 없습니다.'
+            )
+
+        # 응답 데이터 구성
+        data = {
+            'date': performance.date.isoformat(),
+            'daily_return': performance.daily_return,
+            'cumulative_return': performance.cumulative_return,
+            'daily_pnl': performance.daily_pnl,
+            'cumulative_pnl': performance.cumulative_pnl,
+            'total_trades': performance.total_trades,
+            'winning_trades': performance.winning_trades,
+            'losing_trades': performance.losing_trades,
+            'win_rate': performance.win_rate,
+            'sharpe_ratio': performance.sharpe_ratio,
+            'sortino_ratio': performance.sortino_ratio,
+            'volatility': performance.volatility,
+            'max_drawdown': performance.max_drawdown
+        }
+
+        return create_success_response(
+            data=data,
+            message='일일 성과 조회에 성공했습니다.'
+        )
+
+    except ValueError as e:
+        return create_error_response(
+            error_code=ErrorCode.INVALID_REQUEST,
+            message='날짜 형식이 올바르지 않습니다. (YYYY-MM-DD 형식 사용)',
+            details=str(e)
+        )
+    except Exception as e:
+        current_app.logger.error(f'일일 성과 조회 오류: {str(e)}')
+        return exception_to_error_response(e)
