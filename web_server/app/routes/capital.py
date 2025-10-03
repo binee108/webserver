@@ -1,91 +1,153 @@
-from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app
+"""
+자본 배분 관련 라우트
+"""
+
+from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user
-from app.services.analytics import analytics_service as capital_service
-from app.services.strategy_service import strategy_service, StrategyError
 
-bp = Blueprint('capital', __name__, url_prefix='/api')
+from app import csrf
+from app.models import Account
+from app.services.capital_service import capital_allocation_service, CapitalAllocationError
+from app.utils.logging_security import get_secure_logger
 
-@bp.route('/strategies/capital', methods=['POST'])
+logger = get_secure_logger(__name__)
+
+bp = Blueprint('capital', __name__)
+
+
+@bp.route('/api/capital/reallocate/<int:account_id>', methods=['POST'])
 @login_required
-def manage_strategy_capital():
-    """전략 자본 관리"""
+@csrf.exempt
+def reallocate_account_capital(account_id):
+    """
+    특정 계좌의 전략별 자본을 재배분합니다.
+
+    Args:
+        account_id: 계좌 ID
+
+    Query Parameters:
+        use_live: 실시간 잔고 조회 여부 (true/false, 기본값: false)
+
+    Returns:
+        JSON: 재배분 결과
+    """
     try:
-        data = request.get_json()
-        
-        # 자동 할당 모드인지 확인
-        if data.get('auto_allocate'):
-            # 전략 확인
-            strategy = strategy_service.get_strategy_by_id(data['strategy_id'], current_user.id)
-            if not strategy:
-                return jsonify({
-                    'success': False,
-                    'error': '전략을 찾을 수 없습니다.'
-                }), 404
-            
-            # 전략에 연결된 모든 계좌에 대해 자동 할당 실행
-            success_count = 0
-            for strategy_account in strategy.strategy_accounts:
-                if capital_service.auto_allocate_capital_for_account(strategy_account.account_id):
-                    success_count += 1
-            
-            if success_count > 0:
-                return jsonify({
-                    'success': True,
-                    'message': f'{success_count}개 계좌에 자본이 자동 할당되었습니다.'
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': '자동 자본 할당에 실패했습니다.'
-                }), 400
-        
-        # 기존 수동 할당 로직
-        # 입력 데이터 검증
-        required_fields = ['strategy_id', 'currency', 'allocated_amount']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({
-                    'success': False,
-                    'error': f'{field} 필드가 필요합니다.'
-                }), 400
-        
-        # 전략 확인
-        strategy = strategy_service.get_strategy_by_id(data['strategy_id'], current_user.id)
-        if not strategy:
+        # 계좌 소유권 검증
+        account = Account.query.get(account_id)
+        if not account:
             return jsonify({
                 'success': False,
-                'error': '전략을 찾을 수 없습니다.'
+                'error': '계좌를 찾을 수 없습니다'
             }), 404
-        
-        # capital_service를 통해 자본 할당 처리
-        result = capital_service.allocate_capital(
-            strategy_id=data['strategy_id'],
-            currency=data['currency'],
-            allocated_amount=data['allocated_amount'],
-            user_id=current_user.id
-        )
-        
-        if result.get('success'):
-            return jsonify({
-                'success': True,
-                'message': '자본이 성공적으로 할당되었습니다.',
-                'allocation': result.get('allocation')
-            })
-        else:
+
+        if account.user_id != current_user.id:
             return jsonify({
                 'success': False,
-                'error': result.get('error', '자본 할당에 실패했습니다.')
-            }), 400
-        
-    except StrategyError as e:
+                'error': '권한이 없습니다'
+            }), 403
+
+        # 실시간 조회 옵션
+        use_live = request.args.get('use_live', 'false').lower() == 'true'
+
+        # 자본 재배분 실행
+        result = capital_allocation_service.recalculate_strategy_capital(
+            account_id=account_id,
+            use_live_balance=use_live
+        )
+
+        return jsonify({
+            'success': True,
+            'data': result
+        })
+
+    except CapitalAllocationError as e:
+        logger.error(f"자본 재배분 실패: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
         }), 400
     except Exception as e:
-        current_app.logger.error(f'자본 관리 오류: {str(e)}')
+        logger.error(f"자본 재배분 중 예외 발생: {e}")
         return jsonify({
             'success': False,
-            'error': str(e)
-        }), 500 
+            'error': f'서버 오류: {str(e)}'
+        }), 500
+
+
+@bp.route('/api/capital/reallocate-all', methods=['POST'])
+@login_required
+@csrf.exempt
+def reallocate_all_accounts():
+    """
+    현재 사용자의 모든 계좌에 대해 전략별 자본을 재배분합니다.
+
+    Query Parameters:
+        use_live: 실시간 잔고 조회 여부 (true/false, 기본값: false)
+
+    Returns:
+        JSON: 재배분 결과 목록
+    """
+    try:
+        # 사용자의 모든 활성 계좌 조회
+        accounts = Account.query.filter_by(
+            user_id=current_user.id,
+            is_active=True
+        ).all()
+
+        if not accounts:
+            return jsonify({
+                'success': True,
+                'data': {
+                    'total_accounts': 0,
+                    'results': [],
+                    'message': '활성 계좌가 없습니다'
+                }
+            })
+
+        # 실시간 조회 옵션
+        use_live = request.args.get('use_live', 'false').lower() == 'true'
+
+        # 각 계좌별 재배분 실행
+        results = []
+        successful = 0
+        failed = 0
+
+        for account in accounts:
+            try:
+                result = capital_allocation_service.recalculate_strategy_capital(
+                    account_id=account.id,
+                    use_live_balance=use_live
+                )
+                results.append({
+                    'success': True,
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'result': result
+                })
+                successful += 1
+            except Exception as e:
+                logger.error(f"계좌 {account.id} 재배분 실패: {e}")
+                results.append({
+                    'success': False,
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'error': str(e)
+                })
+                failed += 1
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'total_accounts': len(accounts),
+                'successful': successful,
+                'failed': failed,
+                'results': results
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"전체 재배분 중 예외 발생: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'서버 오류: {str(e)}'
+        }), 500

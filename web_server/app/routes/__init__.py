@@ -12,10 +12,10 @@ def register_blueprints(app):
     from .webhook import bp as webhook_bp
     from .accounts import bp as accounts_bp
     from .strategies import bp as strategies_bp
-    from .capital import bp as capital_bp
     from .dashboard import bp as dashboard_bp
     from .system import bp as system_bp
     from .positions import bp as positions_bp
+    from .capital import bp as capital_bp  # 자본 재배분 API
     from .health import health_bp
     
     # Blueprint 등록
