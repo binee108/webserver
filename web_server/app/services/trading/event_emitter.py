@@ -32,16 +32,19 @@ class EventEmitter:
         """Emit a unified trading order event via the SSE event service."""
         try:
             from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
 
-            strategy_account = StrategyAccount.query.filter_by(
-                strategy_id=strategy.id
-            ).first()
-
-            if not strategy_account or not strategy_account.account:
-                logger.warning("전략 %s의 계정 정보를 찾을 수 없음", strategy.id)
+            # order_result에서 account_id 추출 (다중 계좌 지원)
+            account_id = order_result.get('account_id')
+            if not account_id:
+                logger.error("order_result에 account_id 누락, SSE 이벤트 발송 불가")
                 return
 
-            account = strategy_account.account
+            # 해당 계좌 직접 조회
+            account = Account.query.get(account_id)
+            if not account:
+                logger.warning("계좌 정보를 찾을 수 없음: account_id=%s", account_id)
+                return
 
             stop_price_value = None
             raw_response = order_result.get('raw_response')

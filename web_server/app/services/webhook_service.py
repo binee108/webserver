@@ -453,6 +453,7 @@ class WebhookService:
                 cancel_result = order_service.cancel_all_orders(
                     strategy_id=strategy.id,
                     symbol=symbol,
+                    account_id=account.id,  # 특정 계좌 지정
                     timing_context={'webhook_received_at': webhook_received_at}
                 )
                 

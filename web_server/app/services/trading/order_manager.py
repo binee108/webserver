@@ -192,8 +192,17 @@ class OrderManager:
                 'error_type': 'query_error'
             }
 
-    def cancel_all_orders(self, strategy_id: int, symbol: Optional[str] = None, timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """전략의 모든 미체결 주문 취소"""
+    def cancel_all_orders(self, strategy_id: int, symbol: Optional[str] = None,
+                          account_id: Optional[int] = None,
+                          timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """전략의 모든 미체결 주문 취소
+
+        Args:
+            strategy_id: 전략 ID
+            symbol: 심볼 필터 (None이면 전체)
+            account_id: 계좌 ID (None이면 첫 번째 계좌, 지정 시 해당 계좌만)
+            timing_context: 타이밍 정보
+        """
         try:
             # 타이밍 컨텍스트 초기화
             if timing_context is None:
@@ -202,7 +211,7 @@ class OrderManager:
             # 취소 작업 시작 시점 기록
             cancel_started_at = time.time()
 
-            logger.info(f"🔄 전략 {strategy_id} 모든 주문 취소 시작 (symbol: {symbol or 'ALL'})")
+            logger.info(f"🔄 전략 {strategy_id} 모든 주문 취소 시작 (symbol: {symbol or 'ALL'}, account_id: {account_id or 'FIRST'})")
 
             # 전략 조회
             strategy = Strategy.query.get(strategy_id)
@@ -213,10 +222,18 @@ class OrderManager:
                     'error_type': 'strategy_error'
                 }
 
-            # 계정 정보 조회
-            strategy_account = StrategyAccount.query.filter_by(
-                strategy_id=strategy.id
-            ).first()
+            # 계정 정보 조회 (account_id가 지정되면 해당 계좌, 아니면 첫 번째 계좌)
+            if account_id:
+                # 특정 계좌 조회
+                strategy_account = StrategyAccount.query.filter_by(
+                    strategy_id=strategy.id,
+                    account_id=account_id
+                ).first()
+            else:
+                # 첫 번째 계좌 (하위 호환성)
+                strategy_account = StrategyAccount.query.filter_by(
+                    strategy_id=strategy.id
+                ).first()
 
             if not strategy_account or not strategy_account.account:
                 return {
@@ -227,18 +244,18 @@ class OrderManager:
 
             account = strategy_account.account
 
-            # 미체결 주문 조회
-            # 전략의 market_type 정규화
-            from app.constants import MarketType
-            strategy_market_type = MarketType.normalize(strategy.market_type) if strategy.market_type else MarketType.SPOT
-            
-            open_orders_result = self.service.get_open_orders(account.id, symbol, strategy_market_type)
-            if not open_orders_result['success']:
-                return open_orders_result
+            # ✅ DB 기반 미체결 주문 조회 (전략 격리 보장)
+            # 거래소 API가 아닌 DB OpenOrder 테이블에서 조회
+            # → strategy_account_id FK로 해당 전략의 주문만 필터링
+            # → 동일 계좌를 사용하는 다른 전략의 주문은 조회되지 않음
+            db_query = OpenOrder.query.filter_by(strategy_account_id=strategy_account.id)
+            if symbol:
+                db_query = db_query.filter_by(symbol=symbol)
 
-            open_orders = open_orders_result.get('orders', [])
-            if not open_orders:
-                logger.info(f"취소할 미체결 주문이 없습니다 - 전략: {strategy_id}")
+            db_open_orders = db_query.all()
+
+            if not db_open_orders:
+                logger.info(f"취소할 미체결 주문이 없습니다 - 전략: {strategy_id}, 계좌: {account.id}")
                 return {
                     'success': True,
                     'cancelled_orders': 0,
@@ -246,32 +263,36 @@ class OrderManager:
                     'message': '취소할 미체결 주문이 없습니다'
                 }
 
+            logger.info(f"📋 DB에서 조회된 미체결 주문: {len(db_open_orders)}개 (전략: {strategy_id}, 계좌: {account.id})")
+
             # 주문 취소 실행
             cancelled_count = 0
             failed_count = 0
             results = []
 
-            for order in open_orders:
+            for db_order in db_open_orders:
                 try:
-                    order_id = order.id
-                    order_symbol = order.symbol
+                    # DB의 exchange_order_id로 거래소 API 호출
+                    # db_order.exchange_order_id = 거래소 주문 ID
+                    exchange_order_id = db_order.exchange_order_id
+                    order_symbol = db_order.symbol
 
-                    if not order_id or not order_symbol:
-                        logger.warning(f"주문 ID 또는 심볼이 없어서 건너뜀: {order}")
+                    if not exchange_order_id or not order_symbol:
+                        logger.warning(f"주문 ID 또는 심볼이 없어서 건너뜀: DB id={db_order.id}")
                         failed_count += 1
                         continue
 
-                    cancel_result = self.service.cancel_order(order_id, order_symbol, account.id)
+                    cancel_result = self.service.cancel_order(exchange_order_id, order_symbol, account.id)
 
                     if cancel_result['success']:
                         cancelled_count += 1
-                        logger.info(f"✅ 주문 취소 성공: {order_id}")
+                        logger.info(f"✅ 주문 취소 성공: {exchange_order_id} (전략: {strategy_id})")
                     else:
                         failed_count += 1
-                        logger.warning(f"❌ 주문 취소 실패: {order_id} - {cancel_result.get('error')}")
+                        logger.warning(f"❌ 주문 취소 실패: {exchange_order_id} - {cancel_result.get('error')}")
 
                     results.append({
-                        'order_id': order_id,
+                        'order_id': exchange_order_id,
                         'symbol': order_symbol,
                         'result': cancel_result
                     })
@@ -280,8 +301,8 @@ class OrderManager:
                     failed_count += 1
                     logger.error(f"주문 취소 중 오류: {e}")
                     results.append({
-                        'order_id': getattr(order, "id", "unknown"),
-                        'symbol': getattr(order, "symbol", "unknown"),
+                        'order_id': db_order.exchange_order_id if db_order.exchange_order_id else "unknown",
+                        'symbol': db_order.symbol if db_order.symbol else "unknown",
                         'result': {
                             'success': False,
                             'error': str(e),
@@ -297,7 +318,7 @@ class OrderManager:
                 'strategy_id': strategy_id,
                 'cancelled_orders': cancelled_count,
                 'failed_orders': failed_count,
-                'total_orders': len(open_orders),
+                'total_orders': len(db_open_orders),
                 'results': results
             }
 

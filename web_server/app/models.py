@@ -194,7 +194,8 @@ class Strategy(db.Model):
     # 공개 전략 여부: True이면 타 사용자가 구독하여 자신의 계좌로 신호를 실행할 수 있음
     is_public = db.Column(db.Boolean, default=False, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='strategy', lazy=True, cascade='all, delete-orphan')
     
