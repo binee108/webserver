@@ -189,10 +189,16 @@ def trigger_job():
                     summary_data[account.name] = account_summary
                 except Exception as e:
                     current_app.logger.error(f'계정 {account.name} 일일 요약 생성 실패: {str(e)}')
-            
+
             telegram_service.send_daily_summary(summary_data)
             message = '일일 요약 보고서가 전송되었습니다.'
-            
+
+        elif job_type == 'calculate_performance':
+            # Phase 3.4: 일일 성과 계산 수동 실행
+            from app import calculate_daily_performance_with_context
+            calculate_daily_performance_with_context(current_app._get_current_object())
+            message = '일일 성과 계산이 완료되었습니다.'
+
         else:
             return jsonify({
                 'success': False,

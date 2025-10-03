@@ -462,7 +462,21 @@ def register_background_jobs(app):
         replace_existing=True,
         max_instances=1
     )
-    
+
+    # Phase 3.4: 일일 성과 계산 (매일 자정 30초 후)
+    scheduler.add_job(
+        func=calculate_daily_performance_with_context,
+        args=[app],
+        trigger="cron",
+        hour=0,
+        minute=0,
+        second=30,
+        id='calculate_daily_performance',
+        name='Calculate Daily Strategy Performance',
+        replace_existing=True,
+        max_instances=1
+    )
+
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
 
 def warm_up_precision_cache_with_context(app):
@@ -688,7 +702,7 @@ def send_daily_summary_with_context(app):
             from app.services.analytics import analytics_service
             from app.services.telegram import telegram_service
             from app.models import Account
-            
+
             # 모든 활성 계정에 대한 일일 요약 데이터 생성
             accounts = Account.query.filter_by(is_active=True).all()
             summary_data = {}
@@ -698,10 +712,11 @@ def send_daily_summary_with_context(app):
                     summary_data[account.name] = account_summary
                 except Exception as e:
                     app.logger.error(f'계정 {account.name} 일일 요약 생성 실패: {str(e)}')
-            
+
             # 텔레그램으로 전송
             telegram_service.send_daily_summary(summary_data)
             app.logger.info('일일 요약 보고서 전송 완료')
+
         except Exception as e:
             app.logger.error(f'일일 요약 보고서 전송 실패: {str(e)}')
             try:
@@ -712,4 +727,69 @@ def send_daily_summary_with_context(app):
                         f"일일 요약 보고서 전송 실패: {str(e)}"
                     )
             except Exception:
-                pass  # 텔레그램 알림 실패는 조용히 무시 
+                pass  # 텔레그램 알림 실패는 조용히 무시
+
+def calculate_daily_performance_with_context(app):
+    """
+    Phase 3.4: Flask 앱 컨텍스트 내에서 일일 성과 계산
+
+    모든 활성 전략에 대해 전날의 성과를 계산하고 DB에 저장합니다.
+    매일 자정 30초 후 실행되어 전날(어제) 데이터를 처리합니다.
+    """
+    with app.app_context():
+        try:
+            from app.services.performance_tracking import performance_tracking_service
+            from app.models import Strategy
+            from datetime import date, timedelta
+
+            yesterday = date.today() - timedelta(days=1)
+            app.logger.info(f'📊 일일 성과 계산 시작 (대상 날짜: {yesterday})')
+
+            # 모든 활성 전략 조회
+            strategies = Strategy.query.filter_by(is_active=True).all()
+
+            success_count = 0
+            fail_count = 0
+
+            for strategy in strategies:
+                try:
+                    performance = performance_tracking_service.calculate_daily_performance(
+                        strategy_id=strategy.id,
+                        target_date=yesterday
+                    )
+
+                    if performance:
+                        app.logger.info(
+                            f'  ✅ 전략 {strategy.id} ({strategy.name}): '
+                            f'일일 PnL {performance.daily_pnl} USDT, '
+                            f'거래 {performance.total_trades}건'
+                        )
+                        success_count += 1
+                    else:
+                        app.logger.warning(f'  ⚠️ 전략 {strategy.id} ({strategy.name}): 성과 계산 실패')
+                        fail_count += 1
+
+                except Exception as e:
+                    app.logger.error(f'  ❌ 전략 {strategy.id} 성과 계산 오류: {str(e)}')
+                    fail_count += 1
+
+            app.logger.info(
+                f'📊 일일 성과 계산 완료: '
+                f'성공 {success_count}개, 실패 {fail_count}개 (총 {len(strategies)}개 전략)'
+            )
+
+            # 성공률이 50% 미만이면 경고
+            if len(strategies) > 0 and (fail_count / len(strategies)) >= 0.5:
+                app.logger.warning('⚠️ 성과 계산 실패율이 50% 이상입니다!')
+
+        except Exception as e:
+            app.logger.error(f'일일 성과 계산 작업 실패: {str(e)}')
+            try:
+                from app.services.telegram import telegram_service
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"일일 성과 계산 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
