@@ -388,8 +388,9 @@ class TradingCore:
 
     def process_batch_trading_signal(self, webhook_data: Dict[str, Any],
                                      timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """배치 거래 신호 처리"""
+        """배치 거래 신호 처리 (우선순위 기반 정렬)"""
         from app.services.utils import to_decimal
+        from app.constants import OrderType
 
         # 필수 필드 검증
         required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'orders']
@@ -405,9 +406,21 @@ class TradingCore:
 
         logger.info(f"배치 거래 신호 처리 시작 - 전략: {group_name}, 주문 수: {len(orders)}")
 
-        # 각 주문에 대해 process_trading_signal 호출
+        # 🆕 우선순위 기반 정렬 (MARKET 주문 최우선)
+        sorted_orders_with_idx = sorted(
+            enumerate(orders),
+            key=lambda x: OrderType.get_priority(x[1].get('order_type', 'LIMIT'))
+        )
+
+        logger.info(f"📊 주문 우선순위 정렬 완료:")
+        for original_idx, order in sorted_orders_with_idx:
+            order_type = order.get('order_type', 'UNKNOWN')
+            priority = OrderType.get_priority(order_type)
+            logger.info(f"  - [{original_idx}] {order_type} (우선순위: {priority})")
+
+        # 정렬된 순서로 주문 처리
         results = []
-        for idx, order in enumerate(orders):
+        for original_idx, order in sorted_orders_with_idx:
             try:
                 # 공통 필드 병합
                 order_data = {
@@ -420,14 +433,14 @@ class TradingCore:
 
                 result = self.process_trading_signal(order_data, timing_context)
                 results.append({
-                    'order_index': idx,
+                    'order_index': original_idx,  # 원본 인덱스 유지
                     'success': result.get('success', False),
                     'result': result
                 })
             except Exception as e:
-                logger.error(f"배치 주문 {idx} 처리 실패: {e}")
+                logger.error(f"배치 주문 {original_idx} 처리 실패: {e}")
                 results.append({
-                    'order_index': idx,
+                    'order_index': original_idx,  # 원본 인덱스 유지
                     'success': False,
                     'error': str(e)
                 })

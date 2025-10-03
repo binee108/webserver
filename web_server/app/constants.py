@@ -141,6 +141,14 @@ class OrderType:
     # 모든 유효한 타입 (취소 포함)
     VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CANCEL, CANCEL_ALL_ORDER]
 
+    # 주문 우선순위 (낮은 숫자 = 높은 우선순위)
+    PRIORITY = {
+        MARKET: 1,        # 시장가 주문 최우선
+        STOP_MARKET: 2,   # 스탑 시장가
+        LIMIT: 3,         # 지정가
+        STOP_LIMIT: 4     # 스탑 지정가
+    }
+
     @classmethod
     def is_valid(cls, value):
         """값이 유효한 order_type인지 확인"""
@@ -259,6 +267,22 @@ class OrderType:
             return False, f"{order_type} 주문에는 quantity가 필수입니다"
 
         return True, None
+
+    @classmethod
+    def get_priority(cls, order_type):
+        """주문 타입의 우선순위 반환 (낮은 숫자 = 높은 우선순위)
+
+        Args:
+            order_type: 주문 타입
+
+        Returns:
+            int: 우선순위 (1-4), 알 수 없는 타입은 99
+        """
+        if not order_type:
+            return 99
+
+        normalized_type = order_type.upper()
+        return cls.PRIORITY.get(normalized_type, 99)
 
 
 class MinOrderAmount:

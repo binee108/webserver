@@ -4,7 +4,7 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 
 ## 주요 기능
 
-- 🏦 **다중 거래소 지원**: Binance, Bybit, OKX
+- 🏦 **거래소 지원**: Binance (Bybit, OKX 지원 예정)
 - 🤖 **자동 거래**: 웹훅 시그널 기반 자동 주문 실행
 - 📊 **실시간 모니터링**: WebSocket을 통한 실시간 가격 및 포지션 업데이트
 - 💰 **자본 관리**: 전략별 자본 할당 및 리스크 관리
@@ -212,15 +212,11 @@ cd webserver
 
 #### Step 2: 환경 설정
 ```bash
-# 환경별 설정 파일 선택
-# 개발 환경
-cp config/env.development.example .env
-# 또는 스테이징 환경
-cp config/env.staging.example .env
-# 또는 프로덕션 환경
-cp config/env.production.example .env
+# 환경 설정 마법사 실행 (권장)
+python run.py setup
 
-# .env 파일 편집 (필수 설정)
+# 또는 수동 설정
+# .env 파일 생성 및 편집
 # Windows: notepad .env
 # Mac/Linux: nano .env 또는 vi .env
 ```
@@ -229,7 +225,9 @@ cp config/env.production.example .env
 ```env
 # 기본 설정
 SECRET_KEY=your-secret-key-here-change-this
-DATABASE_URL=postgresql://trader:password123@localhost:5432/trading_system
+
+# 데이터베이스 (Docker 사용 시 자동 설정)
+DATABASE_URL=postgresql://trader:password123@postgres:5432/trading_system
 
 # Telegram 설정 (선택사항)
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
@@ -238,6 +236,7 @@ TELEGRAM_CHAT_ID=your-telegram-chat-id
 # 보안 설정
 FLASK_ENV=production
 DEBUG=False
+SSL_ENABLED=True
 ```
 
 #### Step 3: Docker Compose로 시스템 시작
@@ -284,11 +283,11 @@ version: '3.8'
 services:
   # PostgreSQL 데이터베이스
   postgres:
-    image: postgres:13
+    image: postgres:15
     environment:
-      POSTGRES_DB: trading_db
-      POSTGRES_USER: trading
-      POSTGRES_PASSWORD: trading123
+      POSTGRES_DB: trading_system
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: password123
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -296,21 +295,44 @@ services:
 
   # Flask 웹 애플리케이션
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: config/Dockerfile
     depends_on:
       - postgres
     environment:
-      DATABASE_URL: postgresql://trading:trading123@postgres:5432/trading_db
+      DATABASE_URL: postgresql://trader:password123@postgres:5432/trading_system
     volumes:
       - ./web_server:/app/web_server
-      - ./logs:/app/logs
+      - ./scripts:/app/scripts
+      - ./migrations:/app/migrations
+    ports:
+      - "5001:5001"    # HTTP (Flask)
+    networks:
+      - trading-network
+
+  # Nginx 리버스 프록시
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - app
+    volumes:
+      - ./config/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - nginx_logs:/var/log/nginx
     ports:
       - "443:443"      # HTTPS
-      - "5001:5001"    # HTTP
-    command: python app.py
+      - "80:80"        # HTTP (HTTPS로 리다이렉트)
+    networks:
+      - trading-network
 
 volumes:
   postgres_data:  # 데이터 영속성
+  nginx_logs:     # Nginx 로그
+
+networks:
+  trading-network:
+    driver: bridge
 ```
 
 ### Docker 명령어 모음
@@ -377,22 +399,19 @@ docker-compose up -d --force-recreate
 ```bash
 # 시스템 관리
 python run.py start       # 시작
-python run.py stop        # 중지  
+python run.py stop        # 중지
 python run.py restart     # 재시작
 python run.py status      # 상태 확인
+
+# 환경 설정
+python run.py setup       # 환경 설정 마법사
 
 # 로그 관리
 python run.py logs        # 로그 확인
 python run.py logs -f     # 실시간 로그
 
-# 데이터 관리
-python run.py backup      # DB 백업
-python run.py restore     # DB 복원
-python run.py clean       # 완전 초기화
-
-# 개발 도구
-python run.py shell       # Python 쉘
-python run.py db-shell    # DB 쉘
+# 시스템 정리
+python run.py clean       # 완전 초기화 (데이터, 이미지 삭제)
 ```
 
 ## 수동 설치 (Python 환경)
@@ -577,50 +596,64 @@ docker-compose down
 docker-compose up -d
 ```
 
-## 프로젝트 구조 (새로운 깔끔한 구조)
+## 프로젝트 구조
 
 ```
 webserver/                 # 프로젝트 루트
 ├── run.py                 # 🚀 통합 실행 스크립트 (크로스 플랫폼)
 ├── docker-compose.yml     # Docker 구성
 ├── README.md              # 메인 문서
+├── .env                   # 환경 변수 (수동 생성)
 ├── config/                # ⚙️ 설정 파일들
-│   ├── config.py         # 애플리케이션 설정
-│   ├── env.example       # 환경 변수 템플릿
-│   └── Dockerfile        # Docker 이미지 빌드
+│   ├── Dockerfile        # Docker 이미지 빌드
+│   └── nginx-ssl.conf    # Nginx SSL 설정
+├── certs/                 # 🔒 SSL 인증서
+│   ├── cert.pem          # SSL 인증서
+│   └── key.pem           # SSL 개인키
+├── migrations/            # 📦 DB 마이그레이션
+│   ├── versions/         # 마이그레이션 버전들
+│   └── alembic.ini       # Alembic 설정
 ├── scripts/               # 📜 실행 스크립트들
 │   ├── app.py            # Flask 앱 실행
 │   ├── init_db.py        # DB 초기화
-│   ├── start.sh          # Linux/Mac 시작 (레거시)
-│   └── stop.sh           # Linux/Mac 중지 (레거시)
+│   ├── check_service_dependencies.py  # 서비스 의존성 검증
+│   ├── start.sh / start.bat           # 시작 스크립트
+│   └── stop.sh / stop.bat             # 중지 스크립트
 └── web_server/            # 🌐 메인 웹서버 코드
     ├── app/              # Flask 애플리케이션
+    │   ├── __init__.py   # 앱 초기화
+    │   ├── models.py     # 데이터베이스 모델
+    │   ├── constants.py  # 상수 정의
     │   ├── routes/       # API 엔드포인트
     │   ├── services/     # 비즈니스 로직
+    │   │   ├── trading/  # 거래 서비스 (모듈화)
+    │   │   ├── exchange/ # 거래소 어댑터
+    │   │   ├── telegram.py
+    │   │   └── ...
     │   ├── static/       # CSS, JS, 이미지
     │   └── templates/    # HTML 템플릿
-    ├── docs/             # 프로젝트 문서
-    ├── migrations/       # DB 마이그레이션
-    ├── requirements.txt  # Python 의존성
-    ├── certs/           # SSL 인증서
-    └── logs/            # 로그 파일
+    ├── docs/             # 📚 프로젝트 문서
+    ├── logs/             # 📝 로그 파일
+    └── requirements.txt  # Python 의존성
 ```
 
-### 새로운 구조의 장점
-- 🎯 **극도로 깔끔한 루트**: 실행 스크립트와 필수 파일만
-- 📁 **논리적 분리**: 설정, 스크립트, 웹서버 코드 독립
+### 구조의 장점
+- 🎯 **명확한 분리**: 설정, 스크립트, 웹서버 코드 독립
 - 🚀 **통합 관리**: 하나의 run.py로 모든 OS 지원
 - 🔧 **유지보수 용이**: 기능별 디렉토리 분리
+- 🔒 **보안**: SSL 인증서 분리 관리
 
 ## 문서
 
-상세한 문서는 `docs/` 디렉토리에서 확인할 수 있습니다:
+상세한 문서는 `web_server/docs/` 디렉토리에서 확인할 수 있습니다:
 
-- [프로젝트 개요](docs/PROJECT_OVERVIEW.md) - 시스템 전체 개요
-- [아키텍처](docs/ARCHITECTURE.md) - 시스템 아키텍처 및 설계
-- [설치 가이드](docs/SETUP_GUIDE.md) - 상세한 설치 및 설정 방법
-- [API 문서](docs/POSITIONS_AND_ORDERS_API.md) - API 엔드포인트 문서
-- [데이터베이스 스키마](docs/DATABASE_SCHEMA.md) - 데이터베이스 구조
+- [전략 격리 수정 계획](web_server/docs/STRATEGY_ISOLATION_FIX_PLAN.md) - DB 기반 전략 격리 구현
+- [요구사항](web_server/docs/REQUIREMENTS.md) - 시스템 요구사항
+- [웹훅 테스트 시나리오](CLAUDE.md#웹훅-기능-테스트-시나리오) - 웹훅 API 테스트 가이드
+
+### API 문서
+- 웹훅 API: 위 "4. 웹훅 설정" 섹션 참조
+- 주문/포지션 API: `/api` 엔드포인트 (인증 필요)
 
 ## 📖 사용 방법 상세 가이드
 
@@ -652,50 +685,100 @@ webserver/                 # 프로젝트 루트
 4. 저장
 
 ### 4. 웹훅 설정 (TradingView 등)
-**웹훅 URL 형식:**
+**웹훅 URL:**
 ```
-https://your-domain.com/webhook/{strategy_webhook_key}
+https://your-domain.com/api/webhook
 ```
+
+**필수 파라미터:**
+- `group_name`: 전략 그룹명 (전략 식별자)
+- `exchange`: 거래소 (BINANCE, BYBIT, OKX 등)
+- `market_type`: 시장 타입 (SPOT, FUTURES)
+- `currency`: 통화 (USDT, KRW 등)
+- `symbol`: 심볼 (BTCUSDT, ETHUSDT 등)
+- `side`: 방향 (buy, sell)
+- `order_type`: 주문 타입 (MARKET, LIMIT, STOP_LIMIT, CANCEL_ALL_ORDER)
+- `qty_per`: 수량 또는 비율 (숫자 또는 -100)
+- `token`: 웹훅 인증 토큰
 
 **웹훅 페이로드 예시:**
 
 #### 시장가 주문
 ```json
 {
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
     "symbol": "BTCUSDT",
-    "action": "BUY",
-    "quantity": 0.001
+    "order_type": "MARKET",
+    "side": "buy",
+    "qty_per": 10,
+    "token": "your_webhook_token"
 }
 ```
 
 #### 지정가 주문
 ```json
 {
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
     "symbol": "BTCUSDT",
-    "action": "SELL",
-    "quantity": 0.001,
-    "price": "limit:45000"
+    "order_type": "LIMIT",
+    "side": "sell",
+    "price": "130000",
+    "qty_per": 10,
+    "token": "your_webhook_token"
 }
 ```
 
-#### 포지션 청산
+#### 스탑 리밋 주문
 ```json
 {
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
     "symbol": "BTCUSDT",
-    "action": "CLOSE",
-    "quantity": "all"
+    "order_type": "STOP_LIMIT",
+    "side": "sell",
+    "price": "132000",
+    "stop_price": "131000",
+    "qty_per": 10,
+    "token": "your_webhook_token"
 }
 ```
 
-#### 비율 기반 주문
+#### 포지션 100% 청산 (qty_per=-100)
 ```json
 {
-    "symbol": "ETHUSDT",
-    "action": "BUY",
-    "quantity": "10%",  // 자본의 10%
-    "leverage": 10
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
+    "symbol": "BTCUSDT",
+    "order_type": "MARKET",
+    "side": "sell",
+    "qty_per": -100,
+    "token": "your_webhook_token"
 }
 ```
+
+#### 모든 주문 취소
+```json
+{
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
+    "symbol": "BTCUSDT",
+    "order_type": "CANCEL_ALL_ORDER",
+    "token": "your_webhook_token"
+}
+```
+**참고:** `symbol`은 선택적 (지정 시 해당 심볼만 취소)
 
 ### 5. 실시간 모니터링
 - **대시보드**: 전체 계정 현황, 총 자산, 일일 손익
