@@ -4,7 +4,7 @@ Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 
 
 ## 주요 기능
 
-- 🏦 **거래소 지원**: Binance (Bybit, OKX 지원 예정)
+- 🏦 **거래소 지원**: Binance, Upbit (국내 KRW 마켓)
 - 🤖 **자동 거래**: 웹훅 시그널 기반 자동 주문 실행
 - 📊 **실시간 모니터링**: WebSocket을 통한 실시간 가격 및 포지션 업데이트
 - 💰 **자본 관리**: 전략별 자본 할당 및 리스크 관리
@@ -225,9 +225,10 @@ python run.py setup
 **.env 파일 필수 설정 항목:**
 ```env
 # 기본 설정
-SECRET_KEY=your-secret-key-here-change-this
+SECRET_KEY=your-secret-key-here-change-this  # run.py setup으로 자동 생성 가능
 
-# 데이터베이스 (Docker 사용 시 자동 설정)
+# 데이터베이스 (Docker 사용 시)
+# 주의: 호스트명은 'postgres' 사용 (Docker 네트워크 내부)
 DATABASE_URL=postgresql://trader:password123@postgres:5432/trading_system
 
 # Telegram 설정 (선택사항)
@@ -237,7 +238,8 @@ TELEGRAM_CHAT_ID=your-telegram-chat-id
 # 보안 설정
 FLASK_ENV=production
 DEBUG=False
-SSL_ENABLED=True
+ENABLE_SSL=true
+FORCE_HTTPS=true
 ```
 
 #### Step 3: Docker Compose로 시스템 시작
@@ -318,7 +320,8 @@ services:
     depends_on:
       - app
     volumes:
-      - ./config/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./config/nginx-ssl.conf:/etc/nginx/nginx.conf:ro
+      - /dev/null:/etc/nginx/conf.d/default.conf:ro  # 기본 설정 비활성화
       - ./certs:/etc/nginx/certs:ro
       - nginx_logs:/var/log/nginx
     ports:
@@ -415,6 +418,51 @@ python run.py logs -f     # 실시간 로그
 python run.py clean       # 완전 초기화 (데이터, 이미지 삭제)
 ```
 
+## 🌐 네트워크 아키텍처
+
+### 3-Tier 구조
+```
+[외부 클라이언트]
+       ↓
+[Nginx (443/80)] ← HTTPS/리다이렉트
+       ↓
+[Flask App (5001)] ← 내부 HTTP
+       ↓
+[PostgreSQL (5432)]
+```
+
+### 포트 및 접근 경로
+
+#### 외부 접근 (프로덕션)
+- **HTTPS (권장)**: `https://your-domain` (포트 443)
+  - Nginx가 SSL/TLS 종료 처리
+  - HTTP 요청은 자동으로 HTTPS로 리다이렉트
+- **웹훅 엔드포인트**: `https://your-domain/api/webhook`
+
+#### 내부 접근 (개발/디버깅)
+- **Flask 직접 접근**: `http://localhost:5001`
+  - Docker 네트워크 외부에서 접근 가능
+  - Nginx 우회, SSL 없음
+- **PostgreSQL**: `localhost:5432`
+  - Docker 컨테이너 간 통신: `postgres:5432`
+
+### Docker 네트워크
+- **네트워크 이름**: `trading-network` (bridge 드라이버)
+- **컨테이너 간 통신**:
+  - Flask → PostgreSQL: `postgres:5432`
+  - Nginx → Flask: `app:5001`
+- **호스트 → 컨테이너**:
+  - 바인딩된 포트를 통해 `localhost:포트` 사용
+
+### SSL/HTTPS 설정
+- **자체 서명 인증서**: `./certs/` 디렉토리
+  - `run.py start` 시 자동 생성 (cryptography 라이브러리)
+  - 유효기간: 365일
+- **브라우저 보안 경고**:
+  - 자체 서명 인증서이므로 브라우저에서 경고 표시
+  - 개발 환경에서는 안전하게 무시 가능
+  - 프로덕션: Let's Encrypt 등 공인 인증서 사용 권장
+
 ## 수동 설치 (Python 환경)
 
 ### 요구사항
@@ -442,17 +490,19 @@ cp env.example .env
 flask db upgrade
 python init_db.py
 
-# 서버 실행
-# HTTPS 서비스 (443 포트, 기본값)
-python app.py
+# 서버 실행 (Flask만)
+cd web_server
+python -m app
 
-# HTTP 서비스로 실행하려면
-ENABLE_SSL=false python app.py
+# 또는 scripts/app.py 사용
+cd scripts
+python app.py
 ```
 
-### 접속 방법
-- **HTTPS (기본)**: https://localhost (또는 https://서버IP)
-- **HTTP (SSL 비활성화시)**: http://localhost:5001
+### 접속 방법 (수동 설치)
+- **Flask 개발 서버**: `http://localhost:5001`
+- **주의**: 수동 설치 시 Nginx를 별도로 설정해야 HTTPS 사용 가능
+- **프로덕션**: Docker 환경 사용 권장 (Nginx + SSL 자동 설정)
 
 ### 기본 로그인 정보
 - Username: `admin`
@@ -626,11 +676,30 @@ webserver/                 # 프로젝트 루트
     │   ├── models.py     # 데이터베이스 모델
     │   ├── constants.py  # 상수 정의
     │   ├── routes/       # API 엔드포인트
+    │   │   ├── webhook.py      # 웹훅 라우트
+    │   │   ├── strategies.py   # 전략 관리
+    │   │   ├── accounts.py     # 계정 관리
+    │   │   └── ...
     │   ├── services/     # 비즈니스 로직
     │   │   ├── trading/  # 거래 서비스 (모듈화)
-    │   │   ├── exchange/ # 거래소 어댑터
-    │   │   ├── telegram.py
+    │   │   │   ├── core.py              # 핵심 거래 실행
+    │   │   │   ├── order_manager.py     # 주문 생명주기 관리
+    │   │   │   ├── position_manager.py  # 포지션 및 PnL 관리
+    │   │   │   ├── quantity_calculator.py # 수량 계산
+    │   │   │   ├── record_manager.py    # 거래 기록
+    │   │   │   └── event_emitter.py     # 이벤트 발행
+    │   │   ├── webhook_service.py # 웹훅 처리
+    │   │   ├── exchange.py        # 거래소 서비스
+    │   │   ├── telegram.py        # Telegram 알림
+    │   │   ├── analytics.py       # 성과 분석
     │   │   └── ...
+    │   ├── exchanges/    # 거래소 어댑터
+    │   │   ├── base.py         # 거래소 기본 클래스
+    │   │   ├── binance.py      # Binance 어댑터
+    │   │   ├── bybit.py        # Bybit 어댑터
+    │   │   ├── upbit.py        # Upbit 어댑터
+    │   │   ├── factory.py      # 거래소 팩토리
+    │   │   └── metadata.py     # 거래소 메타데이터
     │   ├── static/       # CSS, JS, 이미지
     │   └── templates/    # HTML 템플릿
     ├── docs/             # 📚 프로젝트 문서
@@ -693,14 +762,35 @@ https://your-domain.com/api/webhook
 
 **필수 파라미터:**
 - `group_name`: 전략 그룹명 (전략 식별자)
-- `exchange`: 거래소 (BINANCE, BYBIT, OKX 등)
-- `market_type`: 시장 타입 (SPOT, FUTURES)
-- `currency`: 통화 (USDT, KRW 등)
-- `symbol`: 심볼 (BTCUSDT, ETHUSDT 등)
-- `side`: 방향 (buy, sell)
-- `order_type`: 주문 타입 (MARKET, LIMIT, STOP_LIMIT, CANCEL_ALL_ORDER)
-- `qty_per`: 수량 또는 비율 (숫자 또는 -100)
-- `token`: 웹훅 인증 토큰
+- `exchange`: 거래소 이름
+  - 글로벌: `BINANCE`, `BYBIT`
+  - 국내: `UPBIT`
+- `market_type`: 시장 타입
+  - `SPOT`: 현물 거래
+  - `FUTURES`: 선물 거래 (Upbit 미지원)
+- `currency`: 기준 통화
+  - 글로벌 거래소: `USDT`, `BTC`
+  - Upbit: `KRW` (원화 마켓)
+- `symbol`: 거래 심볼 (표준 형식: `BASE/QUOTE`)
+  - 예시: `BTC/USDT`, `ETH/USDT`, `BTC/KRW`
+  - 시스템이 자동으로 거래소별 형식으로 변환
+- `side`: 거래 방향
+  - `buy`: 매수 (롱 포지션 진입)
+  - `sell`: 매도 (숏 포지션 진입 또는 청산)
+- `order_type`: 주문 타입
+  - `MARKET`: 시장가 주문
+  - `LIMIT`: 지정가 주문 (price 필수)
+  - `STOP_MARKET`: 스탑 마켓 주문 (stop_price 필수)
+  - `STOP_LIMIT`: 스탑 리밋 주문 (price, stop_price 필수)
+  - `CANCEL_ALL_ORDER`: 모든 주문 취소
+- `qty_per`: 수량 비율 (%)
+  - 양수: 계좌 자본의 N% 사용
+  - `-100`: 현재 포지션 100% 청산
+- `token`: 웹훅 인증 토큰 (사용자별 고유 토큰)
+
+**선택적 파라미터:**
+- `price`: 지정가 (LIMIT, STOP_LIMIT 주문 시 필수)
+- `stop_price`: 스탑 가격 (STOP_MARKET, STOP_LIMIT 주문 시 필수)
 
 **웹훅 페이로드 예시:**
 
@@ -730,6 +820,22 @@ https://your-domain.com/api/webhook
     "order_type": "LIMIT",
     "side": "sell",
     "price": "130000",
+    "qty_per": 10,
+    "token": "your_webhook_token"
+}
+```
+
+#### 스탑 마켓 주문
+```json
+{
+    "group_name": "my_strategy",
+    "exchange": "BINANCE",
+    "market_type": "FUTURES",
+    "currency": "USDT",
+    "symbol": "BTCUSDT",
+    "order_type": "STOP_MARKET",
+    "side": "sell",
+    "stop_price": "131000",
     "qty_per": 10,
     "token": "your_webhook_token"
 }
