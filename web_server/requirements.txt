@@ -13,4 +13,5 @@ requests==2.31.0
 numpy==1.24.3
 aiohttp==3.8.6
 psycopg2-binary==2.9.9
-cryptography==41.0.7 
+cryptography==41.0.7
+PyJWT==2.8.0  # Upbit JWT 인증
