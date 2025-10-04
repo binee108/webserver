@@ -468,7 +468,7 @@ class AnalyticsService:
     # === 리포트 생성 ===
 
     def generate_monthly_report(self, user_id: int, year: int, month: int) -> Dict[str, Any]:
-        """월간 리포트 생성"""
+        """월간 리포트 생성 (N+1 쿼리 최적화 버전)"""
         try:
             # 해당 월 범위
             start_date = datetime(year, month, 1)
@@ -485,16 +485,15 @@ class AnalyticsService:
             monthly_pnl = Decimal('0')
 
             if strategy_ids:
-                trades = Trade.query.filter(
-                    and_(
-                        Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter(StrategyAccount.strategy_id.in_(strategy_ids)).all()]),
-                        Trade.timestamp >= start_date,
-                        Trade.timestamp <= end_date
-                    )
-                ).all()
+                # ✅ 중첩 서브쿼리 제거: 벌크 로딩 사용
+                strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+                sa_ids = [sa.id for sa in strategy_accounts]
 
-                monthly_trades = trades
-                monthly_pnl = sum([t.pnl for t in trades if t.pnl], Decimal('0'))
+                if sa_ids:
+                    # ✅ 단일 쿼리로 월간 거래 조회
+                    trades = self._bulk_load_trades(sa_ids, start_date=start_date, end_date=end_date)
+                    monthly_trades = trades
+                    monthly_pnl = sum([t.pnl for t in trades if t.pnl], Decimal('0'))
 
             # 리포트 데이터
             report = {
@@ -506,7 +505,7 @@ class AnalyticsService:
                 'worst_performing_strategy': None
             }
 
-            # 전략별 성과
+            # 전략별 성과 (메모리에서 처리)
             strategy_performance = {}
             for strategy in strategies:
                 strategy_trades = [t for t in monthly_trades if t.strategy_id == strategy.id]
@@ -537,7 +536,7 @@ class AnalyticsService:
     # === 통계 및 메트릭 ===
 
     def get_trading_statistics(self, user_id: int) -> Dict[str, Any]:
-        """거래 통계"""
+        """거래 통계 (N+1 쿼리 최적화 버전)"""
         try:
             strategies = Strategy.query.filter_by(user_id=user_id).all()
             strategy_ids = [s.id for s in strategies]
@@ -545,10 +544,17 @@ class AnalyticsService:
             if not strategy_ids:
                 return {'success': True, 'statistics': {}}
 
-            # 전체 거래
-            all_trades = Trade.query.filter(Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter(StrategyAccount.strategy_id.in_(strategy_ids)).all()])).all()
+            # ✅ 중첩 서브쿼리 제거: 벌크 로딩 사용
+            strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+            sa_ids = [sa.id for sa in strategy_accounts]
 
-            # 기본 통계
+            if not sa_ids:
+                return {'success': True, 'statistics': {}}
+
+            # ✅ 단일 쿼리로 전체 거래 조회 (날짜 필터 없음)
+            all_trades = self._bulk_load_trades(sa_ids)
+
+            # 기본 통계 (메모리에서 처리)
             total_trades = len(all_trades)
             winning_trades = len([t for t in all_trades if t.pnl and t.pnl > 0])
             losing_trades = len([t for t in all_trades if t.pnl and t.pnl < 0])
