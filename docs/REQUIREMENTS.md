@@ -4,7 +4,7 @@
 
 | 구분 | 요구사항 | 현황 |
 | --- | --- | --- |
-| 거래소 확장성 | 다중 거래소 지원 및 용이한 확장 구조 | ⚠️ (Factory 존재, 실 구현은 Binance 위주) |
+| 거래소 확장성 | 다중 거래소 지원 및 용이한 확장 구조 | ✅ (메타데이터 기반 플러그인 구조, Binance 구현 완료) |
 | 전략 마켓 분리 | 전략이 현물/선물 마켓을 구분해서 동작 | ✅ (`MarketType` 상수와 전략 속성으로 구분) |
 | 웹훅 주문 | 단일/배치 주문, 전체 취소, 단일 심볼 취소 처리 | ✅ (단일/배치/전체/심볼별 취소 모두 지원) |
 | Rate Limit | 거래소 API Rate Limit 초과 시 딜레이 후 재시도 | ✅ (요청 슬롯 획득 방식으로 대기 후 실행) |
@@ -18,9 +18,23 @@
 | 전략 공유 | 전략 공개/비공개 및 공유 리스트/구독 | ✅ (is_public 플래그, 구독/해제 API) |
 | 수익률 계산 | 전략 실행 거래만으로 수익률 산출 | ✅ (ROI, 샤프/소르티노 비율, 일일/누적 PnL 자동 계산) |
 
-## 1. 거래소 확장성
-- `app/services/exchange.py`의 factory/adapter 구조를 통해 확장 포인트는 존재하나, 실제 구현체는 Binance 위주입니다.
-- **개선 제안**: CCXT 래퍼 또는 공통 인터페이스를 보강하고, Bybit/OKX용 어댑터를 추가해야 합니다.
+## 1. 거래소 확장성 ✅
+- **구현 완료** (Priority 7 - 2025-10-04): 메타데이터 기반 플러그인 구조 확립
+- **Phase 1**: `app/exchanges/metadata.py` - 거래소 분류 체계
+  - `ExchangeRegion` (DOMESTIC/GLOBAL)
+  - `MarketType` (SPOT/FUTURES/PERPETUAL/MARGIN)
+  - `features` 기반 기능 검증 (leverage, position_mode, funding_rate 등)
+  - Rate Limit 메타데이터 (requests_per_minute, orders_per_second)
+- **Phase 2**: `app/exchanges/base.py` - BaseExchange 개선
+  - 메타데이터 자동 로드
+  - features 기반 선택적 메서드 (set_leverage, fetch_positions 등)
+  - 표준 응답 포맷 통일 (`{'free', 'used', 'total'}`, `{'order_id', 'status', 'filled_quantity', 'average_price'}`)
+- **Phase 3-5**: `app/exchanges/factory.py` - 플러그인 구조
+  - `_EXCHANGE_CLASSES` 딕셔너리 기반 플러그인 (새 거래소 추가 시 여기에만 등록)
+  - `list_exchanges(region, market_type, feature)` 다중 필터링
+  - Testnet 자동 검증
+- **향후 확장**: Bybit, Upbit, OKX 등 추가 대비 완료 (메타데이터 템플릿 준비됨)
+- **검증 완료**: 기존 웹훅 기능 완전 호환 (LIMIT/MARKET/CANCEL_ALL_ORDER 정상 작동)
 
 ## 2. 전략/마켓 구조
 - `Strategy.market_type` 및 `MarketType` 상수를 통해 현물/선물 전략이 구분되며, 자본 배분 루틴에서 마켓 타입별 리스트를 나누고 있습니다.
