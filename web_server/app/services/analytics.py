@@ -767,6 +767,78 @@ class AnalyticsService:
             logger.error(f"대시보드 통계 조회 실패: {e}")
             raise AnalyticsError(f"대시보드 통계 조회 실패: {str(e)}")
 
+    # === N+1 쿼리 최적화 헬퍼 메서드 ===
+
+    def _bulk_load_strategy_accounts(self, strategy_ids: List[int]) -> List[StrategyAccount]:
+        """StrategyAccount 벌크 로딩 + Account 조인"""
+        if not strategy_ids:
+            return []
+
+        return (
+            StrategyAccount.query
+            .options(selectinload(StrategyAccount.account))
+            .filter(StrategyAccount.strategy_id.in_(strategy_ids))
+            .all()
+        )
+
+    def _bulk_load_positions(self, strategy_account_ids: List[int]) -> List[StrategyPosition]:
+        """StrategyPosition 벌크 로딩"""
+        if not strategy_account_ids:
+            return []
+
+        return (
+            StrategyPosition.query
+            .filter(StrategyPosition.strategy_account_id.in_(strategy_account_ids))
+            .all()
+        )
+
+    def _bulk_load_orders(self, strategy_account_ids: List[int]) -> List[OpenOrder]:
+        """OpenOrder 벌크 로딩"""
+        if not strategy_account_ids:
+            return []
+
+        return (
+            OpenOrder.query
+            .filter(OpenOrder.strategy_account_id.in_(strategy_account_ids))
+            .all()
+        )
+
+    def _bulk_load_trades(
+        self,
+        strategy_account_ids: List[int],
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Trade]:
+        """Trade 벌크 로딩 (날짜 필터 옵션)"""
+        if not strategy_account_ids:
+            return []
+
+        query = Trade.query.filter(
+            Trade.strategy_account_id.in_(strategy_account_ids)
+        )
+
+        if start_date:
+            query = query.filter(Trade.timestamp >= start_date)
+        if end_date:
+            query = query.filter(Trade.timestamp <= end_date)
+
+        return query.order_by(Trade.timestamp).all()
+
+    def _group_by_strategy_account(
+        self,
+        items: List,
+        key: str = 'strategy_account_id'
+    ) -> Dict[int, List]:
+        """리스트를 strategy_account_id로 그룹화"""
+        grouped: Dict[int, List] = defaultdict(list)
+
+        for item in items:
+            sa_id = getattr(item, key, None)
+            if sa_id is not None:
+                grouped[sa_id].append(item)
+
+        return grouped
+
     def _filter_exit_trades(self, trades: List[Trade]) -> List[Trade]:
         """청산(Exit) 거래 필터링 - 없으면 전체 거래 반환"""
         exit_trades = [trade for trade in trades if trade.is_entry is False]
