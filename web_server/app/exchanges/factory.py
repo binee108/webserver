@@ -1,57 +1,96 @@
 """
-단순화된 거래소 팩토리
+크립토 거래소 팩토리 (메타데이터 기반)
 
-1인 사용자를 위한 최소한의 거래소 팩토리입니다.
-복잡한 추상화 없이 직접적이고 간단한 구조로 구성되었습니다.
+플러그인 구조로 새 거래소 추가가 용이합니다.
 """
 
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import List, Optional
 
 from .binance import BinanceExchange
+from .metadata import ExchangeMetadata, ExchangeRegion, MarketType
 
 logger = logging.getLogger(__name__)
 
 
 class ExchangeFactory:
     """
-    단순화된 거래소 팩토리
+    크립토 거래소 팩토리 (플러그인 구조)
 
     특징:
-    - 1인 사용자 최적화
-    - 복잡한 추상화 제거
-    - Binance 중심 (Native 구현만)
-    - 직관적이고 간단한 API
+    - 메타데이터 기반 거래소 관리
+    - 플러그인 구조 (새 거래소 추가 용이)
+    - features 기반 필터링
     """
 
-    # 지원하는 거래소 (현재 Binance만)
-    SUPPORTED_EXCHANGES = ['binance']
+    # 거래소 클래스 매핑 (확장 시 여기에만 추가)
+    _EXCHANGE_CLASSES = {
+        'binance': BinanceExchange,
+        # 향후 추가 예시:
+        # 'bybit': BybitExchange,
+        # 'upbit': UpbitExchange,
+    }
+
+    # 지원하는 거래소 목록
+    SUPPORTED_EXCHANGES = list(_EXCHANGE_CLASSES.keys())
 
     @classmethod
     def create_exchange(cls, exchange_name: str, api_key: str, secret: str,
-                       testnet: bool = False, **kwargs) -> BinanceExchange:
+                       testnet: bool = False, **kwargs):
         """
-        거래소 인스턴스 생성
+        크립토 거래소 인스턴스 생성
 
         Args:
-            exchange_name: 거래소 이름 ('binance')
+            exchange_name: 거래소 이름 (소문자)
             api_key: API 키
-            secret: API 시크릿
+            secret: Secret 키
             testnet: 테스트넷 사용 여부
 
         Returns:
-            거래소 인스턴스 (Binance 통합)
+            BaseExchange 인스턴스
         """
         exchange_name = exchange_name.lower()
 
-        if exchange_name not in cls.SUPPORTED_EXCHANGES:
-            raise ValueError(f"지원되지 않는 거래소: {exchange_name}")
+        # 1. 지원 거래소 검증
+        if exchange_name not in cls._EXCHANGE_CLASSES:
+            raise ValueError(
+                f"지원되지 않는 거래소: {exchange_name}. "
+                f"지원 목록: {list(cls._EXCHANGE_CLASSES.keys())}"
+            )
 
-        if exchange_name == 'binance':
-            logger.info(f"✅ Binance 거래소 인스턴스 생성 - Testnet: {testnet}")
-            return BinanceExchange(api_key, secret, testnet)
-        else:
-            raise ValueError(f"지원되지 않는 거래소: {exchange_name}")
+        # 2. 메타데이터 검증
+        metadata = ExchangeMetadata.get_metadata(exchange_name)
+        if not metadata:
+            logger.warning(f"메타데이터 없음: {exchange_name}")
+
+        # 3. Testnet 검증 (국내 거래소는 대부분 미지원)
+        if testnet and metadata and not metadata.get('testnet_available', False):
+            raise ValueError(f"{metadata.get('name')} does not support testnet")
+
+        # 4. 인스턴스 생성
+        exchange_class = cls._EXCHANGE_CLASSES[exchange_name]
+        logger.info(f"✅ {exchange_name} 거래소 인스턴스 생성 - Testnet: {testnet}")
+        return exchange_class(api_key, secret, testnet, **kwargs)
+
+    @classmethod
+    def list_exchanges(cls,
+                       region: Optional[ExchangeRegion] = None,
+                       market_type: Optional[MarketType] = None,
+                       feature: Optional[str] = None) -> List[str]:
+        """
+        지원 거래소 목록 조회 (다중 필터링)
+
+        Examples:
+            >>> list_exchanges(region=ExchangeRegion.DOMESTIC)
+            []  # 현재 국내 거래소 미지원
+
+            >>> list_exchanges(market_type=MarketType.FUTURES)
+            ['binance']
+
+            >>> list_exchanges(feature='leverage')
+            ['binance']
+        """
+        return ExchangeMetadata.list_exchanges(region, market_type, feature)
 
     @classmethod
     def create_binance(cls, api_key: str, secret: str, testnet: bool = False) -> BinanceExchange:
