@@ -46,7 +46,7 @@ class AnalyticsService:
     # === 대시보드 데이터 ===
 
     def get_dashboard_summary(self, user_id: int) -> Dict[str, Any]:
-        """대시보드 요약 정보"""
+        """대시보드 요약 정보 (N+1 쿼리 최적화 버전)"""
         try:
             # 기본 통계
             strategies = Strategy.query.filter_by(user_id=user_id).all()
@@ -58,40 +58,54 @@ class AnalyticsService:
             total_accounts = len(accounts)
             active_accounts = len([a for a in accounts if a.is_active])
 
+            if not strategies:
+                return {
+                    'success': True,
+                    'summary': {
+                        'strategies': {'total': 0, 'active': 0},
+                        'accounts': {'total': total_accounts, 'active': active_accounts},
+                        'positions': {'count': 0, 'total_value': 0.0},
+                        'orders': {'open_count': 0},
+                        'today': {'trades': 0, 'pnl': 0.0}
+                    }
+                }
+
+            # ✅ 벌크 로딩 (N+1 해결)
+            strategy_ids = [s.id for s in strategies]
+            strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+            sa_ids = [sa.id for sa in strategy_accounts]
+
+            # 포지션, 주문, 거래 일괄 조회
+            all_positions = self._bulk_load_positions(sa_ids)
+            all_orders = self._bulk_load_orders(sa_ids)
+
+            # 오늘의 거래만 필터링
+            today = datetime.utcnow().date()
+            today_start = datetime.combine(today, datetime.min.time())
+            all_trades_today = self._bulk_load_trades(sa_ids, start_date=today_start)
+
+            # ✅ 메모리에서 집계 (DB 쿼리 없음)
             # 포지션 정보
             total_positions = 0
             total_position_value = Decimal('0')
-
-            for strategy in strategies:
-                positions = StrategyPosition.query.join(StrategyAccount).filter(StrategyAccount.strategy_id == strategy.id).all()
-                for position in positions:
-                    if position.quantity and position.quantity != 0:
-                        total_positions += 1
-                        if position.entry_price and position.quantity:
-                            total_position_value += position.entry_price * position.quantity
+            for position in all_positions:
+                if position.quantity and position.quantity != 0:
+                    total_positions += 1
+                    if position.entry_price and position.quantity:
+                        total_position_value += position.entry_price * position.quantity
 
             # 미체결 주문
-            open_orders_count = 0
-            for strategy in strategies:
-                orders = OpenOrder.query.join(StrategyAccount).filter(StrategyAccount.strategy_id == strategy.id).all()
-                open_orders_count += len([o for o in orders if o.status in ['NEW', 'PARTIALLY_FILLED']])
+            open_orders_count = len([
+                o for o in all_orders
+                if o.status in ['NEW', 'PARTIALLY_FILLED']
+            ])
 
             # 오늘의 거래
-            today = datetime.utcnow().date()
-            today_trades = 0
-            today_pnl = Decimal('0')
-
-            for strategy in strategies:
-                trades = Trade.query.filter(
-                    and_(
-                        Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter_by(strategy_id=strategy.id).all()]),
-                        func.date(Trade.timestamp) == today
-                    )
-                ).all()
-                today_trades += len(trades)
-                for trade in trades:
-                    if trade.pnl:
-                        today_pnl += trade.pnl
+            today_trades = len(all_trades_today)
+            today_pnl = sum(
+                [trade.pnl for trade in all_trades_today if trade.pnl],
+                Decimal('0')
+            )
 
             return {
                 'success': True,
@@ -123,41 +137,64 @@ class AnalyticsService:
             return {'success': False, 'error': str(e)}
 
     def get_recent_activities(self, user_id: int, limit: int = 10) -> Dict[str, Any]:
-        """최근 활동 내역"""
+        """최근 활동 내역 (N+1 쿼리 최적화 버전)"""
         try:
             activities = []
 
-            # 최근 거래
             strategies = Strategy.query.filter_by(user_id=user_id).all()
             strategy_ids = [s.id for s in strategies]
 
-            if strategy_ids:
-                recent_trades = Trade.query.filter(
-                    Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter(StrategyAccount.strategy_id.in_(strategy_ids)).all()])
-                ).order_by(desc(Trade.timestamp)).limit(limit // 2).all()
+            if not strategy_ids:
+                return {'success': True, 'activities': []}
 
-                for trade in recent_trades:
-                    activities.append({
-                        'type': 'trade',
-                        'timestamp': trade.timestamp.isoformat(),
-                        'description': f"{trade.symbol} {trade.side} {trade.quantity} @ {trade.price}",
-                        'strategy': trade.strategy_account.strategy.name if trade.strategy_account and trade.strategy_account.strategy else 'Unknown',
-                        'pnl': float(trade.pnl) if trade.pnl else 0
-                    })
+            # ✅ 벌크 로딩: StrategyAccount ID 미리 조회 (중첩 서브쿼리 제거)
+            strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+            sa_ids = [sa.id for sa in strategy_accounts]
 
-                # 최근 주문
-                recent_orders = OpenOrder.query.filter(
-                    OpenOrder.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter(StrategyAccount.strategy_id.in_(strategy_ids)).all()])
-                ).order_by(desc(OpenOrder.created_at)).limit(limit // 2).all()
+            # strategy_account_id → strategy 매핑 (N+1 방지)
+            sa_to_strategy = {
+                sa.id: sa.strategy.name
+                for sa in strategy_accounts
+                if sa.strategy
+            }
 
-                for order in recent_orders:
-                    activities.append({
-                        'type': 'order',
-                        'timestamp': order.created_at.isoformat(),
-                        'description': f"{order.symbol} {order.side} {order.order_type} - {order.status}",
-                        'strategy': order.strategy_account.strategy.name if order.strategy_account and order.strategy_account.strategy else 'Unknown',
-                        'amount': float(order.quantity) if order.quantity else 0
-                    })
+            # ✅ 단일 쿼리로 최근 거래 조회
+            recent_trades = (
+                Trade.query
+                .filter(Trade.strategy_account_id.in_(sa_ids))
+                .order_by(desc(Trade.timestamp))
+                .limit(limit // 2)
+                .all()
+            )
+
+            for trade in recent_trades:
+                strategy_name = sa_to_strategy.get(trade.strategy_account_id, 'Unknown')
+                activities.append({
+                    'type': 'trade',
+                    'timestamp': trade.timestamp.isoformat(),
+                    'description': f"{trade.symbol} {trade.side} {trade.quantity} @ {trade.price}",
+                    'strategy': strategy_name,
+                    'pnl': float(trade.pnl) if trade.pnl else 0
+                })
+
+            # ✅ 단일 쿼리로 최근 주문 조회
+            recent_orders = (
+                OpenOrder.query
+                .filter(OpenOrder.strategy_account_id.in_(sa_ids))
+                .order_by(desc(OpenOrder.created_at))
+                .limit(limit // 2)
+                .all()
+            )
+
+            for order in recent_orders:
+                strategy_name = sa_to_strategy.get(order.strategy_account_id, 'Unknown')
+                activities.append({
+                    'type': 'order',
+                    'timestamp': order.created_at.isoformat(),
+                    'description': f"{order.symbol} {order.side} {order.order_type} - {order.status}",
+                    'strategy': strategy_name,
+                    'amount': float(order.quantity) if order.quantity else 0
+                })
 
             # 시간순 정렬
             activities.sort(key=lambda x: x['timestamp'], reverse=True)
@@ -285,7 +322,7 @@ class AnalyticsService:
     # === 자본 관리 (Capital Service) ===
 
     def get_capital_overview(self, user_id: int) -> Dict[str, Any]:
-        """자본 현황 개요"""
+        """자본 현황 개요 (N+1 쿼리 최적화 버전)"""
         try:
             # 사용자 계정들
             accounts = Account.query.filter_by(user_id=user_id, is_active=True).all()
@@ -305,13 +342,20 @@ class AnalyticsService:
                 }
                 account_balances.append(account_balance)
 
-            # 포지션 가치
+            # ✅ 포지션 가치 계산 (벌크 로딩)
             strategies = Strategy.query.filter_by(user_id=user_id).all()
             total_position_value = Decimal('0')
 
-            for strategy in strategies:
-                positions = StrategyPosition.query.join(StrategyAccount).filter(StrategyAccount.strategy_id == strategy.id).all()
-                for position in positions:
+            if strategies:
+                strategy_ids = [s.id for s in strategies]
+                strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+                sa_ids = [sa.id for sa in strategy_accounts]
+
+                # 모든 포지션 일괄 조회
+                all_positions = self._bulk_load_positions(sa_ids)
+
+                # 메모리에서 집계
+                for position in all_positions:
                     if position.quantity and position.entry_price:
                         total_position_value += position.entry_price * position.quantity
 
