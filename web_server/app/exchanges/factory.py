@@ -8,6 +8,7 @@ import logging
 from typing import List, Optional
 
 from .binance import BinanceExchange
+from .upbit import UpbitExchange
 from .metadata import ExchangeMetadata, ExchangeRegion, MarketType
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,9 @@ class ExchangeFactory:
     # 거래소 클래스 매핑 (확장 시 여기에만 추가)
     _EXCHANGE_CLASSES = {
         'binance': BinanceExchange,
+        'upbit': UpbitExchange,
         # 향후 추가 예시:
         # 'bybit': BybitExchange,
-        # 'upbit': UpbitExchange,
     }
 
     # 지원하는 거래소 목록
@@ -98,6 +99,11 @@ class ExchangeFactory:
         return cls.create_exchange('binance', api_key, secret, testnet)
 
     @classmethod
+    def create_upbit(cls, api_key: str, secret: str) -> UpbitExchange:
+        """Upbit 인스턴스 생성 (편의 메서드)"""
+        return cls.create_exchange('upbit', api_key, secret, testnet=False)
+
+    @classmethod
     def is_supported(cls, exchange_name: str) -> bool:
         """지원되는 거래소인지 확인"""
         return exchange_name.lower() in cls.SUPPORTED_EXCHANGES
@@ -122,3 +128,8 @@ def create_exchange(exchange_name: str = 'binance', api_key: str = '', secret: s
 def create_binance(api_key: str, secret: str, testnet: bool = False) -> BinanceExchange:
     """Binance 인스턴스 생성 (편의 함수)"""
     return exchange_factory.create_binance(api_key, secret, testnet)
+
+
+def create_upbit(api_key: str, secret: str) -> UpbitExchange:
+    """Upbit 인스턴스 생성 (편의 함수)"""
+    return exchange_factory.create_upbit(api_key, secret)

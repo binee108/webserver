@@ -8,6 +8,7 @@
 | 거래소 | 지역 | 마켓 | 레버리지 | Testnet |
 |--------|------|------|----------|---------|
 | Binance | 해외 | Spot, Futures | ✅ | ✅ |
+| Upbit | 국내 | Spot | ❌ | ❌ |
 
 ## 사용 예시
 
@@ -20,7 +21,12 @@ binance = ExchangeFactory.create_binance(api_key, secret, testnet=True)
 balance = await binance.fetch_balance('spot')
 print(f"잔액: {balance['free']} USDT")
 
-# 주문 생성
+# Upbit
+upbit = ExchangeFactory.create_upbit(api_key, secret)
+balance = await upbit.fetch_balance('spot')
+print(f"잔액: {balance['free']} KRW")
+
+# 주문 생성 (Binance)
 order = await binance.create_order(
     symbol='BTCUSDT',
     order_type='LIMIT',
@@ -28,6 +34,16 @@ order = await binance.create_order(
     amount=Decimal('0.001'),
     price=Decimal('95000'),
     market_type='futures'
+)
+
+# 주문 생성 (Upbit)
+order = await upbit.create_order(
+    symbol='BTCKRW',
+    order_type='LIMIT',
+    side='buy',
+    amount=Decimal('0.001'),
+    price=Decimal('95000000'),  # KRW
+    market_type='spot'
 )
 ```
 
@@ -39,9 +55,17 @@ from app.exchanges.metadata import ExchangeRegion, MarketType
 global_ex = ExchangeFactory.list_exchanges(region=ExchangeRegion.GLOBAL)
 # ['binance']
 
+# 국내 거래소만 조회
+domestic_ex = ExchangeFactory.list_exchanges(region=ExchangeRegion.DOMESTIC)
+# ['upbit']
+
 # 선물 지원 거래소
 futures = ExchangeFactory.list_exchanges(market_type=MarketType.FUTURES)
 # ['binance']
+
+# Spot 지원 거래소
+spot = ExchangeFactory.list_exchanges(market_type=MarketType.SPOT)
+# ['binance', 'upbit']
 
 # 레버리지 지원 거래소
 leverage = ExchangeFactory.list_exchanges(feature='leverage')
@@ -111,13 +135,12 @@ if exchange.supports_feature('leverage'):
 ## 향후 확장 계획
 
 ### Phase 2 (단기)
+- [x] Upbit (국내, Spot 전용) ✅ 완료
 - [ ] Bybit (해외, Spot + Perpetual)
-- [ ] Upbit (국내, Spot 전용)
-- [ ] Bithumb, Coinone (국내, Spot)
+- [ ] Bithumb (국내, Spot)
 
 ### Phase 3 (중기)
-- [ ] OKX, Kraken (해외, Spot + Futures)
-- [ ] KuCoin, Gate.io (해외)
+- [ ] OKX, Bitget (해외, Spot + Futures)
 
 ## 웹훅 통합
 
