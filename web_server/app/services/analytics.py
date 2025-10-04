@@ -211,7 +211,7 @@ class AnalyticsService:
     # === 전략 분석 ===
 
     def get_strategy_performance(self, strategy_id: int, period_days: int = 30) -> Dict[str, Any]:
-        """전략 성과 분석"""
+        """전략 성과 분석 (N+1 쿼리 최적화 버전)"""
         try:
             strategy = Strategy.query.get(strategy_id)
             if not strategy:
@@ -221,16 +221,33 @@ class AnalyticsService:
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=period_days)
 
-            # 거래 내역
-            trades = Trade.query.filter(
-                and_(
-                    Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter_by(strategy_id=strategy_id).all()]),
-                    Trade.timestamp >= start_date,
-                    Trade.timestamp <= end_date
-                )
-            ).all()
+            # ✅ 중첩 서브쿼리 제거: 벌크 로딩 사용
+            strategy_accounts = self._bulk_load_strategy_accounts([strategy_id])
+            sa_ids = [sa.id for sa in strategy_accounts]
 
-            # 기본 통계
+            if not sa_ids:
+                # 전략에 연결된 계좌가 없음
+                return {
+                    'success': True,
+                    'performance': {
+                        'period_days': period_days,
+                        'total_trades': 0,
+                        'winning_trades': 0,
+                        'losing_trades': 0,
+                        'win_rate': 0.0,
+                        'total_pnl': 0.0,
+                        'total_volume': 0.0,
+                        'avg_win': 0.0,
+                        'avg_loss': 0.0,
+                        'profit_factor': 0.0,
+                        'daily_pnl': {}
+                    }
+                }
+
+            # ✅ 단일 쿼리로 거래 내역 조회
+            trades = self._bulk_load_trades(sa_ids, start_date=start_date, end_date=end_date)
+
+            # 기본 통계 (메모리에서 처리)
             total_trades = len(trades)
             winning_trades = len([t for t in trades if t.pnl and t.pnl > 0])
             losing_trades = len([t for t in trades if t.pnl and t.pnl < 0])
@@ -375,7 +392,7 @@ class AnalyticsService:
             return {'success': False, 'error': str(e)}
 
     def get_pnl_history(self, user_id: int, period_days: int = 30) -> Dict[str, Any]:
-        """수익/손실 이력"""
+        """수익/손실 이력 (N+1 쿼리 최적화 버전)"""
         try:
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=period_days)
@@ -394,16 +411,24 @@ class AnalyticsService:
                     }
                 }
 
-            # 기간별 거래
-            trades = Trade.query.filter(
-                and_(
-                    Trade.strategy_account_id.in_([sa.id for sa in StrategyAccount.query.filter(StrategyAccount.strategy_id.in_(strategy_ids)).all()]),
-                    Trade.timestamp >= start_date,
-                    Trade.timestamp <= end_date
-                )
-            ).order_by(Trade.timestamp).all()
+            # ✅ 중첩 서브쿼리 제거: 벌크 로딩 사용
+            strategy_accounts = self._bulk_load_strategy_accounts(strategy_ids)
+            sa_ids = [sa.id for sa in strategy_accounts]
 
-            # 일별 PnL 계산
+            if not sa_ids:
+                return {
+                    'success': True,
+                    'pnl_history': {
+                        'daily_pnl': {},
+                        'cumulative_pnl': {},
+                        'total_pnl': 0
+                    }
+                }
+
+            # ✅ 단일 쿼리로 기간별 거래 조회
+            trades = self._bulk_load_trades(sa_ids, start_date=start_date, end_date=end_date)
+
+            # 일별 PnL 계산 (메모리에서 처리)
             daily_pnl = {}
             cumulative_pnl = {}
             running_total = Decimal('0')
