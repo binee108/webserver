@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from app import db
-from app.models import Account, StrategyAccount, StrategyCapital, DailyAccountSummary, StrategyPosition
+from app.models import Account, StrategyAccount, StrategyCapital, DailyAccountSummary, StrategyPosition, TradeExecution
 from app.services.exchange import exchange_service
 from app.utils.logging_security import get_secure_logger
 
@@ -339,6 +339,112 @@ class CapitalAllocationService:
                 'has_positions': None,
                 'last_rebalance_at': None,
                 'time_since_last': None
+            }
+
+    def calculate_unreflected_pnl(self, strategy_account_id: int, since: datetime = None) -> Decimal:
+        """
+        특정 전략 계좌의 미반영 실현 손익을 계산합니다.
+
+        Args:
+            strategy_account_id: 전략 계좌 ID
+            since: 집계 시작 시각 (None이면 전체 기간)
+
+        Returns:
+            Decimal: 미반영 실현 손익 합계
+        """
+        try:
+            query = self.session.query(
+                db.func.sum(TradeExecution.realized_pnl)
+            ).filter(
+                TradeExecution.strategy_account_id == strategy_account_id,
+                TradeExecution.realized_pnl.isnot(None)
+            )
+
+            if since:
+                query = query.filter(TradeExecution.execution_time >= since)
+
+            result = query.scalar()
+            total_pnl = Decimal(str(result)) if result else Decimal('0')
+
+            logger.debug(f"전략 계좌 {strategy_account_id} 미반영 실현 손익: {total_pnl} USDT")
+            return total_pnl
+
+        except Exception as e:
+            logger.error(f"실현 손익 계산 실패 - 전략 계좌 {strategy_account_id}: {e}")
+            return Decimal('0')
+
+    def apply_realized_pnl_to_capital(self, strategy_account_id: int, update_timestamp: bool = True) -> Dict[str, Any]:
+        """
+        전략의 실현 손익을 할당 자본에 반영합니다 (복리 효과).
+
+        Args:
+            strategy_account_id: 전략 계좌 ID
+            update_timestamp: last_rebalance_at 업데이트 여부 (기본값: True)
+
+        Returns:
+            Dict[str, Any]: 반영 결과
+                - applied: 반영 여부
+                - pnl_amount: 반영된 손익 금액
+                - old_capital: 이전 자본
+                - new_capital: 새 자본
+        """
+        try:
+            # 전략 자본 레코드 조회
+            strategy_capital = StrategyCapital.query.filter_by(
+                strategy_account_id=strategy_account_id
+            ).first()
+
+            if not strategy_capital:
+                logger.warning(f"전략 계좌 {strategy_account_id}의 StrategyCapital 레코드가 없습니다")
+                return {
+                    'applied': False,
+                    'error': 'StrategyCapital 레코드 없음'
+                }
+
+            # 마지막 반영 시각 이후의 실현 손익 계산
+            since = strategy_capital.last_rebalance_at if strategy_capital.last_rebalance_at else None
+            unreflected_pnl = self.calculate_unreflected_pnl(strategy_account_id, since)
+
+            if unreflected_pnl == Decimal('0'):
+                logger.debug(f"전략 계좌 {strategy_account_id}: 반영할 실현 손익 없음")
+                return {
+                    'applied': False,
+                    'pnl_amount': 0.0,
+                    'old_capital': float(strategy_capital.allocated_capital),
+                    'new_capital': float(strategy_capital.allocated_capital),
+                    'reason': '반영할 손익 없음'
+                }
+
+            # 자본에 손익 반영
+            old_capital = Decimal(str(strategy_capital.allocated_capital))
+            new_capital = old_capital + unreflected_pnl
+
+            strategy_capital.allocated_capital = float(new_capital)
+            if update_timestamp:
+                strategy_capital.last_rebalance_at = datetime.utcnow()
+            strategy_capital.last_updated = datetime.utcnow()
+
+            self.session.commit()
+
+            logger.info(
+                f"💰 전략 계좌 {strategy_account_id} 실현 손익 반영: "
+                f"{float(unreflected_pnl):+.2f} USDT "
+                f"({float(old_capital):.2f} → {float(new_capital):.2f})"
+            )
+
+            return {
+                'applied': True,
+                'pnl_amount': float(unreflected_pnl),
+                'old_capital': float(old_capital),
+                'new_capital': float(new_capital)
+            }
+
+        except Exception as e:
+            self.session.rollback()
+            logger.error(f"실현 손익 자본 반영 실패 - 전략 계좌 {strategy_account_id}: {e}")
+            return {
+                'applied': False,
+                'error': str(e)
             }
 
 

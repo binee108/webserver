@@ -301,6 +301,10 @@ class RecordManager:
             # Phase 3.2: 실시간 성과 업데이트 Hook
             self._trigger_performance_update(strategy_account.strategy_id)
 
+            # Priority 6: 실현 손익 자본 반영 Hook
+            if trade_execution.realized_pnl and trade_execution.realized_pnl != 0:
+                self._trigger_capital_pnl_reflection(strategy_account.id)
+
             response: Dict[str, Any] = {
                 'success': True,
                 'trade_execution_id': trade_execution.id,
@@ -498,5 +502,43 @@ class RecordManager:
             logger.error(
                 "실시간 성과 업데이트 중 오류 발생 (전략: %s): %s",
                 strategy_id,
+                exc
+            )
+
+    def _trigger_capital_pnl_reflection(self, strategy_account_id: int) -> None:
+        """
+        Priority 6: 실현 손익 자본 반영 Hook
+
+        거래 체결 시 실현 손익이 있으면 자동으로 전략 자본에 반영합니다 (복리 효과).
+        """
+        try:
+            from app.services.capital_service import capital_allocation_service
+
+            result = capital_allocation_service.apply_realized_pnl_to_capital(
+                strategy_account_id=strategy_account_id,
+                update_timestamp=False  # 리밸런싱 타임스탬프는 업데이트하지 않음
+            )
+
+            if result.get('applied'):
+                logger.info(
+                    "💰 실현 손익 자본 반영 완료: 전략 계좌 %s, PnL: %+.2f USDT (%s → %s)",
+                    strategy_account_id,
+                    result['pnl_amount'],
+                    result['old_capital'],
+                    result['new_capital']
+                )
+            else:
+                reason = result.get('reason', result.get('error', 'unknown'))
+                logger.debug(
+                    "실현 손익 자본 반영 스킵: 전략 계좌 %s (이유: %s)",
+                    strategy_account_id,
+                    reason
+                )
+
+        except Exception as exc:
+            # 자본 반영 실패는 거래 기록에 영향을 주지 않음 (비침습적 hook)
+            logger.error(
+                "실현 손익 자본 반영 중 오류 발생 (전략 계좌: %s): %s",
+                strategy_account_id,
                 exc
             )
