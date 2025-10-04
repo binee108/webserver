@@ -109,18 +109,16 @@
             </div>
         </div>
         
-        <!-- 기타 거래소 -->
+        <!-- Upbit 계좌 -->
         <div class="stats-card">
             <div class="stats-content">
                 <div class="stats-info">
-                    <h3>기타 거래소</h3>
-                    <p class="stats-value text-accent">{{ accounts|rejectattr('exchange', 'equalto', 'binance')|list|length }}</p>
-                    <p class="stats-subtitle">Bybit, OKX 등</p>
+                    <h3>Upbit</h3>
+                    <p class="stats-value text-accent">{{ accounts|selectattr('exchange', 'equalto', 'upbit')|list|length }}</p>
+                    <p class="stats-subtitle">업비트 계좌</p>
                 </div>
                 <div class="stats-icon bg-purple-100 text-accent">
-                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"></path>
-                    </svg>
+                    <span class="text-lg font-bold">U</span>
                 </div>
             </div>
         </div>
@@ -172,6 +170,10 @@
                                             {% if account.exchange == 'binance' %}
                                                 <div class="h-10 w-10 bg-yellow-100 rounded-full flex items-center justify-center">
                                                     <span class="text-sm font-bold text-warning">B</span>
+                                                </div>
+                                            {% elif account.exchange == 'upbit' %}
+                                                <div class="h-10 w-10 bg-purple-100 rounded-full flex items-center justify-center">
+                                                    <span class="text-sm font-bold text-accent">U</span>
                                                 </div>
                                             {% elif account.exchange == 'bybit' %}
                                                 <div class="h-10 w-10 bg-orange-100 rounded-full flex items-center justify-center">
@@ -355,9 +357,10 @@
                         <label for="exchange" class="form-label">거래소</label>
                         <select id="exchange" name="exchange" required class="form-select">
                             <option value="">선택하세요</option>
-                            <option value="binance">Binance</option>
-                            <option value="bybit">Bybit</option>
-                            <option value="okx">OKX</option>
+                            <option value="binance">Binance (해외)</option>
+                            <option value="upbit">Upbit (국내)</option>
+                            <option value="bybit">Bybit (해외)</option>
+                            <option value="okx">OKX (해외)</option>
                         </select>
                     </div>
                     

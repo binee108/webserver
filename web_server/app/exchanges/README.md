@@ -28,7 +28,7 @@ print(f"잔액: {balance['free']} KRW")
 
 # 주문 생성 (Binance)
 order = await binance.create_order(
-    symbol='BTCUSDT',
+    symbol='BTC/USDT',  # 표준 형식
     order_type='LIMIT',
     side='buy',
     amount=Decimal('0.001'),
@@ -38,7 +38,7 @@ order = await binance.create_order(
 
 # 주문 생성 (Upbit)
 order = await upbit.create_order(
-    symbol='BTCKRW',
+    symbol='BTC/KRW',  # 표준 형식
     order_type='LIMIT',
     side='buy',
     amount=Decimal('0.001'),
@@ -120,7 +120,7 @@ _EXCHANGE_CLASSES = {
 ```python
 # 레버리지 지원 확인 후 호출
 if exchange.supports_feature('leverage'):
-    await exchange.set_leverage('BTCUSDT', 10)
+    await exchange.set_leverage('BTC/USDT', 10)  # 표준 형식
 ```
 
 ### 3. 표준 응답 포맷
