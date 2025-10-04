@@ -21,6 +21,7 @@ import requests
 
 from .base import BaseExchange, ExchangeError, InvalidOrder
 from .models import MarketInfo, Balance, Order, PriceQuote
+from app.utils.symbol_utils import to_upbit_format, from_upbit_format, parse_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -260,24 +261,19 @@ class UpbitExchange(BaseExchange):
             if not market_code.startswith('KRW-'):
                 continue
 
-            # Upbit 마켓 코드를 표준 심볼로 변환 (KRW-BTC → BTCKRW)
-            base_currency = market_info['market'].split('-')[1]  # BTC
-            quote_currency = 'KRW'
-            symbol = f"{base_currency}{quote_currency}"  # BTCKRW
+            # Upbit 마켓 코드를 표준 형식으로 변환 (KRW-BTC → BTC/KRW)
+            standard_symbol = from_upbit_format(market_code)
+            coin, currency = parse_symbol(standard_symbol)  # BTC, KRW
 
-            markets[symbol] = MarketInfo(
-                symbol=symbol,
-                base=base_currency,
-                quote=quote_currency,
-                active=True,
-                precision={
-                    'amount': 8,  # Upbit 기본 수량 정밀도
-                    'price': 0,   # KRW는 소수점 없음
-                },
-                limits={
-                    'amount': {'min': Decimal('0.00000001'), 'max': None},
-                    'price': {'min': Decimal('1'), 'max': None},
-                },
+            markets[standard_symbol] = MarketInfo(
+                symbol=standard_symbol,
+                amount_precision=8,  # Upbit 기본 수량 정밀도
+                price_precision=0,   # KRW는 소수점 없음
+                min_qty=Decimal('0.00000001'),
+                max_qty=None,
+                step_size=Decimal('0.00000001'),
+                tick_size=Decimal('1'),
+                min_notional=Decimal('5000'),  # Upbit 최소 주문금액
                 market_type='SPOT',
                 raw=market_info
             )
@@ -396,13 +392,9 @@ class UpbitExchange(BaseExchange):
         if market_type.lower() != 'spot':
             raise ValueError("Upbit은 Spot 거래만 지원합니다")
 
-        # 심볼을 Upbit 마켓 코드로 변환 (BTCKRW → KRW-BTC)
-        base = symbol[:-3]  # BTC
-        quote = symbol[-3:]  # KRW
-        if quote != 'KRW':
-            raise InvalidOrder(f"Upbit은 KRW 마켓만 지원합니다. symbol={symbol}")
-
-        market_code = f"{quote}-{base}"  # KRW-BTC
+        # 심볼 변환: 표준 형식(BTC/KRW) → Upbit 형식(KRW-BTC)
+        market_code = to_upbit_format(symbol)
+        logger.info(f"🔄 심볼 변환: {symbol} → {market_code}")
 
         # Upbit 주문 파라미터
         order_params = {
@@ -460,11 +452,9 @@ class UpbitExchange(BaseExchange):
 
         params = {}
         if symbol:
-            # 심볼을 Upbit 마켓 코드로 변환
-            base = symbol[:-3]
-            quote = symbol[-3:]
-            if quote == 'KRW':
-                params['market'] = f"{quote}-{base}"
+            # 심볼 변환: 표준 형식(BTC/KRW) → Upbit 형식(KRW-BTC)
+            upbit_market = to_upbit_format(symbol)
+            params['market'] = upbit_market
 
         data = self._request('GET', UpbitEndpoints.ORDERS_OPEN, params=params, signed=True)
         return [self._parse_order(order_data) for order_data in data]
@@ -482,15 +472,10 @@ class UpbitExchange(BaseExchange):
 
     def _parse_order(self, order_data: Dict[str, Any]) -> Order:
         """주문 데이터 파싱 - Upbit 응답을 프로젝트 표준으로 변환"""
-        # Upbit 마켓 코드를 표준 심볼로 변환 (KRW-BTC → BTCKRW)
+        # Upbit 마켓 코드를 표준 심볼로 변환 (KRW-BTC → BTC/KRW)
         market_code = order_data.get('market', '')
-        parts = market_code.split('-')
-        if len(parts) == 2:
-            quote_currency = parts[0]  # KRW
-            base_currency = parts[1]   # BTC
-            symbol = f"{base_currency}{quote_currency}"  # BTCKRW
-        else:
-            symbol = market_code
+        standard_symbol = from_upbit_format(market_code)
+        logger.debug(f"🔄 응답 심볼 변환: {market_code} → {standard_symbol}")
 
         # Upbit 주문 상태 매핑
         state = order_data.get('state', 'wait')
@@ -532,7 +517,7 @@ class UpbitExchange(BaseExchange):
 
         return Order(
             id=order_data.get('uuid'),
-            symbol=symbol,
+            symbol=standard_symbol,  # 표준 형식 심볼 사용
             side=side,
             amount=volume,
             price=price,

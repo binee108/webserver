@@ -22,6 +22,7 @@ import requests
 
 from .base import BaseExchange, ExchangeError, InvalidOrder, InsufficientFunds
 from .models import MarketInfo, Balance, Order, Ticker, Position, PriceQuote
+from app.utils.symbol_utils import to_binance_format, from_binance_format
 
 logger = logging.getLogger(__name__)
 
@@ -346,13 +347,15 @@ class BinanceExchange(BaseExchange):
             if symbol_info['status'] != 'TRADING':
                 continue
 
-            symbol = symbol_info['symbol']
+            binance_symbol = symbol_info['symbol']
+            # Binance 형식(BTCUSDT) → 표준 형식(BTC/USDT)
+            standard_symbol = from_binance_format(binance_symbol)
 
             # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
             if market_type.lower() == 'spot':
-                markets[symbol] = MarketInfo.from_binance_spot(symbol_info)
+                markets[standard_symbol] = MarketInfo.from_binance_spot(symbol_info)
             else:  # futures
-                markets[symbol] = MarketInfo.from_binance_futures(symbol_info)
+                markets[standard_symbol] = MarketInfo.from_binance_futures(symbol_info)
 
         # 캐시 업데이트
         if market_type == 'spot':
@@ -468,12 +471,16 @@ class BinanceExchange(BaseExchange):
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 0. 심볼 변환: 표준 형식(BTC/USDT) → Binance 형식(BTCUSDT)
+        binance_symbol = to_binance_format(symbol)
+        logger.info(f"🔄 심볼 변환: {symbol} → {binance_symbol}")
+
         # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
         original_order_type = order_type
         binance_order_type = self._convert_to_binance_format(order_type, side)
 
         order_params = {
-            'symbol': symbol,
+            'symbol': binance_symbol,  # 변환된 심볼 사용
             'side': side.upper(),
             'type': binance_order_type.upper(),  # 변환된 타입 사용
         }
@@ -540,7 +547,7 @@ class BinanceExchange(BaseExchange):
 
                 order_status_url = f"{base_url}{endpoints.ORDER}"
                 status_params = {
-                    'symbol': symbol,
+                    'symbol': binance_symbol,  # 변환된 심볼 사용
                     'orderId': data.get('orderId')
                 }
 
@@ -568,8 +575,11 @@ class BinanceExchange(BaseExchange):
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 심볼 변환: 표준 형식 → Binance 형식
+        binance_symbol = to_binance_format(symbol)
+
         params = {
-            'symbol': symbol,
+            'symbol': binance_symbol,
             'orderId': order_id
         }
 
@@ -614,7 +624,9 @@ class BinanceExchange(BaseExchange):
 
         params = {}
         if symbol:
-            params['symbol'] = symbol
+            # 심볼 변환: 표준 형식 → Binance 형식
+            binance_symbol = to_binance_format(symbol)
+            params['symbol'] = binance_symbol
 
         url = f"{base_url}{endpoints.OPEN_ORDERS}"
         data = self._request('GET', url, params, signed=True)
@@ -626,8 +638,11 @@ class BinanceExchange(BaseExchange):
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 심볼 변환: 표준 형식 → Binance 형식
+        binance_symbol = to_binance_format(symbol)
+
         params = {
-            'symbol': symbol,
+            'symbol': binance_symbol,
             'orderId': order_id
         }
 
@@ -657,13 +672,15 @@ class BinanceExchange(BaseExchange):
             if symbol_info['status'] != 'TRADING':
                 continue
 
-            symbol = symbol_info['symbol']
+            binance_symbol = symbol_info['symbol']
+            # Binance 형식(BTCUSDT) → 표준 형식(BTC/USDT)
+            standard_symbol = from_binance_format(binance_symbol)
 
             # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
             if market_type.lower() == 'spot':
-                markets[symbol] = MarketInfo.from_binance_spot(symbol_info)
+                markets[standard_symbol] = MarketInfo.from_binance_spot(symbol_info)
             else:  # futures
-                markets[symbol] = MarketInfo.from_binance_futures(symbol_info)
+                markets[standard_symbol] = MarketInfo.from_binance_futures(symbol_info)
 
         # 캐시 업데이트
         if market_type == 'spot':
@@ -770,12 +787,16 @@ class BinanceExchange(BaseExchange):
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 0. 심볼 변환: 표준 형식(BTC/USDT) → Binance 형식(BTCUSDT)
+        binance_symbol = to_binance_format(symbol)
+        logger.info(f"🔄 심볼 변환 (비동기): {symbol} → {binance_symbol}")
+
         # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
         original_order_type = order_type
         binance_order_type = self._convert_to_binance_format(order_type, side)
 
         order_params = {
-            'symbol': symbol,
+            'symbol': binance_symbol,  # 변환된 심볼 사용
             'side': side.upper(),
             'type': binance_order_type.upper(),  # 변환된 타입 사용
         }
@@ -842,8 +863,11 @@ class BinanceExchange(BaseExchange):
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
+        # 심볼 변환: 표준 형식 → Binance 형식
+        binance_symbol = to_binance_format(symbol)
+
         params = {
-            'symbol': symbol,
+            'symbol': binance_symbol,
             'orderId': order_id
         }
 
@@ -858,7 +882,9 @@ class BinanceExchange(BaseExchange):
 
         params = {}
         if symbol:
-            params['symbol'] = symbol
+            # 심볼 변환: 표준 형식 → Binance 형식
+            binance_symbol = to_binance_format(symbol)
+            params['symbol'] = binance_symbol
 
         url = f"{base_url}{endpoints.OPEN_ORDERS}"
         data = await self._request_async('GET', url, params, signed=True)
@@ -867,6 +893,11 @@ class BinanceExchange(BaseExchange):
 
     def _parse_order(self, order_data: Dict[str, Any], market_type: str, original_type: str = None) -> Order:
         """주문 데이터 파싱 - Binance 응답을 프로젝트 표준으로 변환"""
+        # 0. 심볼 변환: Binance 형식(BTCUSDT) → 표준 형식(BTC/USDT)
+        binance_symbol = order_data['symbol']
+        standard_symbol = from_binance_format(binance_symbol)
+        logger.debug(f"🔄 응답 심볼 변환: {binance_symbol} → {standard_symbol}")
+
         # timestamp 필드 처리 - 다양한 필드명 지원
         timestamp = order_data.get('time') or order_data.get('updateTime') or order_data.get('transactTime', 0)
 
@@ -911,7 +942,7 @@ class BinanceExchange(BaseExchange):
 
         return Order(
             id=order_id,
-            symbol=order_data['symbol'],
+            symbol=standard_symbol,  # 표준 형식 심볼 사용
             side=order_data['side'].lower(),
             amount=Decimal(order_data['origQty']),
             price=limit_price,
