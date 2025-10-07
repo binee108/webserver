@@ -5,6 +5,15 @@
 from typing import Any
 from decimal import Decimal
 from app.constants import MarketType, Exchange, OrderType
+from app.utils.symbol_utils import is_standard_format
+
+# 🔁 DRY: 증권 심볼 에러 메시지 (단일 소스)
+_SECURITIES_SYMBOL_ERROR_MESSAGES = {
+    'DOMESTIC_STOCK': "국내주식 심볼 형식이 올바르지 않습니다 (예: 005930, KR005930, 123456A). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
+    'OVERSEAS_STOCK': "해외주식 심볼 형식이 올바르지 않습니다 (예: AAPL, BRK.A, 9988). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
+    'DOMESTIC_FUTUREOPTION': "국내선물옵션 심볼 형식이 올바르지 않습니다 (예: 101TC000, KR4101C3000). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
+    'OVERSEAS_FUTUREOPTION': "해외선물옵션 심볼 형식이 올바르지 않습니다 (예: ESZ4, NQH5, CL-DEC24). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
+}
 
 def to_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
     """값을 Decimal로 안전하게 변환
@@ -129,7 +138,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'stopprice': 'stop_price',   # 대안 필드명
         'qty_per': 'qty_per',
         'token': 'token',
-        'user_token': 'token'
+        'user_token': 'token',
+        'params': 'params'           # 🆕 증권/선물옵션용 추가 파라미터
     }
 
     # 원본 데이터를 소문자 키로 변환하여 매핑
@@ -140,25 +150,34 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         if lower_key in lower_data:
             normalized[standard_key] = lower_data[lower_key]
 
-    # ✅ 심볼 포맷 검증 (BTCUSDT → BTC/USDT 교정 안내)
+    # ✅ 심볼 포맷 검증 (market_type에 따라 다른 검증 방식 적용)
     if 'symbol' in normalized and isinstance(normalized['symbol'], str):
-        from app.utils.symbol_utils import is_standard_format
-
         symbol_input = normalized['symbol']
-        if not is_standard_format(symbol_input):
-            # 자동 교정 제안 생성
-            suggested_format = _suggest_symbol_format(symbol_input)
+        # market_type 추론 (아직 정규화되지 않은 상태에서)
+        detected_market_type = normalized.get('market_type')
 
-            if suggested_format:
-                raise ValueError(
-                    f"잘못된 심볼 포맷입니다: '{symbol_input}'. "
-                    f"올바른 형식: '{suggested_format}' (COIN/CURRENCY 형식 사용)"
-                )
+        if not is_standard_format(symbol_input, detected_market_type):
+            # 크립토 마켓인 경우 자동 교정 제안
+            if not detected_market_type or detected_market_type in ['SPOT', 'FUTURES']:
+                suggested_format = _suggest_symbol_format(symbol_input)
+
+                if suggested_format:
+                    raise ValueError(
+                        f"잘못된 심볼 포맷입니다: '{symbol_input}'. "
+                        f"올바른 형식: '{suggested_format}' (COIN/CURRENCY 형식 사용)"
+                    )
+                else:
+                    raise ValueError(
+                        f"잘못된 심볼 포맷입니다: '{symbol_input}'. "
+                        f"올바른 형식 예시: 'BTC/USDT', 'ETH/KRW' (슬래시(/) 필수)"
+                    )
             else:
-                raise ValueError(
-                    f"잘못된 심볼 포맷입니다: '{symbol_input}'. "
-                    f"올바른 형식 예시: 'BTC/USDT', 'ETH/KRW' (슬래시(/) 필수)"
+                # 증권 마켓인 경우 market_type별 안내
+                error_msg = _SECURITIES_SYMBOL_ERROR_MESSAGES.get(
+                    detected_market_type,
+                    f"잘못된 심볼 포맷입니다: '{symbol_input}'"
                 )
+                raise ValueError(error_msg)
     
     # order_type은 정확한 필드명만 허용
     if 'order_type' in webhook_data:
@@ -166,8 +185,6 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     
     # 🆕 배치 주문 감지 및 처리
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
-        from app.utils.symbol_utils import is_standard_format
-
         normalized['batch_mode'] = True
         normalized['orders'] = []
 
@@ -176,19 +193,27 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                 # 개별 주문의 심볼 추출 (주문 레벨 또는 웹훅 레벨)
                 order_symbol = order.get('symbol') or webhook_data.get('symbol')
 
-                # ✅ 배치 주문 내 심볼도 검증
-                if order_symbol and not is_standard_format(order_symbol):
-                    suggested_format = _suggest_symbol_format(order_symbol)
-                    if suggested_format:
-                        raise ValueError(
-                            f"배치 주문 {idx + 1}번째 심볼 포맷 오류: '{order_symbol}'. "
-                            f"올바른 형식: '{suggested_format}' (COIN/CURRENCY 형식 사용)"
-                        )
+                # ✅ 배치 주문 내 심볼도 검증 (market_type 인식)
+                detected_market_type = normalized.get('market_type')
+                if order_symbol and not is_standard_format(order_symbol, detected_market_type):
+                    if not detected_market_type or detected_market_type in ['SPOT', 'FUTURES']:
+                        suggested_format = _suggest_symbol_format(order_symbol)
+                        if suggested_format:
+                            raise ValueError(
+                                f"배치 주문 {idx + 1}번째 심볼 포맷 오류: '{order_symbol}'. "
+                                f"올바른 형식: '{suggested_format}' (COIN/CURRENCY 형식 사용)"
+                            )
+                        else:
+                            raise ValueError(
+                                f"배치 주문 {idx + 1}번째 심볼 포맷 오류: '{order_symbol}'. "
+                                f"올바른 형식 예시: 'BTC/USDT', 'ETH/KRW' (슬래시(/) 필수)"
+                            )
                     else:
-                        raise ValueError(
-                            f"배치 주문 {idx + 1}번째 심볼 포맷 오류: '{order_symbol}'. "
-                            f"올바른 형식 예시: 'BTC/USDT', 'ETH/KRW' (슬래시(/) 필수)"
+                        error_msg = _SECURITIES_SYMBOL_ERROR_MESSAGES.get(
+                            detected_market_type,
+                            f"배치 주문 {idx + 1}번째 심볼 포맷 오류: '{order_symbol}'"
                         )
+                        raise ValueError(error_msg)
 
                 # 개별 주문의 모든 필드를 포함 (웹훅 레벨 값 폴백)
                 batch_order = {
