@@ -168,8 +168,8 @@ class ExchangeService:
         # 거래소 팩토리 초기화 (UnifiedExchangeFactory는 필요하지 않음 - 직접 생성)
         # UnifiedExchangeFactory는 Account 객체를 직접 받아 처리하므로 팩토리 인스턴스 불필요
         try:
-            from app.exchanges.factory import exchange_factory
-            self.legacy_factory = exchange_factory  # 레거시 크립토 전용 팩토리 (공용 클라이언트용)
+            from app.exchanges.crypto.factory import crypto_factory
+            self.legacy_factory = crypto_factory  # 레거시 크립토 전용 팩토리 (공용 클라이언트용)
             logger.info("✅ 통합 거래소 서비스 초기화 완료")
         except ImportError as e:
             logger.error(f"❌ 거래소 팩토리 import 실패: {e}")

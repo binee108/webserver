@@ -11,8 +11,8 @@ from typing import Dict, List, Optional, Any
 from decimal import Decimal
 from datetime import datetime
 
-from app.securities.models import StockOrder, StockBalance, StockPosition, StockQuote
-from app.securities.exceptions import (
+from app.exchanges.securities.models import StockOrder, StockBalance, StockPosition, StockQuote
+from app.exchanges.securities.exceptions import (
     SecuritiesError,
     NetworkError,
     AuthenticationError,

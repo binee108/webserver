@@ -139,7 +139,7 @@ class SymbolValidator:
     def _load_binance_public_symbols(self) -> int:
         """Binance public API로 심볼 정보 로드 (계정 불필요)"""
         try:
-            from app.exchanges.binance import BinanceExchange
+            from app.exchanges.crypto.binance import BinanceExchange
 
             # API 키 없이 public 엔드포인트 사용
             exchange = BinanceExchange(
@@ -177,7 +177,7 @@ class SymbolValidator:
     def _load_binance_symbols(self, account: Account) -> int:
         """Binance Symbol 정보 로드"""
         try:
-            from app.exchanges.binance import BinanceExchange
+            from app.exchanges.crypto.binance import BinanceExchange
 
             exchange = BinanceExchange(
                 api_key=account.api_key,
