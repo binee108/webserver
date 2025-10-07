@@ -4,12 +4,8 @@
 - [개요](#개요)
 - [기본 구조](#기본-구조)
 - [마켓별 심볼 포맷](#마켓별-심볼-포맷)
-- [웹훅 예시 모음](#웹훅-예시-모음)
-  - [크립토 (SPOT/FUTURES)](#크립토-spotfutures)
-  - [국내주식](#국내주식)
-  - [해외주식](#해외주식)
-  - [국내선물옵션](#국내선물옵션)
-  - [해외선물옵션](#해외선물옵션)
+- [웹훅 예시 코드 (10개)](#웹훅-예시-코드-10개)
+- [웹훅 시나리오 테스트 (45개)](#웹훅-시나리오-테스트-45개)
 - [에러 메시지 명세](#에러-메시지-명세)
 - [FAQ](#faq)
 - [참고 사항](#참고-사항)
@@ -190,67 +186,25 @@ https://your-domain.com/api/webhook
 
 #### 국내주식 (DOMESTIC_STOCK)
 - **형식**: 6자리 숫자 또는 국가코드 포함
-- **예시**:
-  - ✅ `"005930"` (삼성전자)
-  - ✅ `"KR005930"` (국가코드 포함)
-  - ✅ `"123456A"` (ETN 종목)
-  - ✅ `"Q500001"` (ETF)
-  - ❌ `"'; DROP TABLE--"` (SQL Injection 시도 - 차단)
-
-**에러 메시지**:
-```
-국내주식 심볼 형식이 올바르지 않습니다 (예: 005930, KR005930, 123456A). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.
-```
+- **예시**: `"005930"` (삼성전자), `"KR005930"`, `"123456A"` (ETN), `"Q500001"` (ETF)
 
 #### 해외주식 (OVERSEAS_STOCK)
 - **형식**: 티커 심볼 (영문 또는 숫자)
-- **예시**:
-  - ✅ `"AAPL"` (Apple Inc., NASDAQ)
-  - ✅ `"BRK.A"` (Berkshire Hathaway Class A, NYSE)
-  - ✅ `"BRK.B"` (Berkshire Hathaway Class B, NYSE)
-  - ✅ `"9988"` (Alibaba, HKEX)
-  - ✅ `"0700"` (Tencent, HKEX)
-  - ✅ `"TSM"` (Taiwan Semiconductor)
-
-**에러 메시지**:
-```
-해외주식 심볼 형식이 올바르지 않습니다 (예: AAPL, BRK.A, 9988). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.
-```
+- **예시**: `"AAPL"` (Apple), `"BRK.A"`, `"BRK.B"`, `"9988"` (Alibaba, HKEX), `"0700"` (Tencent)
 
 #### 국내선물옵션 (DOMESTIC_FUTUREOPTION)
 - **형식**: 종목코드 (8자리 영숫자)
-- **예시**:
-  - ✅ `"101TC000"` (KOSPI200 선물)
-  - ✅ `"KR4101C3000"` (국가코드 포함)
-  - ✅ `"201PC260"` (KOSPI200 풋옵션)
-  - ✅ `"301TA000"` (개별주식 선물)
-
-**에러 메시지**:
-```
-국내선물옵션 심볼 형식이 올바르지 않습니다 (예: 101TC000, KR4101C3000). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.
-```
+- **예시**: `"101TC000"` (KOSPI200 선물), `"KR4101C3000"`, `"201PC260"` (KOSPI200 풋옵션)
 
 #### 해외선물옵션 (OVERSEAS_FUTUREOPTION)
 - **형식**: 월물 코드 포함 (거래소별 상이)
-- **예시**:
-  - ✅ `"ESZ4"` (E-mini S&P 500, December 2024, CME)
-  - ✅ `"NQH5"` (E-mini NASDAQ 100, March 2025, CME)
-  - ✅ `"CL-DEC24"` (Crude Oil, December 2024, NYMEX)
-  - ✅ `"6E_Z4"` (Euro FX, December 2024, CME)
-  - ✅ `"GCZ24"` (Gold, December 2024, COMEX)
-
-**에러 메시지**:
-```
-해외선물옵션 심볼 형식이 올바르지 않습니다 (예: ESZ4, NQH5, CL-DEC24). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.
-```
+- **예시**: `"ESZ4"` (E-mini S&P 500, Dec 2024), `"NQH5"` (E-mini NASDAQ, Mar 2025), `"CL-DEC24"` (Crude Oil)
 
 ---
 
-## 웹훅 예시 모음
+## 웹훅 예시 코드 (10개)
 
-### 크립토 (SPOT/FUTURES)
-
-#### 1. SPOT 시장가 매수
+### 1. 크립토 SPOT 시장가 매수 (기본 예시)
 ```json
 {
   "group_name": "my_strategy",
@@ -266,40 +220,7 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 2. SPOT 시장가 매도
-```json
-{
-  "group_name": "my_strategy",
-  "currency": "USDT",
-  "symbol": "ETH/USDT",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 5,
-  "token": "your_webhook_token"
-}
-```
-**설명**: ETH 보유 수량의 5% 시장가 매도
-
----
-
-#### 3. SPOT 지정가 매수 (Limit Buy)
-```json
-{
-  "group_name": "my_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "90000",
-  "qty_per": 10,
-  "token": "your_webhook_token"
-}
-```
-**설명**: BTC를 $90,000에 지정가 매수 주문 (미체결 대기)
-
----
-
-#### 4. SPOT 지정가 매도 (Limit Sell)
+### 2. 크립토 SPOT 지정가 매도
 ```json
 {
   "group_name": "my_strategy",
@@ -316,27 +237,10 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 5. STOP_MARKET 매도 (손절)
+### 3. 크립토 FUTURES STOP_LIMIT 주문
 ```json
 {
-  "group_name": "my_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "STOP_MARKET",
-  "side": "sell",
-  "stop_price": "95000",
-  "qty_per": 10,
-  "token": "your_webhook_token"
-}
-```
-**설명**: BTC 가격이 $95,000 이하로 떨어지면 시장가 매도 (손절)
-
----
-
-#### 6. STOP_LIMIT 매도
-```json
-{
-  "group_name": "my_strategy",
+  "group_name": "futures_strategy",
   "currency": "USDT",
   "symbol": "BTC/USDT",
   "order_type": "STOP_LIMIT",
@@ -347,111 +251,11 @@ https://your-domain.com/api/webhook
   "token": "your_webhook_token"
 }
 ```
-**설명**: BTC 가격이 $95,000 이하로 떨어지면 $94,000에 지정가 매도 주문 생성
+**설명**: BTC 가격이 $95,000 이하로 떨어지면 $94,000에 지정가 매도 주문 생성 (손절)
 
 ---
 
-#### 7. FUTURES 시장가 롱 진입
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 20,
-  "token": "your_webhook_token"
-}
-```
-**설명**: Binance FUTURES에서 계좌 자본의 20%로 BTC 롱 포지션 진입 (레버리지 적용)
-
----
-
-#### 8. FUTURES 시장가 숏 진입
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "ETH/USDT",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 15,
-  "token": "your_webhook_token"
-}
-```
-**설명**: ETH 숏 포지션 진입 (공매도)
-
----
-
-#### 9. FUTURES 지정가 롱 진입
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "92000",
-  "qty_per": 20,
-  "token": "your_webhook_token"
-}
-```
-**설명**: BTC가 $92,000까지 떨어지면 롱 진입 (매수 지정가)
-
----
-
-#### 10. FUTURES 지정가 숏 진입
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "LIMIT",
-  "side": "sell",
-  "price": "105000",
-  "qty_per": 15,
-  "token": "your_webhook_token"
-}
-```
-**설명**: BTC가 $105,000까지 상승하면 숏 진입 (공매도 지정가)
-
----
-
-#### 11. FUTURES STOP_MARKET 롱 청산 (손절)
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "STOP_MARKET",
-  "side": "sell",
-  "stop_price": "90000",
-  "qty_per": 20,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 롱 포지션 보유 중, BTC가 $90,000 이하로 떨어지면 손절 청산
-
----
-
-#### 12. FUTURES STOP_MARKET 숏 청산 (손절)
-```json
-{
-  "group_name": "futures_strategy",
-  "currency": "USDT",
-  "symbol": "BTC/USDT",
-  "order_type": "STOP_MARKET",
-  "side": "buy",
-  "stop_price": "105000",
-  "qty_per": 15,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 숏 포지션 보유 중, BTC가 $105,000 이상 상승하면 손절 청산
-
----
-
-#### 13. 포지션 100% 청산 (qty_per=-100)
+### 4. 크립토 포지션 100% 청산 (qty_per=-100)
 ```json
 {
   "group_name": "futures_strategy",
@@ -467,23 +271,7 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 14. Upbit KRW 마켓 매수
-```json
-{
-  "group_name": "upbit_strategy",
-  "currency": "KRW",
-  "symbol": "BTC/KRW",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 10,
-  "token": "your_webhook_token"
-}
-```
-**설명**: Upbit KRW 마켓에서 BTC 매수 (원화 거래)
-
----
-
-#### 15. 특정 심볼만 주문 취소
+### 5. 크립토 모든 주문 취소
 ```json
 {
   "group_name": "my_strategy",
@@ -497,146 +285,7 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 16. 모든 심볼 주문 취소
-```json
-{
-  "group_name": "my_strategy",
-  "currency": "USDT",
-  "order_type": "CANCEL_ALL_ORDER",
-  "token": "your_webhook_token"
-}
-```
-**설명**: 전략의 모든 미체결 주문 취소 (symbol 생략 시)
-
----
-
-#### 17. 배치 주문 (여러 심볼 동시 주문)
-```json
-{
-  "group_name": "multi_symbol_strategy",
-  "currency": "USDT",
-  "token": "your_webhook_token",
-  "orders": [
-    {
-      "symbol": "BTC/USDT",
-      "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 10
-    },
-    {
-      "symbol": "ETH/USDT",
-      "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 5
-    },
-    {
-      "symbol": "SOL/USDT",
-      "side": "buy",
-      "order_type": "LIMIT",
-      "price": "150",
-      "qty_per": 3
-    }
-  ]
-}
-```
-**설명**: BTC, ETH, SOL을 한 번에 주문 (배치 주문)
-
----
-
-#### 18. 배치 주문 (STOP 주문 포함)
-```json
-{
-  "group_name": "multi_order_strategy",
-  "currency": "USDT",
-  "token": "your_webhook_token",
-  "orders": [
-    {
-      "symbol": "BTC/USDT",
-      "side": "buy",
-      "order_type": "LIMIT",
-      "price": "95000",
-      "qty_per": 10
-    },
-    {
-      "symbol": "BTC/USDT",
-      "side": "sell",
-      "order_type": "STOP_LIMIT",
-      "price": "94000",
-      "stop_price": "95000",
-      "qty_per": 10
-    }
-  ]
-}
-```
-**설명**: BTC 매수 지정가 + 손절 STOP_LIMIT 동시 설정
-
----
-
-#### 19. SPOT 알트코인 매수
-```json
-{
-  "group_name": "altcoin_strategy",
-  "currency": "USDT",
-  "symbol": "MATIC/USDT",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 5,
-  "token": "your_webhook_token"
-}
-```
-**설명**: Polygon(MATIC) 시장가 매수
-
----
-
-#### 20. FUTURES 알트코인 숏
-```json
-{
-  "group_name": "altcoin_short",
-  "currency": "USDT",
-  "symbol": "DOGE/USDT",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 10,
-  "token": "your_webhook_token"
-}
-```
-**설명**: Dogecoin 선물 시장가 숏 포지션 진입
-
----
-
-### 국내주식
-
-#### 21. 국내주식 시장가 매수
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 삼성전자(005930) 100주 시장가 매수 (장중 체결)
-
----
-
-#### 22. 국내주식 시장가 매도
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 50,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 삼성전자 50주 시장가 매도
-
----
-
-#### 23. 국내주식 지정가 매수
+### 6. 국내주식 LIMIT 주문
 ```json
 {
   "group_name": "kospi_strategy",
@@ -648,123 +297,11 @@ https://your-domain.com/api/webhook
   "token": "your_webhook_token"
 }
 ```
-**설명**: 삼성전자를 70,000원에 지정가 매수 주문
+**설명**: 삼성전자(005930) 70,000원에 지정가 매수 100주
 
 ---
 
-#### 24. 국내주식 지정가 매도
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "LIMIT",
-  "side": "sell",
-  "price": "75000",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 삼성전자를 75,000원에 지정가 매도 주문 (익절)
-
----
-
-#### 25. 조건부 지정가 매수 (CONDITIONAL_LIMIT)
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "CONDITIONAL_LIMIT",
-  "side": "buy",
-  "price": "72000",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 삼성전자 조건부 지정가 매수 (한투 주문구분 코드: '02')
-
----
-
-#### 26. 최유리 지정가 매수 (BEST_LIMIT)
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "BEST_LIMIT",
-  "side": "buy",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 삼성전자 최유리 지정가 매수 (price 불필요, 자동 최선가 적용)
-
----
-
-#### 27. 장전 시간외 매수 (PRE_MARKET)
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "PRE_MARKET",
-  "side": "buy",
-  "price": "71000",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 장 시작 전 시간외 단일가 매수 (08:30-09:00)
-
----
-
-#### 28. 장후 시간외 매도 (AFTER_MARKET)
-```json
-{
-  "group_name": "kospi_strategy",
-  "symbol": "005930",
-  "order_type": "AFTER_MARKET",
-  "side": "sell",
-  "price": "73000",
-  "qty_per": 100,
-  "token": "your_webhook_token"
-}
-```
-**설명**: 장 종료 후 시간외 종가 매도 (15:30-16:00)
-
----
-
-#### 29. ETF 매수
-```json
-{
-  "group_name": "etf_strategy",
-  "symbol": "069500",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 50,
-  "token": "your_webhook_token"
-}
-```
-**설명**: KODEX 200 ETF(069500) 50주 시장가 매수
-
----
-
-#### 30. ETN 매도
-```json
-{
-  "group_name": "etn_strategy",
-  "symbol": "500032",
-  "order_type": "LIMIT",
-  "side": "sell",
-  "price": "10500",
-  "qty_per": 20,
-  "token": "your_webhook_token"
-}
-```
-**설명**: KODEX 레버리지 ETN 지정가 매도
-
----
-
-### 해외주식
-
-#### 31. 미국주식 시장가 매수 (USD)
+### 7. 해외주식 MARKET 주문 (params 사용)
 ```json
 {
   "group_name": "nasdaq_strategy",
@@ -783,204 +320,7 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 32. 미국주식 지정가 매수
-```json
-{
-  "group_name": "nyse_strategy",
-  "symbol": "TSLA",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "250.50",
-  "qty_per": 5,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "NYSE",
-    "currency": "USD"
-  }
-}
-```
-**설명**: Tesla(TSLA) $250.50에 지정가 매수 (NYSE)
-
----
-
-#### 33. 미국주식 시장가 매도
-```json
-{
-  "group_name": "nasdaq_strategy",
-  "symbol": "MSFT",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 8,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "NASD",
-    "currency": "USD"
-  }
-}
-```
-**설명**: Microsoft(MSFT) 8주 시장가 매도
-
----
-
-#### 34. 미국주식 지정가 매도
-```json
-{
-  "group_name": "nyse_strategy",
-  "symbol": "BRK.B",
-  "order_type": "LIMIT",
-  "side": "sell",
-  "price": "420.00",
-  "qty_per": 3,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "NYSE",
-    "currency": "USD"
-  }
-}
-```
-**설명**: Berkshire Hathaway B주(BRK.B) $420에 지정가 매도
-
----
-
-#### 35. 미국주식 STOP_LIMIT 손절
-```json
-{
-  "group_name": "nasdaq_strategy",
-  "symbol": "NVDA",
-  "order_type": "STOP_LIMIT",
-  "side": "sell",
-  "price": "480.00",
-  "stop_price": "485.00",
-  "qty_per": 5,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "NASD",
-    "currency": "USD"
-  }
-}
-```
-**설명**: NVIDIA(NVDA) $485 이하 떨어지면 $480에 매도 (손절)
-
----
-
-#### 36. 중국주식 매수 (홍콩거래소)
-```json
-{
-  "group_name": "hkex_strategy",
-  "symbol": "9988",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 20,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "SEHK",
-    "currency": "HKD"
-  }
-}
-```
-**설명**: Alibaba(9988) 20주 시장가 매수 (홍콩거래소, HKD)
-
----
-
-#### 37. 일본주식 매수 (도쿄증권거래소)
-```json
-{
-  "group_name": "tse_strategy",
-  "symbol": "7203",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 100,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "TSE",
-    "currency": "JPY"
-  }
-}
-```
-**설명**: Toyota(7203) 100주 시장가 매수 (도쿄증권거래소, JPY)
-
----
-
-#### 38. 베트남주식 매수
-```json
-{
-  "group_name": "hcm_strategy",
-  "symbol": "VNM",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "85000",
-  "qty_per": 50,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "HCM",
-    "currency": "VND"
-  }
-}
-```
-**설명**: Vinamilk(VNM) 베트남 동화 85,000에 지정가 매수
-
----
-
-#### 39. 독일주식 매수 (프랑크푸르트)
-```json
-{
-  "group_name": "xetra_strategy",
-  "symbol": "SAP",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 5,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "XETRA",
-    "currency": "EUR"
-  }
-}
-```
-**설명**: SAP(SAP) 5주 시장가 매수 (프랑크푸르트, EUR)
-
----
-
-#### 40. 영국주식 매수 (런던증권거래소)
-```json
-{
-  "group_name": "lse_strategy",
-  "symbol": "BP",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "5.50",
-  "qty_per": 100,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "LSE",
-    "currency": "GBP"
-  }
-}
-```
-**설명**: BP(BP) £5.50에 지정가 매수 (런던증권거래소, GBP)
-
----
-
-### 국내선물옵션
-
-#### 41. KOSPI200 선물 매수
-```json
-{
-  "group_name": "kfutures_strategy",
-  "symbol": "101TC000",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "position_action": "OPEN"
-  }
-}
-```
-**설명**: KOSPI200 선물 1계약 시장가 매수 (신규 진입)
-
----
-
-#### 42. KOSPI200 선물 지정가 매수
+### 8. 국내선물옵션 LIMIT 주문 (params 사용)
 ```json
 {
   "group_name": "kfutures_strategy",
@@ -995,70 +335,11 @@ https://your-domain.com/api/webhook
   }
 }
 ```
-**설명**: KOSPI200 선물 320.50pt에 지정가 매수 (2계약)
+**설명**: KOSPI200 선물 320.50pt에 지정가 매수 2계약 (신규 진입)
 
 ---
 
-#### 43. KOSPI200 선물 청산
-```json
-{
-  "group_name": "kfutures_strategy",
-  "symbol": "101TC000",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 2,
-  "token": "your_webhook_token",
-  "params": {
-    "position_action": "CLOSE"
-  }
-}
-```
-**설명**: KOSPI200 선물 보유 2계약 시장가 청산
-
----
-
-#### 44. KOSPI200 풋옵션 매수
-```json
-{
-  "group_name": "koption_strategy",
-  "symbol": "201PC260",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "5.00",
-  "qty_per": 10,
-  "token": "your_webhook_token",
-  "params": {
-    "option_type": "PUT",
-    "strike_price": "260.00"
-  }
-}
-```
-**설명**: KOSPI200 풋옵션 (행사가 260.00) 5.00pt에 지정가 매수 (10계약)
-
----
-
-#### 45. KOSPI200 콜옵션 매도
-```json
-{
-  "group_name": "koption_strategy",
-  "symbol": "201CA320",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 5,
-  "token": "your_webhook_token",
-  "params": {
-    "option_type": "CALL",
-    "strike_price": "320.00"
-  }
-}
-```
-**설명**: KOSPI200 콜옵션 (행사가 320.00) 5계약 시장가 매도
-
----
-
-### 해외선물옵션
-
-#### 46. E-mini S&P 500 선물 매수
+### 9. 해외선물옵션 MARKET 주문 (params 사용)
 ```json
 {
   "group_name": "cme_strategy",
@@ -1078,199 +359,10 @@ https://your-domain.com/api/webhook
 
 ---
 
-#### 47. E-mini NASDAQ 100 선물 지정가 매수
+### 10. 배치 주문 예시 (orders 배열)
 ```json
 {
-  "group_name": "cme_strategy",
-  "symbol": "NQH5",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "16500.00",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "CME",
-    "contract_month": "H5",
-    "currency": "USD"
-  }
-}
-```
-**설명**: E-mini NASDAQ 100 (March 2025) 16,500pt에 지정가 매수
-
----
-
-#### 48. 원유 선물 매수 (NYMEX)
-```json
-{
-  "group_name": "nymex_strategy",
-  "symbol": "CL-DEC24",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "NYMEX",
-    "contract_month": "DEC24",
-    "currency": "USD"
-  }
-}
-```
-**설명**: WTI 원유 선물 (December 2024) 1계약 시장가 매수 (NYMEX)
-
----
-
-#### 49. 금 선물 매수 (COMEX)
-```json
-{
-  "group_name": "comex_strategy",
-  "symbol": "GCZ24",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "2050.00",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "COMEX",
-    "contract_month": "Z4",
-    "currency": "USD"
-  }
-}
-```
-**설명**: 금 선물 (December 2024) $2,050/oz에 지정가 매수 (COMEX)
-
----
-
-#### 50. Euro FX 선물 매도 (CME)
-```json
-{
-  "group_name": "cme_fx_strategy",
-  "symbol": "6E_Z4",
-  "order_type": "MARKET",
-  "side": "sell",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "CME",
-    "contract_month": "Z4",
-    "currency": "USD"
-  }
-}
-```
-**설명**: Euro FX 선물 (December 2024) 1계약 시장가 매도 (CME)
-
----
-
-#### 51. DAX 선물 매수 (Eurex)
-```json
-{
-  "group_name": "eurex_strategy",
-  "symbol": "FDAX-DEC24",
-  "order_type": "LIMIT",
-  "side": "buy",
-  "price": "16800.00",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "EUREX",
-    "contract_month": "DEC24",
-    "currency": "EUR"
-  }
-}
-```
-**설명**: DAX 선물 (December 2024) 16,800pt에 지정가 매수 (Eurex)
-
----
-
-#### 52. 일본 국채 선물 매수 (OSE)
-```json
-{
-  "group_name": "ose_strategy",
-  "symbol": "JGB-DEC24",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 1,
-  "token": "your_webhook_token",
-  "params": {
-    "exchange_code": "OSE",
-    "contract_month": "DEC24",
-    "currency": "JPY"
-  }
-}
-```
-**설명**: 일본 10년물 국채 선물 (December 2024) 1계약 시장가 매수 (오사카거래소)
-
----
-
-#### 53. 배치 주문 - 크립토 + 증권 혼합
-```json
-{
-  "group_name": "multi_asset_strategy",
-  "token": "your_webhook_token",
-  "orders": [
-    {
-      "symbol": "BTC/USDT",
-      "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 10,
-      "currency": "USDT"
-    },
-    {
-      "symbol": "005930",
-      "side": "buy",
-      "order_type": "LIMIT",
-      "price": "70000",
-      "qty_per": 100
-    },
-    {
-      "symbol": "AAPL",
-      "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 5,
-      "params": {
-        "exchange_code": "NASD",
-        "currency": "USD"
-      }
-    }
-  ]
-}
-```
-**설명**: BTC, 삼성전자, Apple 동시 매수 (다중 자산 배치 주문)
-
----
-
-#### 54. 조건부 주문 - 손절/익절 동시 설정
-```json
-{
-  "group_name": "risk_management",
-  "currency": "USDT",
-  "token": "your_webhook_token",
-  "orders": [
-    {
-      "symbol": "BTC/USDT",
-      "side": "sell",
-      "order_type": "LIMIT",
-      "price": "110000",
-      "qty_per": 10
-    },
-    {
-      "symbol": "BTC/USDT",
-      "side": "sell",
-      "order_type": "STOP_LIMIT",
-      "price": "95000",
-      "stop_price": "96000",
-      "qty_per": 10
-    }
-  ]
-}
-```
-**설명**: BTC 익절($110k) + 손절($96k) 동시 설정 (OCO 주문 유사)
-
----
-
-#### 55. 심볼별 차등 수량 배치 주문
-```json
-{
-  "group_name": "portfolio_rebalance",
+  "group_name": "multi_symbol_strategy",
   "currency": "USDT",
   "token": "your_webhook_token",
   "orders": [
@@ -1278,24 +370,98 @@ https://your-domain.com/api/webhook
       "symbol": "BTC/USDT",
       "side": "buy",
       "order_type": "MARKET",
-      "qty_per": 50
+      "qty_per": 10
     },
     {
       "symbol": "ETH/USDT",
       "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 30
+      "order_type": "LIMIT",
+      "price": "3500",
+      "qty_per": 5
     },
     {
       "symbol": "SOL/USDT",
       "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 20
+      "order_type": "LIMIT",
+      "price": "150",
+      "qty_per": 3
     }
   ]
 }
 ```
-**설명**: 포트폴리오 리밸런싱 (BTC 50%, ETH 30%, SOL 20%)
+**설명**: BTC, ETH, SOL을 한 번에 주문 (배치 주문)
+
+---
+
+## 웹훅 시나리오 테스트 (45개)
+
+### 크립토 거래 시나리오 (15개)
+
+1. **BTC/USDT SPOT market buy** - qty_per=10, currency=USDT
+2. **ETH/USDT SPOT market sell** - qty_per=5, currency=USDT
+3. **BTC/USDT SPOT limit buy** - price=90000, qty_per=10, currency=USDT
+4. **ETH/USDT SPOT limit sell** - price=3500, qty_per=20, currency=USDT
+5. **BTC/USDT SPOT stop_market sell** - stop_price=95000, qty_per=10, currency=USDT
+6. **BTC/USDT FUTURES market long** - qty_per=20, currency=USDT
+7. **ETH/USDT FUTURES market short** - qty_per=15, currency=USDT
+8. **BTC/USDT FUTURES limit long** - price=92000, qty_per=20, currency=USDT
+9. **BTC/USDT FUTURES limit short** - price=105000, qty_per=15, currency=USDT
+10. **BTC/USDT FUTURES stop_market long close** - stop_price=90000, qty_per=20, side=sell, currency=USDT
+11. **BTC/USDT FUTURES stop_market short close** - stop_price=105000, qty_per=15, side=buy, currency=USDT
+12. **BTC/USDT FUTURES position 100% close** - qty_per=-100, side=sell, order_type=MARKET, currency=USDT
+13. **BTC/KRW Upbit market buy** - qty_per=10, currency=KRW
+14. **ETH/USDT cancel specific symbol** - order_type=CANCEL_ALL_ORDER, symbol=ETH/USDT
+15. **All symbols cancel** - order_type=CANCEL_ALL_ORDER (symbol 생략)
+
+---
+
+### 국내주식 거래 시나리오 (10개)
+
+1. **005930 (삼성전자) market buy** - qty=100, order_type=MARKET, side=buy
+2. **005930 (삼성전자) market sell** - qty=50, order_type=MARKET, side=sell
+3. **005930 (삼성전자) limit buy** - price=70000, qty=100, order_type=LIMIT, side=buy
+4. **005930 (삼성전자) limit sell** - price=75000, qty=100, order_type=LIMIT, side=sell
+5. **005930 conditional_limit buy** - price=72000, qty=100, order_type=CONDITIONAL_LIMIT, side=buy
+6. **005930 best_limit buy** - qty=100, order_type=BEST_LIMIT, side=buy
+7. **005930 pre_market buy** - price=71000, qty=100, order_type=PRE_MARKET, side=buy
+8. **005930 after_market sell** - price=73000, qty=100, order_type=AFTER_MARKET, side=sell
+9. **069500 (KODEX 200 ETF) market buy** - qty=50, order_type=MARKET, side=buy
+10. **000660 (SK하이닉스) limit sell** - price=140000, qty=20, order_type=LIMIT, side=sell
+
+---
+
+### 해외주식 거래 시나리오 (10개)
+
+1. **AAPL market buy** - qty=10, params={exchange_code:NASD, currency:USD}
+2. **TSLA limit buy** - price=250.50, qty=5, params={exchange_code:NYSE, currency:USD}
+3. **MSFT market sell** - qty=8, params={exchange_code:NASD, currency:USD}
+4. **BRK.B limit sell** - price=420.00, qty=3, params={exchange_code:NYSE, currency:USD}
+5. **NVDA stop_limit sell** - price=480.00, stop_price=485.00, qty=5, params={exchange_code:NASD, currency:USD}
+6. **9988 (Alibaba HKEX) market buy** - qty=20, params={exchange_code:SEHK, currency:HKD}
+7. **7203 (Toyota TSE) market buy** - qty=100, params={exchange_code:TSE, currency:JPY}
+8. **VNM (Vinamilk) limit buy** - price=85000, qty=50, params={exchange_code:HCM, currency:VND}
+9. **SAP (Frankfurt) market buy** - qty=5, params={exchange_code:XETRA, currency:EUR}
+10. **BP (LSE) limit buy** - price=5.50, qty=100, params={exchange_code:LSE, currency:GBP}
+
+---
+
+### 국내선물옵션 시나리오 (5개)
+
+1. **101TC000 (KOSPI200 선물) market buy** - qty=1, params={position_action:OPEN}
+2. **101TC000 limit buy** - price=320.50, qty=2, params={position_action:OPEN}
+3. **101TC000 market sell close** - qty=2, side=sell, params={position_action:CLOSE}
+4. **201PC260 (KOSPI200 풋옵션) limit buy** - price=5.00, qty=10, params={option_type:PUT, strike_price:260.00}
+5. **201CA320 (KOSPI200 콜옵션) market sell** - qty=5, params={option_type:CALL, strike_price:320.00}
+
+---
+
+### 해외선물옵션 시나리오 (5개)
+
+1. **ESZ4 (E-mini S&P 500) market buy** - qty=1, params={exchange_code:CME, contract_month:Z4, currency:USD}
+2. **NQH5 (E-mini NASDAQ) limit buy** - price=16500.00, qty=1, params={exchange_code:CME, contract_month:H5, currency:USD}
+3. **CL-DEC24 (WTI Crude Oil) market buy** - qty=1, params={exchange_code:NYMEX, contract_month:DEC24, currency:USD}
+4. **GCZ24 (Gold) limit buy** - price=2050.00, qty=1, params={exchange_code:COMEX, contract_month:Z4, currency:USD}
+5. **6E_Z4 (Euro FX) market sell** - qty=1, params={exchange_code:CME, contract_month:Z4, currency:USD}
 
 ---
 
@@ -1311,10 +477,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 잘못된 token 또는 전략과 token 불일치
-
 **해결**: 전략 설정에서 올바른 token 확인
-
----
 
 #### 토큰 누락
 ```json
@@ -1324,10 +487,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: token 필드 누락
-
 **해결**: 웹훅 메시지에 token 추가
-
----
 
 #### 전략 없음
 ```json
@@ -1337,7 +497,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: group_name에 해당하는 전략이 DB에 없음
-
 **해결**: 웹 UI에서 전략 생성 또는 group_name 수정
 
 ---
@@ -1352,12 +511,9 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 크립토 심볼에 슬래시(`/`) 누락
-
 **해결**: `BTCUSDT` → `BTC/USDT`
 
----
-
-#### 국내주식 심볼 포맷 오류
+#### 증권 심볼 포맷 오류
 ```json
 {
   "error": "국내주식 심볼 형식이 올바르지 않습니다 (예: 005930, KR005930, 123456A). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
@@ -1365,38 +521,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 금지된 특수문자 사용 또는 심볼 길이 초과
-
 **해결**: 허용된 문자만 사용 (영문, 숫자, `.`, `-`, `_`)
-
----
-
-#### 해외주식 심볼 포맷 오류
-```json
-{
-  "error": "해외주식 심볼 형식이 올바르지 않습니다 (예: AAPL, BRK.A, 9988). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
-  "status": 400
-}
-```
-
----
-
-#### 국내선물옵션 심볼 포맷 오류
-```json
-{
-  "error": "국내선물옵션 심볼 형식이 올바르지 않습니다 (예: 101TC000, KR4101C3000). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
-  "status": 400
-}
-```
-
----
-
-#### 해외선물옵션 심볼 포맷 오류
-```json
-{
-  "error": "해외선물옵션 심볼 형식이 올바르지 않습니다 (예: ESZ4, NQH5, CL-DEC24). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
-  "status": 400
-}
-```
 
 ---
 
@@ -1410,10 +535,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: order_type=LIMIT인데 price 필드 없음
-
 **해결**: price 필드 추가
-
----
 
 #### STOP_LIMIT 주문에 stop_price 누락
 ```json
@@ -1423,10 +545,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: order_type=STOP_LIMIT인데 stop_price 필드 없음
-
 **해결**: stop_price 및 price 필드 추가
-
----
 
 #### STOP_MARKET 주문에 stop_price 누락
 ```json
@@ -1435,6 +554,8 @@ https://your-domain.com/api/webhook
   "status": 400
 }
 ```
+**원인**: order_type=STOP_MARKET인데 stop_price 필드 없음
+**해결**: stop_price 필드 추가
 
 ---
 
@@ -1448,7 +569,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 2025-10-07부터 제거된 필드 사용
-
 **해결**: market_type, exchange 필드 제거 (group_name만으로 자동 결정)
 
 ---
@@ -1463,10 +583,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 매수 STOP_LIMIT 주문에서 stop_price가 현재가보다 낮음
-
 **해결**: stop_price를 현재가보다 높게 설정
-
----
 
 #### 한투 주문 시간 제한
 ```json
@@ -1476,10 +593,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 장 시간 외 MARKET 주문 시도
-
 **해결**: 장중 시간에 재시도 또는 PRE_MARKET/AFTER_MARKET 사용
-
----
 
 #### 한투 종목 거래 정지
 ```json
@@ -1489,7 +603,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: 상장폐지, 정리매매, 거래정지 종목
-
 **해결**: 정상 거래 가능한 종목으로 변경
 
 ---
@@ -1504,7 +617,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: qty_per=-100 사용했지만 해당 심볼 포지션 없음
-
 **해결**: 포지션 보유 확인 또는 일반 매도 주문 사용
 
 ---
@@ -1533,7 +645,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: orders 배열 내 2번째 주문의 심볼 포맷 오류
-
 **해결**: 해당 주문의 심볼을 표준 형식으로 수정
 
 ---
@@ -1548,10 +659,7 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: Strategy.strategy_accounts가 비어있음
-
 **해결**: 웹 UI에서 계좌 연동
-
----
 
 #### 증권 계좌 토큰 만료
 ```json
@@ -1561,7 +669,6 @@ https://your-domain.com/api/webhook
 }
 ```
 **원인**: OAuth token 만료 (유효기간 24시간)
-
 **해결**: 웹 UI에서 한투 재인증 (자동 갱신 실패 시)
 
 ---
@@ -1852,107 +959,6 @@ https://your-domain.com/api/webhook
 
 ---
 
-### Q11: 실시간 가격 데이터는 어떻게 받나요?
-
-**A**: 현재 웹훅은 주문 실행만 담당합니다.
-
-**대안**:
-- WebSocket 연동 (크립토): Binance, Upbit WebSocket
-- 한투 실시간 체결: 한투 WebSocket API
-- SSE 이벤트: 주문 체결 알림 구독
-
----
-
-### Q12: 주문 실패 시 재시도는 어떻게 하나요?
-
-**A**: 시스템은 자동 재시도하지 않습니다.
-
-**수동 재시도**:
-- 동일 웹훅 메시지 재전송
-- 에러 메시지 확인 후 파라미터 수정
-
-**권장 사항**:
-- 외부 시스템에서 재시도 로직 구현
-- 지수 백오프(exponential backoff) 사용
-- 최대 재시도 횟수 제한 (예: 3회)
-
----
-
-### Q13: 테스트 환경은 어떻게 사용하나요?
-
-**A**: Account.testnet 설정으로 전환합니다.
-
-**프로덕션 (실거래)**:
-```sql
-UPDATE accounts SET testnet = false WHERE id = 1;
-```
-
-**테스트넷 (모의투자)**:
-```sql
-UPDATE accounts SET testnet = true WHERE id = 1;
-```
-
-**크립토 테스트넷**:
-- Binance Testnet
-- Bybit Testnet
-
-**증권 모의투자**:
-- 한투 모의투자 환경 (별도 appkey 필요)
-
----
-
-### Q14: 여러 계좌에 동시 주문하려면?
-
-**A**: 전략에 여러 계좌를 연동하면 자동으로 처리됩니다.
-
-**전략 설정 (DB)**:
-```
-Strategy: "my_strategy"
-├── StrategyAccount 1 → Account A (Binance)
-└── StrategyAccount 2 → Account B (Binance)
-```
-
-**웹훅 한 번**:
-```json
-{
-  "group_name": "my_strategy",
-  "symbol": "BTC/USDT",
-  "order_type": "MARKET",
-  "side": "buy",
-  "qty_per": 10,
-  "token": "..."
-}
-```
-
-**결과**:
-- Account A: BTC 매수 (자본의 10%)
-- Account B: BTC 매수 (자본의 10%)
-
----
-
-### Q15: 주문 상태는 어떻게 확인하나요?
-
-**A**: 다음 방법으로 확인 가능합니다.
-
-**웹 UI**:
-- `/trades` 페이지에서 모든 주문 내역 확인
-- 실시간 업데이트 (SSE)
-
-**API 조회**:
-```bash
-GET /api/strategies/{strategy_id}/trades
-```
-
-**SSE 이벤트 구독**:
-```javascript
-const eventSource = new EventSource('/api/stream');
-eventSource.addEventListener('trade_update', (e) => {
-  console.log(JSON.parse(e.data));
-});
-```
-
----
-
 ## 참고 사항
 
 ### 보안 주의사항
@@ -2066,7 +1072,7 @@ tail -f /Users/binee/Desktop/quant/webserver/web_server/logs/app.log
 - **추가**: 증권 마켓 타입 지원 (국내주식, 해외주식, 선물옵션)
 - **개선**: 심볼 검증 로직 (크립토 엄격, 증권 유연)
 - **신규**: params 객체 지원
-- **문서**: 웹훅 예시 55개 추가
+- **문서**: 웹훅 예시 55개 → 10개 예시 코드 + 45개 시나리오로 재구성
 
 ### 2025-01-01 (이전)
 - 초기 크립토 웹훅 시스템 구축
