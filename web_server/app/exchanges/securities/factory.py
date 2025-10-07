@@ -7,14 +7,14 @@
 import logging
 from typing import Optional
 
-from app.constants import Exchange
-from app.securities.base import BaseSecuritiesExchange
-from app.securities.korea_investment import KoreaInvestmentExchange
+from app.constants import Exchange, AccountType
+from .base import BaseSecuritiesExchange
+from .korea_investment import KoreaInvestmentExchange
 
 logger = logging.getLogger(__name__)
 
 
-class SecuritiesFactory:
+class SecuritiesExchangeFactory:
     """
     증권 거래소 팩토리 (플러그인 구조)
 
@@ -25,7 +25,7 @@ class SecuritiesFactory:
 
     사용 예시:
         account = Account.query.get(1)  # 한투 계좌
-        exchange = SecuritiesFactory.create_exchange(account)
+        exchange = SecuritiesExchangeFactory.create(account)
         order = await exchange.create_stock_order('005930', 'BUY', 'LIMIT', 10, Decimal('70000'))
     """
 
@@ -38,7 +38,7 @@ class SecuritiesFactory:
     }
 
     @classmethod
-    def create_exchange(cls, account: 'Account') -> BaseSecuritiesExchange:
+    def create(cls, account: 'Account') -> BaseSecuritiesExchange:
         """
         증권 거래소 인스턴스 생성
 
@@ -54,16 +54,15 @@ class SecuritiesFactory:
 
         Examples:
             >>> account = Account.query.filter_by(exchange='KIS').first()
-            >>> exchange = SecuritiesFactory.create_exchange(account)
+            >>> exchange = SecuritiesExchangeFactory.create(account)
             >>> isinstance(exchange, KoreaInvestmentExchange)
             True
         """
-        from app.constants import AccountType
 
         # 1. 계좌 타입 검증
         if AccountType.is_crypto(account.account_type):
             raise ValueError(
-                f"SecuritiesFactory는 증권 계좌만 처리합니다. "
+                f"SecuritiesExchangeFactory는 증권 계좌만 처리합니다. "
                 f"account_id={account.id}, type={account.account_type}"
             )
 
@@ -95,7 +94,7 @@ class SecuritiesFactory:
         return exchange_name in cls._EXCHANGE_CLASSES
 
     @classmethod
-    def get_supported_exchanges(cls) -> list:
+    def list_exchanges(cls) -> list:
         """
         지원되는 증권사 목록 반환
 

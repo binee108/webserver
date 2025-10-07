@@ -1,43 +1,47 @@
 """
-증권 거래소 통합 패키지
+증권 거래소 어댑터 모듈
 
-여러 증권사(한국투자증권, 키움, LS 등)를 지원하는 통합 인터페이스를 제공합니다.
+지원 증권사:
+- 한국투자증권 (KIS) - 국내주식, 해외주식
+
+사용 예시:
+    from app.exchanges.securities import SecuritiesExchangeFactory
+
+    # Factory 사용 (권장)
+    account = Account.query.get(1)  # 한투 계좌
+    exchange = SecuritiesExchangeFactory.create(account)
+
+    # 주문 생성
+    order = await exchange.create_stock_order(
+        symbol='005930',
+        side='buy',
+        order_type='LIMIT',
+        quantity=10,
+        price=Decimal('70000')
+    )
 """
 
-from .models import StockOrder, StockBalance, StockPosition, StockQuote
 from .base import BaseSecuritiesExchange
-from .factory import SecuritiesFactory
+from .factory import SecuritiesExchangeFactory
+from .korea_investment import KoreaInvestmentExchange
+from .models import StockOrder, StockBalance, StockPosition, StockQuote
 from .exceptions import (
     SecuritiesError,
-    NetworkError,
-    AuthenticationError,
     TokenExpiredError,
+    MarketClosed,
     InsufficientBalance,
-    InvalidOrder,
-    OrderNotFound,
-    MarketClosed
 )
 
 __all__ = [
-    # 데이터 모델
+    'BaseSecuritiesExchange',
+    'SecuritiesExchangeFactory',
+    'KoreaInvestmentExchange',
     'StockOrder',
     'StockBalance',
     'StockPosition',
     'StockQuote',
-
-    # 추상 클래스
-    'BaseSecuritiesExchange',
-
-    # 팩토리
-    'SecuritiesFactory',
-
-    # 예외
     'SecuritiesError',
-    'NetworkError',
-    'AuthenticationError',
     'TokenExpiredError',
+    'MarketClosed',
     'InsufficientBalance',
-    'InvalidOrder',
-    'OrderNotFound',
-    'MarketClosed'
 ]

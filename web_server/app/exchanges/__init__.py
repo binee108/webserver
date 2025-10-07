@@ -1,32 +1,77 @@
 """
-단순화된 거래소 API 모듈
+통합 거래소 모듈
 
-1인 사용자를 위한 최소한의 거래소 API입니다.
-Native Binance 구현으로 간단하고 빠른 거래를 제공합니다.
+사용법:
+    # 권장 방식 (신규 코드)
+    from app.exchanges.crypto import BinanceExchange, CryptoExchangeFactory
+    from app.exchanges.securities import KoreaInvestmentExchange, SecuritiesExchangeFactory
+    from app.exchanges import UnifiedExchangeFactory
+
+    # 하위 호환 (기존 코드, Deprecated)
+    from app.exchanges import BinanceExchange  # ⚠️ Deprecated
 """
 
-from .factory import ExchangeFactory, exchange_factory, create_exchange, create_binance
-from .unified_factory import UnifiedExchangeFactory
-from .base import BaseExchange, ExchangeError, NetworkError, AuthenticationError, InsufficientFunds, InvalidOrder
-from .binance import BinanceExchange
+# === 공통 클래스 ===
+from .base import BaseExchange
 from .models import MarketInfo, Balance, Order, Ticker, Position
+from .unified_factory import UnifiedExchangeFactory
+
+# 예외 클래스 (base.py에 있으면 그대로 사용, 없으면 exceptions.py에서 import)
+try:
+    from .base import (
+        ExchangeError,
+        NetworkError,
+        AuthenticationError,
+        InsufficientFunds,
+        InvalidOrder,
+    )
+except ImportError:
+    from .exceptions import (
+        ExchangeError,
+        NetworkError,
+        AuthenticationError,
+        InsufficientFunds,
+        InvalidOrder,
+        OrderNotFound,
+    )
+
+# === 하위 호환성 유지 (Deprecated) ===
+# 기존 코드 호환을 위해 재export
+from .crypto import (
+    BinanceExchange,
+    UpbitExchange,
+    CryptoExchangeFactory,
+)
+from .securities import (
+    KoreaInvestmentExchange,
+    SecuritiesExchangeFactory,
+    StockOrder,
+    StockBalance,
+)
 
 __all__ = [
-    'ExchangeFactory',
-    'UnifiedExchangeFactory',
-    'exchange_factory',
-    'create_exchange',
-    'create_binance',
+    # 공통
     'BaseExchange',
-    'BinanceExchange',
+    'UnifiedExchangeFactory',
+    'MarketInfo',
+    'Balance',
+    'Order',
+    'Ticker',
+    'Position',
     'ExchangeError',
     'NetworkError',
     'AuthenticationError',
     'InsufficientFunds',
     'InvalidOrder',
-    'MarketInfo',
-    'Balance',
-    'Order',
-    'Ticker',
-    'Position'
+
+    # Crypto (Deprecated - 하위 호환용)
+    'BinanceExchange',
+    'UpbitExchange',
+    'CryptoExchangeFactory',
+
+    # Securities (Deprecated - 하위 호환용)
+    'KoreaInvestmentExchange',
+    'SecuritiesExchangeFactory',
+    'StockOrder',
+    'StockBalance',
 ]
