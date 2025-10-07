@@ -126,7 +126,7 @@
 
 ## 📝 Phase별 작업 계획
 
-### Phase 0: 현황 파악 및 체크포인트 생성 ⏳
+### Phase 0: 현황 파악 및 체크포인트 생성 ✅
 
 **목표**: 현재 코드 상태 파악 및 작업 전 체크포인트 생성
 
@@ -148,15 +148,17 @@
    - 필요 시 새 브랜치 생성
 
 **완료 조건**:
-- [ ] Git 상태 깨끗함 (또는 체크포인트 커밋 완료)
-- [ ] 작업 브랜치 확인 완료
-- [ ] 현재 코드 상태 문서화 완료
+- [x] Git 상태 깨끗함 (또는 체크포인트 커밋 완료)
+- [x] 작업 브랜치 확인 완료
+- [x] 현재 코드 상태 문서화 완료
 
-**예상 소요 시간**: 15분
+**실제 소요 시간**: 15분
+
+**완료일**: 2025-10-07
 
 ---
 
-### Phase 1: 상수 및 Enum 확장 ⏳
+### Phase 1: 상수 및 Enum 확장 ✅
 
 **목표**: 새로운 마켓 타입 및 주문 타입 상수 추가
 
@@ -211,12 +213,16 @@ class KISOrderType:
 - `web_server/app/constants.py`
 
 **완료 조건**:
-- [ ] MarketType에 6개 마켓 타입 정의 완료
-- [ ] OrderType에 국내주식 특수 주문 타입 추가 완료
-- [ ] KISOrderType 매핑 클래스 추가 완료
-- [ ] Python import 오류 없음
+- [x] MarketType에 6개 마켓 타입 정의 완료
+- [x] OrderType에 국내주식 특수 주문 타입 추가 완료
+- [x] KISOrderType 매핑 클래스 추가 완료
+- [x] Python import 오류 없음
 
-**예상 소요 시간**: 30분
+**실제 소요 시간**: 30분
+
+**완료일**: 2025-10-07
+
+**커밋**: d246205 (Phase 1 & Phase 3 통합 완료)
 
 ---
 
@@ -335,9 +341,9 @@ def _is_valid_securities_symbol(symbol: str, market_type: str) -> bool:
 
 ---
 
-### Phase 3: 웹훅 서비스 증권 거래소 분기 로직 추가 ⏳
+### Phase 3: 웹훅 서비스 증권 거래소 분기 로직 추가 ✅
 
-**목표**: WebhookService에서 market_type 기반 라우팅 구현
+**목표**: WebhookService에서 Strategy.market_type 기반 라우팅 구현
 
 **작업 내용**:
 
@@ -516,13 +522,26 @@ async def _cancel_securities_orders(self, strategy, normalized_data: dict) -> di
 - `web_server/app/services/webhook_service.py`
 
 **완료 조건**:
-- [ ] market_type 기반 분기 로직 추가 완료
-- [ ] _process_securities_order() 메서드 구현 완료
-- [ ] _cancel_securities_orders() 메서드 구현 완료
-- [ ] Trade/OpenOrder DB 저장 로직 추가 완료
-- [ ] 기존 크립토 웹훅 로직 영향 없음 확인
+- [x] Strategy.market_type 기반 분기 로직 추가 완료
+- [x] _process_securities_order() 메서드 구현 완료
+- [x] _cancel_securities_orders() 메서드 구현 완료
+- [x] Trade/OpenOrder DB 저장 로직 추가 완료
+- [x] 기존 크립토 웹훅 로직 영향 없음 확인
+- [x] market_type, exchange 필드 제거 (Hard Break) 완료
 
-**예상 소요 시간**: 3시간
+**실제 소요 시간**: 3시간
+
+**완료일**: 2025-10-07
+
+**커밋**:
+- d246205 (Phase 1 & Phase 3 통합 완료)
+- 28b2407 (market_type, exchange 필드 제거 Hard Break)
+
+**주요 변경사항**:
+- 웹훅 메시지에서 `market_type`, `exchange` 필드 제거
+- Strategy.market_type과 Account.exchange에서 자동 결정
+- Single Source of Truth 원칙 적용
+- 데이터 일관성 향상
 
 ---
 
@@ -685,18 +704,19 @@ class UnifiedExchangeFactory:
 
 ## 📊 전체 일정 요약
 
-| Phase | 작업 내용 | 예상 소요 시간 | 상태 |
-|-------|----------|--------------|------|
-| Phase 0 | 현황 파악 및 체크포인트 | 15분 | ⏳ 대기 |
-| Phase 1 | 상수 및 Enum 확장 | 30분 | ⏳ 대기 |
-| Phase 2 | 웹훅 데이터 정규화 확장 | 1시간 | ✅ 완료 (2025-10-07) |
-| Phase 3 | 웹훅 서비스 증권 분기 로직 | 3시간 | ⏳ 대기 |
-| Phase 4 | DB 마이그레이션 실행 | 15분 | ⏳ 대기 |
-| Phase 5 | UnifiedExchangeFactory 확장 | 30분 | ⏳ 대기 |
-| Phase 6 | 웹훅 메시지 포맷 문서 작성 | 2시간 | ⏳ 대기 |
-| Phase 7 | 코드 검토 및 정리 | 1시간 | ⏳ 대기 |
+| Phase | 작업 내용 | 예상 소요 시간 | 실제 소요 시간 | 상태 |
+|-------|----------|--------------|---------------|------|
+| Phase 0 | 현황 파악 및 체크포인트 | 15분 | 15분 | ✅ 완료 (2025-10-07) |
+| Phase 1 | 상수 및 Enum 확장 | 30분 | 30분 | ✅ 완료 (2025-10-07) |
+| Phase 2 | 웹훅 데이터 정규화 확장 | 1시간 | 2시간 | ✅ 완료 (2025-10-07) |
+| Phase 3 | 웹훅 서비스 증권 분기 로직 | 3시간 | 3시간 | ✅ 완료 (2025-10-07) |
+| Phase 4 | DB 마이그레이션 실행 | 15분 | - | ⏳ 다음 작업 |
+| Phase 5 | UnifiedExchangeFactory 확장 | 30분 | - | ⏳ 대기 |
+| Phase 6 | 웹훅 메시지 포맷 문서 작성 | 2시간 | - | ⏳ 대기 |
+| Phase 7 | 코드 검토 및 정리 | 1시간 | - | ⏳ 대기 |
 
 **총 예상 소요 시간**: 약 8.5시간
+**현재까지 소요 시간**: 약 5.75시간 (Phase 0-3 완료)
 
 ---
 
@@ -745,12 +765,18 @@ class UnifiedExchangeFactory:
 
 ### 2025-10-07
 
-#### Phase 0 & Phase 2 완료
-- **Phase 0 시작**: 현황 파악 및 계획 수립
-- `docs/task_plan.md` 파일 생성
-- 전체 Phase 계획 수립 완료
+#### Phase 0 완료 (15분)
+- **현황 파악**: 기존 exchanges 디렉토리 구조 분석
+- **계획 수립**: `docs/task_plan.md` 파일 생성
+- **Git 상태 정리**: feature/securities-integration 브랜치 확인
 
-#### Phase 2 완료 내역
+#### Phase 1 완료 (30분)
+- **MarketType 확장**: DOMESTIC_STOCK, OVERSEAS_STOCK, DOMESTIC_FUTUREOPTION, OVERSEAS_FUTUREOPTION 추가
+- **OrderType 확장**: CONDITIONAL_LIMIT, BEST_LIMIT, PRE_MARKET, AFTER_MARKET 추가
+- **KISOrderType 추가**: 한투 주문구분 코드 매핑 (00-07)
+- **커밋**: d246205
+
+#### Phase 2 완료 (2시간)
 1. **심볼 검증 로직 구현** (`symbol_utils.py`)
    - 크립토: 엄격한 검증 (`BTC/USDT` 슬래시 형식)
    - 증권: 유연한 검증 (`^[A-Z0-9._-]+$`, 최대 30자)
@@ -766,6 +792,24 @@ class UnifiedExchangeFactory:
    - 코드 리뷰 2회 실시 (Priority 1 이슈 해결)
    - 36개 테스트 케이스 100% 통과
    - 하위 호환성 100% 유지 (기존 크립토 웹훅)
+
+#### Phase 3 완료 (3시간)
+1. **웹훅 서비스 라우팅 로직** (`webhook_service.py`)
+   - Strategy.market_type 기반 분기 (크립토 vs 증권)
+   - `_process_securities_order()` 메서드 구현
+   - `_cancel_securities_orders()` 메서드 구현
+   - Trade/OpenOrder DB 저장 로직 추가
+   - **커밋**: d246205
+
+2. **아키텍처 개선 (Hard Break)**
+   - 웹훅 메시지에서 `market_type`, `exchange` 필드 제거
+   - Strategy.market_type과 Account.exchange에서 자동 결정
+   - Single Source of Truth 원칙 적용
+   - 금지된 필드 검증 로직 추가
+   - README.md, task_plan.md 문서 업데이트
+   - **커밋**: 28b2407
+
+**현재 진행률**: Phase 0-3 완료 (약 68% 완료)
 
 ---
 
