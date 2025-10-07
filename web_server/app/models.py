@@ -518,7 +518,7 @@ class TradeExecution(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     trade_id = db.Column(db.Integer, db.ForeignKey('trades.id'), nullable=True)  # 기존 Trade와 연결
-    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=True)  # 계좌 연결 해제 시 NULL 가능
     exchange_trade_id = db.Column(db.String(100), nullable=False)  # 거래소 거래 ID
     exchange_order_id = db.Column(db.String(100), nullable=False)  # 거래소 주문 ID
     symbol = db.Column(db.String(20), nullable=False)

@@ -89,11 +89,8 @@ class BinanceExchange(BaseCryptoExchange):
     """
 
     def __init__(self, api_key: str, api_secret: str, testnet: bool = False):
-        super().__init__()
-
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.testnet = testnet
+        # BaseCryptoExchange.__init__이 api_key, secret, testnet 속성을 설정함
+        super().__init__(api_key, api_secret, testnet)
 
         # URL 설정
         if testnet:

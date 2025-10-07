@@ -914,7 +914,7 @@ class ExchangeService:
                 return client
 
             try:
-                client = self.legacy_factory.create_exchange(exchange_key, api_key='', secret='', testnet=False)
+                client = self.legacy_factory.create(exchange_key, api_key='', secret='', testnet=False)
                 self._public_exchange_clients[exchange_key] = client
                 return client
             except Exception as e:

@@ -45,44 +45,80 @@ class SecuritiesMarketType:
 
 
 class MarketType:
-    """마켓 타입 상수"""
+    """마켓 타입 상수 (크립토 + 증권 통합)"""
+    # 크립토 마켓
     SPOT = 'SPOT'
     FUTURES = 'FUTURES'
-    
+
+    # 증권 마켓
+    DOMESTIC_STOCK = 'DOMESTIC_STOCK'            # 국내주식
+    OVERSEAS_STOCK = 'OVERSEAS_STOCK'            # 해외주식
+    DOMESTIC_FUTUREOPTION = 'DOMESTIC_FUTUREOPTION'  # 국내선물옵션
+    OVERSEAS_FUTUREOPTION = 'OVERSEAS_FUTUREOPTION'  # 해외선물옵션
+
     # 소문자 버전 (JavaScript 연동, 레거시 지원용)
     SPOT_LOWER = 'spot'
     FUTURES_LOWER = 'futures'
-    
+
     # 유효한 값 목록
-    VALID_TYPES = [SPOT, FUTURES]
+    CRYPTO_TYPES = [SPOT, FUTURES]
+    SECURITIES_TYPES = [DOMESTIC_STOCK, OVERSEAS_STOCK, DOMESTIC_FUTUREOPTION, OVERSEAS_FUTUREOPTION]
+    VALID_TYPES = CRYPTO_TYPES + SECURITIES_TYPES
     VALID_TYPES_LOWER = [SPOT_LOWER, FUTURES_LOWER]
-    
+
     @classmethod
     def is_valid(cls, value):
         """값이 유효한 market_type인지 확인"""
         if not value:
             return False
         return value.upper() in cls.VALID_TYPES
-    
+
+    @classmethod
+    def is_crypto(cls, value):
+        """크립토 마켓 타입인지 확인"""
+        if not value:
+            return False
+        return value.upper() in cls.CRYPTO_TYPES
+
+    @classmethod
+    def is_securities(cls, value):
+        """증권 마켓 타입인지 확인"""
+        if not value:
+            return False
+        return value.upper() in cls.SECURITIES_TYPES
+
+    @classmethod
+    def get_all_crypto(cls):
+        """모든 크립토 마켓 타입 반환"""
+        return cls.CRYPTO_TYPES.copy()
+
+    @classmethod
+    def get_all_securities(cls):
+        """모든 증권 마켓 타입 반환"""
+        return cls.SECURITIES_TYPES.copy()
+
     @classmethod
     def normalize(cls, value):
         """값을 표준 MarketType 상수로 변환 (모든 변형 지원)"""
         if not value:
             return cls.SPOT  # 기본값
-        
+
         if isinstance(value, str):
             upper_value = value.upper()
             # FUTURES 변형들
             if upper_value in ['FUTURE', 'FUTURES', 'DERIVATIVE', 'DERIVATIVES']:
                 return cls.FUTURES
-            # SPOT 변형들  
+            # SPOT 변형들
             elif upper_value in ['SPOT', 'CASH']:
                 return cls.SPOT
-        
+            # 증권 타입들 (정확한 매칭)
+            elif upper_value in cls.SECURITIES_TYPES:
+                return upper_value
+
         # 이미 올바른 상수인 경우
-        if value in [cls.SPOT, cls.FUTURES]:
+        if value in cls.VALID_TYPES:
             return value
-            
+
         # 알 수 없는 값은 기본값
         return cls.SPOT
     
@@ -177,12 +213,18 @@ class Exchange:
 
 
 class OrderType:
-    """통합 주문 타입 관리"""
-    # 기본 주문 타입
+    """통합 주문 타입 관리 (크립토 + 증권)"""
+    # 기본 주문 타입 (크립토 + 증권 공통)
     MARKET = 'MARKET'
     LIMIT = 'LIMIT'
     STOP_MARKET = 'STOP_MARKET'
     STOP_LIMIT = 'STOP_LIMIT'
+
+    # 증권 전용 주문 타입
+    CONDITIONAL_LIMIT = 'CONDITIONAL_LIMIT'  # 조건부 지정가
+    BEST_LIMIT = 'BEST_LIMIT'                # 최유리 지정가
+    PRE_MARKET = 'PRE_MARKET'                # 시간외 단일가
+    AFTER_MARKET = 'AFTER_MARKET'            # 시간외 종가
 
     # 취소 타입
     CANCEL = 'CANCEL'
@@ -195,15 +237,15 @@ class OrderType:
     STOP_MARKET_LOWER = 'stop_market'
 
     # STOP 주문 그룹 (stopPrice 필요)
-    STOP_ORDERS = [STOP_MARKET, STOP_LIMIT]
+    STOP_ORDERS = [STOP_MARKET, STOP_LIMIT, CONDITIONAL_LIMIT]
 
     # LIMIT 주문 그룹 (price 필요)
-    LIMIT_ORDERS = [LIMIT, STOP_LIMIT]
+    LIMIT_ORDERS = [LIMIT, STOP_LIMIT, CONDITIONAL_LIMIT, PRE_MARKET, AFTER_MARKET]
 
     # 유효한 거래 주문 타입
-    VALID_TRADING_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET]
+    VALID_TRADING_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CONDITIONAL_LIMIT, BEST_LIMIT, PRE_MARKET, AFTER_MARKET]
     # 모든 유효한 타입 (취소 포함)
-    VALID_TYPES = [MARKET, LIMIT, STOP_LIMIT, STOP_MARKET, CANCEL, CANCEL_ALL_ORDER]
+    VALID_TYPES = VALID_TRADING_TYPES + [CANCEL, CANCEL_ALL_ORDER]
 
     # 주문 우선순위 (낮은 숫자 = 높은 우선순위)
     PRIORITY = {
@@ -303,8 +345,11 @@ class OrderType:
 
         normalized_type = order_type.upper()
 
+        # BEST_LIMIT은 price 불필요 (최유리 가격 자동 적용)
+        requires_price = normalized_type in cls.LIMIT_ORDERS and normalized_type != cls.BEST_LIMIT
+
         return {
-            'price': normalized_type in cls.LIMIT_ORDERS,
+            'price': requires_price,
             'stop_price': normalized_type in cls.STOP_ORDERS,
             'quantity': normalized_type in cls.VALID_TRADING_TYPES
         }
@@ -551,3 +596,150 @@ class OrderEventType:
             cls.POSITION_UPDATED: '포지션 업데이트'
         }
         return display_map.get(event_type, event_type)
+
+
+class KISOrderType:
+    """한국투자증권 주문 타입 매핑
+
+    Generic OrderType을 한국투자증권 API 주문 코드로 변환
+    """
+    # 국내주식 주문 구분 코드
+    DOMESTIC_LIMIT = '00'           # 지정가
+    DOMESTIC_MARKET = '01'          # 시장가
+    DOMESTIC_CONDITIONAL = '02'     # 조건부지정가
+    DOMESTIC_BEST = '03'            # 최유리지정가
+    DOMESTIC_PRE_MARKET = '05'      # 시간외단일가
+    DOMESTIC_AFTER_MARKET = '06'    # 시간외종가
+
+    # 해외주식 주문 구분 코드 (단순)
+    OVERSEAS_LIMIT = '00'           # 지정가
+    OVERSEAS_MARKET = '01'          # 시장가
+
+    # 선물옵션 주문 구분 코드
+    FUTURES_LIMIT = '1'             # 지정가
+    FUTURES_MARKET = '2'            # 시장가
+    FUTURES_CONDITION = '3'         # 조건부지정가
+
+    @classmethod
+    def to_domestic_code(cls, order_type: str) -> str:
+        """Generic OrderType을 국내주식 주문 코드로 변환
+
+        Args:
+            order_type: 표준 OrderType 상수 (MARKET, LIMIT 등)
+
+        Returns:
+            str: KIS API 주문 구분 코드 ('00', '01' 등)
+
+        Raises:
+            ValueError: 지원하지 않는 주문 타입인 경우
+        """
+        mapping = {
+            OrderType.LIMIT: cls.DOMESTIC_LIMIT,
+            OrderType.MARKET: cls.DOMESTIC_MARKET,
+            OrderType.CONDITIONAL_LIMIT: cls.DOMESTIC_CONDITIONAL,
+            OrderType.BEST_LIMIT: cls.DOMESTIC_BEST,
+            OrderType.PRE_MARKET: cls.DOMESTIC_PRE_MARKET,
+            OrderType.AFTER_MARKET: cls.DOMESTIC_AFTER_MARKET,
+        }
+        code = mapping.get(order_type.upper() if isinstance(order_type, str) else order_type)
+        if code is None:
+            raise ValueError(f"국내주식에서 지원하지 않는 주문 타입입니다: {order_type}")
+        return code
+
+    @classmethod
+    def to_overseas_code(cls, order_type: str) -> str:
+        """Generic OrderType을 해외주식 주문 코드로 변환
+
+        Args:
+            order_type: 표준 OrderType 상수 (MARKET, LIMIT)
+
+        Returns:
+            str: KIS API 주문 구분 코드 ('00', '01')
+
+        Raises:
+            ValueError: 지원하지 않는 주문 타입인 경우
+        """
+        mapping = {
+            OrderType.LIMIT: cls.OVERSEAS_LIMIT,
+            OrderType.MARKET: cls.OVERSEAS_MARKET,
+        }
+        code = mapping.get(order_type.upper() if isinstance(order_type, str) else order_type)
+        if code is None:
+            raise ValueError(f"해외주식에서 지원하지 않는 주문 타입입니다: {order_type}")
+        return code
+
+    @classmethod
+    def to_futures_code(cls, order_type: str) -> str:
+        """Generic OrderType을 선물옵션 주문 코드로 변환
+
+        Args:
+            order_type: 표준 OrderType 상수
+
+        Returns:
+            str: KIS API 주문 구분 코드 ('1', '2', '3')
+
+        Raises:
+            ValueError: 지원하지 않는 주문 타입인 경우
+        """
+        mapping = {
+            OrderType.LIMIT: cls.FUTURES_LIMIT,
+            OrderType.MARKET: cls.FUTURES_MARKET,
+            OrderType.CONDITIONAL_LIMIT: cls.FUTURES_CONDITION,
+        }
+        code = mapping.get(order_type.upper() if isinstance(order_type, str) else order_type)
+        if code is None:
+            raise ValueError(f"선물옵션에서 지원하지 않는 주문 타입입니다: {order_type}")
+        return code
+
+    @classmethod
+    def from_domestic_code(cls, code: str) -> str:
+        """국내주식 주문 코드를 Generic OrderType으로 역변환
+
+        Args:
+            code: KIS API 주문 구분 코드
+
+        Returns:
+            str: 표준 OrderType 상수
+        """
+        reverse_mapping = {
+            cls.DOMESTIC_LIMIT: OrderType.LIMIT,
+            cls.DOMESTIC_MARKET: OrderType.MARKET,
+            cls.DOMESTIC_CONDITIONAL: OrderType.CONDITIONAL_LIMIT,
+            cls.DOMESTIC_BEST: OrderType.BEST_LIMIT,
+            cls.DOMESTIC_PRE_MARKET: OrderType.PRE_MARKET,
+            cls.DOMESTIC_AFTER_MARKET: OrderType.AFTER_MARKET,
+        }
+        return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
+
+    @classmethod
+    def from_overseas_code(cls, code: str) -> str:
+        """해외주식 주문 코드를 Generic OrderType으로 역변환
+
+        Args:
+            code: KIS API 주문 구분 코드
+
+        Returns:
+            str: 표준 OrderType 상수
+        """
+        reverse_mapping = {
+            cls.OVERSEAS_LIMIT: OrderType.LIMIT,
+            cls.OVERSEAS_MARKET: OrderType.MARKET,
+        }
+        return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
+
+    @classmethod
+    def from_futures_code(cls, code: str) -> str:
+        """선물옵션 주문 코드를 Generic OrderType으로 역변환
+
+        Args:
+            code: KIS API 주문 구분 코드
+
+        Returns:
+            str: 표준 OrderType 상수
+        """
+        reverse_mapping = {
+            cls.FUTURES_LIMIT: OrderType.LIMIT,
+            cls.FUTURES_MARKET: OrderType.MARKET,
+            cls.FUTURES_CONDITION: OrderType.CONDITIONAL_LIMIT,
+        }
+        return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT

@@ -183,44 +183,67 @@ class WebhookService:
             trade_started_at = time.time()
 
             if order_type == OrderType.CANCEL_ALL_ORDER:
-                result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
+                # market_type 기반 취소 로직 분기
+                market_type = normalized_data.get('market_type', MarketType.SPOT)
+
+                if MarketType.is_crypto(market_type):
+                    result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
+                else:
+                    result = self._cancel_securities_orders(strategy, normalized_data, webhook_received_at)
+
             elif order_type == OrderType.CANCEL:
                 result = self.process_cancel_order(normalized_data, webhook_received_at)
             else:
-                # 거래 신호는 trading_service로 위임
-                from app.services.trading import trading_service
-                # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
-                if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
-                    self._validate_order_type_params(normalized_data)
+                # market_type 기반 거래 처리 분기
+                market_type = normalized_data.get('market_type', MarketType.SPOT)
 
+                if MarketType.is_crypto(market_type):
+                    # 크립토: 기존 로직
+                    # 거래 신호는 trading_service로 위임
+                    from app.services.trading import trading_service
+                    # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
+                    if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
+                        self._validate_order_type_params(normalized_data)
 
+                    # 타이밍 컨텍스트 준비
+                    timing_context = {
+                        'webhook_received_at': webhook_received_at,
+                        'webhook_validated_at': webhook_validated_at,
+                        'trade_started_at': trade_started_at
+                    }
 
-                # 타이밍 컨텍스트 준비
-                timing_context = {
-                    'webhook_received_at': webhook_received_at,
-                    'webhook_validated_at': webhook_validated_at,
-                    'trade_started_at': trade_started_at
-                }
+                    # 전략 ID를 거래 데이터에 추가
+                    normalized_data['strategy_id'] = strategy.id
+                    normalized_data['strategy_name'] = strategy.name
 
-                # 전략 ID를 거래 데이터에 추가
-                normalized_data['strategy_id'] = strategy.id
-                normalized_data['strategy_name'] = strategy.name
+                    # 🆕 배치 모드 감지 및 라우팅
+                    if normalized_data.get('batch_mode'):
+                        orders = normalized_data.get('orders', [])
+                        logger.info(f"📦 배치 주문 모드 감지 - {len(orders)}개 주문")
+                        # 디버깅: 정규화된 주문 데이터 로깅
+                        for i, order in enumerate(orders):
+                            logger.debug(f"  주문 {i+1}: symbol={order.get('symbol')}, side={order.get('side')}, "
+                                       f"order_type={order.get('order_type')}, qty_per={order.get('qty_per')}")
+                        result = trading_service.process_batch_trading_signal(normalized_data, timing_context)
+                    else:
+                        # 기존 단일 주문 처리
+                        result = trading_service.process_trading_signal(normalized_data, timing_context)
 
-                # 🆕 배치 모드 감지 및 라우팅
-                if normalized_data.get('batch_mode'):
-                    orders = normalized_data.get('orders', [])
-                    logger.info(f"📦 배치 주문 모드 감지 - {len(orders)}개 주문")
-                    # 디버깅: 정규화된 주문 데이터 로깅
-                    for i, order in enumerate(orders):
-                        logger.debug(f"  주문 {i+1}: symbol={order.get('symbol')}, side={order.get('side')}, "
-                                   f"order_type={order.get('order_type')}, qty_per={order.get('qty_per')}")
-                    result = trading_service.process_batch_trading_signal(normalized_data, timing_context)
+                    # 🆕 거래 신호 처리 결과 분석 및 로깅
+                    self._analyze_trading_result(result, normalized_data)
+
+                elif MarketType.is_securities(market_type):
+                    # 증권: 신규 로직
+                    # 타이밍 컨텍스트 준비
+                    timing_context = {
+                        'webhook_received_at': webhook_received_at,
+                        'webhook_validated_at': webhook_validated_at,
+                        'trade_started_at': trade_started_at
+                    }
+                    result = self._process_securities_order(strategy, normalized_data, timing_context)
+
                 else:
-                    # 기존 단일 주문 처리
-                    result = trading_service.process_trading_signal(normalized_data, timing_context)
-                
-                # 🆕 거래 신호 처리 결과 분석 및 로깅
-                self._analyze_trading_result(result, normalized_data)
+                    raise WebhookError(f"지원하지 않는 market_type: {market_type}")
             
             # 성공 시 로그 업데이트 (모든 타이밍 정보 저장)
             webhook_log.status = 'success'
@@ -664,6 +687,354 @@ class WebhookService:
                 'received_timestamp': datetime.fromtimestamp(webhook_received_at).isoformat()
             }
         }
+
+    def _process_securities_order(
+        self,
+        strategy: Strategy,
+        normalized_data: Dict[str, Any],
+        timing_context: Dict[str, float]
+    ) -> Dict[str, Any]:
+        """
+        증권 거래소 주문 처리
+
+        Args:
+            strategy: 검증된 Strategy 객체
+            normalized_data: 정규화된 웹훅 데이터
+            timing_context: 타이밍 정보 (webhook_received_at, trade_started_at 등)
+
+        Returns:
+            dict: 주문 처리 결과
+            {
+                'success': bool,
+                'message': str,
+                'results': [{'account_name': str, 'order_id': str, 'status': str}],
+                'summary': {'total_accounts': int, 'successful': int, 'failed': int},
+                'timing': {...}
+            }
+
+        Raises:
+            WebhookError: 필수 필드 누락 또는 처리 실패 시
+        """
+        from app.exchanges import UnifiedExchangeFactory
+        from app.models import Trade, OpenOrder
+
+        logger.info(f"🏛️ 증권 주문 처리 시작 - 전략: {strategy.group_name}, "
+                    f"심볼: {normalized_data.get('symbol')}, "
+                    f"side: {normalized_data.get('side')}")
+
+        # 필수 필드 검증
+        required_fields = ['symbol', 'side', 'order_type']
+        for field in required_fields:
+            if field not in normalized_data:
+                raise WebhookError(f"증권 주문에 필수 필드 누락: {field}")
+
+        # 전략에 연결된 계좌 조회
+        strategy_accounts = strategy.strategy_accounts
+        if not strategy_accounts:
+            raise WebhookError(f"전략 '{strategy.group_name}'에 연결된 계좌가 없습니다")
+
+        results = []
+        successful_orders = 0
+        failed_orders = 0
+
+        for sa in strategy_accounts:
+            account = sa.account
+
+            # 증권 계좌만 처리
+            if account.account_type != 'STOCK':
+                logger.warning(f"⚠️ 증권 웹훅이지만 계좌 타입이 STOCK이 아님 "
+                              f"(account_id={account.id}, type={account.account_type})")
+                continue
+
+            try:
+                # 1. 증권 거래소 어댑터 생성
+                trade_request_start = time.time()
+                exchange = UnifiedExchangeFactory.create(account)
+
+                # 2. 주문 생성 (거래소 API 호출)
+                order_params = {
+                    'symbol': normalized_data['symbol'],
+                    'side': normalized_data['side'].upper(),
+                    'order_type': normalized_data['order_type'],
+                    'quantity': int(normalized_data.get('qty_per', 0)),
+                    'price': normalized_data.get('price')
+                }
+
+                logger.info(f"📤 증권 주문 생성 시도 (계좌={account.name}): {order_params}")
+
+                # create_order 메서드 호출
+                stock_order = exchange.create_order(**order_params)
+
+                trade_request_end = time.time()
+
+                logger.info(f"✅ 증권 주문 생성 완료 - order_id: {stock_order.order_id}, "
+                           f"status: {stock_order.status}")
+
+                # 3. DB 저장 (Trade 테이블)
+                # Trade 모델은 status 필드가 없으므로 제외
+                trade = Trade(
+                    strategy_account_id=sa.id,
+                    symbol=stock_order.symbol,
+                    side=stock_order.side,
+                    order_type=stock_order.order_type,
+                    quantity=stock_order.quantity,
+                    price=float(stock_order.price) if stock_order.price else 0.0,
+                    exchange_order_id=stock_order.order_id,
+                    market_type=normalized_data.get('market_type'),
+                    timestamp=datetime.utcnow()
+                )
+                db.session.add(trade)
+
+                # 4. OpenOrder 저장 (미체결 주문 관리)
+                if stock_order.status in ['NEW', 'PARTIALLY_FILLED']:
+                    open_order = OpenOrder(
+                        strategy_account_id=sa.id,
+                        symbol=stock_order.symbol,
+                        side=stock_order.side,
+                        order_type=stock_order.order_type,
+                        quantity=stock_order.quantity,
+                        price=float(stock_order.price) if stock_order.price else None,
+                        exchange_order_id=stock_order.order_id,
+                        status=stock_order.status
+                    )
+                    db.session.add(open_order)
+
+                db.session.commit()
+
+                # 5. SSE 이벤트 발행
+                self._emit_order_event(
+                    account_id=account.id,
+                    order_id=stock_order.order_id,
+                    symbol=stock_order.symbol,
+                    side=stock_order.side,
+                    order_type=stock_order.order_type,
+                    status=stock_order.status,
+                    quantity=stock_order.quantity,
+                    price=stock_order.price,
+                    event_type='order_created'
+                )
+
+                results.append({
+                    'account_name': account.name,
+                    'order_id': stock_order.order_id,
+                    'status': stock_order.status,
+                    'symbol': stock_order.symbol,
+                    'side': stock_order.side
+                })
+                successful_orders += 1
+
+            except Exception as e:
+                logger.error(f"❌ 증권 주문 생성 실패 (account_id={account.id}, "
+                            f"account_name={account.name}): {e}", exc_info=True)
+                results.append({
+                    'account_name': account.name,
+                    'error': str(e),
+                    'status': 'failed'
+                })
+                failed_orders += 1
+
+        # 6. 결과 반환
+        if not results:
+            raise WebhookError("처리할 증권 계좌가 없습니다. STOCK 타입 계좌를 확인하세요.")
+
+        return {
+            'success': successful_orders > 0,
+            'message': f'증권 주문 처리 완료 - 성공: {successful_orders}, 실패: {failed_orders}',
+            'results': results,
+            'summary': {
+                'total_accounts': len(results),
+                'successful': successful_orders,
+                'failed': failed_orders
+            },
+            'timing': timing_context  # 타이밍 정보 전달
+        }
+
+    def _cancel_securities_orders(
+        self,
+        strategy: Strategy,
+        normalized_data: Dict[str, Any],
+        webhook_received_at: float
+    ) -> Dict[str, Any]:
+        """
+        증권 거래소 미체결 주문 취소 (CANCEL_ALL_ORDER 타입)
+
+        Args:
+            strategy: 검증된 Strategy 객체
+            normalized_data: 정규화된 웹훅 데이터
+            webhook_received_at: 웹훅 수신 시각
+
+        Returns:
+            dict: 취소 처리 결과
+            {
+                'success': bool,
+                'message': str,
+                'cancelled_orders': int,
+                'failed_orders': int,
+                'results': [...]
+            }
+        """
+        from app.exchanges import UnifiedExchangeFactory
+        from app.models import OpenOrder
+
+        symbol = normalized_data.get('symbol')  # 선택적 (특정 심볼만 취소)
+
+        logger.info(f"🏛️ 증권 주문 취소 시작 - 전략: {strategy.group_name}, "
+                    f"심볼: {symbol or '전체'}")
+
+        cancelled_count = 0
+        failed_count = 0
+        results = []
+
+        for sa in strategy.strategy_accounts:
+            account = sa.account
+
+            # 증권 계좌만 처리
+            if account.account_type != 'STOCK':
+                continue
+
+            try:
+                # DB에서 미체결 주문 조회
+                query = OpenOrder.query.filter_by(
+                    strategy_account_id=sa.id,
+                    status='NEW'
+                )
+
+                # 심볼 필터 (선택적)
+                if symbol:
+                    query = query.filter_by(symbol=symbol)
+
+                open_orders = query.all()
+
+                if not open_orders:
+                    logger.info(f"ℹ️ 취소할 미체결 주문 없음 (계좌={account.name}, 심볼={symbol or '전체'})")
+                    continue
+
+                logger.info(f"📋 취소 대상 주문: {len(open_orders)}개 (계좌={account.name})")
+
+                # 증권 어댑터 생성
+                exchange = UnifiedExchangeFactory.create(account)
+
+                # 주문 취소
+                account_cancelled = 0
+                account_failed = 0
+
+                for order in open_orders:
+                    try:
+                        # 거래소 API 호출
+                        exchange.cancel_order(
+                            order_id=order.exchange_order_id,
+                            symbol=order.symbol
+                        )
+
+                        # DB 상태 업데이트
+                        order.status = 'CANCELLED'
+
+                        # SSE 이벤트 발행
+                        self._emit_order_event(
+                            account_id=account.id,
+                            order_id=order.exchange_order_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            order_type=order.order_type,
+                            status='CANCELLED',
+                            quantity=order.quantity,
+                            price=order.price,
+                            event_type='order_cancelled'
+                        )
+
+                        account_cancelled += 1
+                        logger.info(f"✅ 주문 취소 완료 - order_id: {order.exchange_order_id}")
+
+                    except Exception as e:
+                        logger.error(f"❌ 주문 취소 실패 - order_id: {order.exchange_order_id}, "
+                                   f"error: {e}")
+                        account_failed += 1
+
+                db.session.commit()
+
+                cancelled_count += account_cancelled
+                failed_count += account_failed
+
+                results.append({
+                    'account_name': account.name,
+                    'cancelled': account_cancelled,
+                    'failed': account_failed
+                })
+
+            except Exception as e:
+                logger.error(f"❌ 증권 주문 취소 실패 (account_id={account.id}): {e}",
+                            exc_info=True)
+                results.append({
+                    'account_name': account.name,
+                    'error': str(e)
+                })
+
+        # 결과 메시지 생성
+        if cancelled_count == 0 and failed_count == 0:
+            message = "취소할 미체결 주문이 없습니다"
+        else:
+            message = f"증권 주문 취소 완료 - 성공: {cancelled_count}, 실패: {failed_count}"
+
+        return {
+            'success': True,  # 취소 대상이 없어도 success=True
+            'message': message,
+            'cancelled_orders': cancelled_count,
+            'failed_orders': failed_count,
+            'results': results
+        }
+
+    def _emit_order_event(
+        self,
+        account_id: int,
+        order_id: str,
+        symbol: str,
+        side: str,
+        order_type: str,
+        status: str,
+        quantity: float,
+        price: Optional[float],
+        event_type: str = 'order_created'
+    ) -> None:
+        """
+        SSE 이벤트 발행 (주문 생성/취소/체결 알림)
+
+        Args:
+            account_id: 계좌 ID
+            order_id: 거래소 주문 ID
+            symbol: 심볼
+            side: 주문 방향 (BUY/SELL)
+            order_type: 주문 타입 (LIMIT/MARKET 등)
+            status: 주문 상태 (NEW/FILLED/CANCELLED 등)
+            quantity: 주문 수량
+            price: 주문 가격 (선택적)
+            event_type: 이벤트 타입 (order_created/order_cancelled 등)
+        """
+        try:
+            from app.services.event_service import event_service
+
+            event_data = {
+                'account_id': account_id,
+                'order_id': order_id,
+                'symbol': symbol,
+                'side': side,
+                'order_type': order_type,
+                'status': status,
+                'quantity': quantity,
+                'price': price,
+                'timestamp': time.time()
+            }
+
+            event_service.emit_order_event(
+                account_id=account_id,
+                event_type=event_type,
+                data=event_data
+            )
+
+            logger.debug(f"📡 SSE 이벤트 발행 완료 - event_type: {event_type}, order_id: {order_id}")
+
+        except Exception as e:
+            # SSE 이벤트 발행 실패는 치명적 에러가 아님
+            logger.warning(f"⚠️ SSE 이벤트 발행 실패: {e}")
 
 # 전역 인스턴스
 webhook_service = WebhookService() 

@@ -114,8 +114,8 @@ class CryptoExchangeFactory:
         return cls.SUPPORTED_EXCHANGES.copy()
 
 
-# 전역 팩토리 인스턴스
-crypto_factory = CryptoExchangeFactory()
+# 전역 팩토리 (클래스 - 모든 메서드가 @classmethod)
+crypto_factory = CryptoExchangeFactory
 
 
 # 편의 함수들
