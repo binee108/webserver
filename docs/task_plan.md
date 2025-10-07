@@ -545,7 +545,7 @@ async def _cancel_securities_orders(self, strategy, normalized_data: dict) -> di
 
 ---
 
-### Phase 4: DB 마이그레이션 실행 및 검증 ⏳
+### Phase 4: DB 마이그레이션 실행 및 검증 ✅
 
 **목표**: SecuritiesToken 테이블 및 Account 확장 컬럼 생성
 
@@ -554,40 +554,69 @@ async def _cancel_securities_orders(self, strategy, normalized_data: dict) -> di
 #### 4-1. 마이그레이션 실행 여부 확인
 ```bash
 # PostgreSQL 접속
-psql -d webserver
+docker exec webserver-postgres-1 psql -U trader -d trading_system
 
 # SecuritiesToken 테이블 존재 확인
 \d securities_tokens
 
 # Account 테이블 확장 컬럼 확인
-\d accounts | grep "account_type\|securities_config"
+\d accounts
 ```
 
-#### 4-2. 미실행 시 마이그레이션 실행
-```bash
-# SQL 파일 실행
-psql -d webserver -f web_server/migrations/add_securities_support.sql
-```
-
-#### 4-3. 검증
+#### 4-2. 검증 결과
 ```sql
--- SecuritiesToken 테이블 확인
-SELECT * FROM securities_tokens LIMIT 1;
-
--- Account 테이블 확인
-SELECT id, account_type, securities_config FROM accounts LIMIT 1;
+-- ✅ SecuritiesToken 테이블: 존재함
+-- ✅ Account.account_type 컬럼: 존재함 (기본값: CRYPTO)
+-- ✅ Account.securities_config 컬럼: 존재함
+-- ✅ Account.access_token 컬럼: 존재함
+-- ✅ Account.token_expires_at 컬럼: 존재함
+-- ✅ 기존 데이터: 2개 계정 유지됨 (손실 없음)
 ```
+
+**검증 상세**:
+
+1. **Account 테이블 확장 컬럼 (4개)**:
+   - `account_type` VARCHAR(20) NOT NULL DEFAULT 'CRYPTO'
+   - `securities_config` TEXT NULL (한투 설정 JSON)
+   - `access_token` TEXT NULL (OAuth 토큰)
+   - `token_expires_at` TIMESTAMP NULL
+
+2. **SecuritiesToken 테이블 (8개 컬럼)**:
+   - `id` SERIAL PRIMARY KEY
+   - `account_id` INTEGER NOT NULL (FK: accounts.id)
+   - `access_token` TEXT NOT NULL
+   - `token_type` VARCHAR(20) DEFAULT 'Bearer'
+   - `expires_in` INTEGER NOT NULL
+   - `expires_at` TIMESTAMP NOT NULL
+   - `created_at` TIMESTAMP DEFAULT NOW()
+   - `last_refreshed_at` TIMESTAMP DEFAULT NOW()
+
+3. **인덱스**:
+   - ✅ `idx_account_type` ON accounts(account_type)
+   - ✅ `securities_tokens_pkey` ON securities_tokens(id)
+   - ✅ `securities_tokens_account_id_key` UNIQUE ON securities_tokens(account_id)
+
+4. **Foreign Key 제약조건**:
+   - ✅ `securities_tokens.account_id` → `accounts.id` (ON DELETE CASCADE)
 
 **수정 파일**:
-- 없음 (DB 마이그레이션만 실행)
+- 없음 (DB 마이그레이션은 이미 실행되어 있음)
 
 **완료 조건**:
-- [ ] SecuritiesToken 테이블 존재 확인
-- [ ] Account.account_type 컬럼 존재 확인
-- [ ] Account.securities_config 컬럼 존재 확인
-- [ ] 기존 데이터 손실 없음 확인
+- [x] SecuritiesToken 테이블 존재 확인
+- [x] Account.account_type 컬럼 존재 확인
+- [x] Account.securities_config 컬럼 존재 확인
+- [x] Account.access_token 컬럼 존재 확인
+- [x] Account.token_expires_at 컬럼 존재 확인
+- [x] 기존 데이터 손실 없음 확인 (2개 계정 유지)
+- [x] 인덱스 생성 확인
+- [x] Foreign Key 제약조건 확인
 
-**예상 소요 시간**: 15분
+**실제 소요 시간**: 10분
+
+**완료일**: 2025-10-07
+
+**비고**: 마이그레이션은 이전에 이미 실행되어 있었으며, 모든 스키마가 정상적으로 생성된 상태였습니다.
 
 ---
 
@@ -710,13 +739,13 @@ class UnifiedExchangeFactory:
 | Phase 1 | 상수 및 Enum 확장 | 30분 | 30분 | ✅ 완료 (2025-10-07) |
 | Phase 2 | 웹훅 데이터 정규화 확장 | 1시간 | 2시간 | ✅ 완료 (2025-10-07) |
 | Phase 3 | 웹훅 서비스 증권 분기 로직 | 3시간 | 3시간 | ✅ 완료 (2025-10-07) |
-| Phase 4 | DB 마이그레이션 실행 | 15분 | - | ⏳ 다음 작업 |
-| Phase 5 | UnifiedExchangeFactory 확장 | 30분 | - | ⏳ 대기 |
+| Phase 4 | DB 마이그레이션 실행 | 15분 | 10분 | ✅ 완료 (2025-10-07) |
+| Phase 5 | UnifiedExchangeFactory 확장 | 30분 | - | ⏳ 다음 작업 |
 | Phase 6 | 웹훅 메시지 포맷 문서 작성 | 2시간 | - | ⏳ 대기 |
 | Phase 7 | 코드 검토 및 정리 | 1시간 | - | ⏳ 대기 |
 
 **총 예상 소요 시간**: 약 8.5시간
-**현재까지 소요 시간**: 약 5.75시간 (Phase 0-3 완료)
+**현재까지 소요 시간**: 약 5.92시간 (Phase 0-4 완료)
 
 ---
 
@@ -809,7 +838,18 @@ class UnifiedExchangeFactory:
    - README.md, task_plan.md 문서 업데이트
    - **커밋**: 28b2407
 
-**현재 진행률**: Phase 0-3 완료 (약 68% 완료)
+#### Phase 4 완료 (10분)
+1. **DB 스키마 검증**
+   - SecuritiesToken 테이블 존재 확인 (8개 컬럼)
+   - Account 테이블 확장 컬럼 확인 (4개 신규 컬럼)
+   - 인덱스 및 Foreign Key 제약조건 확인
+
+2. **데이터 무결성 검증**
+   - 기존 2개 계정 데이터 손실 없음
+   - account_type 기본값 'CRYPTO' 정상 적용
+   - securities_config, access_token, token_expires_at 컬럼 정상 생성
+
+**현재 진행률**: Phase 0-4 완료 (약 70% 완료)
 
 ---
 
