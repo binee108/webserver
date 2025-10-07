@@ -4,6 +4,46 @@
 
 from typing import List, Optional
 
+class AccountType:
+    """계좌 타입"""
+    CRYPTO = 'CRYPTO'
+    STOCK = 'STOCK'  # 증권 통합 타입
+
+    VALID_TYPES = [CRYPTO, STOCK]
+
+    @classmethod
+    def is_crypto(cls, account_type):
+        return account_type == cls.CRYPTO
+
+    @classmethod
+    def is_securities(cls, account_type):
+        return account_type == cls.STOCK
+
+    @classmethod
+    def normalize(cls, value):
+        """값을 표준 AccountType 상수로 변환"""
+        if not value:
+            return cls.CRYPTO  # 기본값
+
+        upper_value = value.upper()
+        if upper_value in ['STOCK', 'SECURITIES', 'EQUITY']:
+            return cls.STOCK
+        elif upper_value in ['CRYPTO', 'CRYPTOCURRENCY']:
+            return cls.CRYPTO
+
+        return cls.CRYPTO  # 기본값
+
+
+class SecuritiesMarketType:
+    """증권 마켓 타입"""
+    DOMESTIC_STOCK = 'DOMESTIC_STOCK'      # 국내주식
+    OVERSEAS_STOCK = 'OVERSEAS_STOCK'      # 해외주식
+    DOMESTIC_FUTURES = 'DOMESTIC_FUTURES'  # 국내선물옵션
+    OVERSEAS_FUTURES = 'OVERSEAS_FUTURES'  # 해외선물옵션
+
+    VALID_TYPES = [DOMESTIC_STOCK, OVERSEAS_STOCK, DOMESTIC_FUTURES, OVERSEAS_FUTURES]
+
+
 class MarketType:
     """마켓 타입 상수"""
     SPOT = 'SPOT'
@@ -73,28 +113,52 @@ class MarketType:
 
 class Exchange:
     """거래소 상수"""
+    # 크립토 거래소
     BINANCE = 'BINANCE'
     BYBIT = 'BYBIT'
     OKX = 'OKX'
     UPBIT = 'UPBIT'
-    
+
+    # 증권 거래소
+    KIS = 'KIS'           # 한국투자증권
+    KIWOOM = 'KIWOOM'     # 키움증권
+    LS = 'LS'             # LS증권
+    EBEST = 'EBEST'       # 이베스트투자증권
+
     # 소문자 버전 (API 연동용)
     BINANCE_LOWER = 'binance'
     BYBIT_LOWER = 'bybit'
     OKX_LOWER = 'okx'
     UPBIT_LOWER = 'upbit'
-    
+
     # 유효한 값 목록
-    VALID_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT]
-    VALID_EXCHANGES_LOWER = [BINANCE_LOWER, BYBIT_LOWER, OKX_LOWER, UPBIT_LOWER]
-    
+    VALID_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, KIS, KIWOOM, LS, EBEST]
+    VALID_EXCHANGES_LOWER = [x.lower() for x in VALID_EXCHANGES]
+
+    CRYPTO_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT]
+    SECURITIES_EXCHANGES = [KIS, KIWOOM, LS, EBEST]
+
     @classmethod
     def is_valid(cls, value):
         """값이 유효한 거래소인지 확인"""
         if not value:
             return False
         return value.upper() in cls.VALID_EXCHANGES
-    
+
+    @classmethod
+    def is_securities(cls, exchange):
+        """증권 거래소 여부 확인"""
+        if not exchange:
+            return False
+        return exchange.upper() in cls.SECURITIES_EXCHANGES
+
+    @classmethod
+    def is_crypto(cls, exchange):
+        """크립토 거래소 여부 확인"""
+        if not exchange:
+            return False
+        return exchange.upper() in cls.CRYPTO_EXCHANGES
+
     @classmethod
     def normalize(cls, value):
         """값을 표준 대문자 형태로 변환"""
@@ -103,7 +167,7 @@ class Exchange:
             if upper_value in cls.VALID_EXCHANGES:
                 return upper_value
         return value
-    
+
     @classmethod
     def to_lower(cls, value):
         """값을 소문자로 변환"""

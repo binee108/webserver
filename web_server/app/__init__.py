@@ -285,6 +285,14 @@ def create_app(config_name=None):
     else:
         app.logger.info('Flask CLI 명령어 실행 중 - 데이터베이스 초기화 및 스케줄러 건너뜀')
 
+    # Flask CLI 명령어 등록
+    try:
+        from app.cli import init_app as init_cli
+        init_cli(app)
+        app.logger.debug('Flask CLI 명령어 등록 완료')
+    except Exception as e:
+        app.logger.warning(f'Flask CLI 명령어 등록 실패: {str(e)}')
+
     return app
 
 def init_scheduler(app):
@@ -485,6 +493,18 @@ def register_background_jobs(app):
         minute=17,
         id='auto_rebalance_accounts',
         name='Auto Rebalance Accounts',
+        replace_existing=True,
+        max_instances=1
+    )
+
+    # Phase 4.3: 증권 OAuth 토큰 자동 갱신 (6시간마다)
+    scheduler.add_job(
+        func=refresh_securities_tokens_with_context,
+        args=[app],
+        trigger="interval",
+        hours=6,
+        id='securities_token_refresh',
+        name='Securities OAuth Token Refresh',
         replace_existing=True,
         max_instances=1
     )
@@ -878,6 +898,46 @@ def calculate_daily_performance_with_context(app):
                     telegram_service.send_error_alert(
                         "백그라운드 작업 오류",
                         f"일일 성과 계산 실패: {str(e)}"
+                    )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
+
+def refresh_securities_tokens_with_context(app):
+    """
+    Phase 4.3: Flask 앱 컨텍스트 내에서 증권 OAuth 토큰 자동 갱신
+
+    모든 증권 계좌의 OAuth 토큰을 자동으로 갱신합니다.
+    6시간마다 실행되어 토큰 만료를 방지합니다.
+
+    관련 문서:
+    - docs/korea_investment_api_auth.md (Line 78-82)
+      * 토큰 유효기간: 24시간
+      * 갱신 주기: 6시간
+    """
+    with app.app_context():
+        try:
+            from app.jobs.securities_token_refresh import SecuritiesTokenRefreshJob
+
+            result = SecuritiesTokenRefreshJob.run(app)
+
+            # 실패한 계좌가 있으면 경고 로그
+            if result['failed'] > 0:
+                app.logger.warning(
+                    f"⚠️ 증권 토큰 갱신 중 {result['failed']}개 계좌 실패"
+                )
+                for failed in result['failed_accounts']:
+                    app.logger.error(
+                        f"  - 계좌 {failed['account_id']} ({failed['account_name']}): {failed['error']}"
+                    )
+
+        except Exception as e:
+            app.logger.error(f'❌ 증권 토큰 자동 갱신 작업 실패: {str(e)}')
+            try:
+                from app.services.telegram import telegram_service
+                if telegram_service.is_enabled():
+                    telegram_service.send_error_alert(
+                        "백그라운드 작업 오류",
+                        f"증권 토큰 자동 갱신 실패: {str(e)}"
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시

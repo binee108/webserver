@@ -74,7 +74,7 @@ class Account(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)  # 계좌명
-    exchange = db.Column(db.String(50), nullable=False)  # BINANCE, BYBIT, OKX 등
+    exchange = db.Column(db.String(50), nullable=False)  # BINANCE, BYBIT, OKX, KIS, KIWOOM 등
     public_api = db.Column(db.Text, nullable=False)  # 기존 필드 유지
     secret_api = db.Column(db.Text, nullable=False)
     passphrase = db.Column(db.Text, nullable=True)  # OKX 등에서 필요한 passphrase
@@ -82,6 +82,22 @@ class Account(db.Model):
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 활성화 상태
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 마지막 업데이트
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # 🆕 계좌 타입 (CRYPTO or STOCK)
+    account_type = db.Column(db.String(20), default='CRYPTO', nullable=False, index=True)
+
+    # 🆕 증권 전용 필드 (증권사별 설정을 JSON으로 유연하게 저장)
+    # securities_config 구조 예시:
+    # {
+    #   "account_number": "12345678",     # 계좌번호
+    #   "product_code": "01",             # 상품코드
+    #   "market_type": "DOMESTIC_STOCK",  # 마켓 타입
+    #   "cert_password": "...",           # 공인인증서 비밀번호 (암호화, 키움용)
+    #   "additional_params": {}           # 증권사별 추가 파라미터
+    # }
+    _securities_config = db.Column('securities_config', db.Text, nullable=True)  # 암호화된 JSON 문자열 저장
+    _access_token = db.Column('access_token', db.Text, nullable=True)  # OAuth 토큰 (암호화)
+    token_expires_at = db.Column(db.DateTime, nullable=True)
     
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='account', lazy=True, cascade='all, delete-orphan')
@@ -152,6 +168,55 @@ class Account(db.Model):
     def api_secret(self) -> str:
         """거래소 클라이언트에 전달할 API 시크릿 (캐싱 적용)"""
         return self._get_cached_decrypted_value("api_secret", self.secret_api)
+
+    @property
+    def securities_config(self) -> dict:
+        """복호화된 증권 설정 (딕셔너리)"""
+        if not self._securities_config:
+            return {}
+
+        from app.security.encryption import decrypt_value
+        import json
+
+        decrypted = decrypt_value(self._securities_config)
+        if not decrypted:
+            return {}
+
+        try:
+            return json.loads(decrypted)
+        except json.JSONDecodeError:
+            logger.error(f"증권 설정 JSON 파싱 실패 (Account {self.id})")
+            return {}
+
+    @securities_config.setter
+    def securities_config(self, value: dict):
+        """증권 설정 암호화 저장"""
+        if value is None:
+            self._securities_config = None
+            return
+
+        from app.security.encryption import encrypt_value
+        import json
+
+        json_str = json.dumps(value)
+        self._securities_config = encrypt_value(json_str)
+
+    @property
+    def access_token(self) -> str:
+        """복호화된 OAuth 토큰"""
+        if not self._access_token:
+            return ""
+        return self._get_cached_decrypted_value("access_token", self._access_token)
+
+    @access_token.setter
+    def access_token(self, value: str):
+        """OAuth 토큰 암호화 저장"""
+        if value is None:
+            self._access_token = None
+            return
+
+        from app.security.encryption import encrypt_value
+        self._access_token = encrypt_value(value)
 
     @classmethod
     def get_cache_stats(cls) -> dict:
@@ -608,3 +673,63 @@ class TrackingLog(db.Model):
     
     def __repr__(self):
         return f'<TrackingLog [{self.severity}] {self.log_type}: {self.message[:50]}...>'
+
+
+class SecuritiesToken(db.Model):
+    """
+    증권 거래소 OAuth 토큰 캐시
+
+    특징:
+    - 계좌당 1개 토큰 (UNIQUE 제약조건)
+    - 자동 갱신 (Background Job)
+    - 암호화 저장 (access_token 프로퍼티)
+
+    관계:
+    - Account (1:1) - CASCADE 동작:
+      * Account 삭제 → Token 자동 삭제 (SQL FK CASCADE)
+      * Token 삭제 → Account 유지 (역방향 cascade 방지)
+    """
+    __tablename__ = 'securities_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id', ondelete='CASCADE'), unique=True, nullable=False)
+    _access_token = db.Column('access_token', db.Text, nullable=False)  # 암호화된 토큰
+    token_type = db.Column(db.String(20), default='Bearer')
+    expires_in = db.Column(db.Integer, nullable=False)  # 유효기간(초)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_refreshed_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # 🆕 Relationship 추가 (CRITICAL FIX - Priority 1)
+    # 1:1 관계: 계좌 삭제 시 토큰도 자동 삭제 (SQL FK CASCADE)
+    # ⚠️ backref에 cascade 없음 → Token 삭제 시 Account 유지 (역방향 cascade 방지)
+    account = db.relationship(
+        'Account',
+        backref=db.backref('securities_token', uselist=False),  # cascade 제거로 역방향 cascade 방지
+        foreign_keys=[account_id]
+    )
+
+    @property
+    def access_token(self) -> str:
+        """복호화된 토큰"""
+        from app.security.encryption import decrypt_value
+        return decrypt_value(self._access_token) if self._access_token else ""
+
+    @access_token.setter
+    def access_token(self, value: str):
+        """토큰 암호화 저장"""
+        from app.security.encryption import encrypt_value
+        self._access_token = encrypt_value(value) if value else None
+
+    def is_expired(self) -> bool:
+        """토큰 만료 여부 확인 (5분 버퍼)"""
+        from datetime import timedelta
+        return datetime.utcnow() > (self.expires_at - timedelta(minutes=5))
+
+    def needs_refresh(self) -> bool:
+        """토큰 갱신 필요 여부 (6시간 기준)"""
+        from datetime import timedelta
+        return datetime.utcnow() > (self.last_refreshed_at + timedelta(hours=6))
+
+    def __repr__(self):
+        return f'<SecuritiesToken account_id={self.account_id}, expires_at={self.expires_at}>'

@@ -7,7 +7,7 @@ Rate Limit + Precision Cache + Exchange Logic + Adapter Factory 통합
 
 import time
 import logging
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union, TYPE_CHECKING
 from decimal import Decimal
 from datetime import datetime
 from threading import Lock
@@ -16,6 +16,10 @@ from collections import defaultdict
 from app.models import Account
 from app.constants import Exchange, MarketType, OrderType
 from app.exchanges.models import PriceQuote
+
+if TYPE_CHECKING:
+    from app.exchanges.base import BaseExchange
+    from app.securities.base import BaseSecuritiesExchange
 
 logger = logging.getLogger(__name__)
 
@@ -161,35 +165,41 @@ class ExchangeService:
         self._cache_max_size = 100
         self._cache_ttl = 3600  # 1시간
 
-        # 거래소 팩토리 초기화
+        # 거래소 팩토리 초기화 (UnifiedExchangeFactory는 필요하지 않음 - 직접 생성)
+        # UnifiedExchangeFactory는 Account 객체를 직접 받아 처리하므로 팩토리 인스턴스 불필요
         try:
             from app.exchanges.factory import exchange_factory
-            self.factory = exchange_factory
+            self.legacy_factory = exchange_factory  # 레거시 크립토 전용 팩토리 (공용 클라이언트용)
             logger.info("✅ 통합 거래소 서비스 초기화 완료")
         except ImportError as e:
             logger.error(f"❌ 거래소 팩토리 import 실패: {e}")
-            self.factory = None
+            self.legacy_factory = None
 
         # 공용(비인증) 클라이언트 캐시
         self._public_exchange_clients: Dict[str, Any] = {}
 
-    def get_exchange_client(self, account: Account) -> Optional[Any]:
+    def get_exchange_client(
+        self, account: Account
+    ) -> Optional[Union['BaseExchange', 'BaseSecuritiesExchange']]:
         """
         거래소 클라이언트 반환 (강화된 캐싱 시스템)
+
+        크립토/증권 통합 지원:
+        - UnifiedExchangeFactory를 통한 자동 라우팅
+        - 계좌 타입에 따라 BaseExchange 또는 BaseSecuritiesExchange 반환
 
         Args:
             account: 계정 정보
 
         Returns:
-            거래소 클라이언트 인스턴스
+            Union[BaseExchange, BaseSecuritiesExchange]: 거래소 클라이언트 인스턴스
         """
-        if not self.factory:
-            logger.error("❌ 거래소 팩토리가 초기화되지 않음")
-            return None
+        from app.exchanges.unified_factory import UnifiedExchangeFactory
+        from app.constants import AccountType
 
         # 캐시 키 생성 (계정 업데이트 시간 포함)
         account_timestamp = account.updated_at.timestamp() if account.updated_at else 0
-        cache_key = f"{account.id}_{account.exchange}_{account_timestamp}"
+        cache_key = f"{account.id}_{account.exchange}_{account.account_type}_{account_timestamp}"
 
         with self._client_lock:
             current_time = time.time()
@@ -202,7 +212,10 @@ class ExchangeService:
                 # 마지막 사용 시간 업데이트
                 created_time, _ = self._client_timestamps[cache_key]
                 self._client_timestamps[cache_key] = (created_time, current_time)
-                logger.debug(f"✅ 캐시된 클라이언트 사용 (Account: {account.id})")
+                logger.debug(
+                    f"✅ 캐시된 클라이언트 사용 "
+                    f"(account_id={account.id}, type={account.account_type})"
+                )
                 return self._exchange_clients[cache_key]
 
             # 캐시 크기 제한 (가장 오래된 것 제거)
@@ -210,25 +223,36 @@ class ExchangeService:
                 self._evict_oldest_client()
 
             try:
-                # 새 클라이언트 생성
-                if account.exchange.lower() == 'binance':
-                    client = self.factory.create_binance(
-                        api_key=account.api_key,
-                        secret=account.api_secret,
-                        testnet=account.is_testnet
-                    )
+                # UnifiedExchangeFactory를 통한 클라이언트 생성
+                logger.info(
+                    f"🔀 거래소 클라이언트 생성 시작 "
+                    f"(account_id={account.id}, type={account.account_type}, exchange={account.exchange})"
+                )
 
-                    if client:
-                        self._exchange_clients[cache_key] = client
-                        self._client_timestamps[cache_key] = (current_time, current_time)
-                        logger.info(f"✅ {account.exchange} 클라이언트 생성 완료 (Account: {account.id})")
-                        return client
+                client = UnifiedExchangeFactory.create_exchange(account)
+
+                if client:
+                    self._exchange_clients[cache_key] = client
+                    self._client_timestamps[cache_key] = (current_time, current_time)
+
+                    client_type = "증권" if not AccountType.is_crypto(account.account_type) else "크립토"
+                    logger.info(
+                        f"✅ {client_type} 거래소 클라이언트 생성 완료 "
+                        f"(account_id={account.id}, exchange={account.exchange})"
+                    )
+                    return client
                 else:
-                    logger.error(f"❌ 지원되지 않는 거래소: {account.exchange}")
+                    logger.error(
+                        f"❌ 거래소 클라이언트 생성 실패: None 반환 "
+                        f"(account_id={account.id})"
+                    )
                     return None
 
             except Exception as e:
-                logger.error(f"❌ 거래소 클라이언트 생성 실패: {e}")
+                logger.error(
+                    f"❌ 거래소 클라이언트 생성 중 예외 발생 "
+                    f"(account_id={account.id}, type={account.account_type}): {e}"
+                )
                 return None
 
     def _cleanup_expired_clients(self, current_time: float) -> None:
@@ -861,26 +885,26 @@ class ExchangeService:
 
     def is_available(self) -> bool:
         """서비스 사용 가능 여부"""
-        return self.factory is not None
+        return self.legacy_factory is not None
 
     def get_supported_exchanges(self) -> List[str]:
-        """지원되는 거래소 목록"""
-        if self.factory:
-            return self.factory.get_supported_exchanges()
+        """지원되는 거래소 목록 (크립토 전용)"""
+        if self.legacy_factory:
+            return self.legacy_factory.get_supported_exchanges()
         return []
 
 
     # === 공용 가격 조회 (가격 캐시 등에서 사용) ===
 
     def _get_public_exchange_client(self, exchange_name: str) -> Optional[Any]:
-        """인증 불필요한 공용 엔드포인트용 클라이언트 반환"""
-        if not self.factory:
+        """인증 불필요한 공용 엔드포인트용 클라이언트 반환 (크립토 전용)"""
+        if not self.legacy_factory:
             logger.error("❌ 거래소 팩토리가 초기화되지 않아 공용 클라이언트를 생성할 수 없습니다")
             return None
 
         exchange_key = exchange_name.lower()
 
-        if not self.factory.is_supported(exchange_name):
+        if not self.legacy_factory.is_supported(exchange_name):
             logger.error(f"❌ 공용 클라이언트를 지원하지 않는 거래소: {exchange_name}")
             return None
 
@@ -890,7 +914,7 @@ class ExchangeService:
                 return client
 
             try:
-                client = self.factory.create_exchange(exchange_key, api_key='', secret='', testnet=False)
+                client = self.legacy_factory.create_exchange(exchange_key, api_key='', secret='', testnet=False)
                 self._public_exchange_clients[exchange_key] = client
                 return client
             except Exception as e:

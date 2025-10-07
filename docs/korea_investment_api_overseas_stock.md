@@ -6,13 +6,20 @@
 - **Endpoint**: `POST /uapi/overseas-stock/v1/trading/order`
 - **tr_id**: 거래소별 상이 (아래 표 참조)
 
-#### 거래소별 tr_id
-| 거래소 | 매수 | 매도 |
-|--------|------|------|
-| 미국(NASD/NYSE/AMEX) | TTTS1002U | TTTS1001U |
-| 홍콩(SEHK) | TTTS1003U | TTTS1003U |
-| 일본(TSE) | TTTS0305U | TTTS0304U |
-| 중국(SHS/SZS) | TTTS0202U | TTTS0201U |
+#### 거래소별 tr_id (실전투자)
+| 거래소 | 코드 | 매수 | 매도 |
+|--------|------|------|------|
+| 미국 나스닥 | NASD | TTTT1002U | TTTT1006U |
+| 미국 뉴욕 | NYSE | TTTT1002U | TTTT1006U |
+| 미국 아멕스 | AMEX | TTTT1002U | TTTT1006U |
+| 홍콩 | SEHK | TTTS1002U | TTTS1001U |
+| 중국 상해 | SHAA | TTTS0202U | TTTS1005U |
+| 중국 심천 | SZAA | TTTS0305U | TTTS0304U |
+| 일본 | TKSE | TTTS0308U | TTTS0307U |
+| 베트남 하노이 | HASE | TTTS0311U | TTTS0310U |
+| 베트남 호치민 | VNSE | TTTS0311U | TTTS0310U |
+
+**※ 모의투자**: 실전투자 TR_ID의 첫 글자 'T'를 'V'로 변경 (예: TTTT1002U → VTTT1002U)
 
 #### 요청 (미국 기준)
 ```json

@@ -6,12 +6,14 @@ Native Binance 구현으로 간단하고 빠른 거래를 제공합니다.
 """
 
 from .factory import ExchangeFactory, exchange_factory, create_exchange, create_binance
+from .unified_factory import UnifiedExchangeFactory
 from .base import BaseExchange, ExchangeError, NetworkError, AuthenticationError, InsufficientFunds, InvalidOrder
 from .binance import BinanceExchange
 from .models import MarketInfo, Balance, Order, Ticker, Position
 
 __all__ = [
     'ExchangeFactory',
+    'UnifiedExchangeFactory',
     'exchange_factory',
     'create_exchange',
     'create_binance',
