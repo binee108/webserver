@@ -183,8 +183,8 @@ class WebhookService:
             trade_started_at = time.time()
 
             if order_type == OrderType.CANCEL_ALL_ORDER:
-                # market_type 기반 취소 로직 분기
-                market_type = normalized_data.get('market_type', MarketType.SPOT)
+                # Strategy의 market_type 기반 취소 로직 분기
+                market_type = strategy.market_type or MarketType.SPOT
 
                 if MarketType.is_crypto(market_type):
                     result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
@@ -194,8 +194,8 @@ class WebhookService:
             elif order_type == OrderType.CANCEL:
                 result = self.process_cancel_order(normalized_data, webhook_received_at)
             else:
-                # market_type 기반 거래 처리 분기
-                market_type = normalized_data.get('market_type', MarketType.SPOT)
+                # Strategy의 market_type 기반 거래 처리 분기
+                market_type = strategy.market_type or MarketType.SPOT
 
                 if MarketType.is_crypto(market_type):
                     # 크립토: 기존 로직
@@ -378,17 +378,10 @@ class WebhookService:
         """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
         token = webhook_data.get('token')
-        exchange = webhook_data.get('exchange')  # 선택적: 특정 거래소만
-        market_type = webhook_data.get('market_type')  # 선택적: 특정 마켓타입만 (SPOT/FUTURE)
         currency = webhook_data.get('currency')  # 선택적: 특정 통화만 (향후 확장용)
         symbol = webhook_data.get('symbol')  # 선택적: 특정 심볼만
-        
-        # market_type 표준화: MarketType.normalize 사용
-        if market_type:
-            market_type = MarketType.normalize(market_type)
-        
+
         logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, "
-                   f"거래소: {exchange or '전체'}, 마켓타입: {market_type or '전체'}, "
                    f"통화: {currency or '전체'}, 심볼: {symbol or '전체'}")
         
         if not group_name:
@@ -457,23 +450,7 @@ class WebhookService:
                 logger.warning(f"❌ 계좌 {account.id}({account.name}): 비활성화 상태로 제외")
                 skipped_count += 1
                 continue
-            
-            # 거래소 필터링
-            if exchange and account.exchange.upper() != exchange.upper():
-                logger.info(f"⏭️ 계좌 {account.id}({account.name}): 거래소 불일치 - 스킵 "
-                           f"(계좌: {account.exchange}, 요청: {exchange})")
-                skipped_count += 1
-                continue
-            
-            # 마켓 타입 필터링 - Strategy의 market_type 정규화
-            strategy_market = MarketType.normalize(strategy.market_type) if strategy.market_type else MarketType.SPOT
-                
-            if market_type and strategy_market != market_type:
-                logger.info(f"⏭️ 계좌 {account.id}({account.name}): 마켓 타입 불일치 - 스킵 "
-                           f"(전략: {strategy_market}, 요청: {market_type})")
-                skipped_count += 1
-                continue
-            
+
             logger.info(f"✅ 계좌 {account.id}({account.name}): 주문 취소 처리 대상")
             processed_count += 1
             
@@ -564,7 +541,6 @@ class WebhookService:
         return {
             'action': 'cancel_all_orders',
             'strategy': group_name,
-            'market_type': market_type,  # 🆕 마켓 타입 정보 추가
             'results': results,
             'summary': {
                 'total_accounts': len(strategy_accounts),
@@ -780,7 +756,7 @@ class WebhookService:
                     quantity=stock_order.quantity,
                     price=float(stock_order.price) if stock_order.price else 0.0,
                     exchange_order_id=stock_order.order_id,
-                    market_type=normalized_data.get('market_type'),
+                    market_type=strategy.market_type,
                     timestamp=datetime.utcnow()
                 )
                 db.session.add(trade)

@@ -127,9 +127,9 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     # order_type은 제외 (정확한 필드명만 허용)
     field_mapping = {
         'group_name': 'group_name',
-        'exchange': 'exchange',
-        'platform': 'exchange',  # platform을 exchange로 매핑
-        'market_type': 'market_type',
+        # 'exchange': 'exchange',  # ❌ 제거: Account.exchange에서 자동 결정
+        # 'platform': 'exchange',  # ❌ 제거: Account.exchange에서 자동 결정
+        # 'market_type': 'market_type',  # ❌ 제거: Strategy.market_type에서 자동 결정
         'currency': 'currency',
         'symbol': 'symbol',
         'side': 'side',
@@ -182,7 +182,18 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     # order_type은 정확한 필드명만 허용
     if 'order_type' in webhook_data:
         normalized['order_type'] = webhook_data['order_type']
-    
+
+    # ✅ Hard Break: 금지된 필드 검증 (정규화 후)
+    forbidden_fields = ['market_type', 'exchange', 'platform']
+    found_forbidden = [field for field in forbidden_fields if field in normalized]
+
+    if found_forbidden:
+        raise ValueError(
+            f"웹훅 메시지에 더 이상 사용되지 않는 필드가 포함되어 있습니다: {', '.join(found_forbidden)}. "
+            f"해당 필드들을 제거하세요. "
+            f"market_type은 전략 설정에서, exchange는 연동된 계좌에서 자동으로 결정됩니다."
+        )
+
     # 🆕 배치 주문 감지 및 처리
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
         normalized['batch_mode'] = True
@@ -246,7 +257,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     # 값들을 내부 로직에 맞게 표준화
     if 'order_type' in normalized and isinstance(normalized['order_type'], str):
         normalized['order_type'] = OrderType.normalize(normalized['order_type'])  # 표준화 (MARKET, LIMIT 등)
-    
+
     if 'side' in normalized and isinstance(normalized['side'], str):
         # side를 BUY/SELL로 표준화
         side_lower = normalized['side'].lower()
@@ -257,14 +268,14 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         else:
             # 이미 대문자인 경우 그대로 사용
             normalized['side'] = normalized['side'].upper()
-    
-    if 'exchange' in normalized and isinstance(normalized['exchange'], str):
-        normalized['exchange'] = Exchange.normalize(normalized['exchange'])  # 표준화 (BINANCE, BYBIT 등)
-    
-    if 'market_type' in normalized and isinstance(normalized['market_type'], str):
-        normalized['market_type'] = MarketType.normalize(normalized['market_type'])  # 표준 형태로 변환
-    
+
+    # ❌ 제거: exchange와 market_type은 더 이상 웹훅에서 받지 않음
+    # if 'exchange' in normalized and isinstance(normalized['exchange'], str):
+    #     normalized['exchange'] = Exchange.normalize(normalized['exchange'])
+    # if 'market_type' in normalized and isinstance(normalized['market_type'], str):
+    #     normalized['market_type'] = MarketType.normalize(normalized['market_type'])
+
     if 'currency' in normalized and isinstance(normalized['currency'], str):
         normalized['currency'] = normalized['currency'].upper()  # 대문자로 표준화 (USDT, KRW 등)
-    
+
     return normalized

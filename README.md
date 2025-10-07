@@ -762,13 +762,8 @@ https://your-domain.com/api/webhook
 
 **필수 파라미터:**
 - `group_name`: 전략 그룹명 (전략 식별자)
-- `exchange`: 거래소 이름
-  - 글로벌: `BINANCE`, `BYBIT`
-  - 국내: `UPBIT`
-- `market_type`: 시장 타입
-  - `SPOT`: 현물 거래
-  - `FUTURES`: 선물 거래 (Upbit 미지원)
-- `currency`: 기준 통화
+  - 시장 타입 및 거래소는 전략 설정에서 자동 결정됨
+- `currency`: 기준 통화 (크립토 거래 시)
   - 글로벌 거래소: `USDT`, `BTC`
   - Upbit: `KRW` (원화 마켓)
 - `symbol`: 거래 심볼 (표준 형식: `BASE/QUOTE`)
@@ -798,8 +793,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "MARKET",
@@ -813,8 +806,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "LIMIT",
@@ -829,8 +820,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "STOP_MARKET",
@@ -845,8 +834,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "STOP_LIMIT",
@@ -862,8 +849,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "MARKET",
@@ -877,8 +862,6 @@ https://your-domain.com/api/webhook
 ```json
 {
     "group_name": "my_strategy",
-    "exchange": "BINANCE",
-    "market_type": "FUTURES",
     "currency": "USDT",
     "symbol": "BTC/USDT",
     "order_type": "CANCEL_ALL_ORDER",

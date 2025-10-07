@@ -37,13 +37,9 @@
 ```json
 {
   // 필수 필드
-  "group_name": "my_strategy",
+  "group_name": "my_strategy",  // 전략 식별자 (market_type, exchange는 전략 설정에서 자동 결정)
   "token": "abc123...",
   "order_type": "LIMIT",
-
-  // 마켓 식별
-  "exchange": "KIS",
-  "market_type": "DOMESTIC_STOCK",
 
   // 주문 대상
   "symbol": "005930",
@@ -66,7 +62,41 @@
 }
 ```
 
-### 마켓 타입 (market_type)
+### 변경 사항 (2025-10-07)
+
+**제거된 필드**: `exchange`, `market_type`
+
+**이유**:
+- `market_type`은 Strategy.market_type에서 자동 결정됨
+- `exchange`는 연동된 Account.exchange에서 자동 결정됨
+- 사용자의 오입력 방지 (전략 설정과 웹훅 메시지 불일치 방지)
+- 데이터 일관성 유지 (Single Source of Truth 원칙)
+
+**마이그레이션 가이드**:
+```json
+// 변경 전 (2025-10-07 이전)
+{
+  "group_name": "my_strategy",
+  "exchange": "BINANCE",        // ❌ 제거됨
+  "market_type": "FUTURES",     // ❌ 제거됨
+  "symbol": "BTC/USDT",
+  ...
+}
+
+// 변경 후 (2025-10-07 이후)
+{
+  "group_name": "my_strategy",  // 전략 설정에서 market_type, exchange 자동 결정
+  "symbol": "BTC/USDT",
+  ...
+}
+```
+
+**하위 호환성**: 기존 웹훅 메시지는 여전히 작동하지만, `exchange`와 `market_type` 필드는 무시됩니다.
+
+---
+
+### 마켓 타입 (참고용)
+시스템 내부에서 사용되는 마켓 타입입니다. 웹훅 메시지에서는 지정하지 않습니다.
 - `SPOT`: 크립토 현물
 - `FUTURES`: 크립토 선물
 - `DOMESTIC_STOCK`: 국내주식
