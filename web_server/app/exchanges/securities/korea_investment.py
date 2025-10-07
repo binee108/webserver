@@ -12,9 +12,9 @@ from typing import Dict, List, Optional, Any
 from decimal import Decimal
 from datetime import datetime, timedelta
 
-from app.securities.base import BaseSecuritiesExchange
-from app.securities.models import StockOrder, StockBalance, StockPosition, StockQuote
-from app.securities.exceptions import (
+from .base import BaseSecuritiesExchange
+from .models import StockOrder, StockBalance, StockPosition, StockQuote
+from .exceptions import (
     AuthenticationError,
     NetworkError,
     InvalidOrder,

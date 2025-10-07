@@ -20,8 +20,9 @@ from urllib.parse import urlencode
 import aiohttp
 import requests
 
-from .base import BaseExchange, ExchangeError, InvalidOrder, InsufficientFunds
-from .models import MarketInfo, Balance, Order, Ticker, Position, PriceQuote
+from .base import BaseCryptoExchange
+from app.exchanges.base import ExchangeError, InvalidOrder, InsufficientFunds
+from app.exchanges.models import MarketInfo, Balance, Order, Ticker, Position, PriceQuote
 from app.utils.symbol_utils import to_binance_format, from_binance_format
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ class OrderStatus:
     EXPIRED = "EXPIRED"
 
 
-class BinanceExchange(BaseExchange):
+class BinanceExchange(BaseCryptoExchange):
     """
     Binance 통합 거래소 클래스 (Spot + Futures)
 

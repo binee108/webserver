@@ -18,8 +18,8 @@ from app.constants import Exchange, MarketType, OrderType
 from app.exchanges.models import PriceQuote
 
 if TYPE_CHECKING:
-    from app.exchanges.base import BaseExchange
-    from app.securities.base import BaseSecuritiesExchange
+    from app.exchanges.crypto.base import BaseCryptoExchange
+    from app.exchanges.securities.base import BaseSecuritiesExchange
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +229,7 @@ class ExchangeService:
                     f"(account_id={account.id}, type={account.account_type}, exchange={account.exchange})"
                 )
 
-                client = UnifiedExchangeFactory.create_exchange(account)
+                client = UnifiedExchangeFactory.create(account)
 
                 if client:
                     self._exchange_clients[cache_key] = client

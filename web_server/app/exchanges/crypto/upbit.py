@@ -19,8 +19,9 @@ import aiohttp
 import jwt
 import requests
 
-from .base import BaseExchange, ExchangeError, InvalidOrder
-from .models import MarketInfo, Balance, Order, PriceQuote
+from .base import BaseCryptoExchange
+from app.exchanges.base import ExchangeError, InvalidOrder
+from app.exchanges.models import MarketInfo, Balance, Order, PriceQuote
 from app.utils.symbol_utils import to_upbit_format, from_upbit_format, parse_symbol
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class OrderStatus:
     CANCEL = "cancel"    # 주문 취소
 
 
-class UpbitExchange(BaseExchange):
+class UpbitExchange(BaseCryptoExchange):
     """
     Upbit 거래소 클래스 (Spot 전용)
 

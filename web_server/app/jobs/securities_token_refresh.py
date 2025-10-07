@@ -81,7 +81,7 @@ class SecuritiesTokenRefreshJob:
         """
         from app import create_app, db
         from app.models import Account
-        from app.securities.factory import SecuritiesFactory
+        from app.exchanges.securities.factory import SecuritiesExchangeFactory
 
         # Flask app context 생성 (Background Job에서 필수)
         if app is None:
@@ -113,8 +113,8 @@ class SecuritiesTokenRefreshJob:
 
             for account in securities_accounts:
                 try:
-                    # SecuritiesFactory로 어댑터 생성
-                    exchange = SecuritiesFactory.create_exchange(account)
+                    # SecuritiesExchangeFactory로 어댑터 생성
+                    exchange = SecuritiesExchangeFactory.create(account)
 
                     # ensure_token()이 자동으로 갱신 필요 여부 판단
                     # - is_expired() 확인: 만료 5분 전이면 재발급
