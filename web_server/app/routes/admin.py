@@ -943,3 +943,204 @@ def get_tracking_stats():
             'success': False,
             'message': f'통계 조회 중 오류가 발생했습니다: {str(e)}'
         }), 500
+
+
+# ============================================
+# Order Queue System API
+# ============================================
+
+@bp.route('/api/queue-status', methods=['GET'])
+@login_required
+@admin_required
+def get_queue_status():
+    """
+    대기열 현황 조회 (Order Queue System)
+
+    Returns:
+        JSON: {
+            'success': bool,
+            'accounts': [
+                {
+                    'account_id': int,
+                    'account_name': str,
+                    'symbols': [
+                        {
+                            'symbol': str,
+                            'active_orders': int,
+                            'pending_orders': int,
+                            'total': int,
+                            'limit': int,
+                            'limit_stop': int
+                        }
+                    ]
+                }
+            ],
+            'total_active': int,
+            'total_pending': int
+        }
+    """
+    try:
+        from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
+        from app.constants import ExchangeLimits
+        from sqlalchemy import distinct, func
+
+        # 활성 계정 조회
+        active_accounts = Account.query.filter_by(is_active=True).all()
+
+        result = {
+            'success': True,
+            'accounts': [],
+            'total_active': 0,
+            'total_pending': 0
+        }
+
+        for account in active_accounts:
+            # (account_id, symbol) 조합 추출
+            active_symbols_query = db.session.query(
+                distinct(OpenOrder.symbol)
+            ).join(
+                StrategyAccount,
+                OpenOrder.strategy_account_id == StrategyAccount.id
+            ).filter(
+                StrategyAccount.account_id == account.id
+            )
+
+            pending_symbols_query = db.session.query(
+                distinct(PendingOrder.symbol)
+            ).filter(
+                PendingOrder.account_id == account.id
+            )
+
+            # 합집합
+            all_symbols = set(
+                [s[0] for s in active_symbols_query.all()] +
+                [s[0] for s in pending_symbols_query.all()]
+            )
+
+            if not all_symbols:
+                continue  # 주문이 없는 계정은 건너뛰기
+
+            # market_type 결정
+            strategy_account = StrategyAccount.query.filter_by(account_id=account.id).first()
+            market_type = 'SPOT'
+            if strategy_account and strategy_account.strategy:
+                market_type = strategy_account.strategy.market_type or 'SPOT'
+
+            account_data = {
+                'account_id': account.id,
+                'account_name': account.name,
+                'exchange': account.exchange,
+                'market_type': market_type,
+                'symbols': []
+            }
+
+            for symbol in sorted(all_symbols):
+                # 활성 주문 수 (DB 조회)
+                active_count = OpenOrder.query.join(StrategyAccount).filter(
+                    StrategyAccount.account_id == account.id,
+                    OpenOrder.symbol == symbol
+                ).count()
+
+                # 대기열 주문 수
+                pending_count = PendingOrder.query.filter_by(
+                    account_id=account.id,
+                    symbol=symbol
+                ).count()
+
+                # 제한 계산
+                limits = ExchangeLimits.calculate_symbol_limit(
+                    exchange=account.exchange,
+                    market_type=market_type,
+                    symbol=symbol
+                )
+
+                account_data['symbols'].append({
+                    'symbol': symbol,
+                    'active_orders': active_count,
+                    'pending_orders': pending_count,
+                    'total': active_count + pending_count,
+                    'limit': limits['max_orders'],
+                    'limit_stop': limits['max_stop_orders']
+                })
+
+                result['total_active'] += active_count
+                result['total_pending'] += pending_count
+
+            result['accounts'].append(account_data)
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'대기열 현황 조회 중 오류가 발생했습니다: {str(e)}'
+        }), 500
+
+
+@bp.route('/api/queue-rebalance', methods=['POST'])
+@login_required
+@admin_required
+def manual_rebalance_queue():
+    """
+    수동 대기열 재정렬 (Order Queue System)
+
+    Request Body:
+        {
+            'account_id': int,
+            'symbol': str
+        }
+
+    Returns:
+        JSON: {
+            'success': bool,
+            'cancelled': int,
+            'executed': int,
+            'total_orders': int,
+            'active_orders': int,
+            'pending_orders': int,
+            'message': str
+        }
+    """
+    try:
+        data = request.get_json()
+        account_id = data.get('account_id')
+        symbol = data.get('symbol')
+
+        if not account_id or not symbol:
+            return jsonify({
+                'success': False,
+                'message': 'account_id와 symbol은 필수입니다'
+            }), 400
+
+        # 계정 존재 확인
+        from app.models import Account
+        account = Account.query.get(account_id)
+        if not account:
+            return jsonify({
+                'success': False,
+                'message': f'계정을 찾을 수 없습니다 (ID: {account_id})'
+            }), 404
+
+        # 재정렬 실행
+        from app.services.trading.order_queue_manager import OrderQueueManager
+        from app.services.trading import trading_service
+
+        queue_manager = OrderQueueManager(service=trading_service.trading_core)
+        result = queue_manager.rebalance_symbol(
+            account_id=account_id,
+            symbol=symbol
+        )
+
+        if result.get('success'):
+            return jsonify({
+                **result,
+                'message': f'재정렬 완료: {result.get("executed")}개 실행, {result.get("cancelled")}개 취소'
+            })
+        else:
+            return jsonify(result), 500
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'수동 재정렬 중 오류가 발생했습니다: {str(e)}'
+        }), 500
