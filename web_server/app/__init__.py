@@ -249,30 +249,59 @@ def create_app(config_name=None):
                 except Exception as mig_e:
                     app.logger.warning(f'호환성 마이그레이션(strategy_accounts.is_active) 적용 실패 또는 불필요: {str(mig_e)}')
 
-                # Order Queue System: pending_orders, order_fill_events 테이블 생성
+                # Order Queue System: pending_orders, order_fill_events 테이블 생성 (레이스 컨디션 방지)
                 try:
                     from sqlalchemy import inspect
-                    inspector = inspect(db.engine)
-                    tables = inspector.get_table_names()
 
-                    if 'pending_orders' not in tables or 'order_fill_events' not in tables:
-                        # 마이그레이션 경로를 동적으로 추가
-                        import importlib.util
-                        migrations_path = os.path.join(current_dir, '..', 'migrations')
-                        if os.path.exists(migrations_path) and migrations_path not in sys.path:
-                            sys.path.insert(0, migrations_path)
+                    # PostgreSQL advisory lock으로 동시성 제어
+                    with db.engine.connect() as conn:
+                        # 락 획득 시도 (hashtext 사용)
+                        lock_acquired = conn.execute(text(
+                            "SELECT pg_try_advisory_lock(hashtext('order_queue_migration'))"
+                        )).scalar()
 
-                        # 파일명의 밑줄(_)을 dot(.)으로 변환하여 import
-                        spec = importlib.util.spec_from_file_location(
-                            "migration_module",
-                            os.path.join(migrations_path, "20251008_create_order_queue_tables.py")
-                        )
-                        migration_module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(migration_module)
-                        migration_module.upgrade(db.engine)
-                        app.logger.info("✅ 주문 대기열 시스템 마이그레이션 완료")
-                    else:
-                        app.logger.debug("주문 대기열 테이블이 이미 존재합니다")
+                        if lock_acquired:
+                            try:
+                                # 락 획득 후 재확인
+                                inspector = inspect(db.engine)
+                                tables = inspector.get_table_names()
+
+                                if 'pending_orders' not in tables or 'order_fill_events' not in tables:
+                                    # 마이그레이션 경로를 동적으로 추가
+                                    import importlib.util
+                                    migrations_path = os.path.join(current_dir, '..', 'migrations')
+                                    if os.path.exists(migrations_path) and migrations_path not in sys.path:
+                                        sys.path.insert(0, migrations_path)
+
+                                    # 파일명의 밑줄(_)을 dot(.)으로 변환하여 import
+                                    spec = importlib.util.spec_from_file_location(
+                                        "migration_module",
+                                        os.path.join(migrations_path, "20251008_create_order_queue_tables.py")
+                                    )
+                                    migration_module = importlib.util.module_from_spec(spec)
+                                    spec.loader.exec_module(migration_module)
+                                    migration_module.upgrade(db.engine)
+                                    app.logger.info("✅ 주문 대기열 시스템 마이그레이션 완료")
+                                else:
+                                    app.logger.debug("주문 대기열 테이블이 이미 존재합니다")
+                            finally:
+                                # 락 해제
+                                conn.execute(text(
+                                    "SELECT pg_advisory_unlock(hashtext('order_queue_migration'))"
+                                ))
+                                conn.commit()
+                        else:
+                            app.logger.info("다른 워커가 마이그레이션 진행 중 - 대기")
+                            # 다른 워커가 락을 보유 중, 블로킹 락 대기
+                            conn.execute(text(
+                                "SELECT pg_advisory_lock(hashtext('order_queue_migration'))"
+                            ))
+                            # 락 획득 즉시 해제 (마이그레이션 완료 확인용)
+                            conn.execute(text(
+                                "SELECT pg_advisory_unlock(hashtext('order_queue_migration'))"
+                            ))
+                            conn.commit()
+                            app.logger.debug("마이그레이션 완료 확인됨")
                 except Exception as mig_e:
                     app.logger.warning(f'주문 대기열 마이그레이션 실패 또는 불필요: {str(mig_e)}')
             except Exception as e:
@@ -537,6 +566,7 @@ def register_background_jobs(app):
     )
 
     # Order Queue System: 대기열 재정렬 (1초마다)
+    from app.services.background.queue_rebalancer import rebalance_all_symbols_with_context
     scheduler.add_job(
         func=rebalance_all_symbols_with_context,
         args=[app],
@@ -981,29 +1011,3 @@ def refresh_securities_tokens_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
-def rebalance_all_symbols_with_context(app):
-    """
-    Order Queue System: Flask 앱 컨텍스트 내에서 모든 심볼의 대기열 재정렬
-
-    처리 단계:
-    1. 활성 계정 조회 (is_active=True)
-    2. (account_id, symbol) 조합 추출:
-       - OpenOrder 테이블에서 DISTINCT (account_id, symbol)
-       - PendingOrder 테이블에서 DISTINCT (account_id, symbol)
-       - 두 결과 합집합
-    3. 각 (account_id, symbol)별로 rebalance_symbol() 호출
-    4. 에러 처리 및 로깅
-
-    실행 주기: 1초마다
-    참고: docs/order_queue_system_plan.md Section 4.3
-    """
-    with app.app_context():
-        try:
-            from app.services.background.queue_rebalancer import rebalance_all_symbols_with_context as rebalance_impl
-
-            # 실제 구현은 별도 모듈에서
-            rebalance_impl(app)
-
-        except Exception as e:
-            app.logger.error(f'❌ 대기열 재정렬 작업 실패: {str(e)}', exc_info=True)
-            # 스케줄러 중단 방지를 위해 조용히 처리

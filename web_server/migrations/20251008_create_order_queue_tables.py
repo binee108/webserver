@@ -27,7 +27,25 @@ def upgrade(engine):
     2. order_fill_events: 체결 이벤트
     """
     with engine.connect() as conn:
-        print('🚀 주문 대기열 시스템 테이블 생성 시작...')
+        trans = conn.begin()
+        try:
+            print('🚀 주문 대기열 시스템 테이블 생성 시작...')
+
+            # 기존 테이블 확인 (부분 마이그레이션 상태 감지)
+            result = conn.execute(text("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_name IN ('pending_orders', 'order_fill_events')
+            """))
+            existing_count = result.scalar()
+
+            if existing_count == 2:
+                print('✅ 테이블이 이미 존재합니다.')
+                trans.rollback()
+                return
+            elif existing_count == 1:
+                raise Exception('⚠️ 부분 마이그레이션 상태 감지 - 수동 확인 필요')
+
+            # 아래는 기존 테이블 생성 로직...
 
         # ============================================
         # 1. PendingOrder 테이블 생성
@@ -114,6 +132,14 @@ def upgrade(engine):
             ON order_fill_events(exchange_order_id);
         """))
 
+        # 부분 인덱스: processed = FALSE인 레코드만 인덱싱 (PostgreSQL 최적화)
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fill_unprocessed_time
+            ON order_fill_events(event_time DESC)
+            WHERE processed = FALSE;
+        """))
+
+        # 전체 인덱스 (호환성 유지)
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_fill_processed
             ON order_fill_events(processed, event_time);
@@ -124,12 +150,19 @@ def upgrade(engine):
             ON order_fill_events(account_id, symbol);
         """))
 
-        conn.commit()
-        print('✅ 주문 대기열 시스템 테이블 생성 완료!')
-        print('')
-        print('생성된 테이블:')
-        print('  - pending_orders (인덱스 3개)')
-        print('  - order_fill_events (인덱스 3개)')
+            # 트랜잭션 커밋
+            trans.commit()
+            print('✅ 주문 대기열 시스템 테이블 생성 완료!')
+            print('')
+            print('생성된 테이블:')
+            print('  - pending_orders (인덱스 3개)')
+            print('  - order_fill_events (인덱스 4개)')
+
+        except Exception as e:
+            # 트랜잭션 롤백
+            trans.rollback()
+            print(f'❌ 마이그레이션 실패: {e}')
+            raise
 
 
 def downgrade(engine):

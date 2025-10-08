@@ -211,6 +211,7 @@ class OrderQueueManager:
                 'pending_orders': int
             }
         """
+        # 전체 작업을 트랜잭션으로 감싸기
         try:
             # Step 1: 계정 및 제한 계산
             account = Account.query.get(account_id)
@@ -269,7 +270,7 @@ class OrderQueueManager:
                     'priority': OrderType.get_priority(order.order_type),
                     'sort_price': self._get_order_sort_price(order),
                     'created_at': order.created_at,
-                    'is_stop': ExchangeLimits.is_stop_order(order.order_type)
+                    'is_stop': OrderType.requires_stop_price(order.order_type)
                 })
 
             for order in pending_orders:
@@ -279,7 +280,7 @@ class OrderQueueManager:
                     'priority': order.priority,
                     'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
                     'created_at': order.created_at,
-                    'is_stop': ExchangeLimits.is_stop_order(order.order_type)
+                    'is_stop': OrderType.requires_stop_price(order.order_type)
                 })
 
             # 정렬 키: (priority ASC, sort_price DESC, created_at ASC)
@@ -346,6 +347,9 @@ class OrderQueueManager:
                 f"실행: {executed_count}개"
             )
 
+            # 트랜잭션 커밋
+            db.session.commit()
+
             return {
                 'success': True,
                 'cancelled': cancelled_count,
@@ -356,7 +360,9 @@ class OrderQueueManager:
             }
 
         except Exception as e:
-            logger.error(f"재정렬 실패 (account_id={account_id}, symbol={symbol}): {e}")
+            # 트랜잭션 롤백
+            db.session.rollback()
+            logger.error(f"❌ 재정렬 실패 (account_id={account_id}, symbol={symbol}): {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -446,6 +452,9 @@ class OrderQueueManager:
                 'error': str (실패 시)
             }
         """
+        # 재시도 횟수 제한 상수
+        MAX_RETRY_COUNT = 5
+
         try:
             # TradingCore를 통해 거래소에 주문 실행
             strategy_account = pending_order.strategy_account
@@ -472,9 +481,8 @@ class OrderQueueManager:
             )
 
             if result.get('success'):
-                # 성공 시 대기열에서 제거
+                # 성공 시 대기열에서 제거 (커밋은 상위에서)
                 db.session.delete(pending_order)
-                db.session.commit()
 
                 logger.info(
                     f"✅ 대기열→거래소 실행 완료 - "
@@ -487,16 +495,26 @@ class OrderQueueManager:
                     'order_id': result.get('order_id')
                 }
             else:
-                # 실패 시 재시도 횟수 증가
-                pending_order.retry_count += 1
-                db.session.commit()
+                # 실패 시 재시도 횟수 확인
+                if pending_order.retry_count >= MAX_RETRY_COUNT:
+                    logger.error(
+                        f"❌ 대기열 주문 최대 재시도 초과 - "
+                        f"pending_id: {pending_order.id}, "
+                        f"재시도: {pending_order.retry_count}회, "
+                        f"error: {result.get('error')}"
+                    )
+                    # 최대 재시도 초과 시 대기열에서 제거
+                    db.session.delete(pending_order)
+                else:
+                    # 재시도 횟수 증가 (커밋은 상위에서)
+                    pending_order.retry_count += 1
 
-                logger.warning(
-                    f"❌ 대기열→거래소 실행 실패 - "
-                    f"pending_id: {pending_order.id}, "
-                    f"error: {result.get('error')}, "
-                    f"재시도: {pending_order.retry_count}회"
-                )
+                    logger.warning(
+                        f"❌ 대기열→거래소 실행 실패 - "
+                        f"pending_id: {pending_order.id}, "
+                        f"error: {result.get('error')}, "
+                        f"재시도: {pending_order.retry_count}회"
+                    )
 
                 return {
                     'success': False,

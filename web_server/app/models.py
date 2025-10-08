@@ -784,6 +784,66 @@ class PendingOrder(db.Model):
         db.Index('idx_pending_strategy', 'strategy_account_id'),
     )
 
+    def __init__(self, **kwargs):
+        """PendingOrder 초기화 - priority와 sort_price 자동 계산"""
+        from app.constants import OrderType
+        from decimal import Decimal
+
+        # priority 자동 계산
+        if 'priority' not in kwargs and 'order_type' in kwargs:
+            kwargs['priority'] = OrderType.get_priority(kwargs['order_type'])
+
+        super().__init__(**kwargs)
+
+        # sort_price 자동 계산 (생성 후)
+        if self.sort_price is None and self.order_type:
+            self.sort_price = self._calculate_sort_price()
+
+    def _calculate_sort_price(self):
+        """정렬용 가격 계산
+
+        정렬 로직:
+        - LIMIT BUY:   sort_price = price          (높을수록 우선)
+        - LIMIT SELL:  sort_price = -price         (낮을수록 우선)
+        - STOP BUY:    sort_price = -stop_price    (낮을수록 우선)
+        - STOP SELL:   sort_price = stop_price     (높을수록 우선)
+        - MARKET:      sort_price = None
+        """
+        from app.constants import OrderType
+        from decimal import Decimal
+
+        # MARKET 주문은 정렬 가격 없음
+        if self.order_type == 'MARKET':
+            return None
+
+        # LIMIT 주문
+        if self.order_type == 'LIMIT':
+            if self.price is None:
+                return None
+
+            price_decimal = Decimal(str(self.price))
+            if self.side.upper() == 'BUY':
+                # 높을수록 우선
+                return price_decimal
+            else:  # SELL
+                # 낮을수록 우선 → 음수 변환
+                return -price_decimal
+
+        # STOP 주문 (STOP_LIMIT, STOP_MARKET)
+        if OrderType.requires_stop_price(self.order_type):
+            if self.stop_price is None:
+                return None
+
+            stop_decimal = Decimal(str(self.stop_price))
+            if self.side.upper() == 'BUY':
+                # 낮을수록 우선 → 음수 변환
+                return -stop_decimal
+            else:  # SELL
+                # 높을수록 우선
+                return stop_decimal
+
+        return None
+
     def __repr__(self):
         return f'<PendingOrder {self.symbol} {self.side} {self.order_type} qty={self.quantity} priority={self.priority}>'
 

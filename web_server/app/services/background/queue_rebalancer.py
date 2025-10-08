@@ -123,6 +123,17 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             # 스케줄러 중단 방지를 위한 최상위 예외 처리
             logger.error(f"❌ 대기열 재정렬 스케줄러 오류: {e}", exc_info=True)
 
+            # Telegram 알림 (다른 스케줄러 패턴과 일치)
+            try:
+                from app.utils.telegram import send_telegram_message
+                send_telegram_message(
+                    f"🚨 대기열 재정렬 스케줄러 오류\n\n"
+                    f"오류: {str(e)}\n"
+                    f"상세 로그를 확인하세요."
+                )
+            except Exception:
+                pass  # 텔레그램 알림 실패는 조용히 무시
+
 
 def rebalance_specific_symbol_with_context(
     app: Flask,

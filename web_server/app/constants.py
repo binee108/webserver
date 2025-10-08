@@ -1233,14 +1233,3 @@ class ExchangeLimits:
             'conditional': None
         })
 
-    @classmethod
-    def is_stop_order(cls, order_type: str) -> bool:
-        """주문 타입이 STOP 주문인지 확인
-
-        Args:
-            order_type: 주문 타입 (STOP_LIMIT, STOP_MARKET, CONDITIONAL_LIMIT 등)
-
-        Returns:
-            bool: STOP 주문이면 True
-        """
-        return order_type.upper() in OrderType.STOP_ORDERS

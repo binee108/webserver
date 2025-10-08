@@ -59,7 +59,7 @@ class ExchangeLimitTracker:
 
             # 주문 타입별 카운트
             total = len(orders)
-            stop_orders = sum(1 for order in orders if ExchangeLimits.is_stop_order(order.order_type))
+            stop_orders = sum(1 for order in orders if OrderType.requires_stop_price(order.order_type))
             limit_orders = sum(1 for order in orders if order.order_type in ['LIMIT', 'BEST_LIMIT'])
             market_orders = sum(1 for order in orders if order.order_type == 'MARKET')
 
@@ -156,7 +156,7 @@ class ExchangeLimitTracker:
             current_stop = current['stop_orders']
 
             # 주문 타입 확인
-            is_stop = ExchangeLimits.is_stop_order(order_type)
+            is_stop = OrderType.requires_stop_price(order_type)
 
             # 제한 체크
             can_place = True
