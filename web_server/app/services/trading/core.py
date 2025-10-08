@@ -140,6 +140,16 @@ class TradingCore:
             )
             if open_order_result['success']:
                 logger.info(f"📝 미체결 주문 OpenOrder 저장: {order_result.get('order_id')}")
+
+                # 심볼 구독 추가 (WebSocket 연결)
+                try:
+                    self.service.subscribe_symbol(account.id, symbol)
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ 심볼 구독 실패 (WebSocket health check에서 재시도): "
+                        f"계정: {account.id}, 심볼: {symbol}, 오류: {e}"
+                    )
+                    # OpenOrder는 유지, WebSocket 헬스체크에서 재구독
             else:
                 logger.debug(f"OpenOrder 저장 스킵: {open_order_result.get('reason', 'unknown')}")
 

@@ -185,7 +185,7 @@ class OrderQueueManager:
         logger.warning(f"정렬 가격 계산 불가능한 주문 타입: {order_type}")
         return None
 
-    def rebalance_symbol(self, account_id: int, symbol: str) -> Dict[str, Any]:
+    def rebalance_symbol(self, account_id: int, symbol: str, commit: bool = True) -> Dict[str, Any]:
         """심볼별 동적 재정렬 (핵심 알고리즘)
 
         처리 단계:
@@ -200,6 +200,7 @@ class OrderQueueManager:
         Args:
             account_id: 계정 ID
             symbol: 거래 심볼
+            commit: 트랜잭션 커밋 여부 (기본값: True)
 
         Returns:
             dict: {
@@ -347,8 +348,9 @@ class OrderQueueManager:
                 f"실행: {executed_count}개"
             )
 
-            # 트랜잭션 커밋
-            db.session.commit()
+            # 호출자가 commit 제어
+            if commit:
+                db.session.commit()
 
             return {
                 'success': True,
@@ -360,8 +362,9 @@ class OrderQueueManager:
             }
 
         except Exception as e:
-            # 트랜잭션 롤백
-            db.session.rollback()
+            # 호출자가 commit 제어
+            if commit:
+                db.session.rollback()
             logger.error(f"❌ 재정렬 실패 (account_id={account_id}, symbol={symbol}): {e}")
             return {
                 'success': False,

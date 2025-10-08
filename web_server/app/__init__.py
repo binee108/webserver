@@ -338,6 +338,22 @@ def create_app(config_name=None):
                 app.logger.info('서비스 의존성 초기화 완료')
             except Exception as e:
                 app.logger.error(f'서비스 의존성 초기화 실패: {str(e)}')
+
+            # OrderFillMonitor 초기화
+            try:
+                from app.services.order_fill_monitor import init_order_fill_monitor
+                init_order_fill_monitor(app)
+                app.logger.info('✅ OrderFillMonitor 초기화 완료')
+            except Exception as e:
+                app.logger.error(f'❌ OrderFillMonitor 초기화 실패: {str(e)}')
+
+            # WebSocket 관리자 초기화
+            try:
+                from app.services.trading import trading_service
+                trading_service.init_websocket_manager(app)
+                app.logger.info('✅ WebSocket 관리자 초기화 완료')
+            except Exception as e:
+                app.logger.error(f'❌ WebSocket 관리자 초기화 실패: {str(e)}')
     else:
         app.logger.info('Flask CLI 명령어 실행 중 - 데이터베이스 초기화 및 스케줄러 건너뜀')
 
@@ -574,6 +590,18 @@ def register_background_jobs(app):
         seconds=1,
         id='rebalance_order_queue',
         name='Rebalance Order Queue',
+        replace_existing=True,
+        max_instances=1
+    )
+
+    # Phase 4: WebSocket 연결 상태 모니터링 (1분마다)
+    scheduler.add_job(
+        func=check_websocket_health_with_context,
+        args=[app],
+        trigger="interval",
+        minutes=1,
+        id='check_websocket_health',
+        name='Check WebSocket Health',
         replace_existing=True,
         max_instances=1
     )
@@ -970,6 +998,54 @@ def calculate_daily_performance_with_context(app):
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
+
+def check_websocket_health_with_context(app):
+    """
+    Phase 4: Flask 앱 컨텍스트 내에서 WebSocket 연결 상태 모니터링
+
+    활성 계정의 WebSocket 연결 상태를 확인하고,
+    연결이 끊어진 계정은 자동으로 재연결합니다.
+    """
+    with app.app_context():
+        try:
+            from app.services.trading import trading_service
+            from app.models import Account
+
+            if not trading_service.websocket_manager:
+                return
+
+            # 통계 조회
+            stats = trading_service.websocket_manager.get_stats()
+            app.logger.debug(
+                f"🔌 WebSocket 상태 - "
+                f"전체: {stats['total_connections']}, "
+                f"활성: {stats['active_connections']}, "
+                f"구독: {stats['total_subscriptions']}"
+            )
+
+            # 모든 활성 계정 조회
+            active_accounts = Account.query.filter_by(is_active=True).all()
+
+            for account in active_accounts:
+                # 지원하는 거래소인지 확인
+                if account.exchange.upper() not in ['BINANCE', 'BYBIT']:
+                    continue
+
+                connection = trading_service.websocket_manager.get_connection(account.id)
+
+                # 연결되지 않은 경우 시작
+                if not connection:
+                    app.logger.info(f"🔌 WebSocket 연결 시작 - 계정: {account.id}")
+                    trading_service.start_websocket_for_account(account.id)
+                elif not connection.is_connected:
+                    # 연결이 끊어진 경우 재연결
+                    app.logger.warning(f"⚠️ WebSocket 연결 끊김 감지 - 계정: {account.id}")
+                    trading_service.websocket_manager._schedule_coroutine(
+                        trading_service.websocket_manager.auto_reconnect(account.id, 0)
+                    )
+
+        except Exception as e:
+            app.logger.error(f"❌ WebSocket 상태 모니터링 실패: {str(e)}")
 
 def refresh_securities_tokens_with_context(app):
     """

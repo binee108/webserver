@@ -40,9 +40,10 @@ class PositionError(Exception):
 class TradingService:
     """Facade that exposes trading behaviours composed from specialized managers."""
 
-    def __init__(self) -> None:
+    def __init__(self, app=None) -> None:
         self.session = db.session
         self._SessionLocal = None
+        self.app = app
 
         self.record_manager = RecordManager(service=self)
         self.quantity_calculator = QuantityCalculator(service=self)
@@ -53,7 +54,80 @@ class TradingService:
         self.exchange_limit_tracker = ExchangeLimitTracker  # classmethod만 있는 유틸리티 클래스
         self.order_queue_manager = OrderQueueManager(service=self)
 
+        # WebSocket 관리자 (앱 초기화 시 설정됨)
+        self.websocket_manager = None
+
         logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성 + 대기열 관리)")
+
+    def init_websocket_manager(self, app):
+        """WebSocket 관리자 초기화
+
+        Args:
+            app: Flask 앱 인스턴스
+        """
+        from app.services.websocket_manager import WebSocketManager
+
+        self.app = app
+        self.websocket_manager = WebSocketManager(app)
+        self.websocket_manager.start()
+
+        logger.info("✅ WebSocket 관리자 초기화 완료")
+
+    def subscribe_symbol(self, account_id: int, symbol: str):
+        """심볼 구독 추가 (주문 생성 시 호출)
+
+        Args:
+            account_id: 계정 ID
+            symbol: 거래 심볼
+        """
+        if self.websocket_manager:
+            logger.debug(f"📊 심볼 구독 추가 요청 - 계정: {account_id}, 심볼: {symbol}")
+            future = self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.subscribe_symbol(account_id, symbol)
+            )
+
+            # 결과 확인 (비블로킹)
+            if future:
+                try:
+                    future.result(timeout=0.1)
+                except TimeoutError:
+                    pass  # 타임아웃은 정상 (비동기 실행 중)
+                except Exception as e:
+                    logger.error(f"❌ 심볼 구독 실패 - 계정: {account_id}, 심볼: {symbol}, 오류: {e}")
+
+    def unsubscribe_symbol(self, account_id: int, symbol: str):
+        """심볼 구독 제거 (주문 삭제 시 호출)
+
+        Args:
+            account_id: 계정 ID
+            symbol: 거래 심볼
+        """
+        if self.websocket_manager:
+            logger.debug(f"📊 심볼 구독 제거 요청 - 계정: {account_id}, 심볼: {symbol}")
+            future = self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.unsubscribe_symbol(account_id, symbol)
+            )
+
+            # 결과 확인 (비블로킹)
+            if future:
+                try:
+                    future.result(timeout=0.1)
+                except TimeoutError:
+                    pass  # 타임아웃은 정상 (비동기 실행 중)
+                except Exception as e:
+                    logger.error(f"❌ 심볼 구독 제거 실패 - 계정: {account_id}, 심볼: {symbol}, 오류: {e}")
+
+    def start_websocket_for_account(self, account_id: int):
+        """계정의 WebSocket 연결 시작
+
+        Args:
+            account_id: 계정 ID
+        """
+        if self.websocket_manager:
+            self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.connect_account(account_id)
+            )
+            logger.info(f"✅ WebSocket 연결 시작 - 계정: {account_id}")
 
     @property
     def SessionLocal(self):

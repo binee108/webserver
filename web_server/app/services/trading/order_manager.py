@@ -95,10 +95,25 @@ class OrderManager:
                 if open_order:
                     # 주문 정보 로그 (삭제 전)
                     logger.info(f"🗑️ OpenOrder 정리: {order_id} (취소 처리)")
-                    
+
                     # DB에서 완전히 삭제
                     db.session.delete(open_order)
                     db.session.commit()
+
+                    # 동일 심볼의 다른 OpenOrder가 있는지 확인
+                    remaining_orders = OpenOrder.query.filter_by(
+                        symbol=symbol
+                    ).join(StrategyAccount).filter(
+                        StrategyAccount.account_id == account_id
+                    ).count()
+
+                    if remaining_orders == 0:
+                        # 더 이상 주문이 없으면 구독 해제
+                        self.service.unsubscribe_symbol(account_id, symbol)
+                        logger.info(f"📊 심볼 구독 해제 - 계정: {account_id}, 심볼: {symbol} (마지막 주문)")
+                    else:
+                        logger.debug(f"📊 심볼 구독 유지 - 계정: {account_id}, 심볼: {symbol} (남은 주문: {remaining_orders}개)")
+
                     logger.info(f"✅ 취소된 주문이 정리되었습니다: {order_id}")
 
                 # 취소 이벤트 발송
