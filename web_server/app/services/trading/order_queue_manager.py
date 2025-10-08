@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from datetime import datetime
@@ -27,10 +28,20 @@ class OrderQueueManager:
     1. 대기열에 주문 추가 (enqueue)
     2. 심볼별 동적 재정렬 (rebalance_symbol)
     3. 거래소 주문 ↔ 대기열 주문 간 이동
+    4. 성능 메트릭 수집
     """
+
+    MAX_RETRY_COUNT = 5  # 재시도 횟수 제한 상수
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
+        self.metrics = {
+            'total_rebalances': 0,
+            'total_cancelled': 0,
+            'total_executed': 0,
+            'total_duration_ms': 0,
+            'avg_duration_ms': 0
+        }
 
     def enqueue(
         self,
@@ -209,9 +220,13 @@ class OrderQueueManager:
                 'executed': int,
                 'total_orders': int,
                 'active_orders': int,
-                'pending_orders': int
+                'pending_orders': int,
+                'duration_ms': float
             }
         """
+        # 성능 측정 시작
+        start_time = time.time()
+
         # 전체 작업을 트랜잭션으로 감싸기
         try:
             # Step 1: 계정 및 제한 계산
@@ -245,12 +260,17 @@ class OrderQueueManager:
                 f"제한: {max_orders}개 (STOP: {max_stop_orders}개)"
             )
 
-            # Step 2: 현재 주문 조회 (DB)
+            # Step 2: 현재 주문 조회 (DB) - N+1 문제 방지를 위해 joinedload 사용
+            from sqlalchemy.orm import joinedload
+
             active_orders = OpenOrder.query.join(StrategyAccount).filter(
                 StrategyAccount.account_id == account_id,
                 OpenOrder.symbol == symbol
+            ).options(
+                joinedload(OpenOrder.strategy_account)  # N+1 방지
             ).all()
 
+            # PendingOrder는 strategy_account 관계를 직접 사용하지 않으므로 joinedload 불필요
             pending_orders = PendingOrder.query.filter_by(
                 account_id=account_id,
                 symbol=symbol
@@ -352,13 +372,31 @@ class OrderQueueManager:
             if commit:
                 db.session.commit()
 
+            # 성능 메트릭 업데이트
+            duration_ms = (time.time() - start_time) * 1000
+            self.metrics['total_rebalances'] += 1
+            self.metrics['total_cancelled'] += cancelled_count
+            self.metrics['total_executed'] += executed_count
+            self.metrics['total_duration_ms'] += duration_ms
+            self.metrics['avg_duration_ms'] = (
+                self.metrics['total_duration_ms'] / self.metrics['total_rebalances']
+            )
+
+            # 느린 재정렬 경고 (500ms 이상)
+            if duration_ms > 500:
+                logger.warning(
+                    f"⚠️ 느린 재정렬 감지 - {symbol}: {duration_ms:.2f}ms "
+                    f"(취소: {cancelled_count}, 실행: {executed_count})"
+                )
+
             return {
                 'success': True,
                 'cancelled': cancelled_count,
                 'executed': executed_count,
                 'total_orders': len(all_orders),
                 'active_orders': len(active_orders) - cancelled_count + executed_count,
-                'pending_orders': len(pending_orders) + cancelled_count - executed_count
+                'pending_orders': len(pending_orders) + cancelled_count - executed_count,
+                'duration_ms': duration_ms
             }
 
         except Exception as e:
@@ -455,9 +493,6 @@ class OrderQueueManager:
                 'error': str (실패 시)
             }
         """
-        # 재시도 횟수 제한 상수
-        MAX_RETRY_COUNT = 5
-
         try:
             # TradingCore를 통해 거래소에 주문 실행
             strategy_account = pending_order.strategy_account
@@ -499,7 +534,7 @@ class OrderQueueManager:
                 }
             else:
                 # 실패 시 재시도 횟수 확인
-                if pending_order.retry_count >= MAX_RETRY_COUNT:
+                if pending_order.retry_count >= self.MAX_RETRY_COUNT:
                     logger.error(
                         f"❌ 대기열 주문 최대 재시도 초과 - "
                         f"pending_id: {pending_order.id}, "
@@ -602,3 +637,26 @@ class OrderQueueManager:
             db.session.rollback()
             logger.error(f"대기열 정리 실패: {e}")
             return 0
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """성능 메트릭 조회
+
+        Returns:
+            Dict: {
+                'total_rebalances': int,
+                'total_cancelled': int,
+                'total_executed': int,
+                'avg_duration_ms': float
+            }
+        """
+        return self.metrics.copy()
+
+    def reset_metrics(self):
+        """메트릭 초기화"""
+        self.metrics = {
+            'total_rebalances': 0,
+            'total_cancelled': 0,
+            'total_executed': 0,
+            'total_duration_ms': 0,
+            'avg_duration_ms': 0
+        }

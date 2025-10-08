@@ -1144,3 +1144,109 @@ def manual_rebalance_queue():
             'success': False,
             'message': f'수동 재정렬 중 오류가 발생했습니다: {str(e)}'
         }), 500
+
+
+@bp.route('/api/metrics', methods=['GET'])
+@login_required
+@admin_required
+def get_metrics():
+    """
+    대기열 시스템 메트릭 조회
+
+    Returns:
+        JSON: {
+            "success": bool,
+            "data": {
+                "queue_metrics": {
+                    "total_rebalances": int,
+                    "total_cancelled": int,
+                    "total_executed": int,
+                    "avg_duration_ms": float
+                },
+                "pending_orders": {
+                    "total": int,
+                    "by_symbol": [
+                        {
+                            "account_id": int,
+                            "symbol": str,
+                            "count": int
+                        }
+                    ]
+                },
+                "websocket_stats": {
+                    "running": bool,
+                    "total_connections": int,
+                    "active_connections": int,
+                    "total_subscriptions": int,
+                    "unique_symbols": int
+                }
+            }
+        }
+    """
+    try:
+        from app.services.trading import trading_service
+        from app.models import PendingOrder
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # 서비스 초기화 확인
+        if not trading_service:
+            return jsonify({
+                'success': False,
+                'error': 'Trading service가 초기화되지 않았습니다'
+            }), 503
+
+        if not hasattr(trading_service, 'order_queue_manager') or not trading_service.order_queue_manager:
+            return jsonify({
+                'success': False,
+                'error': 'Order queue manager가 초기화되지 않았습니다'
+            }), 503
+
+        # 재정렬 메트릭
+        queue_manager = trading_service.order_queue_manager
+        queue_metrics = queue_manager.get_metrics()
+
+        # 대기열 통계
+        pending_stats = db.session.query(
+            PendingOrder.account_id,
+            PendingOrder.symbol,
+            func.count(PendingOrder.id).label('count')
+        ).group_by(
+            PendingOrder.account_id,
+            PendingOrder.symbol
+        ).all()
+
+        pending_by_symbol = [
+            {
+                'account_id': stat.account_id,
+                'symbol': stat.symbol,
+                'count': stat.count
+            }
+            for stat in pending_stats
+        ]
+
+        total_pending = sum(stat['count'] for stat in pending_by_symbol)
+
+        # WebSocket 통계
+        websocket_manager = trading_service.websocket_manager
+        websocket_stats = websocket_manager.get_stats() if websocket_manager else {}
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'queue_metrics': queue_metrics,
+                'pending_orders': {
+                    'total': total_pending,
+                    'by_symbol': pending_by_symbol
+                },
+                'websocket_stats': websocket_stats
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"❌ 메트릭 조회 실패: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

@@ -6,11 +6,16 @@ APScheduler에서 주기적으로 실행되는 스케줄러 함수를 제공합�
 """
 
 import logging
+import time
 from typing import Set, Tuple, List
 from sqlalchemy import distinct
 from flask import Flask
 
 logger = logging.getLogger(__name__)
+
+# 모듈 레벨 변수 (메모리 체크용)
+_last_memory_check = 0
+_psutil_warning_shown = False
 
 
 def rebalance_all_symbols_with_context(app: Flask) -> None:
@@ -24,6 +29,7 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
        - 두 결과 합집합
     3. 각 (account_id, symbol)별로 rebalance_symbol() 호출
     4. 에러 처리 및 로깅
+    5. 대기열 적체 모니터링 및 알림
 
     Args:
         app: Flask 애플리케이션 인스턴스 (app context 제공)
@@ -41,6 +47,45 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             from app import db
             from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
             from app.services.trading.order_queue_manager import OrderQueueManager
+
+            global _last_memory_check, _psutil_warning_shown
+
+            # 메모리 사용량 체크 (5분마다 1회)
+            current_time = time.time()
+            if current_time - _last_memory_check > 300:  # 5분
+                try:
+                    import psutil
+                    import os
+
+                    process = psutil.Process(os.getpid())
+                    memory_info = process.memory_info()
+                    memory_mb = memory_info.rss / 1024 / 1024
+
+                    logger.info(f"📊 메모리 사용량: {memory_mb:.2f} MB")
+
+                    # 메모리 경고
+                    if memory_mb > 500:
+                        logger.warning(f"⚠️ 높은 메모리 사용량 감지: {memory_mb:.2f} MB")
+
+                        if memory_mb > 1024:
+                            try:
+                                from app.services.telegram import telegram_service
+                                if telegram_service.is_enabled():
+                                    telegram_service.send_error_alert(
+                                        "메모리 사용량 경고",
+                                        f"메모리 사용량: {memory_mb:.2f} MB"
+                                    )
+                            except Exception:
+                                pass
+
+                    _last_memory_check = current_time
+
+                except ImportError:
+                    if not _psutil_warning_shown:
+                        logger.warning("⚠️ psutil 패키지가 설치되지 않아 메모리 모니터링을 건너뜁니다")
+                        _psutil_warning_shown = True
+                except Exception as e:
+                    logger.error(f"❌ 메모리 체크 실패: {e}")
 
             # Step 1: 활성 계정 조회
             active_accounts = Account.query.filter_by(is_active=True).all()
@@ -77,13 +122,52 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                 # 재정렬할 주문이 없으면 종료 (로그 스팸 방지)
                 return
 
-            # Step 3: 각 (account_id, symbol)별 재정렬
+            # Step 3: 대기열 적체 모니터링 (재정렬 전 체크)
+            large_queues = []
+            for account_id, symbol in all_pairs:
+                pending_count = PendingOrder.query.filter_by(
+                    account_id=account_id,
+                    symbol=symbol
+                ).count()
+
+                # 대기열이 20개 이상이면 경고
+                if pending_count >= 20:
+                    large_queues.append({
+                        'account_id': account_id,
+                        'symbol': symbol,
+                        'pending_count': pending_count
+                    })
+
+            # 대기열 적체 알림
+            if large_queues:
+                logger.warning(f"⚠️ 대기열 적체 감지 - {len(large_queues)}개 심볼")
+
+                # Telegram 알림 (10개 이상 적체 시)
+                if len(large_queues) >= 10:
+                    try:
+                        from app.services.telegram import telegram_service
+                        if telegram_service.is_enabled():
+                            message = "대기열 적체 경고\n\n"
+                            for item in large_queues[:5]:  # 상위 5개만
+                                message += f"계정 {item['account_id']} - {item['symbol']}: {item['pending_count']}개\n"
+                            if len(large_queues) > 5:
+                                message += f"\n외 {len(large_queues) - 5}개 심볼"
+
+                            telegram_service.send_error_alert(
+                                "대기열 적체 경고",
+                                message
+                            )
+                    except Exception:
+                        pass
+
+            # Step 4: 각 (account_id, symbol)별 재정렬
             total_cancelled = 0
             total_executed = 0
             total_errors = 0
 
-            # OrderQueueManager 인스턴스 생성 (service는 None으로, rebalance_symbol에서만 사용)
-            queue_manager = OrderQueueManager(service=None)
+            # OrderQueueManager 인스턴스 재사용 (trading_service에서 기존 인스턴스 가져오기)
+            from app.services.trading import trading_service
+            queue_manager = trading_service.order_queue_manager
 
             for account_id, symbol in all_pairs:
                 try:
@@ -109,7 +193,47 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                         exc_info=True
                     )
 
-            # Step 4: 결과 로깅 (변경사항이 있을 때만)
+            # Step 5: 재정렬 후 적체 재확인
+            still_large_queues = []
+            for account_id, symbol in all_pairs:
+                pending_count = PendingOrder.query.filter_by(
+                    account_id=account_id,
+                    symbol=symbol
+                ).count()
+
+                if pending_count >= 20:
+                    still_large_queues.append({
+                        'account_id': account_id,
+                        'symbol': symbol,
+                        'pending_count': pending_count
+                    })
+
+            # 적체가 해소되지 않았을 때만 알림
+            resolved_count = len(large_queues) - len(still_large_queues)
+            if resolved_count > 0:
+                logger.info(f"✅ 대기열 적체 해소 - {resolved_count}개 심볼")
+
+            # 여전히 적체 중이고 10개 이상이면 Telegram 알림
+            if still_large_queues and len(still_large_queues) >= 10:
+                try:
+                    from app.services.telegram import telegram_service
+                    if telegram_service.is_enabled():
+                        message = "⚠️ 재정렬 후에도 대기열 적체 지속\n\n"
+                        for item in still_large_queues[:5]:
+                            message += f"계정 {item['account_id']} - {item['symbol']}: {item['pending_count']}개\n"
+                        if len(still_large_queues) > 5:
+                            message += f"\n외 {len(still_large_queues) - 5}개 심볼"
+
+                        telegram_service.send_error_alert(
+                            "대기열 적체 경고",
+                            message
+                        )
+                except Exception:
+                    pass
+            elif still_large_queues:
+                logger.warning(f"⚠️ 대기열 적체 지속 - {len(still_large_queues)}개 심볼 (10개 미만이므로 텔레그램 알림 생략)")
+
+            # Step 6: 결과 로깅 (변경사항이 있을 때만)
             if total_cancelled > 0 or total_executed > 0 or total_errors > 0:
                 logger.info(
                     f"🔄 대기열 재정렬 완료 - "
@@ -160,9 +284,9 @@ def rebalance_specific_symbol_with_context(
     """
     with app.app_context():
         try:
-            from app.services.trading.order_queue_manager import OrderQueueManager
+            from app.services.trading import trading_service
 
-            queue_manager = OrderQueueManager(service=None)
+            queue_manager = trading_service.order_queue_manager
             result = queue_manager.rebalance_symbol(
                 account_id=account_id,
                 symbol=symbol

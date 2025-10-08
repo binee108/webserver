@@ -16,3 +16,4 @@ psycopg2-binary==2.9.9
 cryptography==41.0.7
 PyJWT==2.8.0  # Upbit JWT 인증
 websockets==12.0  # WebSocket 실시간 체결 감지
+psutil==5.9.6  # 메모리 사용량 모니터링
