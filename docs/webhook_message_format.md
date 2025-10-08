@@ -390,23 +390,26 @@ Strategy (전략)
 
 ### 10. 배치 주문 예시 (orders 배열)
 
-> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 포맷이 변경되었습니다.
-> - 공통 필드를 상위 레벨로 이동 (`symbol`, `currency`, `token`, `group_name`)
-> - 각 주문의 `order_type` 필수
-> - 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
+> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 폴백 정책이 간소화되었습니다.
+> - **상위 레벨 필수 필드**: `group_name`, `token`
+> - **상위 레벨 폴백 지원**: `symbol`, `currency`만 (각 주문에서 생략 가능)
+> - **각 주문 필수 필드**: `order_type`, `side`, `qty_per` (주문 타입에 따라 `price`, `stop_price` 필수)
+> - **폴백 지원 안 함**: `side`, `price`, `stop_price`, `qty_per` (각 주문에 명시 필수)
+> - **자동 우선순위 정렬**: MARKET > CANCEL > LIMIT > STOP
 
-#### 새로운 배치 주문 구조
-- **상위 레벨**: 모든 주문에 공통으로 적용되는 필드
-  - `group_name`: 전략 식별자 (필수)
-  - `symbol`: 거래 심볼 (필수)
-  - `currency`: 기준 통화 (크립토 권장)
-  - `token`: 웹훅 인증 토큰 (필수)
-- **orders 배열**: 개별 주문 정의
+#### 배치 주문 구조 (간소화된 폴백 정책)
+- **상위 레벨 필수 필드**:
+  - `group_name`: 전략 식별자
+  - `token`: 웹훅 인증 토큰
+- **상위 레벨 선택 필드** (폴백 지원 O):
+  - `symbol`: 거래 심볼 (개별 주문에서 생략 가능, 상위 값 사용)
+  - `currency`: 기준 통화 (개별 주문에서 생략 가능, 상위 값 사용)
+- **각 주문 필수 필드** (폴백 지원 X):
   - `order_type`: 주문 타입 (필수)
-  - `side`: 거래 방향 (선택적, CANCEL 제외 필수)
-  - `price`: 지정가 (선택적, LIMIT 타입 시 필수)
-  - `qty_per`: 수량 비율 (선택적, CANCEL 제외 필수)
-  - `stop_price`: 스탑 가격 (선택적, STOP 타입 시 필수)
+  - `side`: 거래 방향 (CANCEL 제외 필수, 각 주문에 명시)
+  - `qty_per`: 수량 비율 (CANCEL 제외 필수, 각 주문에 명시)
+  - `price`: 지정가 (LIMIT 타입 시 필수, 각 주문에 명시)
+  - `stop_price`: 스탑 가격 (STOP 타입 시 필수, 각 주문에 명시)
   - `params`: 마켓별 추가 파라미터 (선택적)
 
 #### 배치 주문 처리 순서
@@ -1011,9 +1014,10 @@ Strategy (전략)
 }
 ```
 
-**주요 변경사항:**
-- ✅ 공통 필드 (`symbol`, `currency`) 상위 레벨로 이동
-- ✅ 각 주문의 `order_type` 필수
+**폴백 정책 (간소화):**
+- ✅ **폴백 지원**: `symbol`, `currency`만 상위 레벨에서 생략 가능
+- ❌ **폴백 안 함**: `side`, `price`, `qty_per` 등은 각 주문에 필수
+- ✅ 각 주문의 `order_type`, `side`, `qty_per` 필수
 - ✅ 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
 
 **이점**:
@@ -1266,7 +1270,11 @@ tail -f /Users/binee/Desktop/quant/webserver/web_server/logs/app.log
 
 ## 변경 이력
 
-### 2025-10-08
+### 2025-10-08 (최신)
+- **Breaking Change**: 배치 주문 폴백 정책 간소화
+  - 폴백 지원: `symbol`, `currency`만 (기존: side, price, qty_per 등 모든 필드)
+  - 각 주문 필수 필드: `order_type`, `side`, `qty_per` (주문 타입에 따라 `price`, `stop_price`)
+  - 명확한 데이터 계약으로 실수 방지
 - **Breaking Change**: `exchange` 필드 완전 제거
   - Strategy 연동 모든 계좌에서 자동 주문 실행
   - 멀티 exchange 지원 (Binance + Bybit + Upbit 동시 사용 가능)

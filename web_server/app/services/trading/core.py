@@ -217,7 +217,7 @@ class TradingCore:
         from app.services.utils import to_decimal
 
         # 필수 필드 검증 (market_type은 webhook_service에서 주입됨, exchange는 Strategy 연동 계좌에서 자동 결정)
-        required_fields = ['group_name', 'currency', 'symbol', 'order_type', 'side']
+        required_fields = ['group_name', 'currency', 'symbol', 'order_type']
         for field in required_fields:
             if field not in webhook_data:
                 raise Exception(f"필수 필드 누락: {field}")
@@ -226,12 +226,17 @@ class TradingCore:
         if 'market_type' not in webhook_data:
             raise Exception("market_type이 필요합니다 (내부 호출 시 주입되어야 함)")
 
+        # side 검증 (CANCEL_ALL_ORDER, CANCEL 제외 필수)
+        order_type = webhook_data.get('order_type')
+        if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and 'side' not in webhook_data:
+            raise Exception("필수 필드 누락: side")
+
         group_name = webhook_data['group_name']
         market_type = webhook_data['market_type']
         currency = webhook_data['currency']
         symbol = webhook_data['symbol']
         order_type = webhook_data['order_type']
-        side = webhook_data['side']
+        side = webhook_data.get('side')  # CANCEL_ALL_ORDER는 side 없음
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
         stop_price = to_decimal(webhook_data.get('stop_price')) if webhook_data.get('stop_price') else None
         qty_per = to_decimal(webhook_data.get('qty_per', 100))

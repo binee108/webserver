@@ -2,10 +2,13 @@
 공통 유틸리티 함수들
 """
 
+import logging
 from typing import Any
 from decimal import Decimal
 from app.constants import MarketType, Exchange, OrderType
 from app.utils.symbol_utils import is_standard_format
+
+logger = logging.getLogger(__name__)
 
 # 🔁 DRY: 증권 심볼 에러 메시지 (단일 소스)
 _SECURITIES_SYMBOL_ERROR_MESSAGES = {
@@ -188,13 +191,23 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         normalized['batch_mode'] = True
         normalized['orders'] = []
 
-        # 상위 레벨의 공통 필드 추출 (폴백용)
+        # 상위 레벨 공통 필드 (폴백 지원): symbol, currency만
+        # 나머지 필드(side, price, stop_price, qty_per)는 각 주문에 명시 필수
         common_symbol = webhook_data.get('symbol')
         common_currency = webhook_data.get('currency')
-        common_side = webhook_data.get('side')
-        common_price = webhook_data.get('price')
-        common_stop_price = webhook_data.get('stop_price')
-        common_qty_per = webhook_data.get('qty_per')
+
+        # 폴백 정책 변경 감지 (기존 사용자 경고)
+        deprecated_fallback_fields = []
+        for field in ['side', 'price', 'stop_price', 'qty_per']:
+            if field in webhook_data:
+                deprecated_fallback_fields.append(field)
+
+        if deprecated_fallback_fields:
+            logger.warning(
+                f"⚠️ 배치 주문 폴백 정책 변경 (2025-10-08): "
+                f"상위 레벨 {', '.join(deprecated_fallback_fields)} 필드는 더 이상 폴백되지 않습니다. "
+                f"각 주문에 명시해야 합니다."
+            )
 
         for idx, order in enumerate(webhook_data['orders']):
             if isinstance(order, dict):
@@ -223,33 +236,26 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                         )
                         raise ValueError(error_msg)
 
-                # 개별 주문 데이터 구성 (order 레벨 우선, 상위 레벨 폴백)
+                # 개별 주문 데이터 구성 (order 레벨에서만 가져옴, 폴백 없음)
                 batch_order = {
                     'symbol': order_symbol,
                     'order_type': order.get('order_type'),  # 필수 (order 레벨에서만)
                 }
 
-                # 선택적 필드 (order 레벨 > 상위 레벨 폴백 일관성 확보)
-                order_side = order.get('side') or common_side
-                if order_side:
-                    batch_order['side'] = order_side
+                # side, price, stop_price, qty_per는 각 주문에서만 가져옴 (폴백 없음)
+                if 'side' in order:
+                    batch_order['side'] = order['side']
 
-                order_price = order.get('price') or common_price
-                if order_price is not None:
-                    batch_order['price'] = order_price
+                if 'price' in order:
+                    batch_order['price'] = order['price']
 
-                order_stop_price = order.get('stop_price') or common_stop_price
-                if order_stop_price is not None:
-                    batch_order['stop_price'] = order_stop_price
+                if 'stop_price' in order:
+                    batch_order['stop_price'] = order['stop_price']
 
-                # qty_per: order 레벨 > 상위 레벨 폴백
-                order_qty_per = order.get('qty_per')
-                if order_qty_per is not None:
-                    batch_order['qty_per'] = to_decimal(order_qty_per)
-                elif common_qty_per is not None:
-                    batch_order['qty_per'] = to_decimal(common_qty_per)
+                if 'qty_per' in order:
+                    batch_order['qty_per'] = to_decimal(order['qty_per'])
 
-                # currency: order 레벨 > 상위 레벨 폴백
+                # currency: order 레벨 > 상위 레벨 폴백 (폴백 지원)
                 order_currency = order.get('currency') or common_currency
                 if order_currency:
                     batch_order['currency'] = order_currency
@@ -260,7 +266,25 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
 
                 # order_type 검증 (필수)
                 if not batch_order.get('order_type'):
-                    raise ValueError(f"배치 주문 {idx + 1}번째에 order_type이 필요합니다")
+                    raise ValueError(
+                        f"배치 주문 {idx + 1}번째에 order_type이 필요합니다. "
+                        f"사용 가능한 타입: MARKET, LIMIT, STOP_MARKET, STOP_LIMIT, CANCEL_ALL_ORDER"
+                    )
+
+                # side 검증 (CANCEL_ALL_ORDER 제외 필수)
+                order_type = batch_order.get('order_type')
+                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('side'):
+                    raise ValueError(
+                        f"배치 주문 {idx + 1}번째에 side가 필요합니다. "
+                        f"폴백 정책 변경 (2025-10-08): side는 각 주문에 명시해야 합니다."
+                    )
+
+                # qty_per 검증 (CANCEL_ALL_ORDER 제외 필수)
+                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('qty_per'):
+                    raise ValueError(
+                        f"배치 주문 {idx + 1}번째에 qty_per가 필요합니다. "
+                        f"폴백 정책 변경 (2025-10-08): qty_per는 각 주문에 명시해야 합니다."
+                    )
 
                 normalized['orders'].append(batch_order)
 

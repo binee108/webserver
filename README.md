@@ -931,17 +931,16 @@ Strategy (전략)
 
 #### 배치 주문 (여러 주문 동시 실행)
 
-> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 포맷이 변경되었습니다.
-> - **공통 필드 상위 레벨 이동**: `symbol`, `currency` 등을 상위로 추출
-> - **폴백 로직 일관성**: 모든 선택적 필드에서 order 레벨 > 상위 레벨 폴백 지원
->   - `symbol`, `currency`, `side`, `price`, `stop_price`, `qty_per` 모두 폴백 가능
-> - **각 주문의 `order_type` 필수**
+> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 폴백 정책이 간소화되었습니다.
+> - **상위 레벨 공통 필드** (필수): `group_name`, `token`
+> - **상위 레벨 공통 필드** (선택, 폴백 지원): `symbol`, `currency`
+> - **각 주문 필수 필드**: `order_type`, `side`, `qty_per` (주문 타입에 따라 `price`, `stop_price` 필수)
 > - **자동 우선순위 정렬**: MARKET > CANCEL > LIMIT > STOP
 
-**공통 필드 폴백 규칙:**
-- **order 레벨 우선**: 각 주문에 명시된 값이 우선 사용됨
-- **상위 레벨 폴백**: order 레벨에 없으면 상위 레벨 값 사용
-- **일관성**: 모든 선택적 필드에 동일하게 적용
+**폴백 정책 (간소화)**:
+- **폴백 지원 O**: `symbol`, `currency`만 상위 레벨에서 폴백 가능
+- **폴백 지원 X**: `side`, `price`, `stop_price`, `qty_per`는 각 주문에 명시 필수
+- **명확한 계약**: 각 주문이 완전한 정보를 가져야 함
 
 **기본 예시 (기존 주문 취소 + 2개 매수 주문):**
 ```json
@@ -970,26 +969,26 @@ Strategy (전략)
 }
 ```
 
-**공통 필드 폴백 예시:**
+**폴백 지원 예시 (symbol, currency만)**:
 ```json
 {
-    "group_name": "strategy",
-    "currency": "USDT",
-    "symbol": "BTC/USDT",
-    "side": "buy",
-    "qty_per": 10,
-    "token": "token",
+    "group_name": "multi_strategy",
+    "symbol": "BTC/USDT",     // ✅ 폴백 지원 - 개별 주문에서 생략 가능
+    "currency": "USDT",       // ✅ 폴백 지원 - 개별 주문에서 생략 가능
+    "token": "your_webhook_token",
     "orders": [
         {
             "order_type": "LIMIT",
-            "price": "90000"
-            // side, qty_per는 상위 레벨에서 폴백 (buy, 10)
+            "side": "buy",        // ❌ 폴백 없음 - 각 주문에 필수
+            "price": "90000",     // ❌ 폴백 없음 - 각 주문에 필수
+            "qty_per": 10         // ❌ 폴백 없음 - 각 주문에 필수
+            // symbol, currency는 상위 레벨 사용 (BTC/USDT, USDT)
         },
         {
-            "order_type": "LIMIT",
-            "price": "85000",
-            "qty_per": 5
-            // side는 상위 레벨에서 폴백 (buy), qty_per는 order 레벨 사용 (5)
+            "order_type": "MARKET",
+            "side": "sell",       // ❌ 각 주문에 명시 필수
+            "qty_per": 5          // ❌ 각 주문에 명시 필수
+            // symbol, currency는 상위 레벨 사용
         }
     ]
 }
