@@ -2,10 +2,31 @@
 
 Flask 기반의 암호화폐 자동 거래 시스템으로, 다수의 거래소 계정을 통합 관리하고 웹훅 시그널을 통한 자동 거래를 지원합니다.
 
+## 🆕 최근 업데이트 (2025-10-08)
+
+### 코드 리뷰 반영 및 안정성 개선
+- ✅ **Critical 이슈 3개 수정**: market_type 필드 오류, 멀티 Exchange 중복 주문 경고, 배치 주문 검증 강화
+- ✅ **Important 이슈 3개 수정**: 공통 필드 폴백 로직 일관성, order_type 사전 검증, 금지된 필드 정책 변경
+- ✅ **금지된 필드 정책**: `exchange`, `market_type`, `platform` 필드는 웹훅 메시지에 포함되어도 무시됨 (에러 발생 안함)
+- ✅ **멀티 Exchange 중복 경고**: 동일 거래소 계좌 중복 연동 시 WARNING 로그 발행
+- ✅ **배치 주문 개선**: 공통 필드 폴백 로직 일관성 확보 (side, price, stop_price, qty_per)
+
+### 배치 주문 포맷 변경 (Breaking Change)
+- ⚠️ **공통 필드 상위 레벨 이동**: `symbol`, `currency` 등을 상위로 추출
+- 🔄 **우선순위 자동 정렬**: MARKET(1) > CANCEL(2) > LIMIT(3) > STOP(4-5)
+- 📋 **폴백 로직**: order 레벨 우선 → 상위 레벨 폴백
+
+### DRY 리팩토링 및 코드 품질 향상
+- 🧹 **binance.py 리팩토링**: 120줄 중복 코드 제거 (`_prepare_order_params()` 메서드)
+- 📚 **Docstring 향상**: constants.py 커버리지 21% → 94%
+- 🔧 **로깅 최적화**: 상세 로그 INFO → DEBUG 레벨 변경
+
 ## 주요 기능
 
-- 🏦 **거래소 지원**: Binance, Upbit (국내 KRW 마켓)
+- 🏦 **거래소 지원**: Binance, Bybit, Upbit (국내 KRW 마켓)
+- 🌐 **멀티 Exchange 지원**: 단일 웹훅으로 여러 거래소 동시 주문 실행
 - 🤖 **자동 거래**: 웹훅 시그널 기반 자동 주문 실행
+- 📦 **배치 주문**: 여러 주문을 하나의 웹훅으로 동시 실행 (우선순위 자동 정렬)
 - 📊 **실시간 모니터링**: WebSocket을 통한 실시간 가격 및 포지션 업데이트
 - 💰 **자본 관리**: 전략별 자본 할당 및 리스크 관리
 - 📈 **성과 분석**: ROI, 샤프/소르티노 비율, 일일/누적 PnL 추적 및 API 제공
@@ -717,13 +738,24 @@ webserver/                 # 프로젝트 루트
 
 상세한 문서는 `web_server/docs/` 디렉토리에서 확인할 수 있습니다:
 
+### 주요 문서
+- [웹훅 메시지 포맷 가이드](docs/webhook_message_format.md) - 웹훅 API 전체 스펙 (배치 주문 포함)
+- [웹훅 테스트 시나리오](CLAUDE.md#웹훅-기능-테스트-시나리오) - 실전 테스트 가이드
+- [태스크 플랜](docs/task_plan.md) - 프로젝트 개발 계획 및 진행 상황
+
+### 아키텍처 문서
 - [전략 격리 수정 계획](web_server/docs/STRATEGY_ISOLATION_FIX_PLAN.md) - DB 기반 전략 격리 구현
 - [요구사항](web_server/docs/REQUIREMENTS.md) - 시스템 요구사항
-- [웹훅 테스트 시나리오](CLAUDE.md#웹훅-기능-테스트-시나리오) - 웹훅 API 테스트 가이드
 
 ### API 문서
-- 웹훅 API: 위 "4. 웹훅 설정" 섹션 참조
-- 주문/포지션 API: `/api` 엔드포인트 (인증 필요)
+- **웹훅 API**: 위 "4. 웹훅 설정" 섹션 참조 (필수 파라미터, 배치 주문, 멀티 Exchange)
+- **주문/포지션 API**: `/api` 엔드포인트 (인증 필요)
+- **실시간 이벤트**: Server-Sent Events (SSE) 지원
+
+### 변경 이력
+- **2025-10-08**: 코드 리뷰 반영, 배치 주문 개선, 멀티 Exchange 중복 경고
+- **2025-10-07**: 배치 주문 포맷 변경 (Breaking Change), 멀티 Exchange 지원
+- **이전 변경사항**: [Git 커밋 로그](https://github.com/binee108/crypto-trading-web-service/commits/) 참조
 
 ## 📖 사용 방법 상세 가이드
 
@@ -784,13 +816,22 @@ https://your-domain.com/api/webhook
   - `-100`: 현재 포지션 100% 청산
 - `token`: 웹훅 인증 토큰 (사용자별 고유 토큰)
 
-> ⚠️ **중요**: `exchange` 필드는 **더 이상 사용되지 않습니다**. 웹훅 메시지는 거래소를 지정하지 않으며,
-> Strategy에 연동된 모든 계좌에서 자동으로 주문이 실행됩니다.
+> 📌 **금지된 필드 정책 (2025-10-08 업데이트)**
+>
+> 다음 필드는 웹훅 메시지에 포함되어도 **무시**됩니다 (에러 발생 안함):
+> - `exchange`: 거래소는 Strategy 연동 계좌에서 자동 결정
+> - `market_type`: 시장 타입은 Strategy 설정에서 자동 결정
+> - `platform`: exchange의 별칭 (사용 안함)
+>
+> **이전 동작**: 금지된 필드 포함 시 에러 발생 ❌
+> **현재 동작**: 금지된 필드 포함 시 무시하고 정상 처리 ✅
+>
+> 이는 기존 웹훅 설정과의 호환성을 위한 조치입니다.
 
 #### 멀티 Exchange 지원
 
 웹훅은 `exchange`를 지정하지 않습니다.
-Strategy에 연동된 모든 계좌에서 자동으로 주문이 실행됩니다.
+**Strategy에 연동된 모든 계좌**에서 자동으로 주문이 실행됩니다.
 
 **예시:**
 - Strategy에 Binance, Bybit, Upbit 계좌 연동
@@ -805,8 +846,14 @@ Strategy (전략)
   └─ Upbit 계좌 → Upbit에서 주문 실행
 ```
 
+**중복 주문 감지:**
+- 동일 거래소 계좌가 중복 연동된 경우 **WARNING 로그** 발행
+- 예: Binance 계좌 2개 연동 시 → 로그에 경고 메시지 표시
+- 의도하지 않은 중복 주문 방지를 위해 Strategy 계좌 설정 확인 권장
+
 > ⚠️ **계좌 관리 주의**: Strategy에 같은 거래소 계좌가 중복 연동되면
 > 의도하지 않은 중복 주문이 발생할 수 있습니다.
+> 로그를 확인하여 중복 계좌 연동을 제거하세요.
 
 **선택적 파라미터:**
 - `price`: 지정가 (LIMIT, STOP_LIMIT 주문 시 필수)
@@ -898,9 +945,16 @@ Strategy (전략)
 #### 배치 주문 (여러 주문 동시 실행)
 
 > ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 포맷이 변경되었습니다.
-> - 공통 필드를 상위 레벨로 이동 (`symbol`, `currency`)
-> - 각 주문의 `order_type` 필수
-> - 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
+> - **공통 필드 상위 레벨 이동**: `symbol`, `currency` 등을 상위로 추출
+> - **폴백 로직 일관성**: 모든 선택적 필드에서 order 레벨 > 상위 레벨 폴백 지원
+>   - `symbol`, `currency`, `side`, `price`, `stop_price`, `qty_per` 모두 폴백 가능
+> - **각 주문의 `order_type` 필수**
+> - **자동 우선순위 정렬**: MARKET > CANCEL > LIMIT > STOP
+
+**공통 필드 폴백 규칙:**
+- **order 레벨 우선**: 각 주문에 명시된 값이 우선 사용됨
+- **상위 레벨 폴백**: order 레벨에 없으면 상위 레벨 값 사용
+- **일관성**: 모든 선택적 필드에 동일하게 적용
 
 **기본 예시 (기존 주문 취소 + 2개 매수 주문):**
 ```json
@@ -929,6 +983,31 @@ Strategy (전략)
 }
 ```
 
+**공통 필드 폴백 예시:**
+```json
+{
+    "group_name": "strategy",
+    "currency": "USDT",
+    "symbol": "BTC/USDT",
+    "side": "buy",
+    "qty_per": 10,
+    "token": "token",
+    "orders": [
+        {
+            "order_type": "LIMIT",
+            "price": "90000"
+            // side, qty_per는 상위 레벨에서 폴백 (buy, 10)
+        },
+        {
+            "order_type": "LIMIT",
+            "price": "85000",
+            "qty_per": 5
+            // side는 상위 레벨에서 폴백 (buy), qty_per는 order 레벨 사용 (5)
+        }
+    ]
+}
+```
+
 **우선순위 자동 정렬:**
 배치 주문은 다음 순서로 자동 정렬되어 실행됩니다:
 1. **MARKET** - 시장가 주문 (최우선)
@@ -941,7 +1020,9 @@ Strategy (전략)
 - OCO 주문: 익절과 손절을 동시 설정
 - 포트폴리오 리밸런싱: 기존 주문 취소 후 새 주문 생성
 
-**상세 문서:** [웹훅 메시지 포맷 가이드](docs/webhook_message_format.md#10-배치-주문-예시-orders-배열)
+**상세 문서:**
+- [웹훅 메시지 포맷 가이드](docs/webhook_message_format.md#10-배치-주문-예시-orders-배열)
+- [웹훅 테스트 시나리오](CLAUDE.md#웹훅-기능-테스트-시나리오)
 
 ### 5. 실시간 모니터링
 - **대시보드**: 전체 계정 현황, 총 자산, 일일 손익
