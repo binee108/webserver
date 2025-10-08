@@ -379,11 +379,11 @@ class WebhookService:
         """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
         token = webhook_data.get('token')
-        currency = webhook_data.get('currency')  # 선택적: 특정 통화만 (향후 확장용)
-        symbol = webhook_data.get('symbol')  # 선택적: 특정 심볼만
+        symbol = webhook_data.get('symbol')  # 필수: 특정 심볼
+        side = webhook_data.get('side')  # 선택적: BUY/SELL (없으면 모든 주문 취소)
 
         logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, "
-                   f"통화: {currency or '전체'}, 심볼: {symbol or '전체'}")
+                   f"심볼: {symbol}, side: {side or '전체'}")
         
         if not group_name:
             raise WebhookError("group_name이 필요합니다")
@@ -457,11 +457,12 @@ class WebhookService:
             
             try:
                 # order_service를 통해 주문 취소 (자동으로 OpenOrder 레코드도 처리됨)
-                logger.info(f"🔄 계좌 {account.id}: order_service를 통한 주문 취소 요청...")
+                logger.info(f"🔄 계좌 {account.id}: order_service를 통한 주문 취소 요청 (side={side or '전체'})...")
                 cancel_result = order_service.cancel_all_orders(
                     strategy_id=strategy.id,
                     symbol=symbol,
                     account_id=account.id,  # 특정 계좌 지정
+                    side=side,  # ✅ side 파라미터 전달
                     timing_context={'webhook_received_at': webhook_received_at}
                 )
                 

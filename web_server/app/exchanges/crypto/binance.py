@@ -58,25 +58,6 @@ class FuturesEndpoints:
     ORDER = "/fapi/v1/order"
     OPEN_ORDERS = "/fapi/v1/openOrders"
 
-# 주문 관련 상수
-class OrderType:
-    MARKET = "MARKET"
-    LIMIT = "LIMIT"
-    STOP_LOSS = "STOP_LOSS"
-    STOP_LOSS_LIMIT = "STOP_LOSS_LIMIT"
-
-class OrderSide:
-    BUY = "BUY"
-    SELL = "SELL"
-
-class OrderStatus:
-    NEW = "NEW"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    FILLED = "FILLED"
-    CANCELED = "CANCELED"
-    REJECTED = "REJECTED"
-    EXPIRED = "EXPIRED"
-
 
 class BinanceExchange(BaseCryptoExchange):
     """

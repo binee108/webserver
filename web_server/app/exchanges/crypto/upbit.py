@@ -50,21 +50,6 @@ class UpbitEndpoints:
     ORDERS_OPEN = f"/{API_VERSION}/orders/open"  # 미체결 주문 조회
     ORDER_CANCEL = f"/{API_VERSION}/order"  # 주문 취소
 
-# 주문 관련 상수
-class OrderType:
-    MARKET = "market"  # 시장가
-    LIMIT = "limit"    # 지정가
-
-class OrderSide:
-    BID = "bid"   # 매수
-    ASK = "ask"   # 매도
-
-class OrderStatus:
-    WAIT = "wait"        # 미체결
-    WATCH = "watch"      # 예약 주문
-    DONE = "done"        # 전체 체결
-    CANCEL = "cancel"    # 주문 취소
-
 
 class UpbitExchange(BaseCryptoExchange):
     """

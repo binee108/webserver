@@ -194,6 +194,7 @@ class OrderManager:
 
     def cancel_all_orders(self, strategy_id: int, symbol: Optional[str] = None,
                           account_id: Optional[int] = None,
+                          side: Optional[str] = None,
                           timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """전략의 모든 미체결 주문 취소
 
@@ -201,6 +202,7 @@ class OrderManager:
             strategy_id: 전략 ID
             symbol: 심볼 필터 (None이면 전체)
             account_id: 계좌 ID (None이면 첫 번째 계좌, 지정 시 해당 계좌만)
+            side: 주문 방향 필터 (None이면 전체, 'BUY' 또는 'SELL' 지정 시 해당 방향만)
             timing_context: 타이밍 정보
         """
         try:
@@ -211,7 +213,8 @@ class OrderManager:
             # 취소 작업 시작 시점 기록
             cancel_started_at = time.time()
 
-            logger.info(f"🔄 전략 {strategy_id} 모든 주문 취소 시작 (symbol: {symbol or 'ALL'}, account_id: {account_id or 'FIRST'})")
+            logger.info(f"🔄 전략 {strategy_id} 모든 주문 취소 시작 (symbol: {symbol or 'ALL'}, "
+                       f"account_id: {account_id or 'FIRST'}, side: {side or 'ALL'})")
 
             # 전략 조회
             strategy = Strategy.query.get(strategy_id)
@@ -252,10 +255,15 @@ class OrderManager:
             if symbol:
                 db_query = db_query.filter_by(symbol=symbol)
 
+            # ✅ side 필터 추가 (선택적)
+            if side:
+                db_query = db_query.filter_by(side=side.upper())
+                logger.info(f"📌 side 필터 적용: {side.upper()}")
+
             db_open_orders = db_query.all()
 
             if not db_open_orders:
-                logger.info(f"취소할 미체결 주문이 없습니다 - 전략: {strategy_id}, 계좌: {account.id}")
+                logger.info(f"취소할 미체결 주문이 없습니다 - 전략: {strategy_id}, 계좌: {account.id}, side: {side or '전체'}")
                 return {
                     'success': True,
                     'cancelled_orders': 0,
@@ -263,7 +271,12 @@ class OrderManager:
                     'message': '취소할 미체결 주문이 없습니다'
                 }
 
-            logger.info(f"📋 DB에서 조회된 미체결 주문: {len(db_open_orders)}개 (전략: {strategy_id}, 계좌: {account.id})")
+            # 적용된 필터 로그 메시지 구성
+            filters = [f"symbol={symbol}"]
+            if side:
+                filters.append(f"side={side}")
+            logger.info(f"📋 DB에서 조회된 미체결 주문: {len(db_open_orders)}개 "
+                       f"(전략: {strategy_id}, 필터: {', '.join(filters)})")
 
             # 주문 취소 실행
             cancelled_count = 0

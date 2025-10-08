@@ -138,8 +138,9 @@ class TradingService:
 
     def cancel_all_orders(self, strategy_id: int, symbol: Optional[str] = None,
                           account_id: Optional[int] = None,
+                          side: Optional[str] = None,
                           timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        return self.order_manager.cancel_all_orders(strategy_id, symbol, account_id, timing_context)
+        return self.order_manager.cancel_all_orders(strategy_id, symbol, account_id, side, timing_context)
 
     def cancel_all_orders_by_user(self, user_id: int, strategy_id: int,
                                   account_id: Optional[int] = None,

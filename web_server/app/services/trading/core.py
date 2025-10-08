@@ -217,7 +217,7 @@ class TradingCore:
         from app.services.utils import to_decimal
 
         # 필수 필드 검증 (market_type은 webhook_service에서 주입됨, exchange는 Strategy 연동 계좌에서 자동 결정)
-        required_fields = ['group_name', 'currency', 'symbol', 'order_type']
+        required_fields = ['group_name', 'symbol', 'order_type']
         for field in required_fields:
             if field not in webhook_data:
                 raise Exception(f"필수 필드 누락: {field}")
@@ -233,7 +233,6 @@ class TradingCore:
 
         group_name = webhook_data['group_name']
         market_type = webhook_data['market_type']
-        currency = webhook_data['currency']
         symbol = webhook_data['symbol']
         order_type = webhook_data['order_type']
         side = webhook_data.get('side')  # CANCEL_ALL_ORDER는 side 없음
@@ -296,7 +295,7 @@ class TradingCore:
         results = []
         if filtered_accounts:
             results = self._execute_trades_parallel(
-                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, currency, market_type, timing_context
+                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, market_type, timing_context
             )
 
         successful_trades = [r for r in results if r.get('success', False)]
@@ -323,7 +322,7 @@ class TradingCore:
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str,
                                  side: str, order_type: str, price: Optional[Decimal],
                                  stop_price: Optional[Decimal], qty_per: Decimal,
-                                 currency: str, market_type: str,
+                                 market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
         """병렬 거래 실행 (qty_per → quantity 변환 포함)"""
         results = []
@@ -460,16 +459,12 @@ class TradingCore:
         results = []
         for original_idx, order in sorted_orders_with_idx:
             try:
-                # 공통 필드 병합 (group_name, market_type, currency)
+                # 공통 필드 병합 (group_name, market_type)
                 order_data = {
                     'group_name': group_name,
                     'market_type': market_type,  # Strategy에서 가져온 market_type 주입
                     **order
                 }
-
-                # 상위 레벨 currency를 order 레벨에 없을 경우 추가
-                if 'currency' not in order_data and 'currency' in webhook_data:
-                    order_data['currency'] = webhook_data['currency']
 
                 result = self.process_trading_signal(order_data, timing_context)
                 results.append({

@@ -186,15 +186,21 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     if 'order_type' in webhook_data:
         normalized['order_type'] = webhook_data['order_type']
 
+    # ✅ CANCEL_ALL_ORDER 필수 필드 검증 (symbol 필수, side 선택적)
+    if normalized.get('order_type') == 'CANCEL_ALL_ORDER':
+        if not normalized.get('symbol'):
+            raise ValueError("CANCEL_ALL_ORDER에는 symbol이 필수입니다")
+        # side는 선택적 (BUY/SELL 방향 필터, 없으면 모든 주문 취소)
+        # 필터링: strategy_account_id (전략 격리) + symbol (필수) + side (선택적)
+
     # 🆕 배치 주문 감지 및 처리 (새로운 포맷)
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
         normalized['batch_mode'] = True
         normalized['orders'] = []
 
-        # 상위 레벨 공통 필드 (폴백 지원): symbol, currency만
+        # 상위 레벨 공통 필드 (폴백 지원): symbol만
         # 나머지 필드(side, price, stop_price, qty_per)는 각 주문에 명시 필수
         common_symbol = webhook_data.get('symbol')
-        common_currency = webhook_data.get('currency')
 
         # 폴백 정책 변경 감지 (기존 사용자 경고)
         deprecated_fallback_fields = []
@@ -254,11 +260,6 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
 
                 if 'qty_per' in order:
                     batch_order['qty_per'] = to_decimal(order['qty_per'])
-
-                # currency: order 레벨 > 상위 레벨 폴백 (폴백 지원)
-                order_currency = order.get('currency') or common_currency
-                if order_currency:
-                    batch_order['currency'] = order_currency
 
                 # params 지원 (확장 파라미터)
                 if 'params' in order:
