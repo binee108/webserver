@@ -196,7 +196,7 @@ class OrderManager:
                           account_id: Optional[int] = None,
                           side: Optional[str] = None,
                           timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """전략의 모든 미체결 주문 취소
+        """전략의 모든 미체결 주문 취소 (거래소 + 대기열)
 
         Args:
             strategy_id: 전략 ID
@@ -206,6 +206,8 @@ class OrderManager:
             timing_context: 타이밍 정보
         """
         try:
+            from app.models import PendingOrder
+
             # 타이밍 컨텍스트 초기화
             if timing_context is None:
                 timing_context = {}
@@ -247,36 +249,16 @@ class OrderManager:
 
             account = strategy_account.account
 
-            # ✅ DB 기반 미체결 주문 조회 (전략 격리 보장)
-            # 거래소 API가 아닌 DB OpenOrder 테이블에서 조회
-            # → strategy_account_id FK로 해당 전략의 주문만 필터링
-            # → 동일 계좌를 사용하는 다른 전략의 주문은 조회되지 않음
+            # ✅ 1. 거래소 미체결 주문 취소 (OpenOrder)
             db_query = OpenOrder.query.filter_by(strategy_account_id=strategy_account.id)
             if symbol:
                 db_query = db_query.filter_by(symbol=symbol)
-
-            # ✅ side 필터 추가 (선택적)
             if side:
                 db_query = db_query.filter_by(side=side.upper())
-                logger.info(f"📌 side 필터 적용: {side.upper()}")
 
             db_open_orders = db_query.all()
 
-            if not db_open_orders:
-                logger.info(f"취소할 미체결 주문이 없습니다 - 전략: {strategy_id}, 계좌: {account.id}, side: {side or '전체'}")
-                return {
-                    'success': True,
-                    'cancelled_orders': 0,
-                    'failed_orders': 0,
-                    'message': '취소할 미체결 주문이 없습니다'
-                }
-
-            # 적용된 필터 로그 메시지 구성
-            filters = [f"symbol={symbol}"]
-            if side:
-                filters.append(f"side={side}")
-            logger.info(f"📋 DB에서 조회된 미체결 주문: {len(db_open_orders)}개 "
-                       f"(전략: {strategy_id}, 필터: {', '.join(filters)})")
+            logger.info(f"📋 거래소 미체결 주문: {len(db_open_orders)}개")
 
             # 주문 취소 실행
             cancelled_count = 0
@@ -285,8 +267,6 @@ class OrderManager:
 
             for db_order in db_open_orders:
                 try:
-                    # DB의 exchange_order_id로 거래소 API 호출
-                    # db_order.exchange_order_id = 거래소 주문 ID
                     exchange_order_id = db_order.exchange_order_id
                     order_symbol = db_order.symbol
 
@@ -299,10 +279,10 @@ class OrderManager:
 
                     if cancel_result['success']:
                         cancelled_count += 1
-                        logger.info(f"✅ 주문 취소 성공: {exchange_order_id} (전략: {strategy_id})")
+                        logger.info(f"✅ 거래소 주문 취소 성공: {exchange_order_id}")
                     else:
                         failed_count += 1
-                        logger.warning(f"❌ 주문 취소 실패: {exchange_order_id} - {cancel_result.get('error')}")
+                        logger.warning(f"❌ 거래소 주문 취소 실패: {exchange_order_id} - {cancel_result.get('error')}")
 
                     results.append({
                         'order_id': exchange_order_id,
@@ -323,6 +303,26 @@ class OrderManager:
                         }
                     })
 
+            # ✅ 2. 대기열 주문 삭제 (PendingOrder)
+            pending_query = PendingOrder.query.filter_by(strategy_account_id=strategy_account.id)
+            if symbol:
+                pending_query = pending_query.filter_by(symbol=symbol)
+            if side:
+                pending_query = pending_query.filter_by(side=side.upper())
+
+            pending_orders = pending_query.all()
+            pending_deleted_count = len(pending_orders)
+
+            logger.info(f"📋 대기열 주문: {pending_deleted_count}개")
+
+            for pending_order in pending_orders:
+                db.session.delete(pending_order)
+
+            db.session.commit()
+
+            if pending_deleted_count > 0:
+                logger.info(f"🗑️ 대기열 주문 삭제 완료: {pending_deleted_count}개")
+
             # 취소 작업 완료 시점 기록
             cancel_completed_at = time.time()
 
@@ -331,11 +331,16 @@ class OrderManager:
                 'strategy_id': strategy_id,
                 'cancelled_orders': cancelled_count,
                 'failed_orders': failed_count,
-                'total_orders': len(db_open_orders),
+                'pending_deleted': pending_deleted_count,
+                'total_orders': len(db_open_orders) + pending_deleted_count,
                 'results': results
             }
 
-            logger.info(f"✅ 모든 주문 취소 완료 - 성공: {cancelled_count}, 실패: {failed_count}, 총 처리 시간: {round((cancel_completed_at - cancel_started_at) * 1000, 2)}ms")
+            logger.info(
+                f"✅ 모든 주문 취소 완료 - 거래소 취소: {cancelled_count}, "
+                f"대기열 삭제: {pending_deleted_count}, 실패: {failed_count}, "
+                f"총 처리 시간: {round((cancel_completed_at - cancel_started_at) * 1000, 2)}ms"
+            )
             return result
 
         except Exception as e:

@@ -19,6 +19,8 @@ from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
+from .exchange_limit_tracker import ExchangeLimitTracker
+from .order_queue_manager import OrderQueueManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +50,10 @@ class TradingService:
         self.order_manager = OrderManager(service=self)
         self.core = TradingCore(service=self)
         self.event_emitter = EventEmitter(service=self)
+        self.exchange_limit_tracker = ExchangeLimitTracker  # classmethod만 있는 유틸리티 클래스
+        self.order_queue_manager = OrderQueueManager(service=self)
 
-        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성)")
+        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성 + 대기열 관리)")
 
     @property
     def SessionLocal(self):

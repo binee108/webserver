@@ -324,12 +324,15 @@ class TradingCore:
                                  stop_price: Optional[Decimal], qty_per: Decimal,
                                  market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
-        """병렬 거래 실행 (qty_per → quantity 변환 포함)"""
+        """병렬 거래 실행 (qty_per → quantity 변환 포함, 대기열 분기)"""
         results = []
         max_workers = min(10, len(filtered_accounts))
 
         # Flask app context를 미리 캡처
         app = current_app._get_current_object()
+
+        # 🆕 MARKET/CANCEL은 즉시 실행, LIMIT/STOP은 제한 체크 후 분기
+        is_immediate_order = order_type in [OrderType.MARKET, OrderType.CANCEL, OrderType.CANCEL_ALL_ORDER]
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
@@ -368,7 +371,56 @@ class TradingCore:
                     })
                     continue
 
-                # 변환된 수량으로 거래 실행 (Flask app context 포함)
+                # 🆕 LIMIT/STOP 주문: 제한 체크 후 대기열 분기
+                if not is_immediate_order:
+                    can_place_result = self.service.exchange_limit_tracker.can_place_order(
+                        account_id=account.id,
+                        symbol=symbol,
+                        order_type=order_type,
+                        market_type=market_type
+                    )
+
+                    if not can_place_result.get('can_place'):
+                        # 제한 초과 → 대기열에 추가
+                        reason = can_place_result.get('reason', 'QUEUE_LIMIT')
+                        enqueue_result = self.service.order_queue_manager.enqueue(
+                            strategy_account_id=sa.id,
+                            symbol=symbol,
+                            side=side,
+                            order_type=order_type,
+                            quantity=calculated_quantity,
+                            price=price,
+                            stop_price=stop_price,
+                            market_type=market_type,
+                            reason=reason
+                        )
+
+                        if enqueue_result.get('success'):
+                            logger.info(
+                                f"📥 대기열 추가 (제한 초과) - 계좌: {account.id}, "
+                                f"심볼: {symbol}, 사유: {reason}"
+                            )
+                            results.append({
+                                'success': True,
+                                'queued': True,
+                                'pending_order_id': enqueue_result.get('pending_order_id'),
+                                'message': f'대기열에 추가되었습니다 - {reason}',
+                                'account_id': account.id,
+                                'account_name': account.name
+                            })
+                        else:
+                            logger.error(
+                                f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
+                                f"error: {enqueue_result.get('error')}"
+                            )
+                            results.append({
+                                'success': False,
+                                'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
+                                'account_id': account.id
+                            })
+                        continue  # 거래소 실행 건너뛰기
+
+                # 거래소 즉시 실행 (Flask app context 포함)
                 def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
                     with app.app_context():
                         return self.execute_trade(
