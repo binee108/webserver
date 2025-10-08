@@ -18,22 +18,6 @@ from typing import Dict, Any, Optional, Tuple
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-try:
-    import schedule
-except ImportError:
-    # schedule이 없을 때를 위한 더미 클래스
-    class MockSchedule:
-        def every(self):
-            return self
-        def hour(self):
-            return self
-        def at(self, time):
-            return self
-        def do(self, func):
-            return self
-        def run_pending(self):
-            pass
-    schedule = MockSchedule()
 
 from app.models import Account
 from app.exchanges.models import MarketInfo
@@ -63,39 +47,13 @@ class SymbolValidator:
         self.cache_last_updated: Dict[str, float] = {}
         self.cache_lock = threading.RLock()
         self.is_initialized = False
-        self.background_thread = None
 
         logger.info("✅ Symbol Validator 초기화 완료")
 
-    def start_background_updater(self):
-        """백그라운드 갱신 스케줄러 시작"""
-        if self.background_thread and self.background_thread.is_alive():
-            logger.warning("백그라운드 갱신이 이미 실행 중입니다")
-            return
-
-        def background_worker():
-            """백그라운드 워커 스레드"""
-            # 매시 15분에 실행 (정각 회피)
-            schedule.every().hour.at(":15").do(self._refresh_all_symbols)
-
-            logger.info("🔄 백그라운드 Symbol 갱신 스케줄러 시작 (매시 15분)")
-
-            while True:
-                try:
-                    schedule.run_pending()
-                    time.sleep(60)  # 1분마다 스케줄 확인
-                except Exception as e:
-                    logger.error(f"백그라운드 갱신 중 오류: {e}")
-                    time.sleep(300)  # 오류 시 5분 대기
-
-        self.background_thread = threading.Thread(
-            target=background_worker,
-            daemon=True,
-            name="SymbolValidator-Background"
-        )
-        self.background_thread.start()
-
-        logger.info("✅ Symbol Validator 백그라운드 스케줄러 시작됨")
+    def refresh_symbols_with_context(self, app):
+        """Flask app context와 함께 Symbol 정보 갱신 (APScheduler용)"""
+        with app.app_context():
+            self._refresh_all_symbols()
 
     def load_initial_symbols(self):
         """서비스 시작 시 모든 거래소 심볼 정보 필수 로드 (Public API 사용)"""
@@ -429,7 +387,6 @@ class SymbolValidator:
             return {
                 'total_symbols': len(self.market_info_cache),
                 'is_initialized': self.is_initialized,
-                'background_thread_alive': self.background_thread and self.background_thread.is_alive(),
                 'cache_keys': list(self.market_info_cache.keys())[:10]  # 처음 10개만
             }
 

@@ -494,6 +494,18 @@ def register_background_jobs(app):
         max_instances=1
     )
 
+    # 🆕 Symbol Validator 갱신 (매시 15분 - 소수 시간대)
+    from app.services.symbol_validator import symbol_validator
+    scheduler.add_job(
+        func=symbol_validator.refresh_symbols_with_context,
+        args=[app],
+        trigger="cron",
+        minute=15,
+        id='symbol_validator_refresh',
+        name='Symbol Validator - Hourly Refresh',
+        replace_existing=True,
+        max_instances=1
+    )
 
     # 🆕 가격 캐시 업데이트 (31초마다, 소수 주기로 정각 집중 트래픽 회피)
     scheduler.add_job(
