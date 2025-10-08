@@ -212,9 +212,10 @@ class WebhookService:
                         'trade_started_at': trade_started_at
                     }
 
-                    # 전략 ID를 거래 데이터에 추가
+                    # 전략 정보를 거래 데이터에 추가
                     normalized_data['strategy_id'] = strategy.id
                     normalized_data['strategy_name'] = strategy.name
+                    normalized_data['market_type'] = market_type  # Strategy에서 가져온 market_type 주입
 
                     # 🆕 배치 모드 감지 및 라우팅
                     if normalized_data.get('batch_mode'):

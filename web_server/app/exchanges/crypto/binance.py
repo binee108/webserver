@@ -21,6 +21,7 @@ import aiohttp
 import requests
 
 from .base import BaseCryptoExchange
+from app.constants import OrderType
 from app.exchanges.base import ExchangeError, InvalidOrder, InsufficientFunds
 from app.exchanges.models import MarketInfo, Balance, Order, Ticker, Position, PriceQuote
 from app.utils.symbol_utils import to_binance_format, from_binance_format
@@ -462,6 +463,85 @@ class BinanceExchange(BaseCryptoExchange):
         logger.info(f"✅ {market_type.title()} 잔액 조회 완료: {len(balances)}개")
         return balances
 
+    def _prepare_order_params(self, original_order_type: str, binance_symbol: str,
+                             side: str, binance_order_type: str, amount: Decimal,
+                             price: Optional[Decimal], params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        주문 파라미터 준비 (DRY - 동기/비동기 공통 로직)
+
+        Args:
+            original_order_type (str): 원본 주문 타입 (MARKET, LIMIT, STOP_MARKET, STOP_LIMIT)
+            binance_symbol (str): Binance 형식 심볼 (BTCUSDT)
+            side (str): 주문 방향 (buy, sell)
+            binance_order_type (str): Binance API 형식 주문 타입
+            amount (Decimal): 주문 수량
+            price (Optional[Decimal]): 주문 가격 (LIMIT 타입인 경우 필수)
+            params (Dict[str, Any]): 추가 파라미터 (stopPrice 등)
+
+        Returns:
+            Dict[str, Any]: Binance API 호출용 주문 파라미터
+
+        Raises:
+            InvalidOrder: 필수 파라미터 누락 또는 지원하지 않는 주문 타입
+
+        Examples:
+            >>> params = self._prepare_order_params(
+            ...     'LIMIT', 'BTCUSDT', 'buy', 'LIMIT', Decimal('0.001'),
+            ...     Decimal('50000'), {}
+            ... )
+            >>> params['type']
+            'LIMIT'
+            >>> params['timeInForce']
+            'GTC'
+        """
+        order_params = {
+            'symbol': binance_symbol,
+            'side': side.upper(),
+            'type': binance_order_type.upper(),
+            'quantity': str(amount)
+        }
+
+        # OrderType별 파라미터 설정 - 체계적인 timeInForce 처리
+        if original_order_type.upper() == OrderType.MARKET:
+            # MARKET: timeInForce 불필요, price 불필요
+            logger.info("🔄 MARKET 주문: timeInForce, price 파라미터 제외")
+
+        elif original_order_type.upper() == OrderType.LIMIT:
+            # LIMIT: price 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            order_params['price'] = str(price)
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 LIMIT 주문: price={price}, timeInForce=GTC")
+
+        elif original_order_type.upper() == OrderType.STOP_MARKET:
+            # STOP_MARKET: stopPrice 필수, price 불필요, timeInForce 불필요
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['stopPrice'] = str(params['stopPrice'])
+            logger.info(f"🔄 STOP_MARKET 주문: stopPrice={params['stopPrice']}, timeInForce 제외")
+
+        elif original_order_type.upper() == OrderType.STOP_LIMIT:
+            # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
+            if not price:
+                raise InvalidOrder(f"STOP_LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
+            if not params.get('stopPrice'):
+                raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice 파라미터가 필수입니다.")
+            order_params['price'] = str(price)
+            order_params['stopPrice'] = str(params['stopPrice'])
+            order_params['timeInForce'] = 'GTC'
+            logger.info(f"🔄 STOP_LIMIT 주문: price={price}, stopPrice={params['stopPrice']}, timeInForce=GTC")
+
+        else:
+            raise InvalidOrder(f"지원하지 않는 주문 타입: {original_order_type}")
+
+        # 추가 파라미터 처리 (이미 처리된 것들 제외)
+        processed_keys = {'stopPrice'}
+        remaining_params = {k: v for k, v in params.items() if k not in processed_keys}
+        order_params.update(remaining_params)
+
+        return order_params
+
     def create_order_impl(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
                          market_type: str = 'spot', **params) -> Order:
@@ -473,67 +553,19 @@ class BinanceExchange(BaseCryptoExchange):
         binance_symbol = to_binance_format(symbol)
         logger.info(f"🔄 심볼 변환: {symbol} → {binance_symbol}")
 
-        # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
+        # 1. 입력 변환 및 파라미터 준비 (DRY - 공통 로직)
         original_order_type = order_type
         binance_order_type = self._convert_to_binance_format(order_type, side)
-
-        order_params = {
-            'symbol': binance_symbol,  # 변환된 심볼 사용
-            'side': side.upper(),
-            'type': binance_order_type.upper(),  # 변환된 타입 사용
-        }
-
-        # 수량 설정 (Spot: quantity, Futures: quantity)
-        order_params['quantity'] = str(amount)
-
-
-        # OrderType별 파라미터 설정 - 체계적인 timeInForce 처리
-        from app.constants import OrderType
-
-        # 1. 기본 파라미터 설정 (원본 타입 기준)
-        if original_order_type.upper() == OrderType.MARKET:
-            # MARKET: timeInForce 불필요, price 불필요
-            logger.info("🔄 MARKET 주문: timeInForce, price 파라미터 제외")
-            
-        elif original_order_type.upper() == OrderType.LIMIT:
-            # LIMIT: price 필수, timeInForce = GTC
-            if not price:
-                raise InvalidOrder(f"LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
-            order_params['price'] = str(price)
-            order_params['timeInForce'] = 'GTC'
-            logger.info(f"🔄 LIMIT 주문: price={price}, timeInForce=GTC")
-            
-        elif original_order_type.upper() == OrderType.STOP_MARKET:
-            # STOP_MARKET: stopPrice 필수, price 불필요, timeInForce 불필요
-            if not params.get('stopPrice'):
-                raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice 파라미터가 필수입니다.")
-            order_params['stopPrice'] = str(params['stopPrice'])
-            logger.info(f"🔄 STOP_MARKET 주문: stopPrice={params['stopPrice']}, timeInForce 제외")
-            
-        elif original_order_type.upper() == OrderType.STOP_LIMIT:
-            # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
-            if not price:
-                raise InvalidOrder(f"STOP_LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
-            if not params.get('stopPrice'):
-                raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice 파라미터가 필수입니다.")
-            order_params['price'] = str(price)
-            order_params['stopPrice'] = str(params['stopPrice'])
-            order_params['timeInForce'] = 'GTC'
-            logger.info(f"🔄 STOP_LIMIT 주문: price={price}, stopPrice={params['stopPrice']}, timeInForce=GTC")
-            
-        else:
-            raise InvalidOrder(f"지원하지 않는 주문 타입: {original_order_type}")
-
-        # 2. 추가 파라미터 처리 (이미 처리된 것들 제외)
-        processed_keys = {'stopPrice'}  # 이미 처리된 키들
-        remaining_params = {k: v for k, v in params.items() if k not in processed_keys}
-        order_params.update(remaining_params)
+        order_params = self._prepare_order_params(
+            original_order_type, binance_symbol, side,
+            binance_order_type, amount, price, params
+        )
 
         url = f"{base_url}{endpoints.ORDER}"
-        logger.info(f"🔍 바이낸스 API 호출: {url}")
-        logger.info(f"🔍 주문 파라미터: {order_params}")
+        logger.debug(f"🔍 바이낸스 API 호출: {url}")
+        logger.debug(f"🔍 주문 파라미터: {order_params}")
         data = self._request('POST', url, order_params, signed=True)
-        logger.info(f"🔍 바이낸스 API 응답: {data}")
+        logger.debug(f"🔍 바이낸스 API 응답: {data}")
 
         # 시장가 주문의 경우 즉시 주문 상태 재조회 (체결 정보 확인)
         if order_type.upper() == 'MARKET' and data.get('status') == 'NEW':
@@ -699,8 +731,8 @@ class BinanceExchange(BaseCryptoExchange):
         url = f"{base_url}{endpoints.ACCOUNT}"
         data = await self._request_async('GET', url, signed=True)
 
-        # 디버깅을 위해 API 응답 로깅
-        logger.info(f"🔍 Balance API Response ({market_type}): {json.dumps(data, indent=2, default=str)}")
+        # 디버깅을 위해 API 응답 로깅 (DEBUG 레벨)
+        logger.debug(f"🔍 Balance API Response ({market_type}): {json.dumps(data, indent=2, default=str)}")
 
         balances = {}
         balance_key = 'balances' if market_type == 'spot' else 'assets'
@@ -710,8 +742,8 @@ class BinanceExchange(BaseCryptoExchange):
             if not asset:
                 continue
 
-            # 디버깅을 위해 개별 자산 정보 로깅
-            logger.info(f"🔍 Processing asset {asset}: {json.dumps(balance_info, indent=2, default=str)}")
+            # 디버깅을 위해 개별 자산 정보 로깅 (DEBUG 레벨)
+            logger.debug(f"🔍 Processing asset {asset}: {json.dumps(balance_info, indent=2, default=str)}")
 
             if market_type.lower() == 'futures':
                 # Binance Futures API 필드 매핑 (/fapi/v2/account)
@@ -789,60 +821,13 @@ class BinanceExchange(BaseCryptoExchange):
         binance_symbol = to_binance_format(symbol)
         logger.info(f"🔄 심볼 변환 (비동기): {symbol} → {binance_symbol}")
 
-        # 1. 입력 변환: 프로젝트 표준 → Binance API 형식
+        # 1. 입력 변환 및 파라미터 준비 (DRY - 공통 로직)
         original_order_type = order_type
         binance_order_type = self._convert_to_binance_format(order_type, side)
-
-        order_params = {
-            'symbol': binance_symbol,  # 변환된 심볼 사용
-            'side': side.upper(),
-            'type': binance_order_type.upper(),  # 변환된 타입 사용
-        }
-
-        # 수량 설정
-        order_params['quantity'] = str(amount)
-
-        # OrderType별 파라미터 설정 - 체계적인 timeInForce 처리 (동기 버전과 동일)
-        from app.constants import OrderType
-
-        # 1. 기본 파라미터 설정 (원본 타입 기준)
-        if original_order_type.upper() == OrderType.MARKET:
-            # MARKET: timeInForce 불필요, price 불필요
-            logger.info("🔄 MARKET 주문: timeInForce, price 파라미터 제외")
-            
-        elif original_order_type.upper() == OrderType.LIMIT:
-            # LIMIT: price 필수, timeInForce = GTC
-            if not price:
-                raise InvalidOrder(f"LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
-            order_params['price'] = str(price)
-            order_params['timeInForce'] = 'GTC'
-            logger.info(f"🔄 LIMIT 주문: price={price}, timeInForce=GTC")
-            
-        elif original_order_type.upper() == OrderType.STOP_MARKET:
-            # STOP_MARKET: stopPrice 필수, price 불필요, timeInForce 불필요
-            if not params.get('stopPrice'):
-                raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice 파라미터가 필수입니다.")
-            order_params['stopPrice'] = str(params['stopPrice'])
-            logger.info(f"🔄 STOP_MARKET 주문: stopPrice={params['stopPrice']}, timeInForce 제외")
-            
-        elif original_order_type.upper() == OrderType.STOP_LIMIT:
-            # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
-            if not price:
-                raise InvalidOrder(f"STOP_LIMIT 주문은 price 파라미터가 필수입니다. price={price}")
-            if not params.get('stopPrice'):
-                raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice 파라미터가 필수입니다.")
-            order_params['price'] = str(price)
-            order_params['stopPrice'] = str(params['stopPrice'])
-            order_params['timeInForce'] = 'GTC'
-            logger.info(f"🔄 STOP_LIMIT 주문: price={price}, stopPrice={params['stopPrice']}, timeInForce=GTC")
-            
-        else:
-            raise InvalidOrder(f"지원하지 않는 주문 타입: {original_order_type}")
-
-        # 2. 추가 파라미터 처리 (이미 처리된 것들 제외)
-        processed_keys = {'stopPrice'}  # 이미 처리된 키들
-        remaining_params = {k: v for k, v in params.items() if k not in processed_keys}
-        order_params.update(remaining_params)
+        order_params = self._prepare_order_params(
+            original_order_type, binance_symbol, side,
+            binance_order_type, amount, price, params
+        )
 
 
         url = f"{base_url}{endpoints.ORDER}"

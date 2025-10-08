@@ -36,6 +36,7 @@ https://your-domain.com/api/webhook
 - **모든 마켓에서 동일한 필드명 사용**: `symbol`, `side`, `order_type`, `qty_per` 등
 - **일관된 메시지 구조**: 크립토든 증권이든 동일한 JSON 구조
 - **자동 타입 추론**: `market_type`과 `exchange`는 전략 설정에서 자동 결정
+- **멀티 Exchange 지원**: 하나의 전략이 여러 거래소 계좌를 동시 사용 가능
 
 #### 2. 전략 기반 라우팅 (Strategy-Based Routing)
 ```
@@ -47,7 +48,32 @@ https://your-domain.com/api/webhook
 - 데이터 일관성 유지 (Single Source of Truth)
 - 사용자 오입력 방지 (전략과 웹훅 불일치 차단)
 
-#### 3. 유연한 확장성
+#### 3. 멀티 Exchange 지원
+
+웹훅 메시지에 `exchange` 필드를 지정하지 않습니다.
+대신 Strategy에 연동된 **모든 계좌**에서 자동으로 주문이 실행됩니다.
+
+**동작 방식:**
+```
+Strategy (전략)
+  ↓ 연동 계좌 (StrategyAccount)
+  ├─ Binance 계좌 → Binance에서 주문 실행
+  ├─ Bybit 계좌 → Bybit에서 주문 실행
+  └─ Upbit 계좌 → Upbit에서 주문 실행
+
+웹훅 1개 → 연동된 모든 거래소에 동시 주문 ✅
+```
+
+**장점:**
+- 여러 거래소에 동시 주문 가능
+- 계좌 추가/제거만으로 거래소 변경 가능
+- 웹훅 메시지 단순화
+
+**주의사항:**
+- Strategy에 같은 거래소 계좌가 2개 있으면 2번 주문됨
+- 계좌 관리 시 중복 방지 필요
+
+#### 4. 유연한 확장성
 - **params 객체**: 마켓별 특수 파라미터 지원
 - **배치 주문**: 여러 주문을 한 번에 실행
 - **하위 호환성**: 기존 크립토 웹훅 100% 지원
@@ -80,9 +106,12 @@ https://your-domain.com/api/webhook
 
 > ⚠️ **2025-10-07부터 제거됨 (Hard Break)**: 다음 필드들은 더 이상 사용할 수 없습니다.
 
-- ❌ `exchange`: Account.exchange에서 자동 결정됨
+- ❌ `exchange`: **완전히 제거됨** - Strategy 연동 모든 계좌에서 자동 주문 실행
 - ❌ `market_type`: Strategy.market_type에서 자동 결정됨
 - ❌ `platform`: `exchange`의 대체 필드명 (동일하게 금지)
+
+> 💡 **중요**: `exchange` 필드는 더 이상 지원되지 않습니다. 웹훅 메시지는 거래소를 지정하지 않으며,
+> Strategy에 연동된 **모든 계좌**에서 자동으로 주문이 실행됩니다. 이를 통해 멀티 exchange 동시 거래가 가능합니다.
 
 **에러 예시:**
 ```json
@@ -360,36 +389,197 @@ https://your-domain.com/api/webhook
 ---
 
 ### 10. 배치 주문 예시 (orders 배열)
+
+> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 포맷이 변경되었습니다.
+> - 공통 필드를 상위 레벨로 이동 (`symbol`, `currency`, `token`, `group_name`)
+> - 각 주문의 `order_type` 필수
+> - 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
+
+#### 새로운 배치 주문 구조
+- **상위 레벨**: 모든 주문에 공통으로 적용되는 필드
+  - `group_name`: 전략 식별자 (필수)
+  - `symbol`: 거래 심볼 (필수)
+  - `currency`: 기준 통화 (크립토 권장)
+  - `token`: 웹훅 인증 토큰 (필수)
+- **orders 배열**: 개별 주문 정의
+  - `order_type`: 주문 타입 (필수)
+  - `side`: 거래 방향 (선택적, CANCEL 제외 필수)
+  - `price`: 지정가 (선택적, LIMIT 타입 시 필수)
+  - `qty_per`: 수량 비율 (선택적, CANCEL 제외 필수)
+  - `stop_price`: 스탑 가격 (선택적, STOP 타입 시 필수)
+  - `params`: 마켓별 추가 파라미터 (선택적)
+
+#### 배치 주문 처리 순서
+배치 주문은 다음 우선순위로 자동 정렬됩니다:
+1. **MARKET** - 시장가 주문 (우선순위 1, 최우선)
+2. **CANCEL, CANCEL_ALL_ORDER** - 주문 취소 (우선순위 2)
+3. **LIMIT, BEST_LIMIT, PRE_MARKET, AFTER_MARKET** - 지정가 주문 (우선순위 3)
+4. **STOP_MARKET** - 스탑 시장가 (우선순위 4)
+5. **STOP_LIMIT** - 스탑 지정가 (우선순위 5)
+6. **CONDITIONAL_LIMIT** - 조건부 지정가 (우선순위 6)
+
+**처리 방식:**
+- 사용자가 전송한 순서와 관계없이 위 우선순위에 따라 자동 정렬
+- 같은 우선순위 내에서는 전송 순서 유지
+- 예: LIMIT → MARKET → CANCEL 순서로 전송해도, MARKET → CANCEL → LIMIT 순으로 처리
+
+#### 기본 예시 (동일 심볼)
 ```json
 {
-  "group_name": "multi_symbol_strategy",
+  "group_name": "multi_order_strategy",
+  "symbol": "BTC/USDT",
   "currency": "USDT",
   "token": "your_webhook_token",
   "orders": [
     {
-      "symbol": "BTC/USDT",
-      "side": "buy",
-      "order_type": "MARKET",
-      "qty_per": 10
+      "order_type": "CANCEL_ALL_ORDER"
     },
     {
-      "symbol": "ETH/USDT",
       "side": "buy",
       "order_type": "LIMIT",
-      "price": "3500",
+      "price": "105000",
       "qty_per": 5
     },
     {
-      "symbol": "SOL/USDT",
       "side": "buy",
       "order_type": "LIMIT",
-      "price": "150",
-      "qty_per": 3
+      "price": "104000",
+      "qty_per": 10
     }
   ]
 }
 ```
-**설명**: BTC, ETH, SOL을 한 번에 주문 (배치 주문)
+**설명**:
+- BTC/USDT의 모든 기존 주문 취소
+- $105,000에 매수 지정가 주문 (5% 자본 사용)
+- $104,000에 매수 지정가 주문 (10% 자본 사용)
+- 처리 순서: CANCEL_ALL_ORDER → LIMIT (105000) → LIMIT (104000)
+
+#### 확장 예시 (8개 LIMIT 주문)
+```json
+{
+  "group_name": "ladder_strategy",
+  "symbol": "BTC/USDT",
+  "currency": "USDT",
+  "token": "your_webhook_token",
+  "orders": [
+    {
+      "order_type": "CANCEL_ALL_ORDER"
+    },
+    {
+      "side": "buy",
+      "order_type": "LIMIT",
+      "price": "105000",
+      "qty_per": 5
+    },
+    {
+      "side": "buy",
+      "order_type": "LIMIT",
+      "price": "104000",
+      "qty_per": 5
+    },
+    {
+      "side": "buy",
+      "order_type": "LIMIT",
+      "price": "103000",
+      "qty_per": 5
+    },
+    {
+      "side": "buy",
+      "order_type": "LIMIT",
+      "price": "102000",
+      "qty_per": 5
+    },
+    {
+      "side": "sell",
+      "order_type": "LIMIT",
+      "price": "108000",
+      "qty_per": 5
+    },
+    {
+      "side": "sell",
+      "order_type": "LIMIT",
+      "price": "109000",
+      "qty_per": 5
+    },
+    {
+      "side": "sell",
+      "order_type": "LIMIT",
+      "price": "110000",
+      "qty_per": 5
+    },
+    {
+      "side": "sell",
+      "order_type": "LIMIT",
+      "price": "111000",
+      "qty_per": 5
+    }
+  ]
+}
+```
+**설명**:
+- 기존 주문 취소 후 양방향 사다리 주문 생성
+- 매수: $102k ~ $105k (4단계)
+- 매도: $108k ~ $111k (4단계)
+- 각 주문마다 5% 자본 사용
+
+#### 우선순위 혼합 예시
+```json
+{
+  "group_name": "complex_strategy",
+  "symbol": "BTC/USDT",
+  "currency": "USDT",
+  "token": "your_webhook_token",
+  "orders": [
+    {
+      "side": "buy",
+      "order_type": "LIMIT",
+      "price": "105000",
+      "qty_per": 10
+    },
+    {
+      "side": "buy",
+      "order_type": "MARKET",
+      "qty_per": 5
+    },
+    {
+      "order_type": "CANCEL_ALL_ORDER"
+    },
+    {
+      "side": "sell",
+      "order_type": "STOP_LIMIT",
+      "price": "94000",
+      "stop_price": "95000",
+      "qty_per": 10
+    }
+  ]
+}
+```
+**실제 처리 순서:**
+1. MARKET buy (우선순위 1) - 즉시 5% 매수 체결
+2. CANCEL_ALL_ORDER (우선순위 2) - 기존 주문 취소
+3. LIMIT buy at 105000 (우선순위 3) - 지정가 매수 주문
+4. STOP_LIMIT sell (우선순위 5) - 손절 주문
+
+**참고:** 전송 순서 (LIMIT → MARKET → CANCEL → STOP_LIMIT)와 무관하게 우선순위대로 처리
+
+#### 기존 포맷 (Deprecated)
+```json
+{
+  "group_name": "old_format",
+  "currency": "USDT",
+  "token": "...",
+  "orders": [
+    {
+      "symbol": "BTC/USDT",  // ❌ 개별 주문에 symbol (더 이상 지원 안함)
+      "side": "buy",
+      "order_type": "MARKET",
+      "qty_per": 10
+    }
+  ]
+}
+```
+**경고:** 이 형식은 더 이상 지원되지 않습니다. 공통 필드는 상위 레벨로 이동해야 합니다.
 
 ---
 
@@ -806,23 +996,32 @@ https://your-domain.com/api/webhook
 
 **A**: orders 배열에 여러 주문을 담아 한 번에 전송합니다.
 
-**예시**:
+**새로운 포맷 (2025-10-08 이후):**
 ```json
 {
-  "group_name": "multi_symbol",
+  "group_name": "multi_order_strategy",
+  "symbol": "BTC/USDT",
   "currency": "USDT",
   "token": "...",
   "orders": [
-    {"symbol": "BTC/USDT", "side": "buy", "order_type": "MARKET", "qty_per": 10},
-    {"symbol": "ETH/USDT", "side": "buy", "order_type": "LIMIT", "price": "3500", "qty_per": 5}
+    {"order_type": "CANCEL_ALL_ORDER"},
+    {"side": "buy", "order_type": "LIMIT", "price": "105000", "qty_per": 5},
+    {"side": "buy", "order_type": "LIMIT", "price": "104000", "qty_per": 10}
   ]
 }
 ```
+
+**주요 변경사항:**
+- ✅ 공통 필드 (`symbol`, `currency`) 상위 레벨로 이동
+- ✅ 각 주문의 `order_type` 필수
+- ✅ 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
 
 **이점**:
 - 한 번의 HTTP 요청으로 다중 주문
 - 포트폴리오 리밸런싱 편리
 - OCO 주문 (익절+손절) 동시 설정 가능
+- 사다리 주문 (ladder order) 간편 설정
+- 우선순위 자동 정렬로 안전한 실행 순서 보장
 
 ---
 
@@ -1066,6 +1265,18 @@ tail -f /Users/binee/Desktop/quant/webserver/web_server/logs/app.log
 ---
 
 ## 변경 이력
+
+### 2025-10-08
+- **Breaking Change**: `exchange` 필드 완전 제거
+  - Strategy 연동 모든 계좌에서 자동 주문 실행
+  - 멀티 exchange 지원 (Binance + Bybit + Upbit 동시 사용 가능)
+- **Breaking Change**: 배치 주문 포맷 변경
+  - 공통 필드를 상위 레벨로 이동 (`symbol`, `currency`, `token`, `group_name`)
+  - 각 주문의 `order_type` 필수화
+  - 자동 우선순위 정렬 도입 (MARKET > CANCEL > LIMIT > STOP)
+- **문서**: 배치 주문 섹션 대폭 확장 (기본/확장/우선순위 혼합 예시 추가)
+- **문서**: 멀티 exchange 지원 설명 추가 (개요, 기본 구조, FAQ)
+- **FAQ**: 배치 주문 사용법 업데이트
 
 ### 2025-10-07
 - **Hard Break**: `market_type`, `exchange` 필드 제거

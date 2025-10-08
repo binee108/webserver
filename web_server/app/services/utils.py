@@ -183,26 +183,23 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
     if 'order_type' in webhook_data:
         normalized['order_type'] = webhook_data['order_type']
 
-    # ✅ Hard Break: 금지된 필드 검증 (정규화 후)
-    forbidden_fields = ['market_type', 'exchange', 'platform']
-    found_forbidden = [field for field in forbidden_fields if field in normalized]
-
-    if found_forbidden:
-        raise ValueError(
-            f"웹훅 메시지에 더 이상 사용되지 않는 필드가 포함되어 있습니다: {', '.join(found_forbidden)}. "
-            f"해당 필드들을 제거하세요. "
-            f"market_type은 전략 설정에서, exchange는 연동된 계좌에서 자동으로 결정됩니다."
-        )
-
-    # 🆕 배치 주문 감지 및 처리
+    # 🆕 배치 주문 감지 및 처리 (새로운 포맷)
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
         normalized['batch_mode'] = True
         normalized['orders'] = []
 
+        # 상위 레벨의 공통 필드 추출 (폴백용)
+        common_symbol = webhook_data.get('symbol')
+        common_currency = webhook_data.get('currency')
+        common_side = webhook_data.get('side')
+        common_price = webhook_data.get('price')
+        common_stop_price = webhook_data.get('stop_price')
+        common_qty_per = webhook_data.get('qty_per')
+
         for idx, order in enumerate(webhook_data['orders']):
             if isinstance(order, dict):
-                # 개별 주문의 심볼 추출 (주문 레벨 또는 웹훅 레벨)
-                order_symbol = order.get('symbol') or webhook_data.get('symbol')
+                # 개별 주문의 심볼 (order 레벨 우선, 없으면 상위 레벨 사용)
+                order_symbol = order.get('symbol') or common_symbol
 
                 # ✅ 배치 주문 내 심볼도 검증 (market_type 인식)
                 detected_market_type = normalized.get('market_type')
@@ -226,23 +223,51 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                         )
                         raise ValueError(error_msg)
 
-                # 개별 주문의 모든 필드를 포함 (웹훅 레벨 값 폴백)
+                # 개별 주문 데이터 구성 (order 레벨 우선, 상위 레벨 폴백)
                 batch_order = {
                     'symbol': order_symbol,
-                    'side': order.get('side') or webhook_data.get('side'),
-                    'order_type': order.get('order_type') or webhook_data.get('order_type', 'MARKET'),
-                    'price': order.get('price'),
-                    'qty_per': to_decimal(order.get('qty_per', 100)),
+                    'order_type': order.get('order_type'),  # 필수 (order 레벨에서만)
                 }
-                # STOP 주문 지원
-                if 'stop_price' in order:
-                    batch_order['stop_price'] = order.get('stop_price')
+
+                # 선택적 필드 (order 레벨 > 상위 레벨 폴백 일관성 확보)
+                order_side = order.get('side') or common_side
+                if order_side:
+                    batch_order['side'] = order_side
+
+                order_price = order.get('price') or common_price
+                if order_price is not None:
+                    batch_order['price'] = order_price
+
+                order_stop_price = order.get('stop_price') or common_stop_price
+                if order_stop_price is not None:
+                    batch_order['stop_price'] = order_stop_price
+
+                # qty_per: order 레벨 > 상위 레벨 폴백
+                order_qty_per = order.get('qty_per')
+                if order_qty_per is not None:
+                    batch_order['qty_per'] = to_decimal(order_qty_per)
+                elif common_qty_per is not None:
+                    batch_order['qty_per'] = to_decimal(common_qty_per)
+
+                # currency: order 레벨 > 상위 레벨 폴백
+                order_currency = order.get('currency') or common_currency
+                if order_currency:
+                    batch_order['currency'] = order_currency
+
+                # params 지원 (확장 파라미터)
+                if 'params' in order:
+                    batch_order['params'] = order['params']
+
+                # order_type 검증 (필수)
+                if not batch_order.get('order_type'):
+                    raise ValueError(f"배치 주문 {idx + 1}번째에 order_type이 필요합니다")
 
                 normalized['orders'].append(batch_order)
 
-        # 배치 주문이 감지되면 기본 price, qty_per 제거 (혼동 방지)
+        # 배치 주문이 감지되면 기본 price, qty_per, side 제거 (혼동 방지)
         normalized.pop('price', None)
         normalized.pop('qty_per', None)
+        normalized.pop('side', None)
     else:
         normalized['batch_mode'] = False
     

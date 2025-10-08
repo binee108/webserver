@@ -13,10 +13,38 @@ class AccountType:
 
     @classmethod
     def is_crypto(cls, account_type):
+        """크립토 계좌 타입인지 확인
+
+        Args:
+            account_type (str): 계좌 타입 (CRYPTO 또는 STOCK)
+
+        Returns:
+            bool: 크립토 계좌 타입이면 True
+
+        Examples:
+            >>> AccountType.is_crypto('CRYPTO')
+            True
+            >>> AccountType.is_crypto('STOCK')
+            False
+        """
         return account_type == cls.CRYPTO
 
     @classmethod
     def is_securities(cls, account_type):
+        """증권 계좌 타입인지 확인
+
+        Args:
+            account_type (str): 계좌 타입 (CRYPTO 또는 STOCK)
+
+        Returns:
+            bool: 증권 계좌 타입이면 True
+
+        Examples:
+            >>> AccountType.is_securities('STOCK')
+            True
+            >>> AccountType.is_securities('CRYPTO')
+            False
+        """
         return account_type == cls.STOCK
 
     @classmethod
@@ -99,7 +127,22 @@ class MarketType:
 
     @classmethod
     def normalize(cls, value):
-        """값을 표준 MarketType 상수로 변환 (모든 변형 지원)"""
+        """값을 표준 MarketType 상수로 변환 (모든 변형 지원)
+
+        Args:
+            value (str): 변환할 마켓 타입 값 (SPOT, FUTURES, 대소문자 무관)
+
+        Returns:
+            str: 표준 MarketType 상수 (SPOT, FUTURES, 또는 증권 타입)
+
+        Examples:
+            >>> MarketType.normalize('future')
+            'FUTURES'
+            >>> MarketType.normalize('SPOT')
+            'SPOT'
+            >>> MarketType.normalize('DOMESTIC_STOCK')
+            'DOMESTIC_STOCK'
+        """
         if not value:
             return cls.SPOT  # 기본값
 
@@ -124,7 +167,23 @@ class MarketType:
     
     @classmethod
     def to_exchange_type(cls, market_type, exchange_name):
-        """MarketType 상수를 거래소별 API 형식으로 변환"""
+        """MarketType 상수를 거래소별 API 형식으로 변환
+
+        Args:
+            market_type (str): 마켓 타입 (SPOT, FUTURES)
+            exchange_name (str): 거래소 이름 (binance, bybit, okx 등)
+
+        Returns:
+            str: 거래소 API 형식의 마켓 타입 (spot, future, linear, swap 등)
+
+        Examples:
+            >>> MarketType.to_exchange_type('FUTURES', 'binance')
+            'future'
+            >>> MarketType.to_exchange_type('FUTURES', 'bybit')
+            'linear'
+            >>> MarketType.to_exchange_type('SPOT', 'binance')
+            'spot'
+        """
         # 정규화된 MarketType 상수인지 확인
         normalized_type = cls.normalize(market_type)
         
@@ -143,7 +202,15 @@ class MarketType:
     
     @classmethod
     def get_default(cls):
-        """기본값 반환"""
+        """기본값 반환
+
+        Returns:
+            str: 기본 마켓 타입 (SPOT)
+
+        Examples:
+            >>> MarketType.get_default()
+            'SPOT'
+        """
         return cls.SPOT
 
 
@@ -176,28 +243,82 @@ class Exchange:
 
     @classmethod
     def is_valid(cls, value):
-        """값이 유효한 거래소인지 확인"""
+        """값이 유효한 거래소인지 확인
+
+        Args:
+            value (str): 확인할 거래소 이름
+
+        Returns:
+            bool: 유효한 거래소이면 True
+
+        Examples:
+            >>> Exchange.is_valid('BINANCE')
+            True
+            >>> Exchange.is_valid('binance')
+            True
+            >>> Exchange.is_valid('INVALID')
+            False
+        """
         if not value:
             return False
         return value.upper() in cls.VALID_EXCHANGES
 
     @classmethod
     def is_securities(cls, exchange):
-        """증권 거래소 여부 확인"""
+        """증권 거래소 여부 확인
+
+        Args:
+            exchange (str): 거래소 이름
+
+        Returns:
+            bool: 증권 거래소이면 True
+
+        Examples:
+            >>> Exchange.is_securities('KIS')
+            True
+            >>> Exchange.is_securities('BINANCE')
+            False
+        """
         if not exchange:
             return False
         return exchange.upper() in cls.SECURITIES_EXCHANGES
 
     @classmethod
     def is_crypto(cls, exchange):
-        """크립토 거래소 여부 확인"""
+        """크립토 거래소 여부 확인
+
+        Args:
+            exchange (str): 거래소 이름
+
+        Returns:
+            bool: 크립토 거래소이면 True
+
+        Examples:
+            >>> Exchange.is_crypto('BINANCE')
+            True
+            >>> Exchange.is_crypto('KIS')
+            False
+        """
         if not exchange:
             return False
         return exchange.upper() in cls.CRYPTO_EXCHANGES
 
     @classmethod
     def normalize(cls, value):
-        """값을 표준 대문자 형태로 변환"""
+        """값을 표준 대문자 형태로 변환
+
+        Args:
+            value (str): 거래소 이름
+
+        Returns:
+            str: 대문자로 변환된 거래소 이름 (유효하지 않으면 원본 반환)
+
+        Examples:
+            >>> Exchange.normalize('binance')
+            'BINANCE'
+            >>> Exchange.normalize('BINANCE')
+            'BINANCE'
+        """
         if value and isinstance(value, str):
             upper_value = value.upper()
             if upper_value in cls.VALID_EXCHANGES:
@@ -206,7 +327,18 @@ class Exchange:
 
     @classmethod
     def to_lower(cls, value):
-        """값을 소문자로 변환"""
+        """값을 소문자로 변환
+
+        Args:
+            value (str): 거래소 이름
+
+        Returns:
+            str: 소문자로 변환된 거래소 이름
+
+        Examples:
+            >>> Exchange.to_lower('BINANCE')
+            'binance'
+        """
         if value and isinstance(value, str):
             return value.lower()
         return value
@@ -248,44 +380,119 @@ class OrderType:
     VALID_TYPES = VALID_TRADING_TYPES + [CANCEL, CANCEL_ALL_ORDER]
 
     # 주문 우선순위 (낮은 숫자 = 높은 우선순위)
+    # 배치 주문 처리 순서: MARKET > CANCEL > LIMIT > STOP
     PRIORITY = {
-        MARKET: 1,        # 시장가 주문 최우선
-        STOP_MARKET: 2,   # 스탑 시장가
-        LIMIT: 3,         # 지정가
-        STOP_LIMIT: 4     # 스탑 지정가
+        MARKET: 1,             # 시장가 주문 최우선
+        CANCEL: 2,             # 주문 취소
+        CANCEL_ALL_ORDER: 2,   # 전체 주문 취소 (CANCEL과 동일)
+        LIMIT: 3,              # 지정가
+        STOP_MARKET: 4,        # 스탑 시장가
+        STOP_LIMIT: 5,         # 스탑 지정가
+        CONDITIONAL_LIMIT: 6,  # 조건부 지정가
+        BEST_LIMIT: 3,         # 최유리 지정가 (LIMIT과 동일)
+        PRE_MARKET: 3,         # 시간외 단일가 (LIMIT과 동일)
+        AFTER_MARKET: 3        # 시간외 종가 (LIMIT과 동일)
     }
 
     @classmethod
     def is_valid(cls, value):
-        """값이 유효한 order_type인지 확인"""
+        """값이 유효한 order_type인지 확인
+
+        Args:
+            value (str): 확인할 주문 타입
+
+        Returns:
+            bool: 유효한 주문 타입이면 True
+
+        Examples:
+            >>> OrderType.is_valid('MARKET')
+            True
+            >>> OrderType.is_valid('LIMIT')
+            True
+            >>> OrderType.is_valid('INVALID')
+            False
+        """
         if not value:
             return False
         return value.upper() in cls.VALID_TYPES
 
     @classmethod
     def is_trading_type(cls, value):
-        """값이 거래 주문 타입인지 확인"""
+        """값이 거래 주문 타입인지 확인 (취소 타입 제외)
+
+        Args:
+            value (str): 확인할 주문 타입
+
+        Returns:
+            bool: 거래 주문 타입이면 True (CANCEL 제외)
+
+        Examples:
+            >>> OrderType.is_trading_type('MARKET')
+            True
+            >>> OrderType.is_trading_type('CANCEL')
+            False
+        """
         if not value:
             return False
         return value.upper() in cls.VALID_TRADING_TYPES
 
     @classmethod
     def requires_stop_price(cls, order_type):
-        """STOP 가격이 필요한 주문 타입 확인"""
+        """STOP 가격이 필요한 주문 타입 확인
+
+        Args:
+            order_type (str): 주문 타입
+
+        Returns:
+            bool: stop_price가 필요하면 True (STOP_MARKET, STOP_LIMIT 등)
+
+        Examples:
+            >>> OrderType.requires_stop_price('STOP_LIMIT')
+            True
+            >>> OrderType.requires_stop_price('MARKET')
+            False
+        """
         if not order_type:
             return False
         return order_type.upper() in cls.STOP_ORDERS
 
     @classmethod
     def requires_price(cls, order_type):
-        """지정가가 필요한 주문 타입 확인"""
+        """지정가가 필요한 주문 타입 확인
+
+        Args:
+            order_type (str): 주문 타입
+
+        Returns:
+            bool: price가 필요하면 True (LIMIT, STOP_LIMIT 등)
+
+        Examples:
+            >>> OrderType.requires_price('LIMIT')
+            True
+            >>> OrderType.requires_price('MARKET')
+            False
+        """
         if not order_type:
             return False
         return order_type.upper() in cls.LIMIT_ORDERS
 
     @classmethod
     def to_exchange_format(cls, order_type, exchange):
-        """거래소별 주문 타입 변환"""
+        """거래소별 주문 타입 변환
+
+        Args:
+            order_type (str): 표준 주문 타입 (MARKET, LIMIT 등)
+            exchange (str): 거래소 이름
+
+        Returns:
+            str: 거래소 API 형식의 주문 타입
+
+        Examples:
+            >>> OrderType.to_exchange_format('MARKET', 'binance')
+            'MARKET'
+            >>> OrderType.to_exchange_format('STOP_MARKET', 'upbit')
+            'stop_market'
+        """
         if not order_type or not exchange:
             return order_type
 
@@ -317,7 +524,20 @@ class OrderType:
 
     @classmethod
     def normalize(cls, value):
-        """값을 표준 대문자 형태로 변환"""
+        """값을 표준 대문자 형태로 변환
+
+        Args:
+            value (str): 주문 타입 값
+
+        Returns:
+            str: 표준 대문자 형태의 주문 타입 (유효하지 않으면 원본 반환)
+
+        Examples:
+            >>> OrderType.normalize('market')
+            'MARKET'
+            >>> OrderType.normalize('stop-limit')
+            'STOP_LIMIT'
+        """
         if value and isinstance(value, str):
             upper_value = value.upper()
             # 공백과 하이픈 처리
@@ -328,7 +548,18 @@ class OrderType:
 
     @classmethod
     def to_lower(cls, value):
-        """값을 소문자로 변환 (API 호출용)"""
+        """값을 소문자로 변환 (API 호출용)
+
+        Args:
+            value (str): 주문 타입
+
+        Returns:
+            str: 소문자로 변환된 주문 타입
+
+        Examples:
+            >>> OrderType.to_lower('MARKET')
+            'market'
+        """
         if value and isinstance(value, str):
             return value.lower()
         return value
@@ -418,14 +649,22 @@ class MinOrderAmount:
     @classmethod
     def get_min_amount(cls, exchange: str, market_type: str, currency: str = 'USDT') -> float:
         """거래소와 마켓타입에 따른 최소 금액 반환
-        
+
         Args:
-            exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
-            market_type: 마켓 타입 (SPOT, FUTURES)
-            currency: 통화 (USDT, KRW 등)
-            
+            exchange (str): 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
+            market_type (str): 마켓 타입 (SPOT, FUTURES)
+            currency (str): 통화 (USDT, KRW 등), 기본값 'USDT'
+
         Returns:
-            최소 거래 금액
+            float: 최소 거래 금액 (USDT 또는 해당 통화 기준)
+
+        Examples:
+            >>> MinOrderAmount.get_min_amount('BINANCE', 'SPOT')
+            10.0
+            >>> MinOrderAmount.get_min_amount('BINANCE', 'FUTURES')
+            20.0
+            >>> MinOrderAmount.get_min_amount('BYBIT', 'SPOT')
+            1.0
         """
         exchange_upper = exchange.upper()
         market_type_upper = market_type.upper()
@@ -483,7 +722,23 @@ class OrderStatus:
 
     @classmethod
     def from_exchange(cls, status: str, exchange: str) -> str:
-        """거래소별 상태를 통합 상태로 변환"""
+        """거래소별 상태를 통합 상태로 변환
+
+        Args:
+            status (str): 거래소 원본 주문 상태
+            exchange (str): 거래소 이름
+
+        Returns:
+            str: 통합 주문 상태 (NEW, OPEN, FILLED, CANCELLED 등)
+
+        Examples:
+            >>> OrderStatus.from_exchange('NEW', 'BINANCE')
+            'NEW'
+            >>> OrderStatus.from_exchange('PartiallyFilled', 'BYBIT')
+            'PARTIALLY_FILLED'
+            >>> OrderStatus.from_exchange('wait', 'UPBIT')
+            'OPEN'
+        """
         if not status or not exchange:
             return status
 
@@ -545,22 +800,64 @@ class OrderStatus:
 
     @classmethod
     def is_open(cls, status: str) -> bool:
-        """미체결 상태인지 확인"""
+        """미체결 상태인지 확인
+
+        Args:
+            status (str): 주문 상태
+
+        Returns:
+            bool: 미체결 상태이면 True (NEW, OPEN, PARTIALLY_FILLED)
+
+        Examples:
+            >>> OrderStatus.is_open('OPEN')
+            True
+            >>> OrderStatus.is_open('FILLED')
+            False
+        """
         return status in cls.OPEN_STATUSES
 
     @classmethod
     def is_closed(cls, status: str) -> bool:
-        """완료 상태인지 확인"""
+        """완료 상태인지 확인
+
+        Args:
+            status (str): 주문 상태
+
+        Returns:
+            bool: 완료 상태이면 True (FILLED, CANCELLED, REJECTED, EXPIRED)
+
+        Examples:
+            >>> OrderStatus.is_closed('FILLED')
+            True
+            >>> OrderStatus.is_closed('OPEN')
+            False
+        """
         return status in cls.CLOSED_STATUSES
 
     @classmethod
     def get_open_statuses(cls) -> list:
-        """미체결 상태 목록 반환"""
+        """미체결 상태 목록 반환
+
+        Returns:
+            list: 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
+
+        Examples:
+            >>> OrderStatus.get_open_statuses()
+            ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+        """
         return cls.OPEN_STATUSES.copy()
 
     @classmethod
     def get_closed_statuses(cls) -> list:
-        """완료 상태 목록 반환"""
+        """완료 상태 목록 반환
+
+        Returns:
+            list: 완료 상태 목록 [FILLED, CANCELLED, REJECTED, EXPIRED]
+
+        Examples:
+            >>> OrderStatus.get_closed_statuses()
+            ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED']
+        """
         return cls.CLOSED_STATUSES.copy()
 
 
@@ -581,12 +878,38 @@ class OrderEventType:
 
     @classmethod
     def is_valid(cls, event_type: str) -> bool:
-        """유효한 이벤트 타입인지 확인"""
+        """유효한 이벤트 타입인지 확인
+
+        Args:
+            event_type (str): 확인할 이벤트 타입
+
+        Returns:
+            bool: 유효한 이벤트 타입이면 True
+
+        Examples:
+            >>> OrderEventType.is_valid('order_created')
+            True
+            >>> OrderEventType.is_valid('invalid_event')
+            False
+        """
         return event_type in cls.VALID_TYPES
 
     @classmethod
     def get_display_text(cls, event_type: str) -> str:
-        """이벤트 타입의 한국어 표시 텍스트 반환"""
+        """이벤트 타입의 한국어 표시 텍스트 반환
+
+        Args:
+            event_type (str): 이벤트 타입
+
+        Returns:
+            str: 한국어 표시 텍스트
+
+        Examples:
+            >>> OrderEventType.get_display_text('order_created')
+            '새 주문'
+            >>> OrderEventType.get_display_text('order_filled')
+            '주문 체결'
+        """
         display_map = {
             cls.ORDER_CREATED: '새 주문',
             cls.ORDER_UPDATED: '주문 업데이트',

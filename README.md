@@ -763,6 +763,7 @@ https://your-domain.com/api/webhook
 **필수 파라미터:**
 - `group_name`: 전략 그룹명 (전략 식별자)
   - 시장 타입 및 거래소는 전략 설정에서 자동 결정됨
+  - **멀티 Exchange 지원**: Strategy 연동 모든 계좌에서 자동 주문 실행
 - `currency`: 기준 통화 (크립토 거래 시)
   - 글로벌 거래소: `USDT`, `BTC`
   - Upbit: `KRW` (원화 마켓)
@@ -782,6 +783,30 @@ https://your-domain.com/api/webhook
   - 양수: 계좌 자본의 N% 사용
   - `-100`: 현재 포지션 100% 청산
 - `token`: 웹훅 인증 토큰 (사용자별 고유 토큰)
+
+> ⚠️ **중요**: `exchange` 필드는 **더 이상 사용되지 않습니다**. 웹훅 메시지는 거래소를 지정하지 않으며,
+> Strategy에 연동된 모든 계좌에서 자동으로 주문이 실행됩니다.
+
+#### 멀티 Exchange 지원
+
+웹훅은 `exchange`를 지정하지 않습니다.
+Strategy에 연동된 모든 계좌에서 자동으로 주문이 실행됩니다.
+
+**예시:**
+- Strategy에 Binance, Bybit, Upbit 계좌 연동
+- 웹훅 1개 전송 → 3개 거래소에 동시 주문 ✅
+
+**동작 방식:**
+```
+Strategy (전략)
+  ↓ 연동 계좌 (StrategyAccount)
+  ├─ Binance 계좌 → Binance에서 주문 실행
+  ├─ Bybit 계좌 → Bybit에서 주문 실행
+  └─ Upbit 계좌 → Upbit에서 주문 실행
+```
+
+> ⚠️ **계좌 관리 주의**: Strategy에 같은 거래소 계좌가 중복 연동되면
+> 의도하지 않은 중복 주문이 발생할 수 있습니다.
 
 **선택적 파라미터:**
 - `price`: 지정가 (LIMIT, STOP_LIMIT 주문 시 필수)
@@ -869,6 +894,54 @@ https://your-domain.com/api/webhook
 }
 ```
 **참고:** `symbol`은 선택적 (지정 시 해당 심볼만 취소)
+
+#### 배치 주문 (여러 주문 동시 실행)
+
+> ⚠️ **Breaking Change (2025-10-08)**: 배치 주문 포맷이 변경되었습니다.
+> - 공통 필드를 상위 레벨로 이동 (`symbol`, `currency`)
+> - 각 주문의 `order_type` 필수
+> - 자동 우선순위 정렬 (MARKET > CANCEL > LIMIT > STOP)
+
+**기본 예시 (기존 주문 취소 + 2개 매수 주문):**
+```json
+{
+    "group_name": "multi_order_strategy",
+    "symbol": "BTC/USDT",
+    "currency": "USDT",
+    "token": "your_webhook_token",
+    "orders": [
+        {
+            "order_type": "CANCEL_ALL_ORDER"
+        },
+        {
+            "side": "buy",
+            "order_type": "LIMIT",
+            "price": "105000",
+            "qty_per": 5
+        },
+        {
+            "side": "buy",
+            "order_type": "LIMIT",
+            "price": "104000",
+            "qty_per": 10
+        }
+    ]
+}
+```
+
+**우선순위 자동 정렬:**
+배치 주문은 다음 순서로 자동 정렬되어 실행됩니다:
+1. **MARKET** - 시장가 주문 (최우선)
+2. **CANCEL, CANCEL_ALL_ORDER** - 주문 취소
+3. **LIMIT** - 지정가 주문
+4. **STOP_MARKET, STOP_LIMIT** - 스탑 주문
+
+**사용 사례:**
+- 사다리 주문 (ladder order): 여러 가격대에 분할 매수/매도
+- OCO 주문: 익절과 손절을 동시 설정
+- 포트폴리오 리밸런싱: 기존 주문 취소 후 새 주문 생성
+
+**상세 문서:** [웹훅 메시지 포맷 가이드](docs/webhook_message_format.md#10-배치-주문-예시-orders-배열)
 
 ### 5. 실시간 모니터링
 - **대시보드**: 전체 계정 현황, 총 자산, 일일 손익

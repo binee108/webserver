@@ -216,14 +216,17 @@ class TradingCore:
         """거래 신호 처리"""
         from app.services.utils import to_decimal
 
-        # 필수 필드 검증
-        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'symbol', 'order_type', 'side']
+        # 필수 필드 검증 (market_type은 webhook_service에서 주입됨, exchange는 Strategy 연동 계좌에서 자동 결정)
+        required_fields = ['group_name', 'currency', 'symbol', 'order_type', 'side']
         for field in required_fields:
             if field not in webhook_data:
                 raise Exception(f"필수 필드 누락: {field}")
 
+        # market_type 검증 (webhook_service에서 주입되어야 함)
+        if 'market_type' not in webhook_data:
+            raise Exception("market_type이 필요합니다 (내부 호출 시 주입되어야 함)")
+
         group_name = webhook_data['group_name']
-        exchange = webhook_data['exchange']
         market_type = webhook_data['market_type']
         currency = webhook_data['currency']
         symbol = webhook_data['symbol']
@@ -240,7 +243,7 @@ class TradingCore:
             if not price:
                 raise Exception("STOP_LIMIT 주문: price가 필수입니다")
 
-        logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 거래소: {exchange}, 심볼: {symbol}, "
+        logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 심볼: {symbol}, "
                    f"사이드: {side}, 주문타입: {order_type}, 수량비율: {qty_per}%")
 
         # 전략 조회
@@ -257,8 +260,10 @@ class TradingCore:
 
         logger.info(f"전략에 연결된 계좌 수: {len(strategy_accounts)}")
 
-        # 계좌 필터링
+        # 계좌 필터링 (활성 계좌만, exchange는 모두 허용)
         filtered_accounts = []
+        seen_exchanges = {}  # 중복 거래소 감지용
+
         for sa in strategy_accounts:
             account = sa.account
 
@@ -266,8 +271,17 @@ class TradingCore:
                 continue
             if not account or not account.is_active:
                 continue
-            if account.exchange.upper() != exchange.upper():
-                continue
+
+            # exchange 필터링 제거 - Strategy 연동 모든 계좌에서 주문 실행
+            # 중복 거래소 경고 (사용자 관리 권장)
+            exchange_key = f"{account.exchange}_{market_type}"
+            if exchange_key in seen_exchanges:
+                logger.warning(
+                    f"⚠️ 중복 거래소 감지: {account.exchange} (마켓: {market_type}) - "
+                    f"계좌: {account.name}, 기존: {seen_exchanges[exchange_key]} | "
+                    f"의도하지 않은 중복 주문을 방지하려면 전략에 동일 거래소 계좌를 중복 연동하지 마세요."
+                )
+            seen_exchanges[exchange_key] = account.name
 
             filtered_accounts.append((strategy, account, sa))
 
@@ -392,8 +406,8 @@ class TradingCore:
         from app.services.utils import to_decimal
         from app.constants import OrderType
 
-        # 필수 필드 검증
-        required_fields = ['group_name', 'exchange', 'market_type', 'currency', 'orders']
+        # 필수 필드 검증 (exchange, market_type은 strategy에서 가져옴)
+        required_fields = ['group_name', 'orders']
         for field in required_fields:
             if field not in webhook_data:
                 raise Exception(f"필수 필드 누락: {field}")
@@ -406,10 +420,29 @@ class TradingCore:
 
         logger.info(f"배치 거래 신호 처리 시작 - 전략: {group_name}, 주문 수: {len(orders)}")
 
+        # 배치 주문 order_type 사전 검증 (정렬 전 필수)
+        for idx, order in enumerate(orders):
+            if not isinstance(order, dict):
+                raise Exception(f"배치 주문 {idx + 1}번째가 올바른 형식이 아닙니다 (dict 필요)")
+            if not order.get('order_type'):
+                raise Exception(f"배치 주문 {idx + 1}번째에 order_type이 필요합니다")
+
+        # Strategy 조회 및 market_type 가져오기
+        from app.models import Strategy
+        from app.constants import MarketType
+
+        strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
+        if not strategy:
+            raise Exception(f"활성 전략을 찾을 수 없습니다: {group_name}")
+
+        market_type = strategy.market_type or MarketType.SPOT
+        logger.info(f"전략 조회 성공 - ID: {strategy.id}, 마켓타입: {market_type}")
+
         # 🆕 우선순위 기반 정렬 (MARKET 주문 최우선)
+        # order_type은 위에서 검증했으므로 기본값 없이 사용
         sorted_orders_with_idx = sorted(
             enumerate(orders),
-            key=lambda x: OrderType.get_priority(x[1].get('order_type', 'LIMIT'))
+            key=lambda x: OrderType.get_priority(x[1]['order_type'])
         )
 
         logger.info(f"📊 주문 우선순위 정렬 완료:")
@@ -422,14 +455,16 @@ class TradingCore:
         results = []
         for original_idx, order in sorted_orders_with_idx:
             try:
-                # 공통 필드 병합
+                # 공통 필드 병합 (group_name, market_type, currency)
                 order_data = {
                     'group_name': group_name,
-                    'exchange': webhook_data['exchange'],
-                    'market_type': webhook_data['market_type'],
-                    'currency': webhook_data['currency'],
+                    'market_type': market_type,  # Strategy에서 가져온 market_type 주입
                     **order
                 }
+
+                # 상위 레벨 currency를 order 레벨에 없을 경우 추가
+                if 'currency' not in order_data and 'currency' in webhook_data:
+                    order_data['currency'] = webhook_data['currency']
 
                 result = self.process_trading_signal(order_data, timing_context)
                 results.append({
@@ -454,7 +489,6 @@ class TradingCore:
         return {
             'action': 'batch_order',
             'strategy': group_name,
-            'market_type': webhook_data['market_type'],
             'success': len(successful) > 0,
             'results': results,
             'summary': {
