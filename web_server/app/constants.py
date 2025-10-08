@@ -1066,3 +1066,181 @@ class KISOrderType:
             cls.FUTURES_CONDITION: OrderType.CONDITIONAL_LIMIT,
         }
         return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
+
+
+class ExchangeLimits:
+    """거래소별 열린 주문 제한 관리
+
+    거래소별 심볼당/계정당 열린 주문 제한을 정의하고,
+    대기열 시스템에서 사용할 동적 제한을 계산합니다.
+    """
+
+    # 거래소별 제한 상수 (거래소 공식 문서 기준)
+    LIMITS = {
+        'BINANCE': {
+            MarketType.FUTURES: {
+                'per_symbol': 200,      # 심볼당 열린 주문 제한
+                'per_account': 10000,   # 계정당 총 열린 주문 제한
+                'conditional': 10       # 조건부 주문 제한 (STOP)
+            },
+            MarketType.SPOT: {
+                'per_symbol': 25,
+                'per_account': 1000,
+                'conditional': 5
+            }
+        },
+        'BYBIT': {
+            MarketType.FUTURES: {
+                'per_symbol': 500,
+                'per_account': None,    # 제한 없음
+                'conditional': 10
+            },
+            MarketType.SPOT: {
+                'per_symbol': None,
+                'per_account': 500,
+                'conditional': 30
+            }
+        },
+        'OKX': {
+            MarketType.FUTURES: {
+                'per_symbol': 500,
+                'per_account': 4000,
+                'conditional': None     # 별도 제한 없음
+            },
+            MarketType.SPOT: {
+                'per_symbol': 500,
+                'per_account': 4000,
+                'conditional': None
+            }
+        },
+        'UPBIT': {
+            MarketType.SPOT: {
+                'per_symbol': None,
+                'per_account': None,
+                'conditional': 20       # 조건부 주문만 제한
+            }
+        }
+    }
+
+    # 기본 제한값
+    DEFAULT_MAX_ORDERS = 20         # 제한이 없을 때 기본값
+    MAX_CAP = 20                     # 계산된 제한의 최대 캡
+    MIN_LIMIT = 1                    # 최소 제한
+    DEFAULT_STOP_LIMIT = 5          # STOP 주문 기본 제한
+
+    @classmethod
+    def calculate_symbol_limit(cls, exchange: str, market_type: str, symbol: str = None) -> dict:
+        """심볼당 열린 주문 제한 계산
+
+        계산 로직:
+        1. 심볼당 제한의 10% (존재 시)
+        2. 계정당 제한의 10% (심볼당 없을 시)
+        3. 기본값 20개 (모두 없을 시)
+
+        제약 조건:
+        - 최대 캡: 20개
+        - 최소: 1개
+        - STOP 주문: 별도 제한 (기본 5개)
+
+        Args:
+            exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
+            market_type: 마켓 타입 (SPOT, FUTURES)
+            symbol: 심볼 (현재는 사용하지 않음, 향후 심볼별 커스텀 제한용)
+
+        Returns:
+            dict: {
+                'max_orders': int,           # 일반 주문 최대 개수
+                'max_stop_orders': int,      # STOP 주문 최대 개수
+                'per_symbol_limit': int,     # 거래소 심볼당 원본 제한
+                'per_account_limit': int,    # 거래소 계정당 원본 제한
+                'calculation_method': str    # 계산 방법 (per_symbol, per_account, default)
+            }
+
+        Examples:
+            >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'FUTURES')
+            {'max_orders': 20, 'max_stop_orders': 5, ...}
+
+            >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'SPOT')
+            {'max_orders': 3, 'max_stop_orders': 5, ...}
+        """
+        exchange_upper = exchange.upper()
+        market_type_normalized = MarketType.normalize(market_type)
+
+        # 거래소별 제한 조회
+        exchange_limits = cls.LIMITS.get(exchange_upper, {})
+        market_limits = exchange_limits.get(market_type_normalized, {})
+
+        per_symbol = market_limits.get('per_symbol')
+        per_account = market_limits.get('per_account')
+        conditional_limit = market_limits.get('conditional', cls.DEFAULT_STOP_LIMIT)
+
+        # 제한 계산 로직
+        calculated_limit = None
+        calculation_method = 'default'
+
+        if per_symbol is not None:
+            # 1순위: 심볼당 제한의 10%
+            calculated_limit = int(per_symbol * 0.1)
+            calculation_method = 'per_symbol'
+        elif per_account is not None:
+            # 2순위: 계정당 제한의 10%
+            calculated_limit = int(per_account * 0.1)
+            calculation_method = 'per_account'
+        else:
+            # 3순위: 기본값
+            calculated_limit = cls.DEFAULT_MAX_ORDERS
+            calculation_method = 'default'
+
+        # 제약 조건 적용
+        max_orders = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
+
+        # STOP 주문 제한 (별도)
+        max_stop_orders = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
+        max_stop_orders = min(max_stop_orders, max_orders)  # STOP은 전체 제한을 초과할 수 없음
+
+        return {
+            'max_orders': max_orders,
+            'max_stop_orders': max_stop_orders,
+            'per_symbol_limit': per_symbol,
+            'per_account_limit': per_account,
+            'calculation_method': calculation_method,
+            'exchange': exchange_upper,
+            'market_type': market_type_normalized
+        }
+
+    @classmethod
+    def get_raw_limits(cls, exchange: str, market_type: str) -> dict:
+        """거래소의 원본 제한값 반환 (계산하지 않음)
+
+        Args:
+            exchange: 거래소 이름
+            market_type: 마켓 타입
+
+        Returns:
+            dict: {
+                'per_symbol': int or None,
+                'per_account': int or None,
+                'conditional': int or None
+            }
+        """
+        exchange_upper = exchange.upper()
+        market_type_normalized = MarketType.normalize(market_type)
+
+        exchange_limits = cls.LIMITS.get(exchange_upper, {})
+        return exchange_limits.get(market_type_normalized, {
+            'per_symbol': None,
+            'per_account': None,
+            'conditional': None
+        })
+
+    @classmethod
+    def is_stop_order(cls, order_type: str) -> bool:
+        """주문 타입이 STOP 주문인지 확인
+
+        Args:
+            order_type: 주문 타입 (STOP_LIMIT, STOP_MARKET, CONDITIONAL_LIMIT 등)
+
+        Returns:
+            bool: STOP 주문이면 True
+        """
+        return order_type.upper() in OrderType.STOP_ORDERS
