@@ -75,8 +75,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                                         "메모리 사용량 경고",
                                         f"메모리 사용량: {memory_mb:.2f} MB"
                                     )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"텔레그램 알림 실패 (메모리 경고): {e}")
 
                     _last_memory_check = current_time
 
@@ -157,8 +157,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                                 "대기열 적체 경고",
                                 message
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"텔레그램 알림 실패 (대기열 적체): {e}")
 
             # Step 4: 각 (account_id, symbol)별 재정렬
             total_cancelled = 0
@@ -228,8 +228,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                             "대기열 적체 경고",
                             message
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"텔레그램 알림 실패 (대기열 적체): {e}")
             elif still_large_queues:
                 logger.warning(f"⚠️ 대기열 적체 지속 - {len(still_large_queues)}개 심볼 (10개 미만이므로 텔레그램 알림 생략)")
 
@@ -255,8 +255,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                     f"오류: {str(e)}\n"
                     f"상세 로그를 확인하세요."
                 )
-            except Exception:
-                pass  # 텔레그램 알림 실패는 조용히 무시
+            except Exception as e:
+                logger.debug(f"텔레그램 알림 실패 (스케줄러 오류): {e}")
 
 
 def rebalance_specific_symbol_with_context(

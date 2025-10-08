@@ -116,8 +116,8 @@ class BinanceWebSocket:
                 self._renew_task.cancel()
                 try:
                     await self._renew_task
-                except asyncio.CancelledError:
-                    pass
+                except asyncio.CancelledError as e:
+                    logger.debug(f"갱신 태스크 취소 완료 - 계정: {self.account.id}: {e}")
 
             # Listen Key 생성
             self.listen_key = await self.create_listen_key()
@@ -149,8 +149,8 @@ class BinanceWebSocket:
             self._renew_task.cancel()
             try:
                 await self._renew_task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as e:
+                logger.debug(f"갱신 태스크 취소 완료 (disconnect) - 계정: {self.account.id}: {e}")
 
         if self.ws:
             await self.ws.close()
@@ -182,8 +182,8 @@ class BinanceWebSocket:
                                     "WebSocket 파싱 실패",
                                     f"Binance 체결 이벤트 파싱 실패\n계정: {self.account.id}\n메시지: {message[:500]}"
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"텔레그램 알림 실패 (파싱 실패): {e}")
                 except Exception as e:
                     logger.error(f"❌ 메시지 처리 오류: {e}", exc_info=True)
 
