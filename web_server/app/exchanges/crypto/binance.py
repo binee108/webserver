@@ -57,6 +57,7 @@ class FuturesEndpoints:
     POSITION_RISK = "/fapi/v2/positionRisk"
     ORDER = "/fapi/v1/order"
     OPEN_ORDERS = "/fapi/v1/openOrders"
+    BATCH_ORDERS = "/fapi/v1/batchOrders"  # 배치 주문 엔드포인트
 
 
 class BinanceExchange(BaseCryptoExchange):
@@ -986,6 +987,322 @@ class BinanceExchange(BaseCryptoExchange):
             logger.warning(f"심볼 정보 조회 실패 {symbol}: {e}")
 
         return None
+
+    # ===== 배치 주문 기능 =====
+
+    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (BaseExchange 추상 메서드 구현)
+
+        Args:
+            orders: 주문 리스트
+                [
+                    {
+                        'symbol': 'BTC/USDT',
+                        'side': 'buy',
+                        'type': 'LIMIT',
+                        'amount': Decimal('0.01'),
+                        'price': Decimal('95000'),
+                        'params': {...}  # stopPrice 등
+                    },
+                    ...
+                ]
+            market_type: 'spot' or 'futures'
+
+        Returns:
+            {
+                'success': True,
+                'results': [
+                    {'order_index': 0, 'success': True, 'order_id': '...', 'order': {...}},
+                    {'order_index': 1, 'success': False, 'error': '...'},
+                    ...
+                ],
+                'summary': {
+                    'total': 5,
+                    'successful': 4,
+                    'failed': 1
+                },
+                'implementation': 'NATIVE_BATCH' | 'SEQUENTIAL_FALLBACK'
+            }
+        """
+        if not orders:
+            return {
+                'success': True,
+                'results': [],
+                'summary': {'total': 0, 'successful': 0, 'failed': 0},
+                'implementation': 'NONE'
+            }
+
+        logger.info(f"📦 배치 주문 시작: {len(orders)}건, market_type={market_type}")
+
+        # market_type에 따라 분기
+        if market_type.lower() == 'futures':
+            return await self._create_batch_orders_futures(orders)
+        else:
+            return await self._create_batch_orders_sequential(orders, market_type)
+
+    async def _create_batch_orders_futures(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Binance Futures 네이티브 배치 API 사용
+
+        Binance Futures Batch Orders API:
+        - 엔드포인트: POST /fapi/v1/batchOrders
+        - 최대 5건/요청
+        - batchOrders 파라미터로 JSON 문자열 전송
+        """
+        base_url = self._get_base_url('futures')
+        endpoints = self._get_endpoints('futures')
+
+        all_results = []
+        total_orders = len(orders)
+        successful_count = 0
+        failed_count = 0
+
+        # 5건씩 청크로 분할
+        chunk_size = 5
+        for chunk_idx in range(0, total_orders, chunk_size):
+            chunk = orders[chunk_idx:chunk_idx + chunk_size]
+            chunk_start_idx = chunk_idx
+
+            logger.info(f"📦 청크 {chunk_idx // chunk_size + 1} 처리: {len(chunk)}건 (인덱스 {chunk_start_idx}~{chunk_start_idx + len(chunk) - 1})")
+
+            try:
+                # Binance 배치 주문 형식으로 변환
+                batch_orders_payload = []
+                for order_idx, order in enumerate(chunk):
+                    global_idx = chunk_start_idx + order_idx
+
+                    # 심볼 변환: 표준 형식(BTC/USDT) → Binance 형식(BTCUSDT)
+                    binance_symbol = to_binance_format(order['symbol'])
+
+                    # 주문 타입 변환
+                    original_type = order['type']
+                    binance_type = self._convert_to_binance_format(original_type, order['side'])
+
+                    # 기본 파라미터
+                    order_params = {
+                        'symbol': binance_symbol,
+                        'side': order['side'].upper(),
+                        'type': binance_type.upper(),
+                        'quantity': str(order['amount'])
+                    }
+
+                    # 주문 타입별 파라미터 추가
+                    price = order.get('price')
+                    params = order.get('params', {})
+
+                    if original_type.upper() == OrderType.MARKET:
+                        # MARKET: price, timeInForce 불필요
+                        pass
+
+                    elif original_type.upper() == OrderType.LIMIT:
+                        # LIMIT: price 필수, timeInForce = GTC
+                        if not price:
+                            raise InvalidOrder(f"LIMIT 주문은 price가 필수입니다 (order_index={global_idx})")
+                        order_params['price'] = str(price)
+                        order_params['timeInForce'] = 'GTC'
+
+                    elif original_type.upper() == OrderType.STOP_MARKET:
+                        # STOP_MARKET: stopPrice 필수
+                        if not params.get('stopPrice'):
+                            raise InvalidOrder(f"STOP_MARKET 주문은 stopPrice가 필수입니다 (order_index={global_idx})")
+                        order_params['stopPrice'] = str(params['stopPrice'])
+
+                    elif original_type.upper() == OrderType.STOP_LIMIT:
+                        # STOP_LIMIT: price, stopPrice 모두 필수, timeInForce = GTC
+                        if not price:
+                            raise InvalidOrder(f"STOP_LIMIT 주문은 price가 필수입니다 (order_index={global_idx})")
+                        if not params.get('stopPrice'):
+                            raise InvalidOrder(f"STOP_LIMIT 주문은 stopPrice가 필수입니다 (order_index={global_idx})")
+                        order_params['price'] = str(price)
+                        order_params['stopPrice'] = str(params['stopPrice'])
+                        order_params['timeInForce'] = 'GTC'
+
+                    batch_orders_payload.append(order_params)
+
+                # API 호출
+                url = f"{base_url}{endpoints.BATCH_ORDERS}"
+                api_params = {
+                    'batchOrders': json.dumps(batch_orders_payload)
+                }
+
+                logger.debug(f"🔍 배치 주문 API 호출: {url}")
+                logger.debug(f"🔍 페이로드: {batch_orders_payload}")
+
+                response = await self._request_async('POST', url, api_params, signed=True)
+
+                logger.debug(f"🔍 배치 주문 응답: {response}")
+
+                # 응답 파싱 (응답 순서 = 요청 순서 보장)
+                for order_idx, order_response in enumerate(response):
+                    global_idx = chunk_start_idx + order_idx
+                    original_order = chunk[order_idx]
+
+                    # 실패 체크 (code 필드 존재 시 실패)
+                    if 'code' in order_response:
+                        error_msg = order_response.get('msg', 'Unknown error')
+                        logger.warning(f"⚠️ 주문 {global_idx} 실패: {error_msg}")
+                        all_results.append({
+                            'order_index': global_idx,
+                            'success': False,
+                            'error': error_msg
+                        })
+                        failed_count += 1
+                    else:
+                        # 성공
+                        order_obj = self._parse_order(order_response, 'futures', original_order['type'])
+
+                        # 주문 매핑 저장
+                        if original_order['type'] != self._convert_to_binance_format(original_order['type'], original_order['side']):
+                            self._store_order_mapping(order_obj.id, original_order['type'])
+
+                        logger.info(f"✅ 주문 {global_idx} 성공: order_id={order_obj.id}")
+                        all_results.append({
+                            'order_index': global_idx,
+                            'success': True,
+                            'order_id': order_obj.id,
+                            'order': order_obj.__dict__
+                        })
+                        successful_count += 1
+
+            except Exception as e:
+                # 청크 전체 실패
+                logger.error(f"❌ 청크 {chunk_idx // chunk_size + 1} 실패: {e}")
+                for order_idx in range(len(chunk)):
+                    global_idx = chunk_start_idx + order_idx
+                    all_results.append({
+                        'order_index': global_idx,
+                        'success': False,
+                        'error': str(e)
+                    })
+                    failed_count += 1
+
+        # 배치 완료 로깅
+        num_chunks = (total_orders + chunk_size - 1) // chunk_size  # 올림 계산
+        logger.info(
+            f"📦 Futures 배치 주문 완료: {successful_count}/{total_orders} 성공, "
+            f"implementation=NATIVE_BATCH, chunks={num_chunks}"
+        )
+
+        return {
+            'success': True,
+            'results': all_results,
+            'summary': {
+                'total': total_orders,
+                'successful': successful_count,
+                'failed': failed_count
+            },
+            'implementation': 'NATIVE_BATCH'
+        }
+
+    async def _create_batch_orders_sequential(self, orders: List[Dict[str, Any]], market_type: str) -> Dict[str, Any]:
+        """
+        Spot 폴백: 병렬 순차 처리 (asyncio.gather 사용)
+
+        Note:
+            - Spot은 배치 API 미지원 → 개별 주문을 병렬로 실행
+            - 각 주문의 성공/실패를 독립적으로 처리
+            - Rate limit 방지를 위해 동시 실행 수 제한 (Semaphore)
+        """
+        logger.info(f"📦 병렬 순차 처리 시작: {len(orders)}건")
+
+        # Rate limit 방지: 동시 최대 10개 요청으로 제한
+        MAX_CONCURRENT = 10
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+        async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
+            """Rate limit 제어와 함께 단일 주문 실행"""
+            async with semaphore:
+                return await self._execute_single_order(idx, order, market_type)
+
+        # 태스크 생성
+        tasks = [
+            execute_with_limit(idx, order)
+            for idx, order in enumerate(orders)
+        ]
+
+        # 병렬 실행 (예외를 결과로 반환)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 결과 집계
+        all_results = []
+        successful_count = 0
+        failed_count = 0
+
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                # 예외 발생
+                logger.warning(f"⚠️ 주문 {idx} 실패 (예외): {result}")
+                all_results.append({
+                    'order_index': idx,
+                    'success': False,
+                    'error': str(result)
+                })
+                failed_count += 1
+            elif result.get('success'):
+                all_results.append(result)
+                successful_count += 1
+            else:
+                all_results.append(result)
+                failed_count += 1
+
+        # 배치 완료 로깅
+        logger.info(
+            f"📦 Spot 순차 배치 완료: {successful_count}/{len(orders)} 성공, "
+            f"implementation=SEQUENTIAL_FALLBACK"
+        )
+
+        return {
+            'success': True,
+            'results': all_results,
+            'summary': {
+                'total': len(orders),
+                'successful': successful_count,
+                'failed': failed_count
+            },
+            'implementation': 'SEQUENTIAL_FALLBACK'
+        }
+
+    async def _execute_single_order(self, order_index: int, order: Dict[str, Any], market_type: str) -> Dict[str, Any]:
+        """
+        단일 주문 실행 헬퍼 (병렬 순차 처리용)
+
+        Args:
+            order_index: 주문 인덱스
+            order: 주문 정보
+            market_type: 마켓 타입
+
+        Returns:
+            성공: {'order_index': idx, 'success': True, 'order_id': '...', 'order': {...}}
+            실패: {'order_index': idx, 'success': False, 'error': '...'}
+        """
+        try:
+            # create_order_async 호출
+            order_obj = await self.create_order_async(
+                symbol=order['symbol'],
+                order_type=order['type'],
+                side=order['side'],
+                amount=order['amount'],
+                price=order.get('price'),
+                market_type=market_type,
+                **order.get('params', {})
+            )
+
+            logger.info(f"✅ 주문 {order_index} 성공: order_id={order_obj.id}")
+            return {
+                'order_index': order_index,
+                'success': True,
+                'order_id': order_obj.id,
+                'order': order_obj.__dict__
+            }
+
+        except Exception as e:
+            logger.warning(f"⚠️ 주문 {order_index} 실패: {e}")
+            return {
+                'order_index': order_index,
+                'success': False,
+                'error': str(e)
+            }
 
 
 

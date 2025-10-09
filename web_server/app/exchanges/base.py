@@ -112,6 +112,50 @@ class BaseExchange(ABC):
         """미체결 주문 조회"""
         pass
 
+    @abstractmethod
+    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (거래소별 구현)
+
+        Args:
+            orders: 주문 리스트
+                [
+                    {
+                        'symbol': 'BTC/USDT',
+                        'side': 'buy',
+                        'type': 'LIMIT',
+                        'amount': Decimal('0.01'),
+                        'price': Decimal('95000'),
+                        'params': {...}
+                    },
+                    ...
+                ]
+            market_type: 'spot' or 'futures'
+
+        Returns:
+            {
+                'success': True,
+                'results': [
+                    {'order_index': 0, 'success': True, 'order_id': '...', 'order': {...}},
+                    {'order_index': 1, 'success': False, 'error': '...'},
+                    ...
+                ],
+                'summary': {
+                    'total': 5,
+                    'successful': 4,
+                    'failed': 1
+                },
+                'implementation': 'NATIVE_BATCH' | 'SEQUENTIAL_FALLBACK'
+            }
+
+        Note:
+            - 거래소가 배치 API를 지원하면 네이티브 배치 사용
+            - 지원하지 않으면 내부적으로 순차 처리 (폴백)
+            - 응답 포맷은 통일 (구현 차이 캡슐화)
+            - 청크 분할 (5건 초과)은 각 거래소 구현에서 처리
+        """
+        pass
+
     # === 공통 편의 메서드 ===
 
     def is_domestic(self) -> bool:

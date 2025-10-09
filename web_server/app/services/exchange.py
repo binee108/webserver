@@ -656,6 +656,85 @@ class ExchangeService:
             logger.error(f"잔액 조회 실패: {e}")
             return {'success': False, 'error': str(e)}
 
+    def create_batch_orders(self, account: Account, orders: List[Dict[str, Any]],
+                           market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (거래소 배치 API 활용)
+
+        Args:
+            account: 계정 정보
+            orders: 주문 리스트
+                [
+                    {
+                        'symbol': 'BTC/USDT',
+                        'side': 'buy',
+                        'type': 'LIMIT',
+                        'amount': Decimal('0.01'),
+                        'price': Decimal('95000'),
+                        'params': {...}
+                    },
+                    ...
+                ]
+            market_type: 'spot' or 'futures'
+
+        Returns:
+            {
+                'success': True,
+                'results': [
+                    {'order_index': 0, 'success': True, 'order_id': '...', 'order': {...}},
+                    {'order_index': 1, 'success': False, 'error': '...'},
+                    ...
+                ],
+                'summary': {
+                    'total': 5,
+                    'successful': 4,
+                    'failed': 1
+                },
+                'implementation': 'NATIVE_BATCH' | 'SEQUENTIAL_FALLBACK'
+            }
+        """
+        try:
+            # 거래소 클라이언트 가져오기
+            client = self.get_exchange_client(account)
+            if not client:
+                return {
+                    'success': False,
+                    'error': '거래소 클라이언트 생성 실패',
+                    'error_type': 'client_error'
+                }
+
+            # Rate limit 체크 (배치 주문도 order 엔드포인트)
+            self.rate_limiter.acquire_slot(account.exchange, 'order')
+
+            # 배치 주문 실행 (비동기 → 동기 변환)
+            import asyncio
+
+            # 기존 이벤트 루프가 실행 중인지 확인
+            try:
+                asyncio.get_running_loop()
+                # 이미 async context 내부라면 에러
+                logger.error("create_batch_orders는 동기 컨텍스트에서만 호출해야 합니다")
+                return {
+                    'success': False,
+                    'error': 'create_batch_orders는 async context에서 직접 호출할 수 없습니다',
+                    'error_type': 'context_error'
+                }
+            except RuntimeError:
+                # 실행 중인 루프가 없음 (정상)
+                pass
+
+            # asyncio.run() 사용 (Python 3.7+)
+            result = asyncio.run(client.create_batch_orders(orders, market_type))
+            return result
+
+        except Exception as e:
+            logger.error(f"배치 주문 생성 실패: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'error_type': 'execution_error'
+            }
+
     def cancel_order(self, account: Account, order_id: str, symbol: str,
                     market_type: str = 'spot') -> Dict[str, Any]:
         """주문 취소"""

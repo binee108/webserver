@@ -466,9 +466,145 @@ class TradingCore:
 
         return results
 
+    def _prepare_batch_orders_by_account(
+        self,
+        strategy: Strategy,
+        orders: List[Dict[str, Any]],
+        market_type: str,
+        timing_context: Optional[Dict[str, float]] = None
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        배치 주문을 계좌별로 그룹화하고 Exchange 형식으로 변환
+
+        Args:
+            strategy: Strategy 객체
+            orders: 웹훅 배치 주문 리스트 (원본 형식)
+            market_type: 'SPOT' or 'FUTURES'
+            timing_context: 타이밍 측정 딕셔너리
+
+        Returns:
+            {
+                account_id: {
+                    'account': Account 객체,
+                    'strategy_account': StrategyAccount 객체,
+                    'orders': [
+                        {
+                            'symbol': 'BTC/USDT',
+                            'side': 'buy',
+                            'type': 'LIMIT',
+                            'amount': Decimal('0.01'),
+                            'price': Decimal('95000'),
+                            'params': {'stopPrice': Decimal('...')}
+                        },
+                        ...
+                    ]
+                },
+                ...
+            }
+        """
+        from app.services.utils import to_decimal
+
+        orders_by_account = {}
+
+        # 전략의 모든 활성 계좌 순회
+        strategy_accounts = strategy.strategy_accounts
+        if not strategy_accounts:
+            logger.warning(f"전략 {strategy.name}에 연결된 계좌가 없습니다")
+            return {}
+
+        for sa in strategy_accounts:
+            account = sa.account
+
+            # 활성 계좌만 필터링
+            if hasattr(sa, 'is_active') and not sa.is_active:
+                continue
+            if not account or not account.is_active:
+                continue
+
+            account_orders = []
+
+            # 각 주문에 대해 처리
+            for order in orders:
+                try:
+                    # 필수 필드 추출
+                    symbol = order.get('symbol')
+                    side = order.get('side')
+                    order_type = order.get('order_type')
+                    qty_per = to_decimal(order.get('qty_per', 100))
+                    price = to_decimal(order.get('price')) if order.get('price') else None
+                    stop_price = to_decimal(order.get('stop_price')) if order.get('stop_price') else None
+
+                    # qty_per를 실제 수량으로 변환
+                    calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
+                        strategy_account=sa,
+                        qty_per=qty_per,
+                        symbol=symbol,
+                        order_type=order_type,
+                        market_type=market_type.lower(),  # 'FUTURES' → 'futures'
+                        price=price,
+                        stop_price=stop_price,
+                        side=side
+                    )
+
+                    # 수량이 0이면 스킵
+                    if calculated_quantity == Decimal('0'):
+                        logger.warning(
+                            f"계좌 {account.name}: 수량 계산 결과 0, 주문 스킵 "
+                            f"(symbol={symbol}, qty_per={qty_per}%)"
+                        )
+                        continue
+
+                    logger.debug(
+                        f"계좌 {account.name}: {symbol} qty_per {qty_per}% → quantity {calculated_quantity}"
+                    )
+
+                    # Exchange 표준 형식으로 변환
+                    exchange_order = {
+                        'symbol': symbol,  # 표준 형식 유지 (BTC/USDT)
+                        'side': side.lower(),  # 'buy' or 'sell'
+                        'type': order_type,  # 'LIMIT', 'MARKET', etc.
+                        'amount': calculated_quantity,  # 수량 계산 완료
+                    }
+
+                    # 조건부 파라미터 추가
+                    if price is not None:
+                        exchange_order['price'] = price
+
+                    # params 딕셔너리로 stop_price 전달
+                    params = {}
+                    if stop_price is not None:
+                        params['stopPrice'] = stop_price
+
+                    if params:
+                        exchange_order['params'] = params
+
+                    account_orders.append(exchange_order)
+
+                except Exception as calc_error:
+                    logger.error(
+                        f"계좌 {account.name}: 주문 준비 실패 - {calc_error} "
+                        f"(symbol={order.get('symbol')})"
+                    )
+                    continue
+
+            # 계좌별 그룹화 저장 (주문이 있는 경우만)
+            if account_orders:
+                orders_by_account[account.id] = {
+                    'account': account,
+                    'strategy_account': sa,
+                    'orders': account_orders
+                }
+
+        logger.info(
+            f"📦 배치 주문 준비 완료: {len(orders_by_account)}개 계좌, "
+            f"총 {sum(len(data['orders']) for data in orders_by_account.values())}개 주문"
+        )
+
+        return orders_by_account
+
     def process_batch_trading_signal(self, webhook_data: Dict[str, Any],
                                      timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """배치 거래 신호 처리 (우선순위 기반 정렬)"""
+        """배치 거래 신호 처리 (Exchange 배치 API 활용)"""
         from app.services.utils import to_decimal
         from app.constants import OrderType
 
@@ -504,8 +640,7 @@ class TradingCore:
         market_type = strategy.market_type or MarketType.SPOT
         logger.info(f"전략 조회 성공 - ID: {strategy.id}, 마켓타입: {market_type}")
 
-        # 🆕 우선순위 기반 정렬 (MARKET 주문 최우선)
-        # order_type은 위에서 검증했으므로 기본값 없이 사용
+        # 🆕 우선순위 기반 정렬 (CANCEL_ALL_ORDER 최우선)
         sorted_orders_with_idx = sorted(
             enumerate(orders),
             key=lambda x: OrderType.get_priority(x[1]['order_type'])
@@ -517,37 +652,194 @@ class TradingCore:
             priority = OrderType.get_priority(order_type)
             logger.info(f"  - [{original_idx}] {order_type} (우선순위: {priority})")
 
-        # 정렬된 순서로 주문 처리
+        # CANCEL_ALL_ORDER와 거래 주문 분리
+        cancel_orders = [
+            order for order in sorted_orders_with_idx
+            if order[1].get('order_type') == OrderType.CANCEL_ALL_ORDER
+        ]
+        trading_orders = [
+            order for order in sorted_orders_with_idx
+            if order[1].get('order_type') != OrderType.CANCEL_ALL_ORDER
+        ]
+
+        # 결과 저장
         results = []
-        for original_idx, order in sorted_orders_with_idx:
+
+        # 1. CANCEL_ALL_ORDER 처리 (기존 로직 유지)
+        for original_idx, order in cancel_orders:
             try:
-                # 공통 필드 병합 (group_name, market_type)
-                order_data = {
-                    'group_name': group_name,
-                    'market_type': market_type,  # Strategy에서 가져온 market_type 주입
-                    **order
+                symbol = order.get('symbol')
+                side = order.get('side')  # 선택적
+
+                logger.info(f"🔄 배치 내 CANCEL_ALL_ORDER 처리 - symbol: {symbol}, side: {side or '전체'}")
+
+                # strategy의 모든 활성 계좌에 대해 취소 처리
+                from app.models import StrategyAccount
+                strategy_accounts = StrategyAccount.query.filter_by(
+                    strategy_id=strategy.id
+                ).all()
+
+                cancel_results = []
+                for sa in strategy_accounts:
+                    account = sa.account
+                    if not account or not account.is_active:
+                        continue
+
+                    # order_manager.cancel_all_orders_by_user() 호출
+                    try:
+                        cancel_result = self.service.order_manager.cancel_all_orders_by_user(
+                            user_id=account.user_id,
+                            strategy_id=strategy.id,
+                            account_id=account.id,
+                            symbol=symbol,
+                            side=side,
+                            timing_context=timing_context
+                        )
+                        cancel_results.append({
+                            'account_id': account.id,
+                            'account_name': account.name,
+                            **cancel_result
+                        })
+                    except Exception as cancel_error:
+                        logger.error(f"계좌 {account.id} 주문 취소 실패: {cancel_error}")
+                        cancel_results.append({
+                            'account_id': account.id,
+                            'account_name': account.name,
+                            'success': False,
+                            'error': str(cancel_error)
+                        })
+
+                # 결과 집계
+                successful_cancels = [r for r in cancel_results if r.get('success')]
+                result = {
+                    'action': 'cancel_all_orders',
+                    'strategy': group_name,
+                    'symbol': symbol,
+                    'side': side,
+                    'success': len(successful_cancels) > 0,
+                    'results': cancel_results,
+                    'summary': {
+                        'total_accounts': len(cancel_results),
+                        'successful_accounts': len(successful_cancels),
+                        'failed_accounts': len(cancel_results) - len(successful_cancels)
+                    }
                 }
 
-                result = self.process_trading_signal(order_data, timing_context)
                 results.append({
-                    'order_index': original_idx,  # 원본 인덱스 유지
+                    'order_index': original_idx,
                     'success': result.get('success', False),
                     'result': result
                 })
             except Exception as e:
-                logger.error(f"배치 주문 {original_idx} 처리 실패: {e}")
+                logger.error(f"배치 주문 {original_idx} (CANCEL_ALL_ORDER) 처리 실패: {e}")
                 results.append({
-                    'order_index': original_idx,  # 원본 인덱스 유지
+                    'order_index': original_idx,
                     'success': False,
                     'error': str(e)
                 })
 
+        # 2. 거래 주문을 계좌별로 그룹화 및 변환
+        if trading_orders:
+            trading_order_list = [order for _, order in trading_orders]
+            orders_by_account = self._prepare_batch_orders_by_account(
+                strategy, trading_order_list, market_type, timing_context
+            )
+
+            # 3. 계좌별 배치 주문 실행
+            for account_id, account_data in orders_by_account.items():
+                account = account_data['account']
+                exchange_orders = account_data['orders']
+
+                logger.info(
+                    f"📦 계좌 {account.name} 배치 주문 실행: {len(exchange_orders)}건"
+                )
+
+                try:
+                    # Exchange 배치 API 호출
+                    batch_result = exchange_service.create_batch_orders(
+                        account=account,
+                        orders=exchange_orders,
+                        market_type=market_type.lower()  # 'FUTURES' → 'futures'
+                    )
+
+                    # 결과 로깅
+                    if batch_result.get('success'):
+                        implementation = batch_result.get('implementation', 'UNKNOWN')
+                        summary = batch_result.get('summary', {})
+                        logger.info(
+                            f"✅ 계좌 {account.name} 배치 완료: "
+                            f"{implementation} - "
+                            f"성공 {summary.get('successful', 0)}/{summary.get('total', 0)}"
+                        )
+                    else:
+                        logger.error(
+                            f"❌ 계좌 {account.name} 배치 실패: {batch_result.get('error')}"
+                        )
+
+                    # 4. 결과 매핑 (order_index를 원본 인덱스로 복원)
+                    # exchange_orders와 trading_order_list는 1:1 대응
+                    # batch_result의 order_index는 exchange_orders 내 순서
+                    batch_results = batch_result.get('results', [])
+                    for result_item in batch_results:
+                        batch_order_idx = result_item.get('order_index', 0)
+
+                        # exchange_orders[batch_order_idx] → trading_order_list[batch_order_idx]
+                        # → trading_orders[batch_order_idx] → original_idx
+                        if batch_order_idx < len(trading_orders):
+                            original_idx, _ = trading_orders[batch_order_idx]
+
+                            # 성공/실패 결과 구성
+                            if result_item.get('success'):
+                                results.append({
+                                    'order_index': original_idx,
+                                    'success': True,
+                                    'result': {
+                                        'action': 'trading_signal',
+                                        'success': True,
+                                        'order': result_item.get('order', {}),
+                                        'order_id': result_item.get('order_id'),
+                                        'account_id': account.id,
+                                        'account_name': account.name
+                                    }
+                                })
+                            else:
+                                results.append({
+                                    'order_index': original_idx,
+                                    'success': False,
+                                    'result': {
+                                        'action': 'trading_signal',
+                                        'success': False,
+                                        'error': result_item.get('error', 'Unknown error'),
+                                        'account_id': account.id,
+                                        'account_name': account.name
+                                    }
+                                })
+
+                except Exception as batch_error:
+                    logger.error(f"계좌 {account.name} 배치 실행 예외: {batch_error}")
+
+                    # 해당 계좌의 모든 주문 실패 처리
+                    # 모든 거래 주문에 대해 실패 결과 추가 (계좌별 실패이므로)
+                    for trading_idx, (original_idx, _) in enumerate(trading_orders):
+                        results.append({
+                            'order_index': original_idx,
+                            'success': False,
+                            'result': {
+                                'action': 'trading_signal',
+                                'success': False,
+                                'error': f'배치 실행 실패: {batch_error}',
+                                'account_id': account.id,
+                                'account_name': account.name
+                            }
+                        })
+
+        # 5. 기존 집계 로직 유지
         successful = [r for r in results if r.get('success', False)]
         failed = [r for r in results if not r.get('success', False)]
 
         logger.info(f"배치 거래 신호 처리 완료 - 성공: {len(successful)}, 실패: {len(failed)}")
 
-        # 표준 응답 포맷 (process_cancel_all_orders와 동일한 구조)
+        # 표준 응답 포맷
         return {
             'action': 'batch_order',
             'strategy': group_name,
