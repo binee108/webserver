@@ -790,13 +790,55 @@ class TradingCore:
 
                             # 성공/실패 결과 구성
                             if result_item.get('success'):
+                                order_data = result_item.get('order', {})
+                                exchange_order = exchange_orders[batch_order_idx]
+
+                                # order_data는 id 키를 사용하므로 order_id로 매핑
+                                if 'id' in order_data and 'order_id' not in order_data:
+                                    order_data['order_id'] = order_data['id']
+
+                                # 1. DB 저장 (OpenOrder)
+                                open_order_result = self.service.order_manager.create_open_order_record(
+                                    strategy_account=account_data['strategy_account'],
+                                    order_result=order_data,
+                                    symbol=exchange_order['symbol'],
+                                    side=exchange_order['side'],
+                                    order_type=exchange_order['type'],
+                                    quantity=exchange_order['amount'],
+                                    price=exchange_order.get('price'),
+                                    stop_price=exchange_order.get('params', {}).get('stopPrice')
+                                )
+
+                                if open_order_result['success']:
+                                    logger.info(f"📝 배치 주문 OpenOrder 저장: {order_data.get('id')}")
+
+                                    # 2. 심볼 구독 (WebSocket)
+                                    try:
+                                        self.service.subscribe_symbol(account.id, exchange_order['symbol'])
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"⚠️ 심볼 구독 실패 (WebSocket health check에서 재시도): "
+                                            f"계정: {account.id}, 심볼: {exchange_order['symbol']}, 오류: {e}"
+                                        )
+                                else:
+                                    logger.debug(f"OpenOrder 저장 스킵: {open_order_result.get('reason', 'unknown')}")
+
+                                # 3. SSE 이벤트 발송
+                                self.service.event_emitter.emit_order_events_smart(
+                                    strategy,
+                                    exchange_order['symbol'],
+                                    exchange_order['side'],
+                                    exchange_order['amount'],
+                                    order_data
+                                )
+
                                 results.append({
                                     'order_index': original_idx,
                                     'success': True,
                                     'result': {
                                         'action': 'trading_signal',
                                         'success': True,
-                                        'order': result_item.get('order', {}),
+                                        'order': order_data,
                                         'order_id': result_item.get('order_id'),
                                         'account_id': account.id,
                                         'account_name': account.name

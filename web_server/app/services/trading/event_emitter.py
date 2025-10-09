@@ -277,3 +277,61 @@ class EventEmitter:
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("주문 취소 이벤트 발송 실패: %s", exc)
+
+    def emit_pending_order_event(
+        self,
+        event_type: str,
+        pending_order,
+        user_id: int,
+    ) -> None:
+        """Emit pending order event via SSE.
+
+        Args:
+            event_type: 'order_created' (대기열 추가) or 'order_cancelled' (대기열 제거)
+            pending_order: PendingOrder 모델 인스턴스
+            user_id: 사용자 ID (전략 소유자)
+        """
+        try:
+            from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
+
+            # 계좌 정보 조회
+            account = Account.query.get(pending_order.account_id)
+            if not account:
+                logger.warning(
+                    "계좌를 찾을 수 없어 PendingOrder 이벤트 발송 스킵: %s",
+                    pending_order.account_id
+                )
+                return
+
+            # OrderEvent 생성 (PendingOrder용)
+            order_event = OrderEvent(
+                event_type=event_type,
+                order_id=f'p_{pending_order.id}',  # PendingOrder는 'p_' prefix
+                symbol=pending_order.symbol,
+                strategy_id=0,  # PendingOrder에는 strategy_id 직접 없음
+                user_id=user_id,
+                side=pending_order.side.upper(),
+                quantity=float(pending_order.quantity),
+                price=float(pending_order.price) if pending_order.price else 0.0,
+                status='PENDING_QUEUE',  # PendingOrder 상태
+                timestamp=datetime.utcnow().isoformat(),
+                order_type=pending_order.order_type,
+                stop_price=float(pending_order.stop_price) if pending_order.stop_price else None,
+                account={
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
+            )
+
+            event_service.emit_order_event(order_event)
+            logger.info(
+                "✅ PendingOrder 이벤트 발송 완료: %s - %s (ID: p_%s)",
+                event_type,
+                pending_order.symbol,
+                pending_order.id
+            )
+
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("PendingOrder 이벤트 발송 실패: %s", exc)

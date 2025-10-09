@@ -456,13 +456,16 @@ class WebhookService:
             processed_count += 1
             
             try:
-                # order_service를 통해 주문 취소 (자동으로 OpenOrder 레코드도 처리됨)
-                logger.info(f"🔄 계좌 {account.id}: order_service를 통한 주문 취소 요청 (side={side or '전체'})...")
-                cancel_result = order_service.cancel_all_orders(
+                # ✅ 단일 소스 원칙: cancel_all_orders_by_user()를 직접 호출
+                # account.user_id를 직접 전달하여 불필요한 DB 조회 방지
+                logger.info(f"🔄 계좌 {account.id} (user: {account.user_id}): "
+                           f"주문 취소 요청 (side={side or '전체'})...")
+                cancel_result = order_service.cancel_all_orders_by_user(
+                    user_id=account.user_id,  # ✅ 이미 있는 정보 활용 (성능 최적화)
                     strategy_id=strategy.id,
-                    symbol=symbol,
                     account_id=account.id,  # 특정 계좌 지정
-                    side=side,  # ✅ side 파라미터 전달
+                    symbol=symbol,
+                    side=side,
                     timing_context={'webhook_received_at': webhook_received_at}
                 )
                 
