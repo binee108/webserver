@@ -793,9 +793,18 @@ class TradingCore:
                                 order_data = result_item.get('order', {})
                                 exchange_order = exchange_orders[batch_order_idx]
 
+                                # ✅ 로깅 추가 (검증 투명성)
+                                logger.info(
+                                    f"✅ 배치 주문 성공 - 계좌: {account.name}, 심볼: {exchange_order['symbol']}, "
+                                    f"주문ID: {order_data.get('id')}"
+                                )
+
                                 # order_data는 id 키를 사용하므로 order_id로 매핑
                                 if 'id' in order_data and 'order_id' not in order_data:
                                     order_data['order_id'] = order_data['id']
+                                # ✅ account_id 추가 (SSE 이벤트 발송 필수)
+                                if 'account_id' not in order_data:
+                                    order_data['account_id'] = account.id
 
                                 # 1. DB 저장 (OpenOrder)
                                 open_order_result = self.service.order_manager.create_open_order_record(
@@ -845,6 +854,11 @@ class TradingCore:
                                     }
                                 })
                             else:
+                                # ✅ 로깅 추가 (실패 원인 명확화)
+                                logger.warning(
+                                    f"❌ 배치 주문 실패 - 계좌: {account.name}, "
+                                    f"원인: {result_item.get('error', 'Unknown error')}"
+                                )
                                 results.append({
                                     'order_index': original_idx,
                                     'success': False,

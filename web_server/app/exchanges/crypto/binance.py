@@ -92,21 +92,50 @@ class BinanceExchange(BaseCryptoExchange):
         # 주문 타입 매핑 추적 (거래소 특수성 캡슐화)
         self.order_type_mappings = {}  # order_id -> original_order_type
 
-        # HTTP 세션
+        # HTTP 세션 (thread-safe 관리)
         self.session = None
+        self._session_init_lock = asyncio.Lock()  # Event loop 없이도 Lock 객체 생성 가능
 
         logger.info(f"✅ Binance 통합 거래소 초기화 - Testnet: {testnet}")
 
-    async def _init_session(self):
-        """HTTP 세션 초기화"""
-        if self.session is None:
-            timeout = aiohttp.ClientTimeout(total=30)
-            connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            self.session = aiohttp.ClientSession(
-                timeout=timeout,
-                connector=connector,
-                headers={'User-Agent': 'Binance-Native-Client/1.0'}
-            )
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """
+        Thread-safe HTTP 세션 가져오기 (없으면 생성)
+
+        **Double-check locking 패턴**:
+        1. Fast path: 세션이 이미 존재하면 즉시 반환 (lock 불필요)
+        2. Slow path: 세션 생성 (asyncio.Lock으로 보호)
+
+        **Thread Safety 보장**:
+        - Lock은 __init__()에서 미리 생성되어 race condition 방지
+        - 첫 번째 체크는 lock 없이 수행 (Fast path 최적화)
+        - Lock 내부에서 재확인 (Slow path, 중복 생성 방지)
+
+        Returns:
+            aiohttp.ClientSession: 재사용 가능한 HTTP 세션
+        """
+        # Fast path: 세션이 이미 존재하면 즉시 반환 (lock 불필요)
+        if self.session is not None:
+            return self.session
+
+        # Slow path: 세션 생성 (lock으로 보호)
+        async with self._session_init_lock:
+            # Lock 내부에서 재확인 (다른 코루틴이 이미 생성했을 수 있음)
+            if self.session is None:
+                timeout = aiohttp.ClientTimeout(total=30)
+                connector = aiohttp.TCPConnector(
+                    limit=100,
+                    limit_per_host=30,
+                    enable_cleanup_closed=True
+                )
+                self.session = aiohttp.ClientSession(
+                    timeout=timeout,
+                    connector=connector,
+                    headers={'User-Agent': 'Binance-Native-Client/1.0'}
+                )
+                logger.info("🌐 aiohttp 세션 생성 (재사용 모드)")
+
+        return self.session
 
     async def close(self):
         """세션 정리"""
@@ -172,7 +201,7 @@ class BinanceExchange(BaseCryptoExchange):
     async def _request_async(self, method: str, url: str, params: Dict[str, Any] = None,
                             signed: bool = False) -> Dict[str, Any]:
         """HTTP 요청 실행"""
-        await self._init_session()
+        session = await self._get_session()
 
         if params is None:
             params = {}
@@ -189,13 +218,13 @@ class BinanceExchange(BaseCryptoExchange):
         try:
             response = None
             if method.upper() == 'GET':
-                async with self.session.get(url, params=params, headers=headers) as response:
+                async with session.get(url, params=params, headers=headers) as response:
                     data = await response.json()
             elif method.upper() == 'POST':
-                async with self.session.post(url, data=params, headers=headers) as response:
+                async with session.post(url, data=params, headers=headers) as response:
                     data = await response.json()
             elif method.upper() == 'DELETE':
-                async with self.session.delete(url, params=params, headers=headers) as response:
+                async with session.delete(url, params=params, headers=headers) as response:
                     data = await response.json()
             else:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
@@ -1039,88 +1068,13 @@ class BinanceExchange(BaseCryptoExchange):
 
         logger.info(f"📦 배치 주문 시작: {len(orders)}건, market_type={market_type}")
 
-        # 독립적인 aiohttp session 생성 (event loop 바인딩 문제 해결)
-        timeout = aiohttp.ClientTimeout(total=30)
-        connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-        async with aiohttp.ClientSession(
-            timeout=timeout,
-            connector=connector,
-            headers={'User-Agent': 'Binance-Native-Client/1.0'}
-        ) as session:
-            # market_type에 따라 분기 (session을 파라미터로 전달)
-            if market_type.lower() == 'futures':
-                return await self._create_batch_orders_futures(orders, session)
-            else:
-                return await self._create_batch_orders_sequential(orders, market_type, session)
+        # Phase 2: 공유 세션 사용 (이벤트 루프 바인딩 문제 해결됨)
+        if market_type.lower() == 'futures':
+            return await self._create_batch_orders_futures(orders)
+        else:
+            return await self._create_batch_orders_sequential(orders, market_type)
 
-    async def _request_with_session(self, session: aiohttp.ClientSession, method: str, url: str,
-                                    params: Dict[str, Any] = None, signed: bool = False) -> Dict[str, Any]:
-        """
-        주어진 session을 사용하여 HTTP 요청 실행 (배치 주문 전용)
-
-        Args:
-            session: aiohttp ClientSession 객체
-            method: HTTP 메서드
-            url: 요청 URL
-            params: 요청 파라미터
-            signed: 서명 필요 여부
-        """
-        if params is None:
-            params = {}
-
-        headers = {}
-        if self.api_key:
-            headers['X-MBX-APIKEY'] = self.api_key
-
-        if signed:
-            params['timestamp'] = int(time.time() * 1000)
-            params['recvWindow'] = 5000
-            params['signature'] = self._create_signature(params)
-
-        try:
-            response = None
-            if method.upper() == 'GET':
-                async with session.get(url, params=params, headers=headers) as response:
-                    data = await response.json()
-            elif method.upper() == 'POST':
-                async with session.post(url, data=params, headers=headers) as response:
-                    data = await response.json()
-            elif method.upper() == 'DELETE':
-                async with session.delete(url, params=params, headers=headers) as response:
-                    data = await response.json()
-            else:
-                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-
-            if 'code' in data and data['code'] != 200:
-                raise ExchangeError(f"Binance API 오류: {data.get('msg', 'Unknown error')}")
-
-            return data
-
-        except aiohttp.ClientError as e:
-            raise ExchangeError(f"네트워크 오류: {str(e)}")
-        except json.JSONDecodeError as e:
-            try:
-                raw_text = await response.text()
-                logger.error(f"Binance API 비정상 응답 (상태: {response.status}): {raw_text[:200]}")
-            except:
-                logger.error(f"Binance API 응답 읽기 실패 (상태: {getattr(response, 'status', 'unknown')})")
-            raise ExchangeError(f"Binance API 응답 형식 오류: {str(e)}")
-        except Exception as e:
-            error_details = {
-                'error': str(e),
-                'error_type': type(e).__name__,
-                'url': url,
-                'method': method,
-                'signed': signed
-            }
-            if 'response' in locals() and response:
-                error_details['response_status'] = response.status
-            if 'data' in locals():
-                error_details['response_data'] = data
-            logger.error(f"Binance API 요청 실패: {error_details}")
-            raise ExchangeError(f"Binance API 오류: {str(e)}")
-
-    async def _create_batch_orders_futures(self, orders: List[Dict[str, Any]], session: aiohttp.ClientSession) -> Dict[str, Any]:
+    async def _create_batch_orders_futures(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Binance Futures 네이티브 배치 API 사용
 
@@ -1131,7 +1085,6 @@ class BinanceExchange(BaseCryptoExchange):
 
         Args:
             orders: 주문 리스트
-            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
         """
         base_url = self._get_base_url('futures')
         endpoints = self._get_endpoints('futures')
@@ -1212,7 +1165,7 @@ class BinanceExchange(BaseCryptoExchange):
                 logger.debug(f"🔍 배치 주문 API 호출: {url}")
                 logger.debug(f"🔍 페이로드: {batch_orders_payload}")
 
-                response = await self._request_with_session(session, 'POST', url, api_params, signed=True)
+                response = await self._request_async('POST', url, api_params, signed=True)
 
                 logger.debug(f"🔍 배치 주문 응답: {response}")
 
@@ -1278,8 +1231,7 @@ class BinanceExchange(BaseCryptoExchange):
             'implementation': 'NATIVE_BATCH'
         }
 
-    async def _create_batch_orders_sequential(self, orders: List[Dict[str, Any]], market_type: str,
-                                              session: aiohttp.ClientSession) -> Dict[str, Any]:
+    async def _create_batch_orders_sequential(self, orders: List[Dict[str, Any]], market_type: str) -> Dict[str, Any]:
         """
         Spot 폴백: 병렬 순차 처리 (asyncio.gather 사용)
 
@@ -1291,7 +1243,6 @@ class BinanceExchange(BaseCryptoExchange):
         Args:
             orders: 주문 리스트
             market_type: 마켓 타입
-            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
         """
         logger.info(f"📦 병렬 순차 처리 시작: {len(orders)}건")
 
@@ -1302,7 +1253,7 @@ class BinanceExchange(BaseCryptoExchange):
         async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
             """Rate limit 제어와 함께 단일 주문 실행"""
             async with semaphore:
-                return await self._execute_single_order(idx, order, market_type, session)
+                return await self._execute_single_order(idx, order, market_type)
 
         # 태스크 생성
         tasks = [
@@ -1352,8 +1303,7 @@ class BinanceExchange(BaseCryptoExchange):
             'implementation': 'SEQUENTIAL_FALLBACK'
         }
 
-    async def _execute_single_order(self, order_index: int, order: Dict[str, Any], market_type: str,
-                                    session: aiohttp.ClientSession) -> Dict[str, Any]:
+    async def _execute_single_order(self, order_index: int, order: Dict[str, Any], market_type: str) -> Dict[str, Any]:
         """
         단일 주문 실행 헬퍼 (병렬 순차 처리용)
 
@@ -1361,7 +1311,6 @@ class BinanceExchange(BaseCryptoExchange):
             order_index: 주문 인덱스
             order: 주문 정보
             market_type: 마켓 타입
-            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
 
         Returns:
             성공: {'order_index': idx, 'success': True, 'order_id': '...', 'order': {...}}
@@ -1383,7 +1332,7 @@ class BinanceExchange(BaseCryptoExchange):
             )
 
             url = f"{base_url}{endpoints.ORDER}"
-            data = await self._request_with_session(session, 'POST', url, order_params, signed=True)
+            data = await self._request_async('POST', url, order_params, signed=True)
 
             # 주문 매핑 저장
             order_id = str(data.get('orderId'))
