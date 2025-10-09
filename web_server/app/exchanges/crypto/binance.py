@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
@@ -94,7 +95,7 @@ class BinanceExchange(BaseCryptoExchange):
 
         # HTTP 세션 (thread-safe 관리)
         self.session = None
-        self._session_init_lock = asyncio.Lock()  # Event loop 없이도 Lock 객체 생성 가능
+        self._session_init_lock = threading.Lock()  # Event loop 독립적 동기화
 
         logger.info(f"✅ Binance 통합 거래소 초기화 - Testnet: {testnet}")
 
@@ -104,12 +105,18 @@ class BinanceExchange(BaseCryptoExchange):
 
         **Double-check locking 패턴**:
         1. Fast path: 세션이 이미 존재하면 즉시 반환 (lock 불필요)
-        2. Slow path: 세션 생성 (asyncio.Lock으로 보호)
+        2. Slow path: 세션 생성 (threading.Lock으로 보호)
 
         **Thread Safety 보장**:
-        - Lock은 __init__()에서 미리 생성되어 race condition 방지
+        - threading.Lock은 OS 레벨 동기화 (Event loop 독립적)
+        - 여러 스레드와 이벤트 루프에서 안전하게 공유 가능
         - 첫 번째 체크는 lock 없이 수행 (Fast path 최적화)
         - Lock 내부에서 재확인 (Slow path, 중복 생성 방지)
+
+        **Event Loop 독립성**:
+        - asyncio.Lock이 아닌 threading.Lock 사용
+        - ExchangeService의 스레드별 이벤트 루프에서 안전
+        - Phase 1 아키텍처와 완벽 호환
 
         Returns:
             aiohttp.ClientSession: 재사용 가능한 HTTP 세션
@@ -118,9 +125,9 @@ class BinanceExchange(BaseCryptoExchange):
         if self.session is not None:
             return self.session
 
-        # Slow path: 세션 생성 (lock으로 보호)
-        async with self._session_init_lock:
-            # Lock 내부에서 재확인 (다른 코루틴이 이미 생성했을 수 있음)
+        # Slow path: 세션 생성 (threading.Lock으로 보호)
+        with self._session_init_lock:
+            # Lock 내부에서 재확인 (다른 스레드가 이미 생성했을 수 있음)
             if self.session is None:
                 timeout = aiohttp.ClientTimeout(total=30)
                 connector = aiohttp.TCPConnector(
@@ -133,7 +140,7 @@ class BinanceExchange(BaseCryptoExchange):
                     connector=connector,
                     headers={'User-Agent': 'Binance-Native-Client/1.0'}
                 )
-                logger.info("🌐 aiohttp 세션 생성 (재사용 모드)")
+                logger.info("🌐 aiohttp 세션 생성 (재사용 모드, threading.Lock 보호)")
 
         return self.session
 
