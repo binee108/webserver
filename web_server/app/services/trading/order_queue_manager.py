@@ -35,6 +35,11 @@ class OrderQueueManager:
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
+
+        # EventEmitter 추가 (PendingOrder SSE 이벤트 발송용)
+        from app.services.trading.event_emitter import EventEmitter
+        self.event_emitter = EventEmitter(service)
+
         self.metrics = {
             'total_rebalances': 0,
             'total_cancelled': 0,
@@ -112,6 +117,22 @@ class OrderQueueManager:
 
             db.session.add(pending_order)
             db.session.commit()
+
+            # SSE 이벤트 발송 (PendingOrder 생성)
+            try:
+                from app.models import Strategy
+                strategy = Strategy.query.join(StrategyAccount).filter(
+                    StrategyAccount.id == strategy_account_id
+                ).first()
+
+                if strategy:
+                    self.event_emitter.emit_pending_order_event(
+                        event_type='order_created',
+                        pending_order=pending_order,
+                        user_id=strategy.user_id
+                    )
+            except Exception as e:
+                logger.warning(f"PendingOrder 생성 이벤트 발송 실패: {e}")
 
             logger.info(
                 f"📥 대기열 추가 완료 - ID: {pending_order.id}, "
@@ -519,6 +540,16 @@ class OrderQueueManager:
             )
 
             if result.get('success'):
+                # SSE 이벤트 발송 (PendingOrder 삭제 - 거래소 제출 완료)
+                try:
+                    self.event_emitter.emit_pending_order_event(
+                        event_type='order_cancelled',  # 대기열에서 제거됨
+                        pending_order=pending_order,
+                        user_id=strategy.user_id
+                    )
+                except Exception as e:
+                    logger.warning(f"PendingOrder 삭제 이벤트 발송 실패 (성공): {e}")
+
                 # 성공 시 대기열에서 제거 (커밋은 상위에서)
                 db.session.delete(pending_order)
 
@@ -541,6 +572,17 @@ class OrderQueueManager:
                         f"재시도: {pending_order.retry_count}회, "
                         f"error: {result.get('error')}"
                     )
+
+                    # SSE 이벤트 발송 (PendingOrder 삭제 - 재시도 한계 초과)
+                    try:
+                        self.event_emitter.emit_pending_order_event(
+                            event_type='order_cancelled',
+                            pending_order=pending_order,
+                            user_id=strategy.user_id
+                        )
+                    except Exception as e:
+                        logger.warning(f"PendingOrder 삭제 이벤트 발송 실패 (실패): {e}")
+
                     # 최대 재시도 초과 시 대기열에서 제거
                     db.session.delete(pending_order)
                 else:
