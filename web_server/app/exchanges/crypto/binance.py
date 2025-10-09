@@ -93,62 +93,124 @@ class BinanceExchange(BaseCryptoExchange):
         # 주문 타입 매핑 추적 (거래소 특수성 캡슐화)
         self.order_type_mappings = {}  # order_id -> original_order_type
 
-        # HTTP 세션 (thread-safe 관리)
-        self.session = None
-        self._session_init_lock = threading.Lock()  # Event loop 독립적 동기화
+        # HTTP 세션 (스레드별 관리)
+        self._sessions: Dict[int, aiohttp.ClientSession] = {}  # 스레드 ID → 세션 매핑
+        self._session_lock = threading.Lock()  # 스레드 안전성 보장
 
         logger.info(f"✅ Binance 통합 거래소 초기화 - Testnet: {testnet}")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """
-        Thread-safe HTTP 세션 가져오기 (없으면 생성)
+        스레드별 HTTP 세션 가져오기 (이벤트 루프 검증 포함)
+
+        **스레드별 관리**:
+        각 스레드는 독립적인 이벤트 루프를 가지므로, 세션도 스레드별로 생성됩니다.
+        aiohttp.ClientSession은 생성 시 현재 이벤트 루프에 바인딩되므로,
+        스레드별로 독립적인 세션을 유지해야 합니다.
+
+        **이벤트 루프 검증 (중요!)**:
+        Thread Pool 워커 재사용 시, 이전 요청의 이벤트 루프가 닫혀 있을 수 있습니다.
+        세션이 바인딩된 루프가 닫혔거나 다른 루프로 변경되었으면 세션을 재생성합니다.
+        이를 통해 "Event loop is closed" 에러를 방지합니다.
 
         **Double-check locking 패턴**:
-        1. Fast path: 세션이 이미 존재하면 즉시 반환 (lock 불필요)
-        2. Slow path: 세션 생성 (threading.Lock으로 보호)
+        1. Fast path: 현재 스레드의 세션이 존재하고 이벤트 루프가 유효하면 즉시 반환
+        2. Slow path: 세션 생성 또는 재생성 (threading.Lock으로 보호)
 
-        **Thread Safety 보장**:
-        - threading.Lock은 OS 레벨 동기화 (Event loop 독립적)
-        - 여러 스레드와 이벤트 루프에서 안전하게 공유 가능
-        - 첫 번째 체크는 lock 없이 수행 (Fast path 최적화)
-        - Lock 내부에서 재확인 (Slow path, 중복 생성 방지)
-
-        **Event Loop 독립성**:
-        - asyncio.Lock이 아닌 threading.Lock 사용
-        - ExchangeService의 스레드별 이벤트 루프에서 안전
-        - Phase 1 아키텍처와 완벽 호환
+        **ExchangeService 호환성**:
+        - ExchangeService는 스레드별 이벤트 루프 관리 (exchange.py:189-224)
+        - 각 스레드의 루프에 바인딩된 독립 세션으로 Event loop 불일치 방지
 
         Returns:
-            aiohttp.ClientSession: 재사용 가능한 HTTP 세션
-        """
-        # Fast path: 세션이 이미 존재하면 즉시 반환 (lock 불필요)
-        if self.session is not None:
-            return self.session
+            aiohttp.ClientSession: 현재 스레드의 HTTP 세션
 
-        # Slow path: 세션 생성 (threading.Lock으로 보호)
-        with self._session_init_lock:
+        Raises:
+            RuntimeError: 이벤트 루프가 실행 중이 아닌 경우
+        """
+        thread_id = threading.get_ident()
+
+        # 현재 실행 중인 이벤트 루프 확인
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error("❌ 이벤트 루프가 실행 중이 아닙니다 (스레드: %s)", thread_id)
+            raise RuntimeError("이벤트 루프가 실행 중이 아닙니다")
+
+        # Fast path: 현재 스레드의 세션 확인 및 이벤트 루프 검증
+        if thread_id in self._sessions:
+            session_info = self._sessions[thread_id]
+            session = session_info['session']
+            bound_loop = session_info['loop']
+
+            # 세션이 바인딩된 루프가 현재 루프와 동일하고 닫히지 않았는지 확인
+            if bound_loop == current_loop and not current_loop.is_closed():
+                # 유효한 세션 반환
+                return session
+            else:
+                # 루프가 다르거나 닫혔으면 세션 무효화
+                logger.warning(
+                    f"⚠️ 스레드 {thread_id}: 이벤트 루프 변경 감지 "
+                    f"(기존 루프 ID: {id(bound_loop)}, 현재 루프 ID: {id(current_loop)}, "
+                    f"닫힘 여부: {current_loop.is_closed()}) - 세션 재생성"
+                )
+                # 기존 세션 정리 (메모리 누수 방지, 타임아웃 적용)
+                if session and not session.closed:
+                    try:
+                        # 타임아웃 5초로 안전하게 종료
+                        close_task = asyncio.create_task(session.close())
+                        await asyncio.wait_for(close_task, timeout=5.0)
+                        logger.debug(f"✅ 기존 세션 정리 완료 (스레드: {thread_id})")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"⏱️ 기존 세션 종료 타임아웃 (5초 경과, 스레드: {thread_id})")
+                    except Exception as close_error:
+                        logger.debug(f"세션 종료 중 오류 (무시됨): {close_error}")
+                # 딕셔너리에서 제거
+                del self._sessions[thread_id]
+
+        # Slow path: 새 세션 생성 (threading.Lock으로 보호)
+        with self._session_lock:
             # Lock 내부에서 재확인 (다른 스레드가 이미 생성했을 수 있음)
-            if self.session is None:
+            if thread_id not in self._sessions:
                 timeout = aiohttp.ClientTimeout(total=30)
                 connector = aiohttp.TCPConnector(
                     limit=100,
                     limit_per_host=30,
                     enable_cleanup_closed=True
                 )
-                self.session = aiohttp.ClientSession(
+                session = aiohttp.ClientSession(
                     timeout=timeout,
                     connector=connector,
                     headers={'User-Agent': 'Binance-Native-Client/1.0'}
                 )
-                logger.info("🌐 aiohttp 세션 생성 (재사용 모드, threading.Lock 보호)")
+                self._sessions[thread_id] = {
+                    'session': session,
+                    'loop': current_loop  # 이벤트 루프 참조 저장
+                }
+                logger.info(
+                    f"🌐 스레드 {thread_id}에 aiohttp 세션 생성 "
+                    f"(총 세션: {len(self._sessions)}, 루프 ID: {id(current_loop)})"
+                )
 
-        return self.session
+        return self._sessions[thread_id]['session']
 
     async def close(self):
-        """세션 정리"""
-        if self.session:
-            await self.session.close()
-            self.session = None
+        """모든 스레드의 세션 정리 (타임아웃 적용)"""
+        with self._session_lock:
+            for thread_id, session_info in list(self._sessions.items()):
+                try:
+                    session = session_info['session']
+                    # 타임아웃 5초로 안전하게 종료
+                    close_task = asyncio.create_task(session.close())
+                    await asyncio.wait_for(close_task, timeout=5.0)
+                    logger.info(f"🌐 스레드 {thread_id} 세션 종료 완료")
+                except asyncio.TimeoutError:
+                    logger.warning(f"⏱️ 스레드 {thread_id} 세션 종료 타임아웃 (5초 경과)")
+                except Exception as e:
+                    logger.warning(f"⚠️ 스레드 {thread_id} 세션 종료 실패: {e}")
+
+            num_closed = len(self._sessions)
+            self._sessions.clear()
+            logger.info(f"✅ 전체 세션 정리 완료 (정리된 세션: {num_closed})")
 
     def _get_base_url(self, market_type: str) -> str:
         """마켓 타입에 따른 기본 URL 반환"""

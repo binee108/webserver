@@ -446,6 +446,19 @@ def init_scheduler(app):
             if scheduler.running:
                 scheduler.shutdown()
         atexit.register(shutdown_scheduler)
+
+        # 애플리케이션 종료 시 ExchangeService 정리 (이벤트 루프, aiohttp 세션)
+        def cleanup_exchange_service():
+            """애플리케이션 종료 시 ExchangeService 리소스 정리"""
+            try:
+                app.logger.info("🛑 애플리케이션 종료 - ExchangeService 정리 시작")
+                from app.services.exchange import exchange_service
+                if hasattr(exchange_service, 'shutdown'):
+                    exchange_service.shutdown()
+                app.logger.info("✅ ExchangeService 정리 완료")
+            except Exception as e:
+                app.logger.error(f"❌ ExchangeService 정리 중 오류: {e}", exc_info=True)
+        atexit.register(cleanup_exchange_service)
         
         # 텔레그램 시스템 시작 알림
         try:
@@ -463,27 +476,21 @@ def init_scheduler(app):
 def register_background_jobs(app):
     """백그라운드 작업 등록"""
 
-    # Flask 애플리케이션 종료 시 서비스 정리
+    # Flask 요청 컨텍스트 정리 (이벤트 루프는 애플리케이션 종료 시까지 유지)
     @app.teardown_appcontext
     def shutdown_services(exception=None):
         """
-        Flask 애플리케이션 종료 시 서비스 정리
+        요청 컨텍스트 종료 시 정리
+
+        주의: 이벤트 루프와 aiohttp 세션은 애플리케이션 종료 시까지 유지됩니다.
+        매 요청마다 이벤트 루프를 닫으면 Thread Pool 워커 재사용 시 "Event loop is closed" 에러가 발생합니다.
 
         Args:
             exception: 예외가 발생하여 종료되는 경우 해당 예외 객체
         """
-        try:
-            logger = app.logger
-            logger.info("🛑 애플리케이션 종료 - 서비스 정리 시작")
-
-            # Exchange service event loop cleanup
-            from app.services.exchange import exchange_service
-            if hasattr(exchange_service, 'shutdown'):
-                exchange_service.shutdown()
-
-            logger.info("✅ 서비스 정리 완료")
-        except Exception as e:
-            app.logger.error(f"❌ 서비스 정리 중 오류: {e}", exc_info=True)
+        # 요청별 리소스 정리는 여기서 수행 (DB 세션 등)
+        # 이벤트 루프와 세션은 atexit 핸들러에서 정리
+        pass
 
     # 🆕 애플리케이션 시작 시 Precision 캐시 웜업을 직접 실행 (한 번만)
     # Flask 개발 서버의 자동 재시작으로 인한 중복 실행 방지
