@@ -990,7 +990,17 @@ class BinanceExchange(BaseCryptoExchange):
 
     # ===== 배치 주문 기능 =====
 
-    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+    def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """배치 주문 생성 (동기 래퍼)"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self.create_batch_orders_async(orders, market_type))
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
         """
         배치 주문 생성 (BaseExchange 추상 메서드 구현)
 

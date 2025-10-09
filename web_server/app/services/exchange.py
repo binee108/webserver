@@ -706,25 +706,9 @@ class ExchangeService:
             # Rate limit 체크 (배치 주문도 order 엔드포인트)
             self.rate_limiter.acquire_slot(account.exchange, 'order')
 
-            # 배치 주문 실행 (비동기 → 동기 변환)
-            import asyncio
-
-            # 기존 이벤트 루프가 실행 중인지 확인
-            try:
-                asyncio.get_running_loop()
-                # 이미 async context 내부라면 에러
-                logger.error("create_batch_orders는 동기 컨텍스트에서만 호출해야 합니다")
-                return {
-                    'success': False,
-                    'error': 'create_batch_orders는 async context에서 직접 호출할 수 없습니다',
-                    'error_type': 'context_error'
-                }
-            except RuntimeError:
-                # 실행 중인 루프가 없음 (정상)
-                pass
-
-            # asyncio.run() 사용 (Python 3.7+)
-            result = asyncio.run(client.create_batch_orders(orders, market_type))
+            # 배치 주문 실행 (동기 메서드 호출)
+            # BinanceExchange.create_batch_orders()는 내부에서 이벤트 루프 관리
+            result = client.create_batch_orders(orders, market_type)
             return result
 
         except Exception as e:
