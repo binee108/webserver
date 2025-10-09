@@ -230,3 +230,96 @@
 [data-theme="dark"] .page-positions .positions-table tbody tr:hover {
   background-color: rgba(139, 92, 246, 0.05);
 }
+
+/* ========================================
+   Pending Order Visual Styling
+   ======================================== */
+
+/* Pending Order 스타일 - 시각적 구별 */
+.order-row-pending {
+  background-color: rgba(31, 41, 55, 0.6) !important;
+  opacity: 0.85;
+  border-left: 3px dashed #fbbf24 !important; /* warning color */
+  transition: all 0.3s ease;
+}
+
+.order-row-pending td {
+  color: rgba(243, 244, 246, 0.7);
+}
+
+.order-row-pending .badge {
+  opacity: 0.9;
+}
+
+/* Hover 효과 유지 */
+.order-row-pending:hover {
+  opacity: 1;
+  background-color: rgba(31, 41, 55, 0.8) !important;
+}
+
+/* 툴팁 스타일 */
+.order-row-pending[title] {
+  cursor: help;
+}
+
+/* Dark theme adjustments for pending orders */
+[data-theme="dark"] .order-row-pending {
+  background-color: rgba(17, 24, 39, 0.6) !important;
+  border-left-color: #f59e0b !important;
+}
+
+[data-theme="dark"] .order-row-pending:hover {
+  background-color: rgba(17, 24, 39, 0.8) !important;
+}
+
+[data-theme="dark"] .order-row-pending td {
+  color: rgba(229, 231, 235, 0.65);
+}
+
+/* Light theme adjustments for pending orders */
+[data-theme="light"] .order-row-pending {
+  background-color: rgba(249, 250, 251, 0.9) !important;
+  border-left-color: #f59e0b !important;
+}
+
+[data-theme="light"] .order-row-pending:hover {
+  background-color: rgba(243, 244, 246, 1) !important;
+}
+
+[data-theme="light"] .order-row-pending td {
+  color: rgba(55, 65, 81, 0.75);
+}
+
+/* Pending order badge styling */
+.order-row-pending .badge-secondary {
+  background-color: #6b7280;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Improve contrast for pending order text */
+.order-row-pending .account-name,
+.order-row-pending .order-symbol {
+  font-weight: 600;
+}
+
+/* Animation for pending orders */
+@keyframes pending-pulse {
+  0%, 100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+.order-row-pending {
+  animation: pending-pulse 3s ease-in-out infinite;
+}
+
+/* Stop animation on hover for better readability */
+.order-row-pending:hover {
+  animation: none;
+}

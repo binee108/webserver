@@ -397,13 +397,14 @@ def get_strategy_positions(strategy_id):
 @login_required
 def get_my_strategy_open_orders(strategy_id):
     try:
-        from app.models import Strategy, OpenOrder, StrategyAccount, Account
+        from app.models import Strategy, OpenOrder, PendingOrder, StrategyAccount, Account
         from sqlalchemy.orm import joinedload
 
         strategy = Strategy.query.filter_by(id=strategy_id).first()
         if not strategy:
             return jsonify({'success': False, 'error': '전략을 찾을 수 없습니다.'}), 404
 
+        # OpenOrder 조회 (거래소 제출 완료)
         open_orders = (
             OpenOrder.query
             .join(StrategyAccount)
@@ -420,7 +421,25 @@ def get_my_strategy_open_orders(strategy_id):
             .all()
         )
 
+        # PendingOrder 조회 (대기열)
+        pending_orders = (
+            PendingOrder.query
+            .join(StrategyAccount)
+            .join(Account)
+            .options(
+                joinedload(PendingOrder.strategy_account)
+                .joinedload(StrategyAccount.account)
+            )
+            .filter(
+                StrategyAccount.strategy_id == strategy_id,
+                Account.user_id == current_user.id
+            )
+            .all()
+        )
+
         orders = []
+
+        # OpenOrder 변환 (source: "open_order")
         for order in open_orders:
             orders.append({
                 'order_id': order.exchange_order_id,  # 통일된 명명: order_id 사용
@@ -436,6 +455,30 @@ def get_my_strategy_open_orders(strategy_id):
                 'created_at': order.created_at.isoformat() if order.created_at else None,
                 'account_name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
                 'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown',
+                'source': 'open_order',  # 소스 구별자 추가
+                'account': {
+                    'name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
+                    'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown'
+                } if order.strategy_account else None
+            })
+
+        # PendingOrder 변환 (source: "pending_order")
+        for order in pending_orders:
+            orders.append({
+                'order_id': f'p_{order.id}',  # prefix 추가하여 OpenOrder와 충돌 방지
+                'symbol': order.symbol,
+                'side': order.side,
+                'order_type': order.order_type,
+                'price': float(order.price) if order.price is not None else None,
+                'stop_price': float(order.stop_price) if order.stop_price is not None else None,
+                'quantity': float(order.quantity) if order.quantity is not None else 0.0,
+                'filled_quantity': 0.0,  # PendingOrder는 체결 전
+                'status': 'PENDING_QUEUE',  # 대기열 상태
+                'market_type': order.market_type,
+                'created_at': order.created_at.isoformat() if order.created_at else None,
+                'account_name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
+                'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown',
+                'source': 'pending_order',  # 소스 구별자 추가
                 'account': {
                     'name': order.strategy_account.account.name if order.strategy_account and order.strategy_account.account else 'Unknown',
                     'exchange': order.strategy_account.account.exchange if order.strategy_account and order.strategy_account.account else 'unknown'
