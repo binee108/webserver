@@ -990,19 +990,13 @@ class BinanceExchange(BaseCryptoExchange):
 
     # ===== 배치 주문 기능 =====
 
-    def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
-        """배치 주문 생성 (동기 래퍼)"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(self.create_batch_orders_async(orders, market_type))
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
-
-    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
         """
-        배치 주문 생성 (BaseExchange 추상 메서드 구현)
+        배치 주문 생성 (비동기 구현)
+
+        Note:
+            이 메서드는 ExchangeService._get_or_create_loop()를 통해 호출됩니다.
+            직접 호출하지 마세요 - 대신 ExchangeService.create_batch_orders() 사용.
 
         Args:
             orders: 주문 리스트
@@ -1045,13 +1039,88 @@ class BinanceExchange(BaseCryptoExchange):
 
         logger.info(f"📦 배치 주문 시작: {len(orders)}건, market_type={market_type}")
 
-        # market_type에 따라 분기
-        if market_type.lower() == 'futures':
-            return await self._create_batch_orders_futures(orders)
-        else:
-            return await self._create_batch_orders_sequential(orders, market_type)
+        # 독립적인 aiohttp session 생성 (event loop 바인딩 문제 해결)
+        timeout = aiohttp.ClientTimeout(total=30)
+        connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+            headers={'User-Agent': 'Binance-Native-Client/1.0'}
+        ) as session:
+            # market_type에 따라 분기 (session을 파라미터로 전달)
+            if market_type.lower() == 'futures':
+                return await self._create_batch_orders_futures(orders, session)
+            else:
+                return await self._create_batch_orders_sequential(orders, market_type, session)
 
-    async def _create_batch_orders_futures(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def _request_with_session(self, session: aiohttp.ClientSession, method: str, url: str,
+                                    params: Dict[str, Any] = None, signed: bool = False) -> Dict[str, Any]:
+        """
+        주어진 session을 사용하여 HTTP 요청 실행 (배치 주문 전용)
+
+        Args:
+            session: aiohttp ClientSession 객체
+            method: HTTP 메서드
+            url: 요청 URL
+            params: 요청 파라미터
+            signed: 서명 필요 여부
+        """
+        if params is None:
+            params = {}
+
+        headers = {}
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+
+        if signed:
+            params['timestamp'] = int(time.time() * 1000)
+            params['recvWindow'] = 5000
+            params['signature'] = self._create_signature(params)
+
+        try:
+            response = None
+            if method.upper() == 'GET':
+                async with session.get(url, params=params, headers=headers) as response:
+                    data = await response.json()
+            elif method.upper() == 'POST':
+                async with session.post(url, data=params, headers=headers) as response:
+                    data = await response.json()
+            elif method.upper() == 'DELETE':
+                async with session.delete(url, params=params, headers=headers) as response:
+                    data = await response.json()
+            else:
+                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
+            if 'code' in data and data['code'] != 200:
+                raise ExchangeError(f"Binance API 오류: {data.get('msg', 'Unknown error')}")
+
+            return data
+
+        except aiohttp.ClientError as e:
+            raise ExchangeError(f"네트워크 오류: {str(e)}")
+        except json.JSONDecodeError as e:
+            try:
+                raw_text = await response.text()
+                logger.error(f"Binance API 비정상 응답 (상태: {response.status}): {raw_text[:200]}")
+            except:
+                logger.error(f"Binance API 응답 읽기 실패 (상태: {getattr(response, 'status', 'unknown')})")
+            raise ExchangeError(f"Binance API 응답 형식 오류: {str(e)}")
+        except Exception as e:
+            error_details = {
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'url': url,
+                'method': method,
+                'signed': signed
+            }
+            if 'response' in locals() and response:
+                error_details['response_status'] = response.status
+            if 'data' in locals():
+                error_details['response_data'] = data
+            logger.error(f"Binance API 요청 실패: {error_details}")
+            raise ExchangeError(f"Binance API 오류: {str(e)}")
+
+    async def _create_batch_orders_futures(self, orders: List[Dict[str, Any]], session: aiohttp.ClientSession) -> Dict[str, Any]:
         """
         Binance Futures 네이티브 배치 API 사용
 
@@ -1059,6 +1128,10 @@ class BinanceExchange(BaseCryptoExchange):
         - 엔드포인트: POST /fapi/v1/batchOrders
         - 최대 5건/요청
         - batchOrders 파라미터로 JSON 문자열 전송
+
+        Args:
+            orders: 주문 리스트
+            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
         """
         base_url = self._get_base_url('futures')
         endpoints = self._get_endpoints('futures')
@@ -1130,7 +1203,7 @@ class BinanceExchange(BaseCryptoExchange):
 
                     batch_orders_payload.append(order_params)
 
-                # API 호출
+                # API 호출 (독립적인 session 사용)
                 url = f"{base_url}{endpoints.BATCH_ORDERS}"
                 api_params = {
                     'batchOrders': json.dumps(batch_orders_payload)
@@ -1139,7 +1212,7 @@ class BinanceExchange(BaseCryptoExchange):
                 logger.debug(f"🔍 배치 주문 API 호출: {url}")
                 logger.debug(f"🔍 페이로드: {batch_orders_payload}")
 
-                response = await self._request_async('POST', url, api_params, signed=True)
+                response = await self._request_with_session(session, 'POST', url, api_params, signed=True)
 
                 logger.debug(f"🔍 배치 주문 응답: {response}")
 
@@ -1205,7 +1278,8 @@ class BinanceExchange(BaseCryptoExchange):
             'implementation': 'NATIVE_BATCH'
         }
 
-    async def _create_batch_orders_sequential(self, orders: List[Dict[str, Any]], market_type: str) -> Dict[str, Any]:
+    async def _create_batch_orders_sequential(self, orders: List[Dict[str, Any]], market_type: str,
+                                              session: aiohttp.ClientSession) -> Dict[str, Any]:
         """
         Spot 폴백: 병렬 순차 처리 (asyncio.gather 사용)
 
@@ -1213,6 +1287,11 @@ class BinanceExchange(BaseCryptoExchange):
             - Spot은 배치 API 미지원 → 개별 주문을 병렬로 실행
             - 각 주문의 성공/실패를 독립적으로 처리
             - Rate limit 방지를 위해 동시 실행 수 제한 (Semaphore)
+
+        Args:
+            orders: 주문 리스트
+            market_type: 마켓 타입
+            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
         """
         logger.info(f"📦 병렬 순차 처리 시작: {len(orders)}건")
 
@@ -1223,7 +1302,7 @@ class BinanceExchange(BaseCryptoExchange):
         async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
             """Rate limit 제어와 함께 단일 주문 실행"""
             async with semaphore:
-                return await self._execute_single_order(idx, order, market_type)
+                return await self._execute_single_order(idx, order, market_type, session)
 
         # 태스크 생성
         tasks = [
@@ -1273,7 +1352,8 @@ class BinanceExchange(BaseCryptoExchange):
             'implementation': 'SEQUENTIAL_FALLBACK'
         }
 
-    async def _execute_single_order(self, order_index: int, order: Dict[str, Any], market_type: str) -> Dict[str, Any]:
+    async def _execute_single_order(self, order_index: int, order: Dict[str, Any], market_type: str,
+                                    session: aiohttp.ClientSession) -> Dict[str, Any]:
         """
         단일 주문 실행 헬퍼 (병렬 순차 처리용)
 
@@ -1281,22 +1361,36 @@ class BinanceExchange(BaseCryptoExchange):
             order_index: 주문 인덱스
             order: 주문 정보
             market_type: 마켓 타입
+            session: aiohttp ClientSession (event loop 바인딩 문제 해결)
 
         Returns:
             성공: {'order_index': idx, 'success': True, 'order_id': '...', 'order': {...}}
             실패: {'order_index': idx, 'success': False, 'error': '...'}
         """
         try:
-            # create_order_async 호출
-            order_obj = await self.create_order_async(
-                symbol=order['symbol'],
-                order_type=order['type'],
-                side=order['side'],
-                amount=order['amount'],
-                price=order.get('price'),
-                market_type=market_type,
-                **order.get('params', {})
+            base_url = self._get_base_url(market_type)
+            endpoints = self._get_endpoints(market_type)
+
+            # 0. 심볼 변환: 표준 형식(BTC/USDT) → Binance 형식(BTCUSDT)
+            binance_symbol = to_binance_format(order['symbol'])
+
+            # 1. 입력 변환 및 파라미터 준비
+            original_order_type = order['type']
+            binance_order_type = self._convert_to_binance_format(original_order_type, order['side'])
+            order_params = self._prepare_order_params(
+                original_order_type, binance_symbol, order['side'],
+                binance_order_type, order['amount'], order.get('price'), order.get('params', {})
             )
+
+            url = f"{base_url}{endpoints.ORDER}"
+            data = await self._request_with_session(session, 'POST', url, order_params, signed=True)
+
+            # 주문 매핑 저장
+            order_id = str(data.get('orderId'))
+            if order_id and original_order_type != binance_order_type:
+                self._store_order_mapping(order_id, original_order_type)
+
+            order_obj = self._parse_order(data, market_type, original_order_type)
 
             logger.info(f"✅ 주문 {order_index} 성공: order_id={order_obj.id}")
             return {

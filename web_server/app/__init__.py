@@ -462,7 +462,29 @@ def init_scheduler(app):
 
 def register_background_jobs(app):
     """백그라운드 작업 등록"""
-    
+
+    # Flask 애플리케이션 종료 시 서비스 정리
+    @app.teardown_appcontext
+    def shutdown_services(exception=None):
+        """
+        Flask 애플리케이션 종료 시 서비스 정리
+
+        Args:
+            exception: 예외가 발생하여 종료되는 경우 해당 예외 객체
+        """
+        try:
+            logger = app.logger
+            logger.info("🛑 애플리케이션 종료 - 서비스 정리 시작")
+
+            # Exchange service event loop cleanup
+            from app.services.exchange import exchange_service
+            if hasattr(exchange_service, 'shutdown'):
+                exchange_service.shutdown()
+
+            logger.info("✅ 서비스 정리 완료")
+        except Exception as e:
+            app.logger.error(f"❌ 서비스 정리 중 오류: {e}", exc_info=True)
+
     # 🆕 애플리케이션 시작 시 Precision 캐시 웜업을 직접 실행 (한 번만)
     # Flask 개발 서버의 자동 재시작으로 인한 중복 실행 방지
     if not os.environ.get('WERKZEUG_RUN_MAIN'):
