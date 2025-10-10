@@ -194,3 +194,6 @@ markettype_*.py
 # Git worktrees
 .worktree/
 
+# Implementation plans (temporary working documents)
+.plan/
+
