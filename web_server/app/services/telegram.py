@@ -515,6 +515,81 @@ class TelegramService:
 
         return self.send_message(message)
 
+    def send_order_failure_alert(
+        self,
+        strategy: 'Strategy',
+        account: 'Account',
+        symbol: str,
+        error_type: str,
+        error_message: str
+    ) -> bool:
+        """
+        복구 불가능한 주문 실패 시 텔레그램 알림 발송
+
+        Args:
+            strategy: 전략 객체
+            account: 계정 객체
+            symbol: 심볼
+            error_type: 실패 유형
+            error_message: 에러 메시지
+
+        Returns:
+            bool: 알림 발송 성공 여부
+        """
+        # 에러 유형 한글 변환
+        error_type_kr = {
+            'insufficient_balance': '잔고 부족',
+            'invalid_symbol': '잘못된 심볼',
+            'limit_exceeded': '제한 초과',
+            'rate_limit': '요청 제한 초과',
+            'network_error': '네트워크 오류',
+            'unknown': '알 수 없는 오류'
+        }.get(error_type, error_type)
+
+        message = f"""
+⚠️ <b>주문 실패 알림 (복구 불가능)</b>
+
+<b>전략:</b> {strategy.name}
+<b>계정:</b> {account.name}
+<b>심볼:</b> {symbol}
+<b>실패 유형:</b> {error_type_kr}
+
+<b>오류 상세:</b>
+{error_message}
+
+<b>조치 필요:</b>
+• 잔고 부족: 계정 잔고 확인 필요
+• 잘못된 심볼: 웹훅 설정 확인
+• 제한 초과: 주문 수량 조정 필요
+        """.strip()
+
+        try:
+            # 사용자별 텔레그램 설정 확인
+            from app.models import User
+            user = User.query.get(strategy.user_id)
+            if not user:
+                logger.warning(f"사용자를 찾을 수 없습니다: {strategy.user_id}")
+                return False
+
+            # 사용자별 봇으로 메시지 전송
+            if user.telegram_bot_token and user.telegram_id:
+                result = self.send_message_to_user(
+                    user_telegram_id=user.telegram_id,
+                    message=message,
+                    parse_mode='HTML',
+                    user_telegram_bot_token=user.telegram_bot_token
+                )
+            else:
+                # 전역 봇으로 메시지 전송
+                result = self.send_message(message, parse_mode='HTML')
+
+            if result:
+                logger.info(f"📱 주문 실패 알림 발송 완료 - user_id: {strategy.user_id}")
+            return result
+        except Exception as e:
+            logger.error(f"텔레그램 알림 발송 실패: {e}")
+            return False
+
     def send_daily_summary(self, summary_data: Dict[str, Any]) -> bool:
         """일일 트레이딩 요약 보고서 전송"""
         if not self.is_enabled():

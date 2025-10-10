@@ -533,6 +533,7 @@ class TradingCore:
                     qty_per = to_decimal(order.get('qty_per', 100))
                     price = to_decimal(order.get('price')) if order.get('price') else None
                     stop_price = to_decimal(order.get('stop_price')) if order.get('stop_price') else None
+                    original_index = order.get('original_index')  # ✅ 인덱스 추출
 
                     # qty_per를 실제 수량으로 변환
                     calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
@@ -564,6 +565,7 @@ class TradingCore:
                         'side': side.lower(),  # 'buy' or 'sell'
                         'type': order_type,  # 'LIMIT', 'MARKET', etc.
                         'amount': calculated_quantity,  # 수량 계산 완료
+                        'original_index': original_index  # ✅ 인덱스 보존
                     }
 
                     # 조건부 파라미터 추가
@@ -1055,4 +1057,401 @@ class TradingCore:
         except Exception as e:
             logger.warning(f"거래소 주문 병합 실패: {e}, 원본 결과 사용")
             return order_result
+
+    def process_orders(
+        self,
+        webhook_data: Dict[str, Any],
+        timing_context: Optional[Dict[str, float]] = None
+    ) -> Dict[str, Any]:
+        """
+        통합 주문 처리 (단일/배치 구분 없음)
+
+        Args:
+            webhook_data: {
+                'group_name': str,
+                'orders': [
+                    {
+                        'symbol': str,
+                        'side': str,
+                        'order_type': str,
+                        'price': Optional[Decimal],
+                        'stop_price': Optional[Decimal],
+                        'qty_per': Decimal
+                    },
+                    ...
+                ]
+            }
+
+        Returns:
+            {
+                'action': 'batch_order',
+                'strategy': str,
+                'success': bool,
+                'results': [...],
+                'summary': {
+                    'total_orders': int,
+                    'executed_from_queue': int,
+                    'remaining_in_queue': int,
+                    'exchange_submitted': int,  # ✅ v2 호환성 유지
+                    ...
+                }
+            }
+        """
+        from app.services.utils import to_decimal
+
+        # 필수 필드 검증
+        required_fields = ['group_name', 'orders']
+        for field in required_fields:
+            if field not in webhook_data:
+                raise Exception(f"필수 필드 누락: {field}")
+
+        group_name = webhook_data['group_name']
+        orders = webhook_data['orders']
+
+        # 1. 전략 조회
+        strategy = Strategy.query.filter_by(name=group_name, is_active=True).first()
+        if not strategy:
+            raise Exception(f"활성화된 전략을 찾을 수 없습니다: {group_name}")
+
+        market_type = webhook_data.get('market_type') or strategy.market_type or 'FUTURES'
+
+        # 2. 주문 분류 (MARKET/CANCEL vs LIMIT/STOP)
+        immediate_orders = []
+        queued_orders = []
+
+        for idx, order in enumerate(orders):
+            order['original_index'] = idx  # 인덱스 추적
+
+            if order.get('order_type') in ['MARKET', 'CANCEL', 'CANCEL_ALL_ORDER']:
+                immediate_orders.append(order)
+            else:
+                queued_orders.append(order)
+
+        logger.info(
+            f"📊 주문 분류 - 즉시 실행: {len(immediate_orders)}, 대기열: {len(queued_orders)}"
+        )
+
+        results = []
+
+        # 3. 즉시 실행 주문 처리 (MARKET/CANCEL)
+        if immediate_orders:
+            # 기존 process_batch_trading_signal() 재사용
+            immediate_data = webhook_data.copy()
+            immediate_data['orders'] = immediate_orders
+            immediate_result = self.process_batch_trading_signal(immediate_data, timing_context)
+            results.extend(immediate_result.get('results', []))
+
+        # 4. 대기열 주문 처리 (LIMIT/STOP) - 선행 재정렬
+        if queued_orders:
+            queued_results = self._process_queued_orders_with_rebalance(
+                strategy, queued_orders, market_type, timing_context
+            )
+            results.extend(queued_results)
+
+        # 5. 결과 집계 (✅ v2: exchange_submitted 추가)
+        successful = [r for r in results if r.get('success', False)]
+        failed = [r for r in results if not r.get('success', False)]
+        queued = [r for r in results if r.get('queued', False)]
+        executed = [r for r in successful if not r.get('queued', False)]
+
+        return {
+            'action': 'batch_order',
+            'strategy': group_name,
+            'success': len(successful) > 0,
+            'results': results,
+            'summary': {
+                'total_orders': len(orders),
+                'accounts': len(strategy.strategy_accounts),
+                'immediate_orders': len(immediate_orders),
+                'queued_orders': len(queued_orders),
+                'executed_from_queue': len(executed),
+                'remaining_in_queue': len(queued),
+                'exchange_submitted': len(executed),  # ✅ v2: 호환성 유지
+                'successful_orders': len(successful),
+                'failed_orders': len(failed)
+            }
+        }
+
+    def _process_queued_orders_with_rebalance(
+        self,
+        strategy: Strategy,
+        queued_orders: List[Dict],
+        market_type: str,
+        timing_context: Optional[Dict[str, float]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        LIMIT/STOP 주문 처리: PendingOrders 추가 → 재정렬 → 거래소 실행
+
+        ✅ v2 개선:
+        - enqueue(commit=False) 사용 (트랜잭션 보장)
+        - _execute_pending_order() 반환값 활용 (N+1 제거)
+        - threading.Lock으로 동시성 보호
+
+        처리 흐름:
+        1. 계정별 그룹화 (_prepare_batch_orders_by_account 재사용)
+        2. 각 주문을 PendingOrders에 추가 (commit=False)
+        3. 심볼별 재정렬 (rebalance_symbol, commit=True)
+        4. 재정렬 결과에서 실행된 주문 확인 (N+1 제거)
+
+        Args:
+            strategy: Strategy 객체
+            queued_orders: [{symbol, side, order_type, price, stop_price, qty_per, original_index}, ...]
+            market_type: 'SPOT' or 'FUTURES'
+            timing_context: 타이밍 측정 딕셔너리
+
+        Returns:
+            results: [
+                {
+                    'order_index': int,
+                    'success': bool,
+                    'queued': bool,
+                    'pending_order_id': int,
+                    'result': {...}
+                },
+                ...
+            ]
+        """
+        from app.models import PendingOrder
+
+        # 1. 계정별 그룹화 (기존 로직 재사용)
+        # queued_orders already has 'original_index' from process_orders()
+        orders_by_account = self._prepare_batch_orders_by_account(
+            strategy, queued_orders, market_type, timing_context
+        )
+
+        results = []
+
+        for account_id, account_data in orders_by_account.items():
+            account = account_data['account']
+            exchange_orders = account_data['orders']
+
+            logger.info(
+                f"📥 대기열 주문 처리 시작 - 계정: {account.name}, 주문 수: {len(exchange_orders)}"
+            )
+
+            # ✅ v2: 트랜잭션 시작 (조건 2)
+            try:
+                # 2. 모든 주문을 PendingOrders에 추가 (commit=False)
+                pending_map = {}  # {original_index: pending_order_id}
+
+                for order in exchange_orders:
+                    original_idx = order['original_index']
+
+                    enqueue_result = self.service.order_queue_manager.enqueue(
+                        strategy_account_id=account_data['strategy_account'].id,
+                        symbol=order['symbol'],
+                        side=order['side'].upper(),
+                        order_type=order['type'],
+                        quantity=order['amount'],
+                        price=order.get('price'),
+                        stop_price=order.get('params', {}).get('stopPrice'),
+                        market_type=market_type,
+                        reason='BATCH_ORDER',
+                        commit=False  # ✅ v2: 커밋 지연
+                    )
+
+                    if enqueue_result['success']:
+                        pending_map[original_idx] = enqueue_result['pending_order_id']
+                        logger.debug(
+                            f"📝 PendingOrder 추가 (미커밋) - ID: {enqueue_result['pending_order_id']}, "
+                            f"심볼: {order['symbol']}, 가격: {order.get('price')}"
+                        )
+                    else:
+                        # 대기열 추가 실패 → 즉시 에러 결과 추가
+                        logger.error(
+                            f"❌ PendingOrder 추가 실패 - "
+                            f"계정: {account.name}, 심볼: {order['symbol']}, "
+                            f"error: {enqueue_result.get('error')}"
+                        )
+                        results.append({
+                            'order_index': original_idx,
+                            'success': False,
+                            'result': {
+                                'action': 'trading_signal',
+                                'success': False,
+                                'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
+                                'account_id': account.id,
+                                'account_name': account.name
+                            }
+                        })
+
+                # 3. 심볼별 재정렬 (동기 실행, commit=True)
+                symbols = set(order['symbol'] for order in exchange_orders)
+
+                # ✅ v2.1: pending_map_reverse 생성 (pending_id → original_index 매핑)
+                pending_map_reverse = {v: k for k, v in pending_map.items()}
+
+                for symbol in symbols:
+                    logger.info(f"🔄 재정렬 실행 - 계정: {account.name}, 심볼: {symbol}")
+
+                    rebalance_result = self.service.order_queue_manager.rebalance_symbol(
+                        account_id=account.id,
+                        symbol=symbol,
+                        commit=True  # ✅ v2: 단일 커밋 (조건 2)
+                    )
+
+                    if rebalance_result['success']:
+                        logger.info(
+                            f"✅ 재정렬 완료 - "
+                            f"실행: {rebalance_result['executed']}, "
+                            f"취소: {rebalance_result['cancelled']}, "
+                            f"실패: {len(rebalance_result.get('failed_orders', []))}, "
+                            f"소요 시간: {rebalance_result['duration_ms']:.2f}ms"
+                        )
+
+                        # ✅ v2.1: 실패한 주문 처리
+                        failed_orders = rebalance_result.get('failed_orders', [])
+                        for failed_order in failed_orders:
+                            error_type = failed_order.get('error_type', 'unknown')
+                            recoverable = failed_order.get('recoverable', False)
+                            pending_id = failed_order.get('pending_id')
+
+                            if recoverable:
+                                # 복구 가능 → PendingOrder 유지 (스케줄러가 재시도)
+                                logger.info(
+                                    f"⏳ 재시도 대기 - pending_id: {pending_id}, "
+                                    f"사유: {error_type}"
+                                )
+                                # results에 queued로 추가 (실패했지만 재시도 예정)
+                                # ✅ v2.1: Defensive logging for missing reverse map
+                                order_idx = pending_map_reverse.get(pending_id, -1)
+                                if order_idx == -1:
+                                    logger.warning(
+                                        f"⚠️ 실패 주문 pending_id {pending_id}가 현재 배치에 없음 "
+                                        f"(재시도 또는 다른 배치의 주문일 수 있음)"
+                                    )
+
+                                results.append({
+                                    'order_index': order_idx,
+                                    'success': True,
+                                    'queued': True,
+                                    'pending_order_id': pending_id,
+                                    'retry_scheduled': True,
+                                    'result': {
+                                        'action': 'trading_signal',
+                                        'success': True,
+                                        'message': f'일시적 실패 - 재시도 예정 ({error_type})',
+                                        'account_id': account.id,
+                                        'account_name': account.name
+                                    }
+                                })
+                            else:
+                                # 복구 불가능 → 텔레그램 알림 + 삭제
+                                logger.error(
+                                    f"❌ 복구 불가능한 실패 - pending_id: {pending_id}, "
+                                    f"사유: {error_type}, 알림 발송 중..."
+                                )
+
+                                # 텔레그램 알림 발송
+                                try:
+                                    self.service.telegram_service.send_order_failure_alert(
+                                        strategy=strategy,
+                                        account=account,
+                                        symbol=failed_order['symbol'],
+                                        error_type=error_type,
+                                        error_message=failed_order['error']
+                                    )
+                                except Exception as e:
+                                    logger.error(f"텔레그램 알림 발송 실패: {e}")
+
+                                # PendingOrder 삭제 (복구 불가능) - 커밋은 재정렬 완료 후
+                                PendingOrder.query.filter_by(id=pending_id).delete()
+                                # ✅ v2.1: 중첩 commit 제거 - 외부 트랜잭션이 처리 (원자성 보장)
+
+                                # results에 실패로 추가
+                                # ✅ v2.1: Defensive logging for missing reverse map
+                                order_idx = pending_map_reverse.get(pending_id, -1)
+                                if order_idx == -1:
+                                    logger.warning(
+                                        f"⚠️ 실패 주문 pending_id {pending_id}가 현재 배치에 없음 "
+                                        f"(재시도 또는 다른 배치의 주문일 수 있음)"
+                                    )
+
+                                results.append({
+                                    'order_index': order_idx,
+                                    'success': False,
+                                    'result': {
+                                        'action': 'trading_signal',
+                                        'success': False,
+                                        'error': f'{error_type}: {failed_order["error"]}',
+                                        'account_id': account.id,
+                                        'account_name': account.name,
+                                        'alert_sent': True
+                                    }
+                                })
+                    else:
+                        logger.error(
+                            f"❌ 재정렬 실패 - "
+                            f"계정: {account.name}, 심볼: {symbol}, "
+                            f"error: {rebalance_result.get('error')}"
+                        )
+                        # 재정렬 실패 시 롤백 (조건 2)
+                        raise Exception(f"재정렬 실패: {rebalance_result.get('error')}")
+
+                # 4. 재정렬 후 결과 검증 (✅ v2: N+1 제거)
+                # Bulk query: 한 번에 모든 PendingOrder 존재 여부 확인
+                remaining_pending_ids = set(
+                    row[0] for row in PendingOrder.query.filter(
+                        PendingOrder.id.in_(pending_map.values())
+                    ).with_entities(PendingOrder.id).all()
+                )
+
+                for original_idx, pending_id in pending_map.items():
+                    if pending_id not in remaining_pending_ids:
+                        # 재정렬에서 실행되어 삭제됨 → 거래소 전송 성공
+                        symbol = next(
+                            (order['symbol'] for order in exchange_orders
+                             if order['original_index'] == original_idx),
+                            None
+                        )
+
+                        results.append({
+                            'order_index': original_idx,
+                            'success': True,
+                            'queued': False,
+                            'executed': True,
+                            'result': {
+                                'action': 'trading_signal',
+                                'success': True,
+                                'message': '거래소 실행 완료',
+                                'account_id': account.id,
+                                'account_name': account.name
+                            }
+                        })
+                    else:
+                        # 아직 대기열에 남아있음 → queued
+                        results.append({
+                            'order_index': original_idx,
+                            'success': True,
+                            'queued': True,
+                            'pending_order_id': pending_id,
+                            'result': {
+                                'action': 'trading_signal',
+                                'success': True,
+                                'message': '대기열에 추가됨 (우선순위 낮음)',
+                                'account_id': account.id,
+                                'account_name': account.name
+                            }
+                        })
+
+            except Exception as e:
+                # ✅ v2: 트랜잭션 롤백 (조건 2)
+                db.session.rollback()
+                logger.error(f"계정 {account.name} 대기열 처리 실패: {e}")
+
+                # 해당 계좌의 모든 주문 실패 처리
+                for order in exchange_orders:
+                    results.append({
+                        'order_index': order['original_index'],
+                        'success': False,
+                        'result': {
+                            'action': 'trading_signal',
+                            'success': False,
+                            'error': f'대기열 처리 실패: {e}',
+                            'account_id': account.id,
+                            'account_name': account.name
+                        }
+                    })
+
+        return results
 

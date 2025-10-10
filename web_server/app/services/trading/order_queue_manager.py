@@ -40,6 +40,11 @@ class OrderQueueManager:
         from app.services.trading.event_emitter import EventEmitter
         self.event_emitter = EventEmitter(service)
 
+        # ✅ v2: 동시성 보호 (조건 4)
+        import threading
+        self._rebalance_locks = {}  # {(account_id, symbol): Lock}
+        self._locks_lock = threading.Lock()
+
         self.metrics = {
             'total_rebalances': 0,
             'total_cancelled': 0,
@@ -58,7 +63,8 @@ class OrderQueueManager:
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
         market_type: str = 'FUTURES',
-        reason: str = 'QUEUE_LIMIT'
+        reason: str = 'QUEUE_LIMIT',
+        commit: bool = True  # ✅ v2: 트랜잭션 제어 (조건 2)
     ) -> Dict[str, Any]:
         """대기열에 주문 추가
 
@@ -72,6 +78,9 @@ class OrderQueueManager:
             stop_price: STOP 트리거 가격 (선택적)
             market_type: 마켓 타입 (SPOT/FUTURES)
             reason: 대기열 진입 사유
+            commit: 즉시 커밋 여부 (기본값: True)
+                - True: 즉시 db.session.commit() 수행
+                - False: 커밋 지연 (호출자가 트랜잭션 제어)
 
         Returns:
             dict: {
@@ -116,7 +125,9 @@ class OrderQueueManager:
             )
 
             db.session.add(pending_order)
-            db.session.commit()
+            # ✅ v2: 호출자가 commit 제어
+            if commit:
+                db.session.commit()
 
             # SSE 이벤트 발송 (PendingOrder 생성)
             try:
@@ -149,7 +160,9 @@ class OrderQueueManager:
             }
 
         except Exception as e:
-            db.session.rollback()
+            # ✅ v2: commit=True일 때만 롤백 (호출자가 트랜잭션 제어 중일 수 있음)
+            if commit:
+                db.session.rollback()
             logger.error(f"대기열 추가 실패: {e}")
             return {
                 'success': False,
@@ -220,6 +233,8 @@ class OrderQueueManager:
     def rebalance_symbol(self, account_id: int, symbol: str, commit: bool = True) -> Dict[str, Any]:
         """심볼별 동적 재정렬 (핵심 알고리즘)
 
+        ✅ v2: threading.Lock으로 동시성 보호 (조건 4)
+
         처리 단계:
         1. 제한 계산 (ExchangeLimits.calculate_symbol_limit)
         2. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
@@ -231,8 +246,8 @@ class OrderQueueManager:
 
         Args:
             account_id: 계정 ID
-            symbol: 거래 심볼
-            commit: 트랜잭션 커밋 여부 (기본값: True)
+            symbol: 심볼 (예: 'BTC/USDT')
+            commit: 커밋 여부 (기본값: True)
 
         Returns:
             dict: {
@@ -245,192 +260,216 @@ class OrderQueueManager:
                 'duration_ms': float
             }
         """
-        # 성능 측정 시작
-        start_time = time.time()
+        # ✅ v2: 심볼별 Lock 획득 (조건 4)
+        import threading
+        lock_key = (account_id, symbol)
+        with self._locks_lock:
+            if lock_key not in self._rebalance_locks:
+                self._rebalance_locks[lock_key] = threading.Lock()
+            lock = self._rebalance_locks[lock_key]
 
-        # 전체 작업을 트랜잭션으로 감싸기
-        try:
-            # Step 1: 계정 및 제한 계산
-            account = Account.query.get(account_id)
-            if not account:
-                return {
-                    'success': False,
-                    'error': f'계정을 찾을 수 없습니다 (ID: {account_id})'
-                }
+        with lock:
+            # 기존 재정렬 로직 (보호됨)
+            # 성능 측정 시작
+            start_time = time.time()
 
-            # market_type 결정 (Strategy에서 추론)
-            strategy_account = StrategyAccount.query.filter_by(account_id=account_id).first()
-            if not strategy_account or not strategy_account.strategy:
-                logger.warning(f"계정 {account_id}에 연결된 전략이 없음, SPOT 기본값 사용")
-                market_type = 'SPOT'
-            else:
-                market_type = strategy_account.strategy.market_type or 'SPOT'
+            # 전체 작업을 트랜잭션으로 감싸기
+            try:
+                # Step 1: 계정 및 제한 계산
+                account = Account.query.get(account_id)
+                if not account:
+                    return {
+                        'success': False,
+                        'error': f'계정을 찾을 수 없습니다 (ID: {account_id})'
+                    }
 
-            # 거래소별 제한 계산
-            limits = ExchangeLimits.calculate_symbol_limit(
-                exchange=account.exchange,
-                market_type=market_type,
-                symbol=symbol
-            )
-
-            max_orders = limits['max_orders']
-            max_stop_orders = limits['max_stop_orders']
-
-            logger.info(
-                f"🔄 재정렬 시작 - 계정: {account_id}, 심볼: {symbol}, "
-                f"제한: {max_orders}개 (STOP: {max_stop_orders}개)"
-            )
-
-            # Step 2: 현재 주문 조회 (DB) - N+1 문제 방지를 위해 joinedload 사용
-            from sqlalchemy.orm import joinedload
-
-            active_orders = OpenOrder.query.join(StrategyAccount).filter(
-                StrategyAccount.account_id == account_id,
-                OpenOrder.symbol == symbol
-            ).options(
-                joinedload(OpenOrder.strategy_account)  # N+1 방지
-            ).all()
-
-            # PendingOrder는 strategy_account 관계를 직접 사용하지 않으므로 joinedload 불필요
-            pending_orders = PendingOrder.query.filter_by(
-                account_id=account_id,
-                symbol=symbol
-            ).all()
-
-            logger.info(
-                f"📋 현재 상태 - 거래소: {len(active_orders)}개, "
-                f"대기열: {len(pending_orders)}개"
-            )
-
-            # Step 3: 통합 정렬
-            all_orders = []
-
-            for order in active_orders:
-                all_orders.append({
-                    'source': 'active',
-                    'db_record': order,
-                    'priority': OrderType.get_priority(order.order_type),
-                    'sort_price': self._get_order_sort_price(order),
-                    'created_at': order.created_at,
-                    'is_stop': OrderType.requires_stop_price(order.order_type)
-                })
-
-            for order in pending_orders:
-                all_orders.append({
-                    'source': 'pending',
-                    'db_record': order,
-                    'priority': order.priority,
-                    'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
-                    'created_at': order.created_at,
-                    'is_stop': OrderType.requires_stop_price(order.order_type)
-                })
-
-            # 정렬 키: (priority ASC, sort_price DESC, created_at ASC)
-            all_orders.sort(key=lambda x: (
-                x['priority'],
-                -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
-                x['created_at']
-            ))
-
-            logger.debug(f"📊 정렬 완료 - 총 {len(all_orders)}개 주문")
-
-            # Step 4: 상위 N개 선택 (이중 제한)
-            selected_orders = []
-            stop_count = 0
-
-            for order in all_orders:
-                if len(selected_orders) >= max_orders:
-                    break  # 전체 제한 도달
-
-                if order['is_stop']:
-                    if stop_count >= max_stop_orders:
-                        continue  # STOP 제한 초과 → 건너뛰기
-                    stop_count += 1
-
-                selected_orders.append(order)
-
-            logger.info(
-                f"✅ 선택 완료 - {len(selected_orders)}개 주문 "
-                f"(STOP: {stop_count}개)"
-            )
-
-            # Step 5: 액션 결정
-            to_cancel = []  # 취소할 거래소 주문
-            to_execute = []  # 실행할 대기열 주문
-
-            for order in all_orders:
-                if order in selected_orders:
-                    if order['source'] == 'pending':
-                        to_execute.append(order['db_record'])
+                # market_type 결정 (Strategy에서 추론)
+                strategy_account = StrategyAccount.query.filter_by(account_id=account_id).first()
+                if not strategy_account or not strategy_account.strategy:
+                    logger.warning(f"계정 {account_id}에 연결된 전략이 없음, SPOT 기본값 사용")
+                    market_type = 'SPOT'
                 else:
-                    if order['source'] == 'active':
-                        to_cancel.append(order['db_record'])
+                    market_type = strategy_account.strategy.market_type or 'SPOT'
 
-            logger.info(
-                f"📤 실행 계획 - 취소: {len(to_cancel)}개, "
-                f"실행: {len(to_execute)}개"
-            )
-
-            # Step 6: 실제 실행
-            cancelled_count = 0
-            for open_order in to_cancel:
-                result = self._move_to_pending(open_order)
-                if result:
-                    cancelled_count += 1
-
-            executed_count = 0
-            for pending_order in to_execute:
-                result = self._execute_pending_order(pending_order)
-                if result['success']:
-                    executed_count += 1
-
-            logger.info(
-                f"✅ 재정렬 완료 - 취소: {cancelled_count}개, "
-                f"실행: {executed_count}개"
-            )
-
-            # 호출자가 commit 제어
-            if commit:
-                db.session.commit()
-
-            # 성능 메트릭 업데이트
-            duration_ms = (time.time() - start_time) * 1000
-            self.metrics['total_rebalances'] += 1
-            self.metrics['total_cancelled'] += cancelled_count
-            self.metrics['total_executed'] += executed_count
-            self.metrics['total_duration_ms'] += duration_ms
-            self.metrics['avg_duration_ms'] = (
-                self.metrics['total_duration_ms'] / self.metrics['total_rebalances']
-            )
-
-            # 느린 재정렬 경고 (500ms 이상)
-            if duration_ms > 500:
-                logger.warning(
-                    f"⚠️ 느린 재정렬 감지 - {symbol}: {duration_ms:.2f}ms "
-                    f"(취소: {cancelled_count}, 실행: {executed_count})"
+                # 거래소별 제한 계산
+                limits = ExchangeLimits.calculate_symbol_limit(
+                    exchange=account.exchange,
+                    market_type=market_type,
+                    symbol=symbol
                 )
 
-            return {
-                'success': True,
-                'cancelled': cancelled_count,
-                'executed': executed_count,
-                'total_orders': len(all_orders),
-                'active_orders': len(active_orders) - cancelled_count + executed_count,
-                'pending_orders': len(pending_orders) + cancelled_count - executed_count,
-                'duration_ms': duration_ms
-            }
+                max_orders = limits['max_orders']
+                max_stop_orders = limits['max_stop_orders']
 
-        except Exception as e:
-            # 호출자가 commit 제어
-            if commit:
-                db.session.rollback()
-            logger.error(f"❌ 재정렬 실패 (account_id={account_id}, symbol={symbol}): {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'cancelled': 0,
-                'executed': 0
-            }
+                logger.info(
+                    f"🔄 재정렬 시작 - 계정: {account_id}, 심볼: {symbol}, "
+                    f"제한: {max_orders}개 (STOP: {max_stop_orders}개)"
+                )
+
+                # Step 2: 현재 주문 조회 (DB) - N+1 문제 방지를 위해 joinedload 사용
+                from sqlalchemy.orm import joinedload
+
+                active_orders = OpenOrder.query.join(StrategyAccount).filter(
+                    StrategyAccount.account_id == account_id,
+                    OpenOrder.symbol == symbol
+                ).options(
+                    joinedload(OpenOrder.strategy_account)  # N+1 방지
+                ).all()
+
+                # PendingOrder는 strategy_account 관계를 직접 사용하지 않으므로 joinedload 불필요
+                pending_orders = PendingOrder.query.filter_by(
+                    account_id=account_id,
+                    symbol=symbol
+                ).all()
+
+                logger.info(
+                    f"📋 현재 상태 - 거래소: {len(active_orders)}개, "
+                    f"대기열: {len(pending_orders)}개"
+                )
+
+                # Step 3: 통합 정렬
+                all_orders = []
+
+                for order in active_orders:
+                    all_orders.append({
+                        'source': 'active',
+                        'db_record': order,
+                        'priority': OrderType.get_priority(order.order_type),
+                        'sort_price': self._get_order_sort_price(order),
+                        'created_at': order.created_at,
+                        'is_stop': OrderType.requires_stop_price(order.order_type)
+                    })
+
+                for order in pending_orders:
+                    all_orders.append({
+                        'source': 'pending',
+                        'db_record': order,
+                        'priority': order.priority,
+                        'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
+                        'created_at': order.created_at,
+                        'is_stop': OrderType.requires_stop_price(order.order_type)
+                    })
+
+                # 정렬 키: (priority ASC, sort_price DESC, created_at ASC)
+                all_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
+
+                logger.debug(f"📊 정렬 완료 - 총 {len(all_orders)}개 주문")
+
+                # Step 4: 상위 N개 선택 (이중 제한)
+                selected_orders = []
+                stop_count = 0
+
+                for order in all_orders:
+                    if len(selected_orders) >= max_orders:
+                        break  # 전체 제한 도달
+
+                    if order['is_stop']:
+                        if stop_count >= max_stop_orders:
+                            continue  # STOP 제한 초과 → 건너뛰기
+                        stop_count += 1
+
+                    selected_orders.append(order)
+
+                logger.info(
+                    f"✅ 선택 완료 - {len(selected_orders)}개 주문 "
+                    f"(STOP: {stop_count}개)"
+                )
+
+                # Step 5: 액션 결정
+                to_cancel = []  # 취소할 거래소 주문
+                to_execute = []  # 실행할 대기열 주문
+
+                for order in all_orders:
+                    if order in selected_orders:
+                        if order['source'] == 'pending':
+                            to_execute.append(order['db_record'])
+                    else:
+                        if order['source'] == 'active':
+                            to_cancel.append(order['db_record'])
+
+                logger.info(
+                    f"📤 실행 계획 - 취소: {len(to_cancel)}개, "
+                    f"실행: {len(to_execute)}개"
+                )
+
+                # Step 6: 실제 실행
+                cancelled_count = 0
+                for open_order in to_cancel:
+                    result = self._move_to_pending(open_order)
+                    if result:
+                        cancelled_count += 1
+
+                # ✅ v2.1: 실패한 주문 수집
+                executed_count = 0
+                failed_orders = []
+
+                for pending_order in to_execute:
+                    result = self._execute_pending_order(pending_order)
+                    if result['success']:
+                        executed_count += 1
+                    else:
+                        # 실패 시 분류 정보 추가
+                        error_type = self._classify_failure_type(result.get('error', ''))
+                        failed_orders.append({
+                            'pending_id': result.get('pending_id', pending_order.id),
+                            'symbol': pending_order.symbol,
+                            'error': result.get('error', 'Unknown error'),
+                            'error_type': error_type,
+                            'recoverable': self._is_recoverable(error_type)
+                        })
+
+                logger.info(
+                    f"✅ 재정렬 완료 - 취소: {cancelled_count}개, "
+                    f"실행: {executed_count}개, 실패: {len(failed_orders)}개"
+                )
+
+                # 호출자가 commit 제어
+                if commit:
+                    db.session.commit()
+
+                # 성능 메트릭 업데이트
+                duration_ms = (time.time() - start_time) * 1000
+                self.metrics['total_rebalances'] += 1
+                self.metrics['total_cancelled'] += cancelled_count
+                self.metrics['total_executed'] += executed_count
+                self.metrics['total_duration_ms'] += duration_ms
+                self.metrics['avg_duration_ms'] = (
+                    self.metrics['total_duration_ms'] / self.metrics['total_rebalances']
+                )
+
+                # 느린 재정렬 경고 (500ms 이상)
+                if duration_ms > 500:
+                    logger.warning(
+                        f"⚠️ 느린 재정렬 감지 - {symbol}: {duration_ms:.2f}ms "
+                        f"(취소: {cancelled_count}, 실행: {executed_count})"
+                    )
+
+                return {
+                    'success': True,
+                    'cancelled': cancelled_count,
+                    'executed': executed_count,
+                    'failed_orders': failed_orders,  # ✅ v2.1: 실패한 주문 목록 추가
+                    'total_orders': len(all_orders),
+                    'active_orders': len(active_orders) - cancelled_count + executed_count,
+                    'pending_orders': len(pending_orders) + cancelled_count - executed_count,
+                    'duration_ms': duration_ms
+                }
+
+            except Exception as e:
+                # 호출자가 commit 제어
+                if commit:
+                    db.session.rollback()
+                logger.error(f"❌ 재정렬 실패 (account_id={account_id}, symbol={symbol}): {e}")
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'cancelled': 0,
+                    'executed': 0
+                }
 
     def _get_order_sort_price(self, order: OpenOrder) -> Optional[Decimal]:
         """OpenOrder의 정렬 가격 계산
@@ -447,6 +486,59 @@ class OrderQueueManager:
             price=price,
             stop_price=stop_price
         )
+
+    def _classify_failure_type(self, error_message: str) -> str:
+        """
+        거래소 에러 메시지를 분류하여 실패 유형 반환
+
+        Args:
+            error_message: 거래소 API 에러 메시지
+
+        Returns:
+            str: 'insufficient_balance', 'rate_limit', 'invalid_symbol',
+                 'limit_exceeded', 'network_error', 'unknown'
+        """
+        error_lower = error_message.lower()
+
+        # 잔고 부족
+        if any(keyword in error_lower for keyword in ['balance', 'insufficient', 'funds']):
+            return 'insufficient_balance'
+
+        # Rate Limit
+        if any(keyword in error_lower for keyword in ['rate limit', 'too many', 'throttle']):
+            return 'rate_limit'
+
+        # 잘못된 심볼
+        if any(keyword in error_lower for keyword in ['invalid symbol', 'unknown symbol']):
+            return 'invalid_symbol'
+
+        # 제한 초과 (영구적)
+        if 'exceeds' in error_lower or 'limit' in error_lower:
+            return 'limit_exceeded'
+
+        # 네트워크 오류
+        if any(keyword in error_lower for keyword in ['timeout', 'network', 'connection']):
+            return 'network_error'
+
+        return 'unknown'
+
+    def _is_recoverable(self, error_type: str) -> bool:
+        """
+        실패 유형이 복구 가능한지 판단
+
+        Args:
+            error_type: 실패 유형 ('insufficient_balance', 'rate_limit', etc.)
+
+        Returns:
+            bool: True (재시도 가능), False (복구 불가능 → 알림)
+        """
+        # 복구 가능 (일시적 에러 → 스케줄러 재시도)
+        recoverable_types = ['rate_limit', 'network_error', 'timeout']
+
+        # 복구 불가능 (영구적 에러 → 알림 + 삭제)
+        # non_recoverable_types = ['insufficient_balance', 'invalid_symbol', 'limit_exceeded']
+
+        return error_type in recoverable_types
 
     def _move_to_pending(self, open_order: OpenOrder) -> bool:
         """거래소 주문 → 대기열 이동
@@ -561,7 +653,9 @@ class OrderQueueManager:
 
                 return {
                     'success': True,
-                    'order_id': result.get('order_id')
+                    'pending_id': pending_order.id,  # ✅ 원본 ID 추적
+                    'order_id': result.get('order_id'),
+                    'deleted': True  # PendingOrder 삭제 여부
                 }
             else:
                 # 실패 시 재시도 횟수 확인
@@ -572,6 +666,20 @@ class OrderQueueManager:
                         f"재시도: {pending_order.retry_count}회, "
                         f"error: {result.get('error')}"
                     )
+
+                    # ✅ v2.1: 텔레그램 알림 발송 (max retry 실패)
+                    try:
+                        error_type = self._classify_failure_type(result.get('error', ''))
+                        if self.service and hasattr(self.service, 'telegram_service'):
+                            self.service.telegram_service.send_order_failure_alert(
+                                strategy=strategy,
+                                account=account,
+                                symbol=pending_order.symbol,
+                                error_type=error_type,
+                                error_message=f"최대 재시도 초과 ({self.MAX_RETRY_COUNT}회): {result.get('error')}"
+                            )
+                    except Exception as e:
+                        logger.error(f"텔레그램 알림 발송 실패: {e}")
 
                     # SSE 이벤트 발송 (PendingOrder 삭제 - 재시도 한계 초과)
                     try:
@@ -585,6 +693,13 @@ class OrderQueueManager:
 
                     # 최대 재시도 초과 시 대기열에서 제거
                     db.session.delete(pending_order)
+
+                    return {
+                        'success': False,
+                        'pending_id': pending_order.id,
+                        'error': result.get('error'),
+                        'deleted': True  # ✅ 최대 재시도 초과로 삭제
+                    }
                 else:
                     # 재시도 횟수 증가 (커밋은 상위에서)
                     pending_order.retry_count += 1
@@ -596,10 +711,12 @@ class OrderQueueManager:
                         f"재시도: {pending_order.retry_count}회"
                     )
 
-                return {
-                    'success': False,
-                    'error': result.get('error')
-                }
+                    return {
+                        'success': False,
+                        'pending_id': pending_order.id,
+                        'error': result.get('error'),
+                        'deleted': False  # ✅ 재시도 대기
+                    }
 
         except Exception as e:
             logger.error(f"대기열 주문 실행 실패: {e}")
