@@ -217,18 +217,26 @@ class WebhookService:
                     normalized_data['strategy_name'] = strategy.name
                     normalized_data['market_type'] = market_type  # Strategy에서 가져온 market_type 주입
 
-                    # 🆕 배치 모드 감지 및 라우팅
-                    if normalized_data.get('batch_mode'):
-                        orders = normalized_data.get('orders', [])
-                        logger.info(f"📦 배치 주문 모드 감지 - {len(orders)}개 주문")
-                        # 디버깅: 정규화된 주문 데이터 로깅
-                        for i, order in enumerate(orders):
-                            logger.debug(f"  주문 {i+1}: symbol={order.get('symbol')}, side={order.get('side')}, "
-                                       f"order_type={order.get('order_type')}, qty_per={order.get('qty_per')}")
-                        result = trading_service.process_batch_trading_signal(normalized_data, timing_context)
+                    # 🆕 주문 정규화: 단일 → 배치 (비파괴적)
+                    is_batch = 'orders' in normalized_data
+
+                    if is_batch:
+                        # 이미 배치 형식 → 그대로 사용
+                        logger.info(f"📦 배치 주문 모드 감지 - {len(normalized_data['orders'])}개 주문")
+                        result = trading_service.core.process_orders(normalized_data, timing_context)
                     else:
-                        # 기존 단일 주문 처리
-                        result = trading_service.process_trading_signal(normalized_data, timing_context)
+                        # 단일 주문 → 배치 형식으로 변환 (원본 유지)
+                        batch_data = normalized_data.copy()  # 원본 보존
+                        batch_data['orders'] = [normalized_data.copy()]  # 배열로 감싸기
+
+                        # 배치 형식에서 불필요한 필드 제거 (최상위 레벨)
+                        order_fields = ['symbol', 'side', 'order_type', 'price', 'stop_price', 'qty_per']
+                        for key in order_fields:
+                            if key in batch_data:
+                                del batch_data[key]
+
+                        logger.info(f"📝 단일 주문 → 배치 형식 변환 완료")
+                        result = trading_service.core.process_orders(batch_data, timing_context)
 
                     # 🆕 거래 신호 처리 결과 분석 및 로깅
                     self._analyze_trading_result(result, normalized_data)
