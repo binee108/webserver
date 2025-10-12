@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:crypto-implementation
 """
 Upbit 통합 API 구현 (Spot 전용)
 
@@ -15,6 +16,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlencode
 
+import asyncio
 import aiohttp
 import jwt
 import requests
@@ -599,3 +601,158 @@ class UpbitExchange(BaseCryptoExchange):
     def fetch_order_sync(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
         """단일 주문 상세 조회 (동기)"""
         return self.fetch_order_impl(symbol, order_id, market_type)
+
+    # ===== 배치 주문 기능 =====
+
+    # @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
+    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (순차 폴백 - Rate Limit 준수)
+
+        Note:
+            - 업비트는 배치 API를 지원하지 않으므로 순차 처리
+            - Rate Limit: 초당 8회, 분당 600회
+            - asyncio.Semaphore로 동시 실행 수 제한
+            - 각 주문 사이에 0.125초 딜레이 (1/8초 = 초당 최대 8회)
+
+        Args:
+            orders: 주문 리스트
+                [
+                    {
+                        'symbol': 'BTC/KRW',
+                        'side': 'buy',
+                        'type': 'LIMIT',
+                        'amount': Decimal('0.001'),
+                        'price': Decimal('50000000'),
+                        'params': {...}
+                    },
+                    ...
+                ]
+            market_type: 'spot' (업비트는 Spot만 지원)
+
+        Returns:
+            {
+                'success': True,
+                'results': [
+                    {'order_index': 0, 'success': True, 'order_id': '...', 'order': {...}},
+                    {'order_index': 1, 'success': False, 'error': '...'},
+                    ...
+                ],
+                'summary': {
+                    'total': 5,
+                    'successful': 4,
+                    'failed': 1
+                },
+                'implementation': 'SEQUENTIAL_FALLBACK'
+            }
+
+        Raises:
+            ValueError: market_type이 'spot'이 아닌 경우
+        """
+        # 1. 빈 배치 처리
+        if not orders:
+            return {
+                'success': True,
+                'results': [],
+                'summary': {'total': 0, 'successful': 0, 'failed': 0},
+                'implementation': 'NONE'
+            }
+
+        # 2. Spot 전용 검증
+        if market_type.lower() != 'spot':
+            raise ValueError("Upbit은 Spot 거래만 지원합니다")
+
+        logger.info(f"📦 Upbit 배치 주문 시작: {len(orders)}건 (Rate Limit: 초당 8회)")
+
+        # 3. Rate Limiting 설정
+        # Lock은 한 번에 1개만 통과시켜 완전한 순차 실행 보장
+        _order_lock = asyncio.Lock()
+        start_time = time.time()
+
+        async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
+            """Rate limit 제어와 함께 단일 주문 실행 (완전 순차)"""
+            async with _order_lock:
+                # ⭐ CRITICAL: Rate Limiting - 초당 8회로 제한
+                await asyncio.sleep(0.125)  # 1/8초 = 125ms
+
+                try:
+                    # 주문 실행
+                    order_obj = await self.create_order_async(
+                        symbol=order['symbol'],
+                        order_type=order['type'],
+                        side=order['side'],
+                        amount=order['amount'],
+                        price=order.get('price'),
+                        market_type=market_type,
+                        **order.get('params', {})
+                    )
+
+                    logger.info(f"✅ Upbit 배치 주문 [{idx}] 성공: order_id={order_obj.id}, symbol={order['symbol']}")
+                    return {
+                        'order_index': idx,
+                        'success': True,
+                        'order_id': order_obj.id,
+                        'order': order_obj.__dict__
+                    }
+
+                except Exception as e:
+                    logger.error(f"❌ Upbit 배치 주문 [{idx}] 실패 (symbol={order['symbol']}): {str(e)}")
+                    return {
+                        'order_index': idx,
+                        'success': False,
+                        'error': str(e)
+                    }
+
+        # 4. 병렬 실행 (Semaphore로 동시성 제한)
+        tasks = [execute_with_limit(idx, order) for idx, order in enumerate(orders)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 5. 결과 집계
+        all_results = []
+        successful_count = 0
+        failed_count = 0
+
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                # asyncio.gather가 예외를 반환한 경우 (이론적으로 발생하지 않아야 함)
+                logger.critical(f"🐛 UNEXPECTED: Exception escaped execute_with_limit: {result}")
+                all_results.append({
+                    'order_index': idx,
+                    'success': False,
+                    'error': str(result)
+                })
+                failed_count += 1
+            elif isinstance(result, dict):
+                all_results.append(result)
+                if result.get('success'):
+                    successful_count += 1
+                else:
+                    failed_count += 1
+            else:
+                # 예상치 못한 결과 타입
+                logger.error(f"❌ Upbit 배치 주문 [{idx}] 예상치 못한 결과 타입: {type(result)}")
+                all_results.append({
+                    'order_index': idx,
+                    'success': False,
+                    'error': f"Unexpected result type: {type(result)}"
+                })
+                failed_count += 1
+
+        # 6. 배치 완료 로깅
+        elapsed = time.time() - start_time
+        logger.info(
+            f"📦 Upbit 배치 주문 완료: {successful_count}/{len(orders)} 성공, "
+            f"소요시간: {elapsed:.2f}초 (평균 {elapsed/len(orders):.3f}초/주문), "
+            f"implementation=SEQUENTIAL_FALLBACK"
+        )
+
+        return {
+            'success': True,  # 전체 프로세스 성공 (개별 주문 실패는 results에 포함)
+            'results': all_results,
+            'summary': {
+                'total': len(orders),
+                'successful': successful_count,
+                'failed': failed_count
+            },
+            'implementation': 'SEQUENTIAL_FALLBACK'  # 업비트는 배치 API 미지원
+        }

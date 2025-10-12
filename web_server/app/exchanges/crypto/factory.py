@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:config
 """
 크립토 거래소 팩토리 (메타데이터 기반)
 
