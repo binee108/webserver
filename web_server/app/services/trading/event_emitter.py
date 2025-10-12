@@ -1,4 +1,4 @@
-
+# @FEAT:event-sse @COMP:service @TYPE:helper
 """Event emission helpers extracted from the legacy trading service."""
 
 from __future__ import annotations
@@ -14,12 +14,14 @@ from app.models import OpenOrder, Strategy, StrategyAccount
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:event-sse @COMP:service @TYPE:helper
 class EventEmitter:
     """Encapsulates trading-related event emission."""
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_trading_event(
         self,
         event_type: str,
@@ -84,6 +86,7 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("이벤트 발송 실패: %s", exc)
 
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:core
     def emit_order_events_smart(
         self,
         strategy: Strategy,
@@ -167,6 +170,7 @@ class EventEmitter:
                 event_quantity,
             )
 
+    # @FEAT:event-sse @FEAT:position-tracking @COMP:service @TYPE:integration
     def emit_position_event(
         self,
         strategy_account: StrategyAccount,
@@ -207,7 +211,7 @@ class EventEmitter:
             exchange_name = None
             if account:
                 account_payload = {
-                    'id': account.id,
+                    'account_id': account.id,  # Standardized field name (consistent with OrderEvent)
                     'name': account.name,
                     'exchange': account.exchange,
                 }
@@ -237,6 +241,7 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("포지션 이벤트 발송 실패: %s", exc)
 
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_order_cancelled_event(
         self,
         order_id: str,
@@ -269,7 +274,12 @@ class EventEmitter:
                 status='CANCELED',
                 timestamp=datetime.utcnow().isoformat(),
                 order_type='',  # 취소 이벤트는 주문 타입 불필요
-                stop_price=None
+                stop_price=None,
+                account={  # Added missing account field
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
             )
 
             event_service.emit_order_event(order_event)
@@ -278,6 +288,7 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("주문 취소 이벤트 발송 실패: %s", exc)
 
+    # @FEAT:event-sse @FEAT:order-queue @COMP:service @TYPE:integration
     def emit_pending_order_event(
         self,
         event_type: str,
