@@ -124,15 +124,16 @@ def strategy_positions(strategy_id):
     if not strategy:
         return redirect(url_for('main.strategies'))
 
-    # 권한 확인: 소유자이거나, 해당 전략에 내 계좌가 연결되어 있어야 함
-    is_owner = (strategy.user_id == current_user.id)
-    if not is_owner:
-        has_subscription = db.session.query(StrategyAccount)\
-            .join(StrategyAccount.account)\
-            .filter(StrategyAccount.strategy_id == strategy_id, Account.user_id == current_user.id)\
-            .count() > 0
-        if not has_subscription:
-            return redirect(url_for('main.strategies'))
+    # 권한 확인: StrategyService.verify_strategy_access() 사용
+    from app.services.strategy_service import StrategyService
+    from flask import current_app
+
+    has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+    if not has_access:
+        current_app.logger.warning(
+            f'포지션 페이지 접근 거부 - 사용자: {current_user.id}, 전략: {strategy_id}'
+        )
+        return redirect(url_for('main.strategies'))
 
     # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
     positions_query = StrategyPosition.query\

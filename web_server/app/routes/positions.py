@@ -265,19 +265,48 @@ def trigger_order_status_update():
 @bp.route('/events/stream')
 @login_required
 def event_stream():
-    """실시간 포지션/주문 업데이트 이벤트 스트림 (SSE)"""
+    """실시간 포지션/주문 업데이트 이벤트 스트림 (SSE)
+
+    Query Parameters:
+        strategy_id (int, optional): 특정 전략의 이벤트만 수신.
+                                     생략 시 모든 전략의 이벤트를 수신 (하위 호환성)
+    """
     try:
-        current_app.logger.info(f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, URL: /api/events/stream')
+        # 쿼리 파라미터에서 strategy_id 추출
+        strategy_id = request.args.get('strategy_id', type=int)
+
+        # strategy_id가 제공된 경우 권한 검증
+        if strategy_id is not None:
+            from app.services.strategy_service import StrategyService
+            from flask import Response
+
+            has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+            if not has_access:
+                # 보안상 항상 403 반환 (404 분기 제거)
+                current_app.logger.warning(
+                    f'SSE 연결 권한 검증 실패 - 사용자: {current_user.id}, 전략: {strategy_id}'
+                )
+                return Response(
+                    f"data: {{'type': 'error', 'message': '{error_msg}'}}\n\n",
+                    mimetype='text/event-stream',
+                    status=403
+                )
+
+        current_app.logger.info(
+            f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, 전략: {strategy_id}, URL: /api/events/stream'
+        )
 
         from app.services.event_service import event_service
 
-        # SSE 스트림 반환
-        response = event_service.get_event_stream(current_user.id)
-        current_app.logger.info(f'✅ SSE 스트림 생성 완료 - 사용자: {current_user.id}')
+        # SSE 스트림 반환 (전략별 필터링 지원)
+        response = event_service.get_event_stream(current_user.id, strategy_id)
+        current_app.logger.info(f'✅ SSE 스트림 생성 완료 - 사용자: {current_user.id}, 전략: {strategy_id}')
         return response
 
     except Exception as e:
-        current_app.logger.error(f'이벤트 스트림 생성 실패 - 사용자: {current_user.id}, 오류: {str(e)}')
+        current_app.logger.error(
+            f'이벤트 스트림 생성 실패 - 사용자: {current_user.id}, 오류: {str(e)}'
+        )
         # SSE 형식의 오류 메시지 반환
         from flask import Response
         return Response(
@@ -345,30 +374,17 @@ def event_stats():
 def get_strategy_positions(strategy_id):
     """특정 전략의 포지션 조회 (동적 업데이트용)"""
     try:
-        from app.models import Strategy, StrategyPosition, StrategyAccount
+        from app.models import StrategyPosition, StrategyAccount, Account
+        from app.services.strategy_service import StrategyService
         from sqlalchemy.orm import joinedload
 
-        # 전략 존재 확인
-        strategy = Strategy.query.filter_by(id=strategy_id).first()
-        if not strategy:
+        # 권한 확인: StrategyService.verify_strategy_access() 사용 (전략 존재 여부 포함)
+        has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+        if not has_access:
             return jsonify({
                 'success': False,
-                'error': '전략을 찾을 수 없습니다.'
-            }), 404
-
-        # 권한 확인: 소유자이거나, 해당 전략에 내 계좌가 연결되어 있어야 함
-        from app.models import Account
-        is_owner = (strategy.user_id == current_user.id)
-        if not is_owner:
-            has_subscription = StrategyAccount.query.join(Account).filter(
-                StrategyAccount.strategy_id == strategy_id,
-                Account.user_id == current_user.id
-            ).count() > 0
-            if not has_subscription:
-                return jsonify({
-                    'success': False,
-                    'error': '접근 권한이 없습니다.'
-                }), 403
+                'error': error_msg
+            }), 403
 
         # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
         positions_query = StrategyPosition.query.join(StrategyAccount).join(Account).options(
@@ -416,12 +432,14 @@ def get_strategy_positions(strategy_id):
 @login_required
 def get_my_strategy_open_orders(strategy_id):
     try:
-        from app.models import Strategy, OpenOrder, PendingOrder, StrategyAccount, Account
+        from app.models import OpenOrder, PendingOrder, StrategyAccount, Account
+        from app.services.strategy_service import StrategyService
         from sqlalchemy.orm import joinedload
 
-        strategy = Strategy.query.filter_by(id=strategy_id).first()
-        if not strategy:
-            return jsonify({'success': False, 'error': '전략을 찾을 수 없습니다.'}), 404
+        # 권한 확인: StrategyService.verify_strategy_access() 사용 (전략 존재 여부 포함)
+        has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+        if not has_access:
+            return jsonify({'success': False, 'error': error_msg}), 403
 
         # OpenOrder 조회 (거래소 제출 완료)
         open_orders = (

@@ -31,6 +31,57 @@ class StrategyService:
         self.session = db.session
 
     # @FEAT:strategy-management @COMP:validation @TYPE:validation
+    @staticmethod
+    def verify_strategy_access(strategy_id: int, user_id: int) -> tuple[bool, Optional[str]]:
+        """전략 접근 권한 검증
+
+        전략 소유자이거나 해당 전략에 활성화된 계좌가 연결되어 있는지 확인합니다.
+        보안상 전략 존재 여부를 구분하지 않고 동일한 에러 메시지를 반환합니다.
+
+        Args:
+            strategy_id: 전략 ID
+            user_id: 사용자 ID
+
+        Returns:
+            (허용 여부, 에러 메시지)
+            - (True, None): 접근 허용 (소유자 또는 구독자)
+            - (False, "접근 권한이 없습니다."): 권한 없음 또는 전략 미존재
+
+        Examples:
+            >>> has_access, error = StrategyService.verify_strategy_access(1, 1)
+            >>> if has_access:
+            ...     # 접근 허용
+            ...     logger.info(f"전략 접근 허용: 전략={strategy_id}, 사용자={user_id}")
+            >>> else:
+            ...     # 접근 거부
+            ...     logger.warning(f"전략 접근 거부: {error}")
+        """
+        # 전략 존재 여부 확인
+        strategy = Strategy.query.filter_by(id=strategy_id).first()
+        if not strategy:
+            logger.warning(f"전략 접근 거부 (전략 없음): 전략={strategy_id}, 사용자={user_id}")
+            return False, "접근 권한이 없습니다."  # 보안상 404가 아닌 403
+
+        # 소유자 확인
+        if strategy.user_id == user_id:
+            logger.debug(f"전략 접근 허용 (소유자): 전략={strategy_id}, 사용자={user_id}")
+            return True, None
+
+        # 구독자 확인 (활성화된 StrategyAccount 존재 여부)
+        has_subscription = StrategyAccount.query.join(Account).filter(
+            StrategyAccount.strategy_id == strategy_id,
+            StrategyAccount.is_active == True,
+            Account.user_id == user_id
+        ).count() > 0
+
+        if has_subscription:
+            logger.debug(f"전략 접근 허용 (구독자): 전략={strategy_id}, 사용자={user_id}")
+            return True, None
+
+        logger.warning(f"전략 접근 거부 (권한 없음): 전략={strategy_id}, 사용자={user_id}")
+        return False, "접근 권한이 없습니다."
+
+    # @FEAT:strategy-management @COMP:validation @TYPE:validation
     def _validate_strategy_data(self, data: Dict[str, Any]) -> None:
         """전략 데이터 포괄적 검증 - RCE 예방 수칙 준수"""
         if not isinstance(data, dict):
