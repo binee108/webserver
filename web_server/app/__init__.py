@@ -728,6 +728,7 @@ def _refresh_price_cache(app, *, source: str = 'scheduler') -> dict:
     from app.services.exchange import exchange_service
     from app.models import StrategyPosition
     from app.constants import Exchange, MarketType
+    from app.exchanges.metadata import ExchangeMetadata
 
     logger = app.logger
     logger.debug('💰 가격 캐시 갱신 시작 (source=%s)', source)
@@ -740,7 +741,15 @@ def _refresh_price_cache(app, *, source: str = 'scheduler') -> dict:
     for exchange_name in supported_exchanges:
         normalized_exchange = Exchange.normalize(exchange_name) or Exchange.BINANCE
 
-        for market_type in (MarketType.SPOT, MarketType.FUTURES):
+        # ⭐ 메타데이터에서 지원하는 market_type만 조회
+        metadata = ExchangeMetadata.get_metadata(normalized_exchange.lower())
+        supported_markets = metadata.get('supported_markets', [])
+
+        if not supported_markets:
+            logger.warning(f"⚠️ {normalized_exchange}: 지원하는 market_type 없음 (스킵)")
+            continue
+
+        for market_type in supported_markets:  # ✅ Filtered by metadata
             quotes = exchange_service.get_price_quotes(
                 exchange=normalized_exchange,
                 market_type=market_type,

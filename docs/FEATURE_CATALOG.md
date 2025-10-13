@@ -133,17 +133,22 @@ grep -r "@FEAT:analytics" --include="*.py" | grep "@FEAT:capital-management"
 ---
 
 ### 6. exchange-integration
-**설명**: 거래소 통합 레이어 (Binance, Bybit, KIS)
+**설명**: 거래소 통합 레이어 (Binance, Bybit, KIS, Upbit)
 **태그**: `@FEAT:exchange-integration`
 **주요 컴포넌트**:
 - **Exchange**: `web_server/app/exchanges/` - 거래소 어댑터
   - `crypto/binance.py` - Binance 구현
   - `crypto/bybit.py` - Bybit 구현 (미완성)
+  - `crypto/upbit.py` - Upbit 구현 (2025-10-13 추가)
   - `securities/korea_investment.py` - 한국투자증권
   - `unified_factory.py` - 통합 팩토리
 - **Service**: `web_server/app/services/exchange.py` - 거래소 서비스
 
 **의존성**: None
+
+**최신 수정 (2025-10-13)**:
+- Upbit 거래소 통합 완료 (SPOT 전용, 215개 심볼)
+- ExchangeMetadata 기반 market_type 필터링 구현
 
 **검색 예시**:
 ```bash
@@ -152,6 +157,9 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 # Binance 특화
 grep -r "@FEAT:exchange-integration" --include="*.py" | grep "binance"
+
+# Upbit 특화
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep "upbit"
 ```
 
 ---
@@ -489,11 +497,35 @@ grep -r "@FEAT:health-monitoring" --include="*.py"
 **주요 컴포넌트**:
 - **Service**: `web_server/app/services/symbol_validator.py` - 심볼 검증 서비스
 
-**의존성**: `exchange-integration`
+**의존성**: `exchange-integration`, `background-scheduler`
+
+**최신 수정 (2025-10-13)**:
+- **CryptoExchangeFactory 기반 동적 로딩**: 하드코딩 제거, 새 거래소 추가 시 코드 수정 불필요
+- **메타데이터 기반 market_type 필터링**: ExchangeMetadata.supported_markets로 자동 필터링
+- **Upbit SPOT 지원**: 215개 심볼 로드, "Upbit은 Futures 지원하지 않음" 에러 제거
+- **Background Job 개선**: 메타데이터 기반 필터링으로 거래소별 지원 market_type 자동 감지
+
+**변경 내역**:
+- **삭제된 메서드**: `_load_binance_public_symbols()`, `_load_binance_symbols()`
+- **개선된 메서드**:
+  - `load_initial_symbols()`: crypto_factory.SUPPORTED_EXCHANGES 순회 + metadata 기반 필터링
+  - `_refresh_all_symbols()`: ExchangeMetadata.supported_markets 기반 필터링
+
+**상세 문서**: [symbol-validation.md](./features/symbol-validation.md)
 
 **검색 예시**:
 ```bash
+# 모든 Symbol Validation 코드
 grep -r "@FEAT:symbol-validation" --include="*.py"
+
+# 핵심 로직만
+grep -r "@FEAT:symbol-validation" --include="*.py" | grep "@TYPE:core"
+
+# 거래소 통합 지점
+grep -r "@FEAT:symbol-validation" --include="*.py" | grep "@FEAT:exchange-integration"
+
+# Background Scheduler 통합
+grep -r "@FEAT:symbol-validation" --include="*.py" | grep "@FEAT:background-scheduler"
 ```
 
 ---
@@ -571,9 +603,11 @@ grep -r "@FEAT:api-gateway" --include="*.py"
 - `web_server/app/services/event_service.py` - SSE 이벤트
 - `web_server/app/services/telegram.py` - 텔레그램 알림
 - `web_server/app/services/security.py` - 계좌 관리, 인증, 세션
+- `web_server/app/services/symbol_validator.py` - 심볼 검증 **(2025-10-13 업데이트)**
 
 ### Exchanges (@COMP:exchange)
 - `web_server/app/exchanges/crypto/binance.py` - Binance
+- `web_server/app/exchanges/crypto/upbit.py` - Upbit **(2025-10-13 추가)**
 - `web_server/app/exchanges/securities/korea_investment.py` - KIS
 
 ### Models (@COMP:model)
@@ -659,6 +693,17 @@ async function submitAccount(event) {
      */
     // ...
 }
+
+# @FEAT:symbol-validation @FEAT:exchange-integration @COMP:service @TYPE:core
+def load_initial_symbols(self):
+    """
+    서비스 시작 시 모든 거래소 심볼 정보 필수 로드 (Public API)
+
+    WHY CryptoExchangeFactory 기반 동적 로딩:
+    - 하드코딩 제거: 새 거래소 추가 시 코드 수정 불필요
+    - 메타데이터 활용: ExchangeMetadata의 supported_markets로 market_type 자동 필터링
+    """
+    pass
 ```
 
 ---
@@ -696,6 +741,9 @@ grep -r "telegram_service.send" --include="*.py"
 
 # analytics와 다른 기능의 통합 지점
 grep -r "@FEAT:analytics" --include="*.py" | grep "@FEAT:"
+
+# symbol-validation과 exchange-integration 통합 지점
+grep -r "@FEAT:symbol-validation" --include="*.py" | grep "@FEAT:exchange-integration"
 ```
 
 ### 의존성 검색
@@ -735,6 +783,9 @@ grep -rn "sharpe_ratio\|sortino_ratio\|max_drawdown" web_server/app/services/ana
 
 # account-management 프론트엔드 코드
 grep -r "@FEAT:account-management" --include="*.js"
+
+# symbol-validation의 메타데이터 기반 로딩
+grep -rn "ExchangeMetadata" web_server/app/services/symbol_validator.py
 ```
 
 ---
@@ -820,6 +871,9 @@ grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "binance"
 
 # 증권사 구현
 grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "securities"
+
+# Upbit 구현
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "upbit"
 ```
 
 ### order-tracking (확장)
@@ -859,17 +913,18 @@ grep -r "@FEAT:framework" --include="*.py" | grep "trading/core"
 ---
 
 *Last Updated: 2025-10-13*
-*Version: 2.1.0*
+*Version: 2.2.0*
 *Total Features: 20*
 *Documented Features: 20 (기존 12 + 신규 8)*
 
 **Changelog:**
+- 2025-10-13: **symbol-validation 기능 업데이트** - CryptoExchangeFactory 기반 동적 로딩, 메타데이터 기반 market_type 필터링, Upbit SPOT 지원 추가
 - 2025-10-13: account-management 기능 확장 - 프론트엔드 파일 추가 (`accounts.js`), Phase 1/2 버그 수정 기록, Variable Shadowing 예방 가이드 추가
 - 2025-10-11: Code Review 완료 - 기능 중복 제거 및 통합, 태그 일관성 개선
 - 2025-10-10: 초기 작성 (20개 기능 문서화)
 
 **Recent Updates:**
-- `account-management` 기능에 프론트엔드 JavaScript 파일 추가
-- JavaScript 파일에 대한 검색 패턴 가이드 추가 (`--include="*.js"`)
-- Variable Shadowing 버그 수정 내용 기록
-- 의사결정 문서 링크 추가 (004-python-variable-shadowing-prevention.md)
+- `symbol-validation` 기능에 메타데이터 기반 동적 로딩 구현 추가
+- Upbit 거래소 통합 (SPOT 전용, 215개 심볼)
+- 하드코딩 제거 및 확장성 개선 (DRY 원칙)
+- Background Job "Upbit은 Futures 지원하지 않음" 에러 제거
