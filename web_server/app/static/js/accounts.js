@@ -360,14 +360,20 @@
         const payload = {
             name: formData.get('name'),
             exchange: formData.get('exchange'),
-            public_api: formData.get('public_api'),
             is_testnet: formData.get('is_testnet') === 'on',
         };
 
         if (!accountId) {
+            // 새 계좌 추가: 모든 API 키 필수
+            payload.public_api = formData.get('public_api');
             payload.secret_api = apiSecret;
             payload.passphrase = passphrase || '';
         } else {
+            // 계좌 수정: 변경된 필드만 포함
+            const publicApi = formData.get('public_api');
+            if (publicApi && publicApi.toString().trim() !== '') {
+                payload.public_api = publicApi;
+            }
             if (apiSecret && apiSecret.toString().trim() !== '') {
                 payload.secret_api = apiSecret;
             }
