@@ -83,17 +83,21 @@ class BaseExchange(ABC):
 
         logger.info(f"✅ {self.__class__.__name__} 초기화 (region={self.region})")
 
-    # === 필수 메서드 (모든 거래소 구현) ===
+    # === 필수 메서드 (모든 거래소 구현 - 동기) ===
 
     @abstractmethod
-    async def load_markets(self, market_type: str = 'spot', reload: bool = False):
-        """마켓 정보 로드"""
+    def load_markets(self, market_type: str = 'spot', reload: bool = False):
+        """
+        마켓 정보 로드 (동기 - 필수 구현)
+
+        모든 거래소는 이 동기 메서드를 구현해야 합니다.
+        """
         pass
 
     @abstractmethod
-    async def fetch_balance(self, market_type: str = 'spot'):
+    def fetch_balance(self, market_type: str = 'spot'):
         """
-        잔액 조회
+        잔액 조회 (동기 - 필수 구현)
 
         Returns:
             {'free': float, 'used': float, 'total': float}
@@ -101,11 +105,11 @@ class BaseExchange(ABC):
         pass
 
     @abstractmethod
-    async def create_order(self, symbol: str, order_type: str, side: str,
-                          amount: Decimal, price: Optional[Decimal] = None,
-                          market_type: str = 'spot', **params):
+    def create_order(self, symbol: str, order_type: str, side: str,
+                     amount: Decimal, price: Optional[Decimal] = None,
+                     market_type: str = 'spot', **params):
         """
-        주문 생성
+        주문 생성 (동기 - 필수 구현)
 
         Returns:
             {'order_id': str, 'status': str, 'filled_quantity': float, 'average_price': float}
@@ -113,19 +117,19 @@ class BaseExchange(ABC):
         pass
 
     @abstractmethod
-    async def cancel_order(self, order_id: str, symbol: str, market_type: str = 'spot'):
-        """주문 취소"""
+    def cancel_order(self, order_id: str, symbol: str, market_type: str = 'spot'):
+        """주문 취소 (동기 - 필수 구현)"""
         pass
 
     @abstractmethod
-    async def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
-        """미체결 주문 조회"""
+    def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
+        """미체결 주문 조회 (동기 - 필수 구현)"""
         pass
 
     @abstractmethod
-    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+    def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
         """
-        배치 주문 생성 (거래소별 구현)
+        배치 주문 생성 (동기 - 필수 구현)
 
         Args:
             orders: 주문 리스트
@@ -166,6 +170,64 @@ class BaseExchange(ABC):
         """
         pass
 
+    # === 선택적 비동기 래퍼 (WebSocket 등에서 사용) ===
+
+    async def load_markets_async(self, market_type: str = 'spot', reload: bool = False):
+        """
+        마켓 정보 로드 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.load_markets(market_type, reload)
+
+    async def fetch_balance_async(self, market_type: str = 'spot'):
+        """
+        잔액 조회 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.fetch_balance(market_type)
+
+    async def create_order_async(self, symbol: str, order_type: str, side: str,
+                                  amount: Decimal, price: Optional[Decimal] = None,
+                                  market_type: str = 'spot', **params):
+        """
+        주문 생성 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.create_order(symbol, order_type, side, amount, price, market_type, **params)
+
+    async def cancel_order_async(self, order_id: str, symbol: str, market_type: str = 'spot'):
+        """
+        주문 취소 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.cancel_order(order_id, symbol, market_type)
+
+    async def fetch_open_orders_async(self, symbol: Optional[str] = None, market_type: str = 'spot'):
+        """
+        미체결 주문 조회 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.fetch_open_orders(symbol, market_type)
+
+    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (비동기 래퍼 - 선택적)
+
+        기본 구현: 동기 메서드를 호출
+        거래소별로 필요시 재정의 가능
+        """
+        return self.create_batch_orders(orders, market_type)
+
     # === 공통 편의 메서드 ===
 
     # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
@@ -196,38 +258,64 @@ class BaseExchange(ABC):
         currencies = self.metadata.get('base_currency', [])
         return currencies[0] if currencies else 'USDT'
 
-    # === 선택적 메서드 (Futures/Perpetual 지원 거래소만 구현) ===
+    # === 선택적 메서드 (Futures/Perpetual 지원 거래소만 구현 - 동기) ===
 
-    async def set_leverage(self, symbol: str, leverage: int, **params) -> Dict:
-        """레버리지 설정"""
+    def set_leverage(self, symbol: str, leverage: int, **params) -> Dict:
+        """레버리지 설정 (동기 - 선택적)"""
         if not self.supports_feature('leverage'):
             raise NotImplementedError(f"{self.name} does not support leverage")
         raise NotImplementedError("set_leverage not implemented")
 
-    async def set_position_mode(self, dual_side: bool, **params) -> Dict:
-        """포지션 모드 설정 (단방향/양방향)"""
+    def set_position_mode(self, dual_side: bool, **params) -> Dict:
+        """포지션 모드 설정 (단방향/양방향) (동기 - 선택적)"""
         if not self.supports_feature('position_mode'):
             raise NotImplementedError(f"{self.name} does not support position mode")
         raise NotImplementedError("set_position_mode not implemented")
 
-    async def fetch_positions(self, symbol: Optional[str] = None, **params) -> List[Dict]:
-        """포지션 조회 (선물/마진)"""
+    def fetch_positions(self, symbol: Optional[str] = None, **params) -> List[Dict]:
+        """포지션 조회 (선물/마진) (동기 - 선택적)"""
         from app.exchanges.metadata import MarketType
         if not (self.supports_market('futures') or self.supports_market('perpetual')):
             raise NotImplementedError(f"{self.name} does not support futures/perpetual")
         raise NotImplementedError("fetch_positions not implemented")
 
-    async def fetch_funding_rate(self, symbol: str) -> Dict:
-        """펀딩비 조회 (무기한 선물)"""
+    def fetch_funding_rate(self, symbol: str) -> Dict:
+        """펀딩비 조회 (무기한 선물) (동기 - 선택적)"""
         if not self.supports_feature('funding_rate'):
             raise NotImplementedError(f"{self.name} does not support funding rate")
         raise NotImplementedError("fetch_funding_rate not implemented")
 
-    async def get_balance(self, currency: str = 'USDT', market_type: str = 'spot') -> float:
-        """사용 가능 잔액 조회 (편의 메서드)"""
-        balance = await self.fetch_balance(market_type)
+    def get_balance(self, currency: str = 'USDT', market_type: str = 'spot') -> float:
+        """사용 가능 잔액 조회 (편의 메서드) (동기 - 선택적)"""
+        balance = self.fetch_balance(market_type)
         return balance.get('free', 0)
 
-    async def close(self):
-        """리소스 정리 (필요시 하위 클래스에서 구현)"""
+    def close(self):
+        """리소스 정리 (필요시 하위 클래스에서 구현) (동기 - 선택적)"""
         pass
+
+    # === 선택적 메서드 비동기 래퍼 ===
+
+    async def set_leverage_async(self, symbol: str, leverage: int, **params) -> Dict:
+        """레버리지 설정 (비동기 래퍼 - 선택적)"""
+        return self.set_leverage(symbol, leverage, **params)
+
+    async def set_position_mode_async(self, dual_side: bool, **params) -> Dict:
+        """포지션 모드 설정 (비동기 래퍼 - 선택적)"""
+        return self.set_position_mode(dual_side, **params)
+
+    async def fetch_positions_async(self, symbol: Optional[str] = None, **params) -> List[Dict]:
+        """포지션 조회 (비동기 래퍼 - 선택적)"""
+        return self.fetch_positions(symbol, **params)
+
+    async def fetch_funding_rate_async(self, symbol: str) -> Dict:
+        """펀딩비 조회 (비동기 래퍼 - 선택적)"""
+        return self.fetch_funding_rate(symbol)
+
+    async def get_balance_async(self, currency: str = 'USDT', market_type: str = 'spot') -> float:
+        """사용 가능 잔액 조회 (비동기 래퍼 - 선택적)"""
+        return self.get_balance(currency, market_type)
+
+    async def close_async(self):
+        """리소스 정리 (비동기 래퍼 - 선택적)"""
+        return self.close()
