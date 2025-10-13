@@ -1,3 +1,10 @@
+"""
+Dashboard API Routes
+
+@FEAT:api-gateway @FEAT:analytics @COMP:route @TYPE:core
+Provides dashboard statistics and recent trades data for authenticated users.
+"""
+
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
@@ -7,6 +14,7 @@ from app.services.analytics import AnalyticsError as DashboardError
 
 bp = Blueprint('dashboard', __name__, url_prefix='/api')
 
+# @FEAT:api-gateway @FEAT:analytics @COMP:route @TYPE:core
 @bp.route('/dashboard/stats', methods=['GET'])
 @login_required
 def get_dashboard_stats():
@@ -14,12 +22,12 @@ def get_dashboard_stats():
     try:
         # 통합된 get_user_dashboard_stats 메서드 사용
         stats = dashboard_service.get_user_dashboard_stats(current_user.id)
-        
+
         return jsonify({
             'success': True,
             'stats': stats
         })
-        
+
     except DashboardError as e:
         current_app.logger.error(f'대시보드 통계 조회 오류: {str(e)}')
         return jsonify({
@@ -33,6 +41,7 @@ def get_dashboard_stats():
             'error': '시스템 오류가 발생했습니다.'
         }), 500
 
+# @FEAT:api-gateway @FEAT:analytics @COMP:route @TYPE:core
 @bp.route('/dashboard/recent-trades', methods=['GET'])
 @login_required
 def get_recent_trades():

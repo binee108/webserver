@@ -11,12 +11,14 @@ from flask import current_app
 from flask.cli import with_appcontext
 
 
+# @FEAT:securities-token @COMP:cli @TYPE:core
 @click.group()
 def securities():
     """증권 관련 명령어 그룹"""
     pass
 
 
+# @FEAT:securities-token @COMP:cli @TYPE:core
 @securities.command('refresh-tokens')
 @with_appcontext
 def refresh_tokens():
@@ -51,6 +53,7 @@ def refresh_tokens():
     click.echo("\n✅ 완료")
 
 
+# @FEAT:securities-token @COMP:cli @TYPE:core
 @securities.command('check-status')
 @with_appcontext
 def check_status():

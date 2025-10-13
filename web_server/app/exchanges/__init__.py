@@ -1,6 +1,8 @@
 """
 통합 거래소 모듈
 
+# @FEAT:exchange-integration @COMP:exchange @TYPE:core
+
 사용법:
     # 권장 방식 (신규 코드)
     from app.exchanges.crypto import BinanceExchange, CryptoExchangeFactory

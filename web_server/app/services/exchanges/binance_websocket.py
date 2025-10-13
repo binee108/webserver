@@ -2,6 +2,8 @@
 Binance Futures User Data Stream WebSocket 구현
 
 Binance Futures User Data Stream을 통해 주문 체결 이벤트를 실시간으로 수신합니다.
+
+@FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:websocket-integration
 """
 
 import asyncio
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:websocket-integration
 class BinanceWebSocket:
     """Binance Futures User Data Stream WebSocket 클라이언트
 
@@ -41,6 +44,7 @@ class BinanceWebSocket:
         self._running = False
         self._renew_task: Optional[asyncio.Task] = None
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:integration
     async def create_listen_key(self) -> str:
         """Listen Key 생성
 
@@ -72,6 +76,7 @@ class BinanceWebSocket:
             logger.error(f"❌ Listen Key 생성 실패 - 계정: {self.account.id}, 오류: {e}")
             raise
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def renew_listen_key(self):
         """Listen Key 갱신 (30분마다)"""
         while self._running:
@@ -108,6 +113,7 @@ class BinanceWebSocket:
                 logger.error(f"❌ Listen Key 갱신 오류: {e}", exc_info=True)
                 # 오류 발생해도 루프 계속 실행
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def connect(self):
         """WebSocket 연결"""
         try:
@@ -141,6 +147,7 @@ class BinanceWebSocket:
             logger.error(f"❌ Binance WebSocket 연결 실패: {e}", exc_info=True)
             raise
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def disconnect(self):
         """WebSocket 연결 종료"""
         self._running = False
@@ -157,6 +164,7 @@ class BinanceWebSocket:
 
         logger.info(f"🔌 Binance WebSocket 연결 종료 - 계정: {self.account.id}")
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def _receive_messages(self):
         """WebSocket 메시지 수신 루프"""
         try:
@@ -197,6 +205,7 @@ class BinanceWebSocket:
             if self._running:
                 await self.manager.auto_reconnect(self.account.id, 0)
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def on_message(self, data: dict):
         """WebSocket 메시지 수신 처리
 
@@ -217,6 +226,7 @@ class BinanceWebSocket:
         except Exception as e:
             logger.error(f"❌ 메시지 처리 오류 - 계정: {self.account.id}, 오류: {e}")
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:integration @DEPS:order-fill-monitor
     async def _handle_order_update(self, order_data: dict):
         """주문 업데이트 처리 → OrderFillMonitor에 위임
 
@@ -246,6 +256,7 @@ class BinanceWebSocket:
         except Exception as e:
             logger.error(f"❌ 주문 업데이트 처리 오류 - 계정: {self.account.id}, 오류: {e}")
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:helper
     async def ping(self):
         """Ping 전송 (keep-alive)"""
         if self.ws and not self.ws.closed:

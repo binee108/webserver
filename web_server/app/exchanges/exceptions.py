@@ -2,6 +2,8 @@
 거래소 공통 예외 클래스
 
 Crypto와 Securities 모두 사용하는 기본 예외를 정의합니다.
+
+@FEAT:framework @FEAT:exchange-integration @COMP:model @TYPE:boilerplate
 """
 
 

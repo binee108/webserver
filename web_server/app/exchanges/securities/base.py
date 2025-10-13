@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:core
 """
 증권 거래소 기본 추상 클래스
 

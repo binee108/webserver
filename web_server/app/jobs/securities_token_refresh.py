@@ -28,6 +28,7 @@ from flask import Flask
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:securities-token @COMP:job @TYPE:core
 class SecuritiesTokenRefreshJob:
     """
     증권 OAuth 토큰 자동 갱신 Job
@@ -51,6 +52,7 @@ class SecuritiesTokenRefreshJob:
         result = SecuritiesTokenRefreshJob.run(app)
     """
 
+    # @FEAT:securities-token @COMP:job @TYPE:core
     @staticmethod
     async def run_async(app: Flask = None) -> dict:
         """
@@ -161,6 +163,7 @@ class SecuritiesTokenRefreshJob:
 
             return result
 
+    # @FEAT:securities-token @COMP:job @TYPE:core
     @staticmethod
     def run(app: Flask = None) -> dict:
         """
@@ -196,6 +199,7 @@ class SecuritiesTokenRefreshJob:
         # - RuntimeError: cannot reuse running loop 방지
         return asyncio.run(SecuritiesTokenRefreshJob.run_async(app))
 
+    # @FEAT:securities-token @COMP:job @TYPE:helper
     @staticmethod
     async def get_accounts_needing_refresh_async(app: Flask = None) -> List['Account']:
         """
@@ -238,6 +242,7 @@ class SecuritiesTokenRefreshJob:
 
             return accounts
 
+    # @FEAT:securities-token @COMP:job @TYPE:helper
     @staticmethod
     def get_accounts_needing_refresh(app: Flask = None) -> List['Account']:
         """

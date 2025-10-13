@@ -195,16 +195,17 @@ class SecurityService:
 
     # === 계정 관리 ===
 
+    # @FEAT:account-management @COMP:service @TYPE:core
     def get_user_accounts(self, user_id: int) -> List[Account]:
         """사용자 계정 목록 조회"""
         try:
             logger.info(f"계정 목록 조회 시작: user_id={user_id}")
-            
+
             # 입력 검증
             if not isinstance(user_id, int) or user_id <= 0:
                 logger.error(f"잘못된 user_id: {user_id}")
                 raise ValueError(f"유효하지 않은 사용자 ID: {user_id}")
-            
+
             # 데이터베이스 쿼리 실행 (일일 요약 eager loading)
             accounts = (
                 Account.query
@@ -213,9 +214,9 @@ class SecurityService:
                 .all()
             )
             logger.info(f"계정 목록 조회 완료: user_id={user_id}, 계정 수={len(accounts)}")
-            
+
             return accounts
-            
+
         except ValueError as ve:
             logger.error(f"입력 검증 실패: {ve}")
             raise  # ValueError는 다시 발생시켜 호출자에게 전달
@@ -224,17 +225,18 @@ class SecurityService:
             # 데이터베이스 연결 문제 등 복구 불가능한 오류는 빈 리스트 반환
             return []
 
+    # @FEAT:account-management @COMP:service @TYPE:core
     def get_accounts_by_user(self, user_id: int) -> List[Dict[str, Any]]:
         """사용자 계정 목록 조회 (딕셔너리 형태로 반환)"""
         try:
             logger.info(f"계정 딕셔너리 변환 시작: user_id={user_id}")
-            
+
             # 계정 목록 조회
             accounts = self.get_user_accounts(user_id)
             if not accounts:
                 logger.info(f"사용자 계정이 없습니다: user_id={user_id}")
                 return []
-            
+
             result = []
             for account in accounts:
                 try:
@@ -262,15 +264,15 @@ class SecurityService:
 
                     result.append(account_dict)
                     logger.debug(f"계정 변환 완료: account_id={account.id}, name={account.name}")
-                    
+
                 except Exception as ae:
                     logger.error(f"계정 데이터 변환 실패: account_id={getattr(account, 'id', 'unknown')}, error={str(ae)}")
                     # 개별 계정 변환 실패해도 다른 계정들은 처리 계속
                     continue
-            
+
             logger.info(f"계정 딕셔너리 변환 완료: user_id={user_id}, 성공={len(result)}개")
             return result
-            
+
         except ValueError as ve:
             # 입력 검증 오류는 호출자에게 전달
             logger.error(f"입력 검증 오류: {ve}")
@@ -280,6 +282,7 @@ class SecurityService:
             # 예상치 못한 오류 발생 시에만 빈 리스트 반환
             return []
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def _convert_balance_map(self, balance_map: Dict[str, Any]) -> Tuple[List[Dict[str, float]], Decimal]:
         """잔고 데이터 맵을 프론트엔드 친화적인 형태로 변환"""
         processed: List[Dict[str, float]] = []
@@ -319,6 +322,7 @@ class SecurityService:
         processed.sort(key=lambda item: item['total'], reverse=True)
         return processed, total_balance
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def _record_balance_snapshot(self, account: Account, total_balance: Decimal, spot_balance: Decimal = None, futures_balance: Decimal = None) -> DailyAccountSummary:
         """일일 계좌 요약 테이블에 잔고 스냅샷 저장"""
         today = date.today()
@@ -357,6 +361,7 @@ class SecurityService:
 
         return summary
 
+    # @FEAT:account-management @FEAT:exchange-integration @COMP:service @TYPE:integration
     def _collect_account_balances(self, account: Account, persist: bool = True) -> Dict[str, Any]:
         """거래소에서 잔고를 조회하고 필요 시 저장"""
         if not account:
@@ -420,6 +425,7 @@ class SecurityService:
             'snapshot_at': datetime.utcnow().isoformat() + 'Z'
         }
 
+    # @FEAT:account-management @COMP:service @TYPE:core
     def get_account_by_id(self, account_id: int, user_id: int) -> Optional[Account]:
         """ID로 계정 조회"""
         try:
@@ -428,6 +434,7 @@ class SecurityService:
             logger.error(f"계정 조회 실패: {e}")
             return None
 
+    # @FEAT:account-management @COMP:service @TYPE:core @DEPS:exchange-integration
     def test_account_connection(self, account_id: int, user_id: int) -> Dict[str, Any]:
         """계정 연결 테스트 및 잔고 스냅샷 저장"""
         try:
@@ -470,6 +477,7 @@ class SecurityService:
                 'error': '계정 연결 테스트 중 오류가 발생했습니다.'
             }
 
+    # @FEAT:account-management @COMP:service @TYPE:core @DEPS:exchange-integration
     def get_account_balance(self, account_id: int, user_id: int) -> Dict[str, Any]:
         """계정 잔고 조회"""
         account = self.get_account_by_id(account_id, user_id)
@@ -483,6 +491,7 @@ class SecurityService:
         balance_snapshot = self._collect_account_balances(account, persist=False)
         return balance_snapshot
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def refresh_account_balance_async(self, account_id: int) -> None:
         """계좌 잔고 갱신을 비동기로 스케줄링"""
         try:
@@ -498,6 +507,7 @@ class SecurityService:
         )
         thread.start()
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def _refresh_account_balance_task(self, app, account_id: int) -> None:
         """백그라운드에서 계좌 잔고를 갱신하는 작업"""
         with app.app_context():
@@ -517,6 +527,7 @@ class SecurityService:
                 db.session.rollback()
                 logger.error(f'계정 {account_id} 잔고 갱신 중 예외 발생: {e}')
 
+    # @FEAT:account-management @COMP:service @TYPE:core
     def create_account(self, user_id: int, account_data: Dict[str, Any]) -> Dict[str, Any]:
         """거래소 계정 생성"""
         try:
@@ -592,6 +603,8 @@ class SecurityService:
             db.session.rollback()
             logger.error(f"계정 생성 실패: {e}")
             raise SecurityError(f"계정 생성 중 오류가 발생했습니다: {str(e)}")
+
+    # @FEAT:account-management @COMP:service @TYPE:core
     def update_account(self, account_id: int, user_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
         """계정 정보 수정"""
         try:
@@ -638,6 +651,8 @@ class SecurityService:
             db.session.rollback()
             logger.error(f"계정 수정 실패: {e}")
             raise SecurityError(f"계정 수정 중 오류가 발생했습니다: {str(e)}")
+
+    # @FEAT:account-management @COMP:service @TYPE:core
     def delete_account(self, account_id: int, user_id: int) -> bool:
         """계정 삭제"""
         try:
@@ -653,16 +668,20 @@ class SecurityService:
             db.session.rollback()
             logger.error(f"계정 삭제 실패: {e}")
             raise SecurityError(f"계정 삭제 중 오류가 발생했습니다: {str(e)}")
+
     # === 보안 유틸리티 ===
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def _encrypt_api_key(self, api_key: str) -> str:
         """API 키 암호화"""
         return encrypt_value(api_key)
 
+    # @FEAT:account-management @COMP:service @TYPE:helper
     def _decrypt_api_key(self, stored_value: str) -> str:
         """저장된 API 키 복호화"""
         return decrypt_value(stored_value)
 
+    # @FEAT:account-management @COMP:service @TYPE:validation
     def _validate_api_credentials(self, account: Account) -> Tuple[bool, Optional[str]]:
         """저장된 API 자격 증명이 사용 가능한지 검증"""
         if not account.public_api or not account.secret_api:

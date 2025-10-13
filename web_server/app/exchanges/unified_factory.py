@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:config
 """
 통합 거래소 팩토리 (Crypto + Securities)
 

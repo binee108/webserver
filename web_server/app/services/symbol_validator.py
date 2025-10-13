@@ -1,6 +1,8 @@
 """
 Symbol 제한사항 검증 서비스
 
+@FEAT:symbol-validation @COMP:service @TYPE:core
+
 거래소별 Symbol 제한사항(LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL 등)을
 메모리에 캐싱하고 고속으로 검증하는 서비스입니다.
 
@@ -31,6 +33,7 @@ class SymbolValidationError(Exception):
     pass
 
 
+# @FEAT:symbol-validation @COMP:service @TYPE:core
 class SymbolValidator:
     """
     Symbol 제한사항 검증 서비스
@@ -50,11 +53,13 @@ class SymbolValidator:
 
         logger.info("✅ Symbol Validator 초기화 완료")
 
+    # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:integration
     def refresh_symbols_with_context(self, app):
         """Flask app context와 함께 Symbol 정보 갱신 (APScheduler용)"""
         with app.app_context():
             self._refresh_all_symbols()
 
+    # @FEAT:symbol-validation @FEAT:exchange-integration @COMP:service @TYPE:core
     def load_initial_symbols(self):
         """서비스 시작 시 모든 거래소 심볼 정보 필수 로드 (Public API 사용)"""
         try:
@@ -94,6 +99,7 @@ class SymbolValidator:
             logger.error(f"❌ 거래소 심볼 로드 실패: {e}")
             raise Exception(f"거래소 심볼 정보를 로드할 수 없어 서비스를 시작할 수 없습니다: {e}")
 
+    # @FEAT:symbol-validation @FEAT:exchange-integration @COMP:service @TYPE:helper
     def _load_binance_public_symbols(self) -> int:
         """Binance public API로 심볼 정보 로드 (계정 불필요)"""
         try:
@@ -132,6 +138,7 @@ class SymbolValidator:
             logger.error(f"❌ Binance Symbol 로드 실패: {e}")
             return 0
 
+    # @FEAT:symbol-validation @FEAT:exchange-integration @COMP:service @TYPE:helper
     def _load_binance_symbols(self, account: Account) -> int:
         """Binance Symbol 정보 로드"""
         try:
@@ -169,6 +176,7 @@ class SymbolValidator:
             return 0
 
 
+    # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:helper
     def _refresh_all_symbols(self):
         """모든 Symbol 정보 갱신 (백그라운드 작업)"""
         try:
@@ -194,6 +202,7 @@ class SymbolValidator:
         except Exception as e:
             logger.error(f"백그라운드 Symbol 갱신 실패: {e}")
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:helper
     def get_market_info(self, exchange: str, symbol: str, market_type: str) -> Optional[MarketInfo]:
         """메모리에서 MarketInfo 조회 (네트워크 요청 없음)"""
         cache_key = f"{exchange.upper()}_{symbol.upper()}_{market_type.upper()}"
@@ -201,6 +210,7 @@ class SymbolValidator:
         with self.cache_lock:
             return self.market_info_cache.get(cache_key)
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def validate_order_params(self, exchange: str, symbol: str, market_type: str,
                             quantity: Decimal, price: Optional[Decimal] = None) -> Dict[str, Any]:
         """
@@ -279,6 +289,7 @@ class SymbolValidator:
                 'error_type': 'validation_error'
             }
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def _validate_and_adjust_quantity(self, market_info: MarketInfo, quantity: Decimal) -> Dict[str, Any]:
         """수량 검증 및 조정"""
         try:
@@ -331,6 +342,7 @@ class SymbolValidator:
                 'error_type': 'quantity_adjustment_error'
             }
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def _validate_and_adjust_price(self, market_info: MarketInfo, price: Optional[Decimal]) -> Dict[str, Any]:
         """가격 검증 및 조정"""
         try:
@@ -381,6 +393,7 @@ class SymbolValidator:
             }
 
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:helper
     def get_cache_stats(self) -> Dict[str, Any]:
         """캐시 통계 조회"""
         with self.cache_lock:

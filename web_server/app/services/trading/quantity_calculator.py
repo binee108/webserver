@@ -1,4 +1,4 @@
-
+# @FEAT:order-tracking @FEAT:capital-management @COMP:util @TYPE:helper
 """Order quantity calculation utilities extracted from the legacy trading service."""
 
 from __future__ import annotations
@@ -14,19 +14,23 @@ from app.services.symbol_validator import symbol_validator
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:capital-management @FEAT:order-tracking @FEAT:position-tracking @COMP:util @TYPE:helper
 class QuantityCalculationError(Exception):
     """Raised when order quantity cannot be determined safely."""
 
 
+# @FEAT:capital-management @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:core
 class QuantityCalculator:
     """Encapsulates order quantity and price calculations."""
 
+    # @FEAT:capital-management @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:core
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
     # ------------------------------------------------------------------
     # Price helpers
     # ------------------------------------------------------------------
+    # @FEAT:capital-management @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:helper
     def determine_order_price(
         self,
         order_type: str,
@@ -72,6 +76,7 @@ class QuantityCalculator:
     # ------------------------------------------------------------------
     # Quantity helpers
     # ------------------------------------------------------------------
+    # @FEAT:order-tracking @FEAT:capital-management @COMP:util @TYPE:core @DEPS:position-tracking
     def calculate_order_quantity(
         self,
         strategy_account: StrategyAccount,
@@ -130,6 +135,7 @@ class QuantityCalculator:
                 order_type,
             )
 
+            # @FEAT:capital-management - allocated_capital 조회 및 사용
             strategy_capital = StrategyCapital.query.filter_by(
                 strategy_account_id=strategy_account.id
             ).first()
@@ -144,6 +150,8 @@ class QuantityCalculator:
             if market_type.lower() == 'futures':
                 leverage = Decimal(str(getattr(strategy_account, 'leverage', 1)))
 
+            # @FEAT:capital-management - 핵심 수량 계산 공식
+            # quantity = (allocated_capital × qty_per% ÷ price) × leverage
             quantity = (
                 allocated_capital
                 * (qty_per_decimal / Decimal('100'))
@@ -194,6 +202,7 @@ class QuantityCalculator:
             logger.error("수량 계산 실패: %s", exc)
             return Decimal('0')
 
+    # @FEAT:order-tracking @FEAT:position-tracking @COMP:util @TYPE:helper
     def calculate_quantity_from_percentage(
         self,
         strategy_account: StrategyAccount,
@@ -345,6 +354,7 @@ class QuantityCalculator:
 
         return adjusted_quantity
 
+    # @FEAT:capital-management @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:helper
     def quantize_quantity_for_symbol(
         self,
         strategy_account: StrategyAccount,

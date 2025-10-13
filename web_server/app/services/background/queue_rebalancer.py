@@ -1,3 +1,4 @@
+# @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core @DEPS:order-tracking,telegram-notification
 """
 주문 대기열 자동 재정렬 백그라운드 작업
 
@@ -18,6 +19,7 @@ _last_memory_check = 0
 _psutil_warning_shown = False
 
 
+# @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core
 def rebalance_all_symbols_with_context(app: Flask) -> None:
     """Flask app context에서 모든 심볼의 대기열 재정렬
 
@@ -118,6 +120,19 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             # 2-3. 합집합 (Set으로 중복 제거)
             all_pairs: Set[Tuple[int, str]] = set(open_order_pairs) | set(pending_order_pairs)
 
+            # 🔍 디버깅: 중복 검증
+            logger.info(
+                f"🔍 재정렬 대상 조합 - "
+                f"OpenOrder: {len(open_order_pairs)}개, "
+                f"PendingOrder: {len(pending_order_pairs)}개, "
+                f"합집합: {len(all_pairs)}개"
+            )
+
+            if all_pairs:
+                logger.info(f"🔍 재정렬 대상 상세:")
+                for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
+                    logger.info(f"  [{idx}] Account {account_id}: {symbol}")
+
             if not all_pairs:
                 # 재정렬할 주문이 없으면 종료 (로그 스팸 방지)
                 return
@@ -169,11 +184,24 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             from app.services.trading import trading_service
             queue_manager = trading_service.order_queue_manager
 
+            # 🔍 디버깅: 처리 순서 추적
+            processed_pairs = []
+
             for account_id, symbol in all_pairs:
                 try:
+                    # 🔍 디버깅: 처리 시작
+                    logger.info(f"🔍 재정렬 처리 시작 - Account {account_id}, Symbol: {symbol}")
+                    processed_pairs.append((account_id, symbol))
+
                     result = queue_manager.rebalance_symbol(
                         account_id=account_id,
                         symbol=symbol
+                    )
+
+                    # 🔍 디버깅: 처리 완료
+                    logger.info(
+                        f"🔍 재정렬 처리 완료 - Account {account_id}, Symbol: {symbol}, "
+                        f"결과: {result.get('success')}, 취소: {result.get('cancelled')}, 실행: {result.get('executed')}"
                     )
 
                     if result.get('success'):
@@ -259,6 +287,7 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                 logger.debug(f"텔레그램 알림 실패 (스케줄러 오류): {e}")
 
 
+# @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:helper
 def rebalance_specific_symbol_with_context(
     app: Flask,
     account_id: int,

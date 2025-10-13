@@ -1,6 +1,8 @@
 """
 크립토 거래소 기본 클래스
 
+# @FEAT:exchange-integration @COMP:exchange @TYPE:core
+
 암호화폐 거래소 통합을 위한 공통 인터페이스를 제공합니다.
 """
 
@@ -13,34 +15,41 @@ logger = logging.getLogger(__name__)
 
 
 # 예외 클래스들
+# @FEAT:exchange-integration @COMP:model @TYPE:core
 class ExchangeError(Exception):
     """거래소 API 에러"""
+    # @FEAT:exchange-integration @COMP:model @TYPE:core
     def __init__(self, message: str, code: int = None, response: Dict = None):
         super().__init__(message)
         self.code = code
         self.response = response
 
 
+# @FEAT:exchange-integration @COMP:model @TYPE:core
 class NetworkError(ExchangeError):
     """네트워크 에러"""
     pass
 
 
+# @FEAT:exchange-integration @COMP:model @TYPE:core
 class AuthenticationError(ExchangeError):
     """인증 에러"""
     pass
 
 
+# @FEAT:exchange-integration @COMP:model @TYPE:core
 class InsufficientFunds(ExchangeError):
     """잔액 부족 에러"""
     pass
 
 
+# @FEAT:exchange-integration @COMP:model @TYPE:core
 class InvalidOrder(ExchangeError):
     """잘못된 주문 에러"""
     pass
 
 
+# @FEAT:exchange-integration @COMP:exchange @TYPE:core
 class BaseExchange(ABC):
     """
     크립토 거래소 공통 인터페이스
@@ -51,6 +60,7 @@ class BaseExchange(ABC):
     - 표준 응답 포맷 통일
     """
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:core
     def __init__(self):
         self.api_key = None
         self.api_secret = None
@@ -158,11 +168,13 @@ class BaseExchange(ABC):
 
     # === 공통 편의 메서드 ===
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
     def is_domestic(self) -> bool:
         """국내 거래소 여부"""
         from app.exchanges.metadata import ExchangeRegion
         return self.region == ExchangeRegion.DOMESTIC
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
     def supports_market(self, market_type: str) -> bool:
         """특정 마켓 타입 지원 여부"""
         from app.exchanges.metadata import MarketType
@@ -173,10 +185,12 @@ class BaseExchange(ABC):
         except ValueError:
             return False
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
     def supports_feature(self, feature: str) -> bool:
         """특정 기능 지원 여부"""
         return self.features.get(feature, False)
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
     def get_base_currency(self) -> str:
         """기본 기준 통화"""
         currencies = self.metadata.get('base_currency', [])

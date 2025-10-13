@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:core
 """
 크립토 거래소 기본 클래스
 

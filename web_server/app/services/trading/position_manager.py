@@ -1,4 +1,4 @@
-
+# @FEAT:position-tracking @COMP:service @TYPE:core @DEPS:order-tracking,exchange-integration,event-sse,price-cache
 """Position management logic extracted from the legacy trading service."""
 
 from __future__ import annotations
@@ -26,12 +26,14 @@ from app.services.utils import decimal_to_float, to_decimal
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:position-tracking @COMP:service @TYPE:core
 class PositionManager:
     """Encapsulates position update and query behaviour."""
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:position-tracking @COMP:service @TYPE:helper
     def _fetch_fallback_execution_price(self, account: Account, symbol: str, market_type: str) -> Optional[Decimal]:
         """Fallback to the latest market price when the exchange omits execution price."""
         from app.services.exchange import exchange_service
@@ -61,6 +63,7 @@ class PositionManager:
             )
         return None
 
+    # @FEAT:position-tracking @FEAT:order-tracking @COMP:service @TYPE:core
     def process_order_fill(self, strategy_account: StrategyAccount, order_id: str,
                            symbol: Optional[str] = None, side: Optional[str] = None,
                            order_type: Optional[str] = None,
@@ -286,6 +289,7 @@ class PositionManager:
                 'error': str(e)
             }
 
+    # @FEAT:position-tracking @COMP:service @TYPE:core
     def close_position_by_id(self, position_id: int, user_id: int) -> Dict[str, Any]:
         """포지션 ID 기반 시장가 청산"""
         try:
@@ -424,6 +428,7 @@ class PositionManager:
                 'error': f'포지션 청산 실패: {str(e)}'
             }
 
+    # @FEAT:position-tracking @COMP:service @TYPE:core
     def get_user_open_orders_with_positions(self, user_id: int) -> Dict[str, Any]:
         """사용자의 포지션과 열린 주문을 심볼별로 집계"""
         try:
@@ -581,6 +586,7 @@ class PositionManager:
                 'summary': {}
             }
 
+    # @FEAT:position-tracking @COMP:service @TYPE:core
     def get_position_and_orders_by_symbol(self, user_id: int, symbol: str) -> Dict[str, Any]:
         """특정 심볼에 대한 포지션 및 주문 조회"""
         try:
@@ -716,6 +722,8 @@ class PositionManager:
                 'positions': [],
                 'open_orders': []
             }
+
+    # @FEAT:position-tracking @COMP:service @TYPE:core
     def _update_position(self, strategy_account_id: int, symbol: str, side: str,
                         quantity: Decimal, price: Decimal) -> Dict[str, Any]:
         """포지션 업데이트 (평균가 계산 + 실현 손익 산출)"""
@@ -860,11 +868,13 @@ class PositionManager:
                 'error_type': 'position_error'
             }
 
+    # @FEAT:position-tracking @COMP:service @TYPE:helper
     def _get_strategy_account_ids(self, strategy_id: int) -> List[int]:
         """전략과 연결된 StrategyAccount ID 목록 반환"""
         accounts = StrategyAccount.query.filter_by(strategy_id=strategy_id).all()
         return [account.id for account in accounts]
 
+    # @FEAT:position-tracking @COMP:service @TYPE:core
     def get_positions(self, strategy_id: int) -> List[Dict[str, Any]]:
         """전략 포지션 목록 조회"""
         try:
@@ -894,6 +904,7 @@ class PositionManager:
             logger.error(f"포지션 조회 실패: {e}")
             return []
 
+    # @FEAT:position-tracking @FEAT:background-scheduler @COMP:job @TYPE:core @DEPS:price-cache
     def calculate_unrealized_pnl(self) -> None:
         """백그라운드 작업: 모든 포지션의 미실현 손익 계산 및 업데이트"""
         from app.services.price_cache import price_cache
@@ -967,5 +978,4 @@ class PositionManager:
         except Exception as e:
             db.session.rollback()
             logger.error(f"미실현 손익 계산 실패: {e}")
-
 

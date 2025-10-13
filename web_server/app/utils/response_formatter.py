@@ -1,3 +1,4 @@
+# @FEAT:framework @COMP:util @TYPE:helper
 """
 표준화된 API 응답 포맷터
 일관된 응답 구조 및 에러 처리

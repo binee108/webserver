@@ -1,5 +1,8 @@
 """
 헬스체크 엔드포인트
+
+@FEAT:health-monitoring @COMP:route @TYPE:core
+Health check endpoints for system monitoring and orchestration platforms.
 """
 from flask import Blueprint, jsonify
 from app import db
@@ -7,6 +10,7 @@ from datetime import datetime
 
 health_bp = Blueprint('health', __name__)
 
+# @FEAT:health-monitoring @COMP:route @TYPE:core
 @health_bp.route('/health', methods=['GET'])
 def health_check():
     """
@@ -22,7 +26,7 @@ def health_check():
         db_status = "healthy"
     except Exception as e:
         db_status = f"error: {str(e)}"
-    
+
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
@@ -30,6 +34,7 @@ def health_check():
         'service': 'trading-system'
     }), 200
 
+# @FEAT:health-monitoring @COMP:route @TYPE:core
 @health_bp.route('/health/ready', methods=['GET'])
 def readiness_check():
     """
@@ -41,7 +46,7 @@ def readiness_check():
         # 데이터베이스 연결 테스트
         from sqlalchemy import text
         db.session.execute(text('SELECT 1'))
-        
+
         # 필요시 추가 서비스 체크 (Redis, 외부 API 등)
         return jsonify({
             'status': 'ready',
@@ -50,7 +55,7 @@ def readiness_check():
                 'database': 'ok'
             }
         }), 200
-        
+
     except Exception as e:
         return jsonify({
             'status': 'not_ready',
@@ -58,6 +63,7 @@ def readiness_check():
             'error': str(e)
         }), 503
 
+# @FEAT:health-monitoring @COMP:route @TYPE:core
 @health_bp.route('/health/live', methods=['GET'])
 def liveness_check():
     """

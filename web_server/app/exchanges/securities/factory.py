@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:config
 """
 증권 거래소 팩토리
 

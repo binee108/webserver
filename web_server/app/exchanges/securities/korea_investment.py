@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:securities-implementation
 """
 한국투자증권 API 어댑터
 

@@ -1,3 +1,4 @@
+# @FEAT:background-scheduler @COMP:job @TYPE:config
 """
 백그라운드 작업 서비스 모듈
 

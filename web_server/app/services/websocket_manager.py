@@ -2,6 +2,8 @@
 WebSocket 연결 관리자
 
 계정별 WebSocket 연결 풀을 관리하고 자동 재연결 및 keep-alive를 제공합니다.
+
+@FEAT:order-tracking @COMP:service @TYPE:websocket-integration
 """
 
 import asyncio
@@ -16,6 +18,7 @@ from app.models import Account
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-tracking @COMP:service @TYPE:websocket-integration
 class WebSocketConnection:
     """단일 WebSocket 연결 래퍼"""
 
@@ -28,6 +31,7 @@ class WebSocketConnection:
         self.subscribed_symbols: Set[str] = set()
 
 
+# @FEAT:order-tracking @COMP:service @TYPE:websocket-integration
 class WebSocketManager:
     """WebSocket 연결 풀 관리자
 
@@ -47,6 +51,7 @@ class WebSocketManager:
         self.thread: Optional[Thread] = None
         self._running = False
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     def start(self):
         """WebSocket 관리자 시작 (백그라운드 스레드에서 asyncio 이벤트 루프 실행)"""
         if self._running:
@@ -73,6 +78,7 @@ class WebSocketManager:
         self.thread.start()
         logger.info("✅ WebSocketManager 시작 완료")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     def stop(self):
         """WebSocket 관리자 정지"""
         if not self._running:
@@ -92,6 +98,7 @@ class WebSocketManager:
 
         logger.info("🔌 WebSocketManager 정지 완료")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _schedule_coroutine(self, coro):
         """백그라운드 스레드에서 코루틴 스케줄링 (에러 처리 포함)"""
         if self.event_loop and self._running:
@@ -103,6 +110,7 @@ class WebSocketManager:
             return future
         return None
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _handle_future_result(self, future):
         """코루틴 실행 결과 처리
 
@@ -114,6 +122,7 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"❌ 코루틴 실행 실패: {e}", exc_info=True)
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     async def connect_account(self, account_id: int) -> bool:
         """계정의 WebSocket 연결 생성
 
@@ -163,6 +172,7 @@ class WebSocketManager:
             logger.error(f"❌ WebSocket 연결 생성 실패 - 계정: {account_id}, 오류: {e}")
             return False
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     async def disconnect_account(self, account_id: int):
         """계정의 WebSocket 연결 종료
 
@@ -186,6 +196,7 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"❌ WebSocket 연결 종료 실패 - 계정: {account_id}, 오류: {e}")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     async def subscribe_symbol(self, account_id: int, symbol: str):
         """심볼 구독 추가 (카운트 증가)
 
@@ -213,6 +224,7 @@ class WebSocketManager:
         else:
             logger.debug(f"📊 심볼 구독 카운트 증가 - 계정: {account_id}, 심볼: {symbol}, 카운트: {self.symbol_subscriptions[key]}")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     async def unsubscribe_symbol(self, account_id: int, symbol: str):
         """심볼 구독 제거 (카운트 감소)
 
@@ -249,6 +261,7 @@ class WebSocketManager:
         else:
             logger.debug(f"📊 심볼 구독 카운트 감소 - 계정: {account_id}, 심볼: {symbol}, 카운트: {new_count}")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     async def auto_reconnect(self, account_id: int, retry_count: int = 0):
         """자동 재연결 (exponential backoff)
 
@@ -299,6 +312,7 @@ class WebSocketManager:
             # 재시도
             await self.auto_reconnect(account_id, retry_count + 1)
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     async def keep_alive(self, account_id: int):
         """Ping/Pong keep-alive (30초 주기)
 
@@ -321,6 +335,7 @@ class WebSocketManager:
                 logger.error(f"❌ Keep-alive 오류 - 계정: {account_id}, 오류: {e}")
                 break
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def get_connection(self, account_id: int) -> Optional[WebSocketConnection]:
         """계정의 WebSocket 연결 반환
 
@@ -332,6 +347,7 @@ class WebSocketManager:
         """
         return self.connections.get(account_id)
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def get_stats(self) -> Dict:
         """WebSocket 관리자 통계
 

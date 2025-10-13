@@ -2,6 +2,8 @@
 주문 체결 모니터
 
 WebSocket 이벤트 수신 → REST API 확인 → DB 업데이트 → 재정렬 트리거
+
+@FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:integration
 """
 
 import asyncio
@@ -17,6 +19,7 @@ from app.services.exchange import exchange_service
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:integration
 class OrderFillMonitor:
     """주문 체결 모니터
 
@@ -30,6 +33,7 @@ class OrderFillMonitor:
     def __init__(self, app: Flask):
         self.app = app
 
+    # @FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:core
     async def on_order_update(
         self,
         account_id: int,
@@ -102,6 +106,7 @@ class OrderFillMonitor:
         except Exception as e:
             logger.error(f"❌ 주문 업데이트 처리 실패: {e}", exc_info=True)
 
+    # @FEAT:order-tracking @COMP:service @TYPE:integration
     async def _confirm_order_status(
         self,
         account_id: int,
@@ -198,6 +203,7 @@ class OrderFillMonitor:
             logger.error(f"❌ REST API 주문 확인 실패: {e}")
             return None
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     def _update_order_in_db(self, order_info: Dict[str, Any], commit: bool = True):
         """DB의 OpenOrder 업데이트 또는 삭제
 

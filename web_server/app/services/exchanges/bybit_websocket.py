@@ -2,6 +2,8 @@
 Bybit Private WebSocket 구현
 
 Bybit Private WebSocket을 통해 주문 체결 이벤트를 실시간으로 수신합니다.
+
+@FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:websocket-integration
 """
 
 import asyncio
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:websocket-integration
 class BybitWebSocket:
     """Bybit Private WebSocket 클라이언트
 
@@ -39,6 +42,7 @@ class BybitWebSocket:
         self._running = False
         self._authenticated = False
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:integration
     async def authenticate(self):
         """HMAC SHA256 인증
 
@@ -83,6 +87,7 @@ class BybitWebSocket:
             logger.error(f"❌ Bybit 인증 실패 - 계정: {self.account.id}, 오류: {e}")
             raise
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def keep_alive(self):
         """Ping 메시지 전송 (20초마다)"""
         while self._running:
@@ -110,6 +115,7 @@ class BybitWebSocket:
                 logger.error(f"❌ Keep-alive 오류: {e}", exc_info=True)
                 # 오류 발생해도 루프 계속 실행
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def connect(self):
         """WebSocket 연결 및 인증"""
         try:
@@ -143,6 +149,7 @@ class BybitWebSocket:
             logger.error(f"❌ Bybit WebSocket 연결 실패 - 계정: {self.account.id}, 오류: {e}")
             raise
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def disconnect(self):
         """WebSocket 연결 종료"""
         self._running = False
@@ -160,6 +167,7 @@ class BybitWebSocket:
 
         logger.info(f"🔌 Bybit WebSocket 연결 종료 - 계정: {self.account.id}")
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:integration
     async def subscribe_orders(self):
         """order 토픽 구독"""
         try:
@@ -175,6 +183,7 @@ class BybitWebSocket:
             logger.error(f"❌ Bybit order 토픽 구독 실패 - 계정: {self.account.id}, 오류: {e}")
             raise
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def _receive_messages(self):
         """WebSocket 메시지 수신 루프"""
         try:
@@ -215,6 +224,7 @@ class BybitWebSocket:
             if self._running:
                 await self.manager.auto_reconnect(self.account.id, 0)
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def on_message(self, data: dict):
         """WebSocket 메시지 수신 처리
 
@@ -238,6 +248,7 @@ class BybitWebSocket:
         except Exception as e:
             logger.error(f"❌ 메시지 처리 오류 - 계정: {self.account.id}, 오류: {e}")
 
+    # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:integration @DEPS:order-fill-monitor
     async def _handle_order_update(self, order_data: dict):
         """주문 업데이트 처리 → OrderFillMonitor에 위임
 

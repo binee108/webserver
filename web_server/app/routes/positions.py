@@ -1,3 +1,10 @@
+"""
+Positions and Orders API Routes
+
+@FEAT:api-gateway @FEAT:position-tracking @FEAT:order-tracking @COMP:route @TYPE:core
+Provides RESTful APIs for position management, order tracking, and real-time updates via SSE.
+"""
+
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 
@@ -9,6 +16,7 @@ from app.services.trading import trading_service as order_service
 
 bp = Blueprint('positions', __name__, url_prefix='/api')
 
+# @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core
 @bp.route('/positions/<int:position_id>/close', methods=['POST'])
 @login_required
 def close_position(position_id):
@@ -16,7 +24,7 @@ def close_position(position_id):
     try:
         # position_service에서 트랜잭션을 완전히 관리
         result = position_service.close_position_by_id(position_id, current_user.id)
-        
+
         if result.get('success'):
             current_app.logger.info(f'포지션 청산 완료: 포지션 ID {position_id} - 주문 ID: {result.get("order_id")}')
             return jsonify({
@@ -33,7 +41,7 @@ def close_position(position_id):
                 'success': False,
                 'error': result.get('error', '포지션 청산에 실패했습니다.')
             }), 400
-            
+
     except Exception as e:
         current_app.logger.error(f'포지션 청산 오류: {str(e)}')
         return jsonify({
@@ -41,6 +49,7 @@ def close_position(position_id):
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/open-orders', methods=['GET'])
 @login_required
 def get_open_orders():
@@ -48,7 +57,7 @@ def get_open_orders():
     try:
         # Service 계층을 통한 데이터 조회
         result = position_service.get_user_open_orders(current_user.id)
-        
+
         if result.get('success'):
             current_app.logger.info(f'열린 주문 조회 완료: 사용자 {current_user.id}, {len(result.get("open_orders", []))}개 주문')
             return jsonify(result)
@@ -57,7 +66,7 @@ def get_open_orders():
                 'success': False,
                 'error': result.get('error', '데이터 조회에 실패했습니다.')
             }), 500
-            
+
     except Exception as e:
         current_app.logger.error(f'열린 주문 조회 오류: {str(e)}')
         return jsonify({
@@ -65,6 +74,7 @@ def get_open_orders():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/open-orders/<string:order_id>/cancel', methods=['POST'])
 @login_required
 def cancel_open_order(order_id):
@@ -72,7 +82,7 @@ def cancel_open_order(order_id):
     try:
         # Service 계층을 통한 주문 취소
         result = order_service.cancel_order_by_user(order_id, current_user.id)
-        
+
         if result.get('success'):
             current_app.logger.info(f'주문 취소 완료: 주문 ID {order_id}')
             return jsonify({
@@ -86,7 +96,7 @@ def cancel_open_order(order_id):
                 'success': False,
                 'error': result.get('error', '주문 취소에 실패했습니다.')
             }), 400
-            
+
     except Exception as e:
         current_app.logger.error(f'주문 취소 오류: {str(e)}')
         return jsonify({
@@ -94,6 +104,7 @@ def cancel_open_order(order_id):
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/open-orders/cancel-all', methods=['POST'])
 @login_required
 def cancel_all_open_orders():
@@ -106,7 +117,7 @@ def cancel_all_open_orders():
             # JSON 파싱 실패시 빈 딕셔너리 사용
             current_app.logger.warning(f'JSON 파싱 실패, 빈 딕셔너리 사용: {str(json_error)}')
             data = {}
-        
+
         strategy_id = data.get('strategy_id')
         if strategy_id is None:
             return jsonify({
@@ -146,7 +157,7 @@ def cancel_all_open_orders():
             account_id=account_id,
             symbol=data.get('symbol')
         )
-        
+
         success_count = len(result.get('cancelled_orders', []))
         failed_count = len(result.get('failed_orders', []))
         current_app.logger.info(f'일괄 주문 취소 결과: 성공 {success_count}개, 실패 {failed_count}개')
@@ -156,7 +167,7 @@ def cancel_all_open_orders():
 
         status_code = 207 if failed_count and success_count else 400
         return jsonify(result), status_code
-            
+
     except Exception as e:
         current_app.logger.error(f'일괄 주문 취소 오류: {str(e)}')
         return jsonify({
@@ -164,16 +175,17 @@ def cancel_all_open_orders():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:position-tracking @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/positions-with-orders', methods=['GET'])
-@login_required  
+@login_required
 def get_positions_with_orders():
     """포지션과 열린 주문 통합 조회 (Service 계층 사용)"""
     try:
         current_app.logger.info(f'포지션/주문 통합 조회 요청: 사용자 {current_user.id}')
-        
+
         # position_service의 통합 조회 함수 사용
         result = position_service.get_user_open_orders_with_positions(current_user.id)
-        
+
         if result.get('success'):
             current_app.logger.info(f'포지션/주문 통합 조회 완료: 사용자 {current_user.id}')
             return jsonify(result)
@@ -182,7 +194,7 @@ def get_positions_with_orders():
                 'success': False,
                 'error': result.get('error', '데이터 조회에 실패했습니다.')
             }), 500
-            
+
     except Exception as e:
         current_app.logger.error(f'포지션/주문 통합 조회 오류: {str(e)}')
         return jsonify({
@@ -190,16 +202,17 @@ def get_positions_with_orders():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:position-tracking @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/symbol/<string:symbol>/positions-orders', methods=['GET'])
 @login_required
 def get_symbol_positions_orders(symbol):
     """특정 심볼의 포지션과 열린 주문 조회 (Service 계층 사용)"""
     try:
         current_app.logger.info(f'심볼별 포지션/주문 조회 요청: 사용자 {current_user.id}, 심볼: {symbol}')
-        
+
         # position_service의 심볼별 조회 함수 사용
         result = position_service.get_position_and_orders_by_symbol(current_user.id, symbol)
-        
+
         if result.get('success'):
             current_app.logger.info(f'심볼별 포지션/주문 조회 완료: 사용자 {current_user.id}, 심볼: {symbol}')
             return jsonify(result)
@@ -208,7 +221,7 @@ def get_symbol_positions_orders(symbol):
                 'success': False,
                 'error': result.get('error', '데이터 조회에 실패했습니다.')
             }), 500
-            
+
     except Exception as e:
         current_app.logger.error(f'심볼별 포지션/주문 조회 오류: {str(e)}')
         return jsonify({
@@ -216,16 +229,17 @@ def get_symbol_positions_orders(symbol):
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:order-tracking @COMP:route @TYPE:core
 @bp.route('/open-orders/status-update', methods=['POST'])
 @login_required
 def trigger_order_status_update():
     """열린 주문 상태 수동 업데이트 트리거 (Service 계층 사용)"""
     try:
         current_app.logger.info(f'수동 주문 상태 업데이트 요청: 사용자 {current_user.id}')
-        
+
         # order_service를 통한 상태 업데이트
         result = order_service.update_open_orders_status()
-        
+
         if result.get('success'):
             return jsonify({
                 'success': True,
@@ -239,7 +253,7 @@ def trigger_order_status_update():
                 'success': False,
                 'error': '주문 상태 업데이트에 실패했습니다.'
             }), 500
-            
+
     except Exception as e:
         current_app.logger.error(f'수동 주문 상태 업데이트 오류: {str(e)}')
         return jsonify({
@@ -247,20 +261,21 @@ def trigger_order_status_update():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:event-sse @COMP:route @TYPE:core
 @bp.route('/events/stream')
 @login_required
 def event_stream():
     """실시간 포지션/주문 업데이트 이벤트 스트림 (SSE)"""
     try:
         current_app.logger.info(f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, URL: /api/events/stream')
-        
+
         from app.services.event_service import event_service
-        
+
         # SSE 스트림 반환
         response = event_service.get_event_stream(current_user.id)
         current_app.logger.info(f'✅ SSE 스트림 생성 완료 - 사용자: {current_user.id}')
         return response
-        
+
     except Exception as e:
         current_app.logger.error(f'이벤트 스트림 생성 실패 - 사용자: {current_user.id}, 오류: {str(e)}')
         # SSE 형식의 오류 메시지 반환
@@ -270,12 +285,13 @@ def event_stream():
             mimetype='text/event-stream'
         )
 
+# @FEAT:api-gateway @COMP:route @TYPE:validation
 @bp.route('/auth/check')
 def check_auth():
     """로그인 상태 확인 API (SSE 연결 전 체크용)"""
     try:
         from flask_login import current_user
-        
+
         if current_user.is_authenticated:
             return jsonify({
                 'authenticated': True,
@@ -286,7 +302,7 @@ def check_auth():
             return jsonify({
                 'authenticated': False
             }), 401
-            
+
     except Exception as e:
         current_app.logger.error(f'인증 상태 확인 실패: {str(e)}')
         return jsonify({
@@ -294,27 +310,28 @@ def check_auth():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:event-sse @COMP:route @TYPE:core
 @bp.route('/events/stats')
 @login_required
 def event_stats():
     """이벤트 서비스 통계 조회 (관리자용)"""
     try:
         from app.services.event_service import event_service
-        
+
         # 관리자 권한 확인 (필요시)
         if not current_user.is_admin:
             return jsonify({
                 'success': False,
                 'error': '관리자 권한이 필요합니다.'
             }), 403
-        
+
         stats = event_service.get_statistics()
-        
+
         return jsonify({
             'success': True,
             'stats': stats
         })
-        
+
     except Exception as e:
         current_app.logger.error(f'이벤트 통계 조회 실패: {str(e)}')
         return jsonify({
@@ -322,6 +339,7 @@ def event_stats():
             'error': str(e)
         }), 500
 
+# @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/positions', methods=['GET'])
 @login_required
 def get_strategy_positions(strategy_id):
@@ -329,7 +347,7 @@ def get_strategy_positions(strategy_id):
     try:
         from app.models import Strategy, StrategyPosition, StrategyAccount
         from sqlalchemy.orm import joinedload
-        
+
         # 전략 존재 확인
         strategy = Strategy.query.filter_by(id=strategy_id).first()
         if not strategy:
@@ -337,7 +355,7 @@ def get_strategy_positions(strategy_id):
                 'success': False,
                 'error': '전략을 찾을 수 없습니다.'
             }), 404
-        
+
         # 권한 확인: 소유자이거나, 해당 전략에 내 계좌가 연결되어 있어야 함
         from app.models import Account
         is_owner = (strategy.user_id == current_user.id)
@@ -351,7 +369,7 @@ def get_strategy_positions(strategy_id):
                     'success': False,
                     'error': '접근 권한이 없습니다.'
                 }), 403
-        
+
         # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
         positions_query = StrategyPosition.query.join(StrategyAccount).join(Account).options(
             joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account)
@@ -360,7 +378,7 @@ def get_strategy_positions(strategy_id):
             Account.user_id == current_user.id,
             StrategyPosition.quantity != 0
         ).all()
-        
+
         # StrategyPosition 객체들을 딕셔너리로 변환
         positions = []
         for pos in positions_query:
@@ -376,22 +394,23 @@ def get_strategy_positions(strategy_id):
                 'last_updated': pos.last_updated.isoformat() if pos.last_updated else None
             }
             positions.append(position_dict)
-        
+
         current_app.logger.info(f'전략 {strategy_id} 포지션 조회 완료: {len(positions)}개')
-        
+
         return jsonify({
             'success': True,
             'positions': positions,
             'total_count': len(positions)
         })
-        
+
     except Exception as e:
         current_app.logger.error(f'전략 포지션 조회 실패: {str(e)}')
         return jsonify({
             'success': False,
             'error': str(e)
-        }), 500 
+        }), 500
 
+# @FEAT:api-gateway @FEAT:order-tracking @COMP:route @TYPE:core
 # 구독 전략용: 내 계좌의 열린 주문 조회
 @bp.route('/strategies/<int:strategy_id>/my/open-orders', methods=['GET'])
 @login_required

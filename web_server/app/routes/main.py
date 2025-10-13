@@ -1,3 +1,10 @@
+"""
+Main Page Routes
+
+@FEAT:api-gateway @COMP:route @TYPE:core
+Handles main page rendering, dashboard, accounts, strategies, and position pages.
+"""
+
 from flask import Blueprint, render_template, redirect, url_for
 from flask_login import login_required, current_user
 from app.models import Strategy, Account, Trade, OpenOrder, StrategyAccount, StrategyPosition
@@ -10,6 +17,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 bp = Blueprint('main', __name__)
 
+# @FEAT:api-gateway @COMP:route @TYPE:core
 @bp.route('/')
 def index():
     """홈페이지"""
@@ -17,6 +25,7 @@ def index():
         return redirect(url_for('main.dashboard'))
     return redirect(url_for('auth.login'))
 
+# @FEAT:api-gateway @COMP:route @TYPE:core
 @bp.route('/dashboard')
 @login_required
 def dashboard():
@@ -24,37 +33,37 @@ def dashboard():
     # 사용자의 전략들
     strategies = Strategy.query.filter_by(user_id=current_user.id).all()
     active_strategies = [s for s in strategies if s.is_active]
-    
+
     # 오늘 거래 수 계산
     today = datetime.now().date()
     today_trades_count = 0
-    
+
     # 미체결 주문 수 계산
     pending_orders_count = 0
-    
+
     # 최근 거래 내역 (최대 5개)
     recent_trades = []
-    
+
     if strategies:
         strategy_ids = [s.id for s in strategies]
-        
+
         # 오늘 거래 수
         today_trades_count = db.session.query(Trade).join(StrategyAccount).filter(
             StrategyAccount.strategy_id.in_(strategy_ids),
             func.date(Trade.timestamp) == today
         ).count()
-        
+
         # 미체결 주문 수
         pending_orders_count = db.session.query(OpenOrder).join(StrategyAccount).filter(
             StrategyAccount.strategy_id.in_(strategy_ids),
             OpenOrder.status.in_(['OPEN', 'PARTIALLY_FILLED'])
         ).count()
-        
+
         # 최근 거래 내역
         recent_trades = db.session.query(Trade).join(StrategyAccount).filter(
             StrategyAccount.strategy_id.in_(strategy_ids)
         ).order_by(Trade.timestamp.desc()).limit(5).all()
-    
+
     return render_template('dashboard.html', MarketType=MarketType,
                          strategies=active_strategies,
                          active_strategies_count=len(active_strategies),
@@ -62,6 +71,7 @@ def dashboard():
                          pending_orders_count=pending_orders_count,
                          recent_trades=recent_trades)
 
+# @FEAT:api-gateway @COMP:route @TYPE:core
 @bp.route('/accounts')
 @login_required
 def accounts():
@@ -88,6 +98,7 @@ def accounts():
 
     return render_template('accounts.html', accounts=accounts, MarketType=MarketType)
 
+# @FEAT:api-gateway @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies')
 @login_required
 def strategies():
@@ -103,6 +114,7 @@ def strategies():
         # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
         return render_template('strategies.html', strategies=[], MarketType=MarketType)
 
+# @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/positions')
 @login_required
 def strategy_positions(strategy_id):
@@ -132,7 +144,7 @@ def strategy_positions(strategy_id):
             Account.user_id == current_user.id,
             StrategyPosition.quantity != 0
         ).all()
-    
+
     # StrategyPosition 객체들을 딕셔너리로 변환 (JSON 직렬화 가능하도록)
     positions = []
     for pos in positions_query:
@@ -150,5 +162,5 @@ def strategy_positions(strategy_id):
             } if pos.strategy_account and pos.strategy_account.account else None
         }
         positions.append(position_dict)
-    
-    return render_template('positions.html', strategy=strategy, positions=positions, MarketType=MarketType) 
+
+    return render_template('positions.html', strategy=strategy, positions=positions, MarketType=MarketType)

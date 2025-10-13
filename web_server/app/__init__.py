@@ -1,3 +1,4 @@
+# @FEAT:framework @COMP:config @TYPE:boilerplate
 import os
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,7 +18,7 @@ def setup_config_path():
     """config 경로 설정 및 import"""
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(current_dir, '..', '..', 'config')
-    
+
     if os.path.exists(config_path):
         sys.path.insert(0, os.path.abspath(config_path))
         try:
@@ -61,7 +62,7 @@ if config is None:
         SERVER_NAME = None
         DEBUG = True
         APPLICATION_ROOT = '/'
-    
+
     config = {
         'development': DefaultConfig,
         'production': DefaultConfig,
@@ -80,19 +81,19 @@ def create_app(config_name=None):
     """Flask 애플리케이션 팩토리"""
     if config_name is None:
         config_name = os.environ.get('FLASK_ENV', 'default')
-    
+
     app = Flask(__name__)
     app.config.from_object(config[config_name])
-    
-    # 🔧 세션 쿠키 설정 - localhost와 외부 IP 모두에서 작동하도록 
+
+    # 🔧 세션 쿠키 설정 - localhost와 외부 IP 모두에서 작동하도록
     app.config['SESSION_COOKIE_DOMAIN'] = None  # 도메인 제한 없음
     app.config['SESSION_COOKIE_SECURE'] = True  # HTTPS에서만 쿠키 전송
     app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScript 접근 방지
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF 보호
-    
+
     # URL 라우팅 설정
     app.url_map.strict_slashes = False
-    
+
     # ProxyFix 설정 (Nginx 리버스 프록시용)
     app.wsgi_app = ProxyFix(
         app.wsgi_app,
@@ -101,23 +102,23 @@ def create_app(config_name=None):
         x_host=1,
         x_prefix=1
     )
-    
+
     # 확장 초기화
     db.init_app(app)
     login_manager.init_app(app)
     csrf.init_app(app)
-    
+
     # Flask-Login 설정
     login_manager.login_view = 'auth.login'
     login_manager.login_message = '로그인이 필요합니다.'
     login_manager.login_message_category = 'info'
-    
+
     # 사용자 로더 함수
     @login_manager.user_loader
     def load_user(user_id):
         from app.models import User
         return User.query.get(int(user_id))
-    
+
     # 비밀번호 변경 강제 미들웨어
     @app.before_request
     def check_password_change_required():
@@ -125,55 +126,55 @@ def create_app(config_name=None):
         # 로그인하지 않은 사용자는 통과
         if not current_user.is_authenticated:
             return
-        
+
         # 비밀번호 변경이 필요하지 않은 사용자는 통과
         if not current_user.must_change_password:
             return
-        
+
         # 허용된 엔드포인트들
         allowed_endpoints = [
             'auth.force_change_password',
             'auth.logout',
             'static'
         ]
-        
+
         # 현재 요청이 허용된 엔드포인트인지 확인
         if request.endpoint in allowed_endpoints:
             return
-        
+
         # 비밀번호 변경 페이지로 리다이렉트
         return redirect(url_for('auth.force_change_password'))
-    
+
     # 블루프린트 등록
     from app.routes import register_blueprints
     register_blueprints(app)
-    
+
     # 등록된 라우트 디버그 출력 (개발환경에서만)
     if app.debug:
         app.logger.info("등록된 라우트들:")
         for rule in app.url_map.iter_rules():
             app.logger.info(f"  {rule.rule} -> {rule.endpoint}")
-    
+
     # 로깅 설정
     if not os.path.exists('logs'):
         os.mkdir('logs')
-    
+
     # 파일 핸들러 설정
     file_handler = RotatingFileHandler(
-        app.config['LOG_FILE'], 
-        maxBytes=10240000, 
+        app.config['LOG_FILE'],
+        maxBytes=10240000,
         backupCount=10
     )
     file_handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
     ))
-    
+
     # 환경별 로깅 레벨 설정
     log_level = getattr(logging, app.config.get('LOG_LEVEL', 'INFO').upper())
     file_handler.setLevel(log_level)
     app.logger.addHandler(file_handler)
     app.logger.setLevel(log_level)
-    
+
     # 개발 환경에서는 콘솔에도 출력
     if app.debug:
         console_handler = logging.StreamHandler()
@@ -182,19 +183,19 @@ def create_app(config_name=None):
             '%(asctime)s %(levelname)s: %(message)s'
         ))
         app.logger.addHandler(console_handler)
-    
+
     # 백그라운드 작업용 별도 로거 설정
     background_logger = logging.getLogger('trading_system.background')
     background_log_level = getattr(logging, app.config.get('BACKGROUND_LOG_LEVEL', 'WARNING').upper())
     background_logger.setLevel(background_log_level)
     background_logger.addHandler(file_handler)
-    
+
     app.logger.info('Trading System startup')
-    
+
     # Flask CLI 명령어 실행 중인지 확인
     import sys
     is_cli_command = len(sys.argv) > 1 and sys.argv[1] in ['--help'] or 'flask' in sys.argv[0]
-    
+
     # CLI 명령어가 아닐 때만 데이터베이스 초기화 및 스케줄러 시작
     if not is_cli_command:
         # 데이터베이스 테이블 생성
@@ -207,7 +208,7 @@ def create_app(config_name=None):
                         conn.execute(text('DROP TABLE alembic_version'))
                         conn.commit()
                     app.logger.info('마이그레이션 히스토리 테이블 제거 완료')
-                
+
                 # 모든 테이블 생성 (이미 존재하는 테이블은 무시됨)
                 db.create_all()
                 app.logger.info('데이터베이스 테이블 생성 완료')
@@ -327,9 +328,16 @@ def create_app(config_name=None):
                     app.logger.info('최초 로그인 시 비밀번호 변경이 필요합니다.')
             except Exception as e:
                 app.logger.warning(f'관리자 계정 생성 실패: {str(e)}')
-            
-            # APScheduler 초기화 및 백그라운드 작업 등록
-            init_scheduler(app)
+
+            # APScheduler 초기화 및 백그라운드 작업 등록 (워커 프로세스만)
+            # Flask 개발 서버는 reloader를 위해 2개 프로세스를 실행
+            # - 메인 프로세스: 파일 변경 감지 (WERKZEUG_RUN_MAIN 없음)
+            # - 워커 프로세스: 실제 요청 처리 (WERKZEUG_RUN_MAIN='true')
+            # 스케줄러는 워커 프로세스에서만 1번 시작해야 함
+            if os.environ.get('WERKZEUG_RUN_MAIN'):
+                init_scheduler(app)
+            else:
+                app.logger.info('🔄 Flask reloader 메인 프로세스 - 스케줄러 건너뜀')
 
             # 서비스 의존성 초기화 (순환 의존성 해결)
             try:
@@ -371,11 +379,11 @@ def init_scheduler(app):
     """APScheduler 초기화 및 백그라운드 작업 등록"""
     if scheduler.running:
         return
-    
+
     try:
         # APScheduler 설정 (메모리 기반 jobstore 사용)
         from apscheduler.jobstores.memory import MemoryJobStore
-        
+
         jobstores = {
             'default': MemoryJobStore()
         }
@@ -386,14 +394,14 @@ def init_scheduler(app):
             'coalesce': False,
             'max_instances': 3
         }
-        
+
         scheduler.configure(
             jobstores=jobstores,
             executors=executors,
             job_defaults=job_defaults,
             timezone='Asia/Seoul'
         )
-        
+
         # 스케줄러에 강제 실행 메서드 추가
         def get_status():
             """스케줄러 상태 조회"""
@@ -410,7 +418,7 @@ def init_scheduler(app):
                 ],
                 'last_check': datetime.utcnow().isoformat()
             }
-        
+
         def force_update_orders():
             """주문 상태 강제 업데이트"""
             try:
@@ -419,7 +427,7 @@ def init_scheduler(app):
             except Exception as e:
                 app.logger.error(f'주문 상태 강제 업데이트 실패: {str(e)}')
                 return False
-        
+
         def force_calculate_pnl():
             """미실현 손익 강제 계산"""
             try:
@@ -428,19 +436,19 @@ def init_scheduler(app):
             except Exception as e:
                 app.logger.error(f'미실현 손익 강제 계산 실패: {str(e)}')
                 return False
-        
+
         # 스케줄러 객체에 메서드 추가
         scheduler.get_status = get_status
         scheduler.force_update_orders = force_update_orders
         scheduler.force_calculate_pnl = force_calculate_pnl
-        
+
         # 스케줄러 시작
         scheduler.start()
         app.logger.info('APScheduler 시작됨')
-        
+
         # 백그라운드 작업 등록
         register_background_jobs(app)
-        
+
         # 애플리케이션 종료 시 스케줄러도 종료
         def shutdown_scheduler():
             if scheduler.running:
@@ -459,7 +467,7 @@ def init_scheduler(app):
             except Exception as e:
                 app.logger.error(f"❌ ExchangeService 정리 중 오류: {e}", exc_info=True)
         atexit.register(cleanup_exchange_service)
-        
+
         # 텔레그램 시스템 시작 알림
         try:
             from app.services.telegram import telegram_service
@@ -469,7 +477,7 @@ def init_scheduler(app):
                 app.logger.debug('텔레그램이 비활성화되어 있어 시작 알림을 건너뜁니다.')
         except Exception as e:
             app.logger.debug(f'텔레그램 시작 알림 전송 실패: {str(e)}')
-            
+
     except Exception as e:
         app.logger.error(f'APScheduler 초기화 실패: {str(e)}')
 
@@ -509,7 +517,7 @@ def register_background_jobs(app):
             app.logger.info('✅ 애플리케이션 시작 시 캐시 웜업 완료')
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 캐시 웜업 실패: {str(e)}')
-    
+
     # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시 7분 - 소수 시간대)
     scheduler.add_job(
         func=update_precision_cache_with_context,
@@ -654,16 +662,16 @@ def warm_up_precision_cache_with_context(app):
     with app.app_context():
         try:
             from app.services.exchange import exchange_service
-            
+
             app.logger.info('🔥 Precision 캐시 웜업 시작')
-            
+
             # 모든 활성 계좌로 캐시 웜업
             exchange_service.warm_up_precision_cache()
-            
+
             # 웜업 완료 후 통계 로깅
             stats = exchange_service.get_precision_cache_stats()
             app.logger.info(f'🔥 Precision 캐시 웜업 완료 - 통계: {stats}')
-            
+
         except Exception as e:
             app.logger.error(f'❌ Precision 캐시 웜업 실패: {str(e)}')
 
@@ -673,23 +681,23 @@ def update_precision_cache_with_context(app):
         try:
             from app.services.exchange import exchange_service
             from app.models import Account
-            
+
             app.logger.info('🔄 Precision 캐시 주기적 업데이트 시작')
-            
+
             # 모든 활성 계좌 조회
             active_accounts = Account.query.filter_by(is_active=True).all()
-            
+
             if not active_accounts:
                 app.logger.warning('활성 계좌가 없어 Precision 캐시 업데이트를 건너뜁니다')
                 return
-            
+
             # 거래소별로 그룹화하여 업데이트
             exchange_groups = {}
             for account in active_accounts:
                 exchange_name = account.exchange.lower()
                 if exchange_name not in exchange_groups:
                     exchange_groups[exchange_name] = account
-            
+
             # 각 거래소별로 precision 캐시 업데이트
             total_updated = 0
             for exchange_name, account in exchange_groups.items():
@@ -700,15 +708,15 @@ def update_precision_cache_with_context(app):
                     )
                     total_updated += updated_count
                     app.logger.info(f'✅ {exchange_name} precision 캐시 업데이트 완료 - {updated_count}개 심볼')
-                    
+
                 except Exception as e:
                     app.logger.error(f'❌ {exchange_name} precision 캐시 업데이트 실패: {str(e)}')
                     continue
-            
+
             # 업데이트 완료 후 통계 로깅
             stats = exchange_service.get_precision_cache_stats()
             app.logger.info(f'🔄 Precision 캐시 주기적 업데이트 완료 - 총 {total_updated}개 심볼, 통계: {stats}')
-            
+
         except Exception as e:
             app.logger.error(f'❌ Precision 캐시 주기적 업데이트 실패: {str(e)}')
 
@@ -1127,4 +1135,3 @@ def refresh_securities_tokens_with_context(app):
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
-

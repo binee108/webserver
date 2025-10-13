@@ -1,3 +1,4 @@
+# @FEAT:order-queue @COMP:service @TYPE:core @DEPS:order-tracking,exchange-integration
 """
 주문 대기열 관리 모듈
 
@@ -21,6 +22,7 @@ from app.services.utils import to_decimal
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-queue @COMP:service @TYPE:core
 class OrderQueueManager:
     """주문 대기열 관리자
 
@@ -33,7 +35,13 @@ class OrderQueueManager:
 
     MAX_RETRY_COUNT = 5  # 재시도 횟수 제한 상수
 
+    # @FEAT:order-queue @COMP:service @TYPE:core
     def __init__(self, service: Optional[object] = None) -> None:
+        """주문 큐 매니저 초기화
+
+        Args:
+            service: TradingCore 인스턴스 (거래소 API 호출용)
+        """
         self.service = service
 
         # EventEmitter 추가 (PendingOrder SSE 이벤트 발송용)
@@ -53,6 +61,7 @@ class OrderQueueManager:
             'avg_duration_ms': 0
         }
 
+    # @FEAT:order-queue @COMP:service @TYPE:core
     def enqueue(
         self,
         strategy_account_id: int,
@@ -169,6 +178,7 @@ class OrderQueueManager:
                 'error': str(e)
             }
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def _calculate_sort_price(
         self,
         order_type: str,
@@ -230,6 +240,7 @@ class OrderQueueManager:
         logger.warning(f"정렬 가격 계산 불가능한 주문 타입: {order_type}")
         return None
 
+    # @FEAT:order-queue @COMP:service @TYPE:core
     def rebalance_symbol(self, account_id: int, symbol: str, commit: bool = True) -> Dict[str, Any]:
         """심볼별 동적 재정렬 (핵심 알고리즘)
 
@@ -326,6 +337,15 @@ class OrderQueueManager:
                     f"📋 현재 상태 - 거래소: {len(active_orders)}개, "
                     f"대기열: {len(pending_orders)}개"
                 )
+
+                # 🔍 디버깅: PendingOrder 상세 정보
+                if pending_orders:
+                    logger.info(f"🔍 PendingOrder 목록:")
+                    for po in pending_orders:
+                        logger.info(
+                            f"  - ID: {po.id}, Price: {po.price}, "
+                            f"Priority: {po.priority}, Created: {po.created_at}"
+                        )
 
                 # Step 3: 통합 정렬
                 all_orders = []
@@ -471,6 +491,7 @@ class OrderQueueManager:
                     'executed': 0
                 }
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def _get_order_sort_price(self, order: OpenOrder) -> Optional[Decimal]:
         """OpenOrder의 정렬 가격 계산
 
@@ -487,6 +508,7 @@ class OrderQueueManager:
             stop_price=stop_price
         )
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def _classify_failure_type(self, error_message: str) -> str:
         """
         거래소 에러 메시지를 분류하여 실패 유형 반환
@@ -522,6 +544,7 @@ class OrderQueueManager:
 
         return 'unknown'
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def _is_recoverable(self, error_type: str) -> bool:
         """
         실패 유형이 복구 가능한지 판단
@@ -540,6 +563,7 @@ class OrderQueueManager:
 
         return error_type in recoverable_types
 
+    # @FEAT:order-queue @COMP:service @TYPE:integration
     def _move_to_pending(self, open_order: OpenOrder) -> bool:
         """거래소 주문 → 대기열 이동
 
@@ -593,6 +617,7 @@ class OrderQueueManager:
             logger.error(f"거래소→대기열 이동 실패: {e}")
             return False
 
+    # @FEAT:order-queue @COMP:service @TYPE:integration
     def _execute_pending_order(self, pending_order: PendingOrder) -> Dict[str, Any]:
         """대기열 주문 → 거래소 실행
 
@@ -725,6 +750,7 @@ class OrderQueueManager:
                 'error': str(e)
             }
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def get_pending_orders(
         self,
         account_id: Optional[int] = None,
@@ -759,6 +785,7 @@ class OrderQueueManager:
 
         return query.all()
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def clear_pending_orders(
         self,
         account_id: Optional[int] = None,
@@ -797,6 +824,7 @@ class OrderQueueManager:
             logger.error(f"대기열 정리 실패: {e}")
             return 0
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def get_metrics(self) -> Dict[str, Any]:
         """성능 메트릭 조회
 
@@ -810,6 +838,7 @@ class OrderQueueManager:
         """
         return self.metrics.copy()
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
     def reset_metrics(self):
         """메트릭 초기화"""
         self.metrics = {

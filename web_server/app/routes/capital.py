@@ -1,3 +1,4 @@
+# @FEAT:capital-management @COMP:route @TYPE:core
 """
 자본 배분 관련 라우트
 """
@@ -15,6 +16,7 @@ logger = get_secure_logger(__name__)
 bp = Blueprint('capital', __name__)
 
 
+# @FEAT:capital-management @COMP:route @TYPE:core
 @bp.route('/api/capital/reallocate/<int:account_id>', methods=['POST'])
 @login_required
 @csrf.exempt
@@ -74,6 +76,7 @@ def reallocate_account_capital(account_id):
         }), 500
 
 
+# @FEAT:capital-management @COMP:route @TYPE:core
 @bp.route('/api/capital/reallocate-all', methods=['POST'])
 @login_required
 @csrf.exempt
@@ -153,6 +156,7 @@ def reallocate_all_accounts():
         }), 500
 
 
+# @FEAT:capital-management @COMP:route @TYPE:validation
 @bp.route('/api/capital/rebalance-status/<int:account_id>', methods=['GET'])
 @login_required
 def get_rebalance_status(account_id):
@@ -204,6 +208,7 @@ def get_rebalance_status(account_id):
         }), 500
 
 
+# @FEAT:capital-management @COMP:route @TYPE:core
 @bp.route('/api/capital/auto-rebalance-all', methods=['POST'])
 @login_required
 @csrf.exempt

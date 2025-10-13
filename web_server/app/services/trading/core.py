@@ -1,4 +1,4 @@
-
+# @FEAT:framework @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
 """Core trading execution logic extracted from the legacy trading service."""
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ from app.services.utils import to_decimal
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:framework @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
 class TradingCore:
     """Encapsulates trading execution, signal processing, and exchange coordination."""
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
     def execute_trade(self, strategy: Strategy, symbol: str, side: str,
                      quantity: Decimal, order_type: str,
                      price: Optional[Decimal] = None,
@@ -221,6 +223,7 @@ class TradingCore:
                 failure_payload['account_id'] = account.id
             return failure_payload
 
+    # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_trading_signal(self, webhook_data: Dict[str, Any],
                                timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """거래 신호 처리"""
@@ -329,6 +332,7 @@ class TradingCore:
             }
         }
 
+    # @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:helper
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str,
                                  side: str, order_type: str, price: Optional[Decimal],
                                  stop_price: Optional[Decimal], qty_per: Decimal,
@@ -466,6 +470,7 @@ class TradingCore:
 
         return results
 
+    # @FEAT:webhook-order @COMP:service @TYPE:helper
     def _prepare_batch_orders_by_account(
         self,
         strategy: Strategy,
@@ -604,6 +609,7 @@ class TradingCore:
 
         return orders_by_account
 
+    # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_batch_trading_signal(self, webhook_data: Dict[str, Any],
                                      timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """배치 거래 신호 처리 (Exchange 배치 API 활용)"""
@@ -912,6 +918,7 @@ class TradingCore:
         }
 
 
+    # @FEAT:framework @COMP:service @TYPE:integration
     def _execute_exchange_order(self, account: Account, symbol: str, side: str,
                                 quantity: Decimal, order_type: str, market_type: str,
                                 price: Optional[Decimal] = None,
@@ -919,7 +926,7 @@ class TradingCore:
                                 timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """
         거래소에 주문을 전송하고 결과를 반환합니다.
-        
+
         Args:
             account: 거래 계좌
             symbol: 거래 심볼
@@ -930,7 +937,7 @@ class TradingCore:
             price: 지정가 (LIMIT 주문 시)
             stop_price: 스탑 가격 (STOP 주문 시)
             timing_context: 타이밍 측정용 딕셔너리
-            
+
         Returns:
             Dict with keys:
                 - success (bool): 성공 여부
@@ -941,14 +948,14 @@ class TradingCore:
                 - error (str): 에러 메시지 (실패 시)
         """
         from app.services.utils import decimal_to_float
-        
+
         try:
             # 타이밍 기록 시작
             if timing_context is not None:
                 timing_context['exchange_call_start'] = time.time()
-            
+
             logger.info(f"거래소 주문 전송 - 마켓타입: {market_type}, 수량: {quantity}, 가격: {price}")
-            
+
             # 거래소 주문 실행
             order_result = exchange_service.create_order(
                 account=account,
@@ -960,11 +967,11 @@ class TradingCore:
                 price=price,  # Decimal 타입 그대로 전달
                 stop_price=stop_price  # Decimal 타입 그대로 전달
             )
-            
+
             # 타이밍 기록 종료
             if timing_context is not None:
                 timing_context['exchange_call_end'] = time.time()
-            
+
             # 주문 ID 확인 (exchange_service는 항상 'order_id'를 반환 - 단일 진실 소스)
             order_id = order_result.get('order_id')
             if not order_id:
@@ -984,7 +991,7 @@ class TradingCore:
                 'adjusted_stop_price': stop_price,
                 'raw_result': order_result
             }
-            
+
         except Exception as e:
             logger.error(f"거래소 주문 실패: {e}")
             return {
@@ -992,20 +999,21 @@ class TradingCore:
                 'error': str(e),
                 'error_type': 'exchange_error'
             }
+    # @FEAT:framework @COMP:service @TYPE:helper
     def _merge_order_with_exchange(self, account: Account, symbol: str,
                                    market_type: str, order_result: Dict[str, Any]) -> Dict[str, Any]:
         """
         거래소의 주문 상태를 조회하여 order_result에 병합합니다.
-        
+
         Args:
             account: 거래 계좌
             symbol: 거래 심볼
             market_type: 마켓 타입 (spot/futures)
             order_result: 기존 주문 결과 딕셔너리
-            
+
         Returns:
             병합된 주문 정보 딕셔너리
-            
+
         Note:
             거래소에서 최신 주문 정보를 가져와 filled_quantity, average_price 등을 업데이트합니다.
         """
@@ -1014,7 +1022,7 @@ class TradingCore:
             if not order_id:
                 logger.warning("주문 ID가 없어 거래소 주문 병합을 건너뜁니다")
                 return order_result
-            
+
             # 거래소에서 최신 주문 상태 조회
             logger.debug(f"거래소 주문 상태 조회 - order_id: {order_id}, symbol: {symbol}")
             exchange_order = exchange_service.fetch_order(
@@ -1023,7 +1031,7 @@ class TradingCore:
                 order_id=order_id,
                 market_type=market_type
             )
-            
+
             if exchange_order and isinstance(exchange_order, dict):
                 # 거래소 응답에서 중요 필드 추출하여 병합
                 merged = order_result.copy()
@@ -1053,11 +1061,12 @@ class TradingCore:
             else:
                 logger.warning(f"거래소 주문 조회 실패 또는 응답 없음 - order_id: {order_id}")
                 return order_result
-                
+
         except Exception as e:
             logger.warning(f"거래소 주문 병합 실패: {e}, 원본 결과 사용")
             return order_result
 
+    # @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:core
     def process_orders(
         self,
         webhook_data: Dict[str, Any],
@@ -1172,6 +1181,7 @@ class TradingCore:
             }
         }
 
+    # @FEAT:order-queue @COMP:service @TYPE:core
     def _process_queued_orders_with_rebalance(
         self,
         strategy: Strategy,
@@ -1180,18 +1190,18 @@ class TradingCore:
         timing_context: Optional[Dict[str, float]] = None
     ) -> List[Dict[str, Any]]:
         """
-        LIMIT/STOP 주문 처리: PendingOrders 추가 → 재정렬 → 거래소 실행
+        LIMIT/STOP 주문 처리: PendingOrders 추가 → 스케줄러에 위임
 
-        ✅ v2 개선:
-        - enqueue(commit=False) 사용 (트랜잭션 보장)
-        - _execute_pending_order() 반환값 활용 (N+1 제거)
-        - threading.Lock으로 동시성 보호
+        ✅ v3 옵션 A (레이스 컨디션 해결):
+        - 웹훅에서 rebalance_symbol() 호출 제거
+        - 스케줄러가 매초 자동으로 재정렬 실행 (단일 진입점)
+        - 레이스 컨디션 완전 제거
 
         처리 흐름:
         1. 계정별 그룹화 (_prepare_batch_orders_by_account 재사용)
         2. 각 주문을 PendingOrders에 추가 (commit=False)
-        3. 심볼별 재정렬 (rebalance_symbol, commit=True)
-        4. 재정렬 결과에서 실행된 주문 확인 (N+1 제거)
+        3. 단일 커밋 (원자적 트랜잭션)
+        4. 모든 주문을 queued=True로 응답 (스케줄러가 1초 내 처리)
 
         Args:
             strategy: Strategy 객체
@@ -1275,164 +1285,25 @@ class TradingCore:
                             }
                         })
 
-                # 3. 심볼별 재정렬 (동기 실행, commit=True)
-                symbols = set(order['symbol'] for order in exchange_orders)
+                # 3. ✅ 단일 커밋 (옵션 A: 웹훅에서 재정렬 제거, 스케줄러에 위임)
+                db.session.commit()
+                logger.info(f"✅ PendingOrder 커밋 완료 - 계정: {account.name}, 주문 수: {len(pending_map)}")
 
-                # ✅ v2.1: pending_map_reverse 생성 (pending_id → original_index 매핑)
-                pending_map_reverse = {v: k for k, v in pending_map.items()}
-
-                for symbol in symbols:
-                    logger.info(f"🔄 재정렬 실행 - 계정: {account.name}, 심볼: {symbol}")
-
-                    rebalance_result = self.service.order_queue_manager.rebalance_symbol(
-                        account_id=account.id,
-                        symbol=symbol,
-                        commit=True  # ✅ v2: 단일 커밋 (조건 2)
-                    )
-
-                    if rebalance_result['success']:
-                        logger.info(
-                            f"✅ 재정렬 완료 - "
-                            f"실행: {rebalance_result['executed']}, "
-                            f"취소: {rebalance_result['cancelled']}, "
-                            f"실패: {len(rebalance_result.get('failed_orders', []))}, "
-                            f"소요 시간: {rebalance_result['duration_ms']:.2f}ms"
-                        )
-
-                        # ✅ v2.1: 실패한 주문 처리
-                        failed_orders = rebalance_result.get('failed_orders', [])
-                        for failed_order in failed_orders:
-                            error_type = failed_order.get('error_type', 'unknown')
-                            recoverable = failed_order.get('recoverable', False)
-                            pending_id = failed_order.get('pending_id')
-
-                            if recoverable:
-                                # 복구 가능 → PendingOrder 유지 (스케줄러가 재시도)
-                                logger.info(
-                                    f"⏳ 재시도 대기 - pending_id: {pending_id}, "
-                                    f"사유: {error_type}"
-                                )
-                                # results에 queued로 추가 (실패했지만 재시도 예정)
-                                # ✅ v2.1: Defensive logging for missing reverse map
-                                order_idx = pending_map_reverse.get(pending_id, -1)
-                                if order_idx == -1:
-                                    logger.warning(
-                                        f"⚠️ 실패 주문 pending_id {pending_id}가 현재 배치에 없음 "
-                                        f"(재시도 또는 다른 배치의 주문일 수 있음)"
-                                    )
-
-                                results.append({
-                                    'order_index': order_idx,
-                                    'success': True,
-                                    'queued': True,
-                                    'pending_order_id': pending_id,
-                                    'retry_scheduled': True,
-                                    'result': {
-                                        'action': 'trading_signal',
-                                        'success': True,
-                                        'message': f'일시적 실패 - 재시도 예정 ({error_type})',
-                                        'account_id': account.id,
-                                        'account_name': account.name
-                                    }
-                                })
-                            else:
-                                # 복구 불가능 → 텔레그램 알림 + 삭제
-                                logger.error(
-                                    f"❌ 복구 불가능한 실패 - pending_id: {pending_id}, "
-                                    f"사유: {error_type}, 알림 발송 중..."
-                                )
-
-                                # 텔레그램 알림 발송
-                                try:
-                                    self.service.telegram_service.send_order_failure_alert(
-                                        strategy=strategy,
-                                        account=account,
-                                        symbol=failed_order['symbol'],
-                                        error_type=error_type,
-                                        error_message=failed_order['error']
-                                    )
-                                except Exception as e:
-                                    logger.error(f"텔레그램 알림 발송 실패: {e}")
-
-                                # PendingOrder 삭제 (복구 불가능) - 커밋은 재정렬 완료 후
-                                PendingOrder.query.filter_by(id=pending_id).delete()
-                                # ✅ v2.1: 중첩 commit 제거 - 외부 트랜잭션이 처리 (원자성 보장)
-
-                                # results에 실패로 추가
-                                # ✅ v2.1: Defensive logging for missing reverse map
-                                order_idx = pending_map_reverse.get(pending_id, -1)
-                                if order_idx == -1:
-                                    logger.warning(
-                                        f"⚠️ 실패 주문 pending_id {pending_id}가 현재 배치에 없음 "
-                                        f"(재시도 또는 다른 배치의 주문일 수 있음)"
-                                    )
-
-                                results.append({
-                                    'order_index': order_idx,
-                                    'success': False,
-                                    'result': {
-                                        'action': 'trading_signal',
-                                        'success': False,
-                                        'error': f'{error_type}: {failed_order["error"]}',
-                                        'account_id': account.id,
-                                        'account_name': account.name,
-                                        'alert_sent': True
-                                    }
-                                })
-                    else:
-                        logger.error(
-                            f"❌ 재정렬 실패 - "
-                            f"계정: {account.name}, 심볼: {symbol}, "
-                            f"error: {rebalance_result.get('error')}"
-                        )
-                        # 재정렬 실패 시 롤백 (조건 2)
-                        raise Exception(f"재정렬 실패: {rebalance_result.get('error')}")
-
-                # 4. 재정렬 후 결과 검증 (✅ v2: N+1 제거)
-                # Bulk query: 한 번에 모든 PendingOrder 존재 여부 확인
-                remaining_pending_ids = set(
-                    row[0] for row in PendingOrder.query.filter(
-                        PendingOrder.id.in_(pending_map.values())
-                    ).with_entities(PendingOrder.id).all()
-                )
-
+                # 4. 모든 주문을 queued로 results에 추가 (스케줄러가 처리)
                 for original_idx, pending_id in pending_map.items():
-                    if pending_id not in remaining_pending_ids:
-                        # 재정렬에서 실행되어 삭제됨 → 거래소 전송 성공
-                        symbol = next(
-                            (order['symbol'] for order in exchange_orders
-                             if order['original_index'] == original_idx),
-                            None
-                        )
-
-                        results.append({
-                            'order_index': original_idx,
+                    results.append({
+                        'order_index': original_idx,
+                        'success': True,
+                        'queued': True,
+                        'pending_order_id': pending_id,
+                        'result': {
+                            'action': 'trading_signal',
                             'success': True,
-                            'queued': False,
-                            'executed': True,
-                            'result': {
-                                'action': 'trading_signal',
-                                'success': True,
-                                'message': '거래소 실행 완료',
-                                'account_id': account.id,
-                                'account_name': account.name
-                            }
-                        })
-                    else:
-                        # 아직 대기열에 남아있음 → queued
-                        results.append({
-                            'order_index': original_idx,
-                            'success': True,
-                            'queued': True,
-                            'pending_order_id': pending_id,
-                            'result': {
-                                'action': 'trading_signal',
-                                'success': True,
-                                'message': '대기열에 추가됨 (우선순위 낮음)',
-                                'account_id': account.id,
-                                'account_name': account.name
-                            }
-                        })
+                            'message': '대기열에 추가됨 (스케줄러가 1초 내 처리)',
+                            'account_id': account.id,
+                            'account_name': account.name
+                        }
+                    })
 
             except Exception as e:
                 # ✅ v2: 트랜잭션 롤백 (조건 2)
@@ -1454,4 +1325,3 @@ class TradingCore:
                     })
 
         return results
-

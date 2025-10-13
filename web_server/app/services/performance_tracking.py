@@ -1,3 +1,4 @@
+# @FEAT:analytics @COMP:service @TYPE:core
 """
 성과 추적 서비스
 전략별 성과 메트릭 계산 및 저장
@@ -16,47 +17,50 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:analytics @COMP:service @TYPE:core
 class PerformanceTrackingService:
     """전략 성과 추적 서비스 (기본 구조)"""
-    
-    def calculate_daily_performance(self, strategy_id: int, 
+
+    # @FEAT:analytics @COMP:service @TYPE:core
+    def calculate_daily_performance(self, strategy_id: int,
                                    target_date: date = None) -> Optional[StrategyPerformance]:
         """일일 성과 계산"""
         try:
             if not target_date:
                 target_date = date.today()
-            
+
             # 기존 레코드 확인
             performance = StrategyPerformance.query.filter_by(
                 strategy_id=strategy_id,
                 date=target_date
             ).first()
-            
+
             if not performance:
                 performance = StrategyPerformance(
                     strategy_id=strategy_id,
                     date=target_date
                 )
                 db.session.add(performance)
-            
+
             # 기본 메트릭 계산
             metrics = self._calculate_metrics(strategy_id, target_date)
-            
+
             # 성과 레코드 업데이트
             for key, value in metrics.items():
                 setattr(performance, key, value)
-            
+
             performance.updated_at = datetime.utcnow()
             db.session.commit()
-            
+
             logger.info(f"Performance calculated for strategy {strategy_id} on {target_date}")
             return performance
-            
+
         except Exception as e:
             logger.error(f"Error calculating daily performance: {e}")
             db.session.rollback()
             return None
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_metrics(self, strategy_id: int, target_date: date) -> Dict[str, Any]:
         """메트릭 계산 (ROI, 리스크 메트릭 포함)"""
         try:
@@ -159,7 +163,8 @@ class PerformanceTrackingService:
         except Exception as e:
             logger.error(f"Error calculating metrics: {e}")
             return self._get_empty_metrics()
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_risk_metrics(self, strategy_id: int, target_date: date) -> tuple:
         """
         리스크 메트릭 계산 (최근 30일 기반)
@@ -209,6 +214,7 @@ class PerformanceTrackingService:
             logger.warning(f"리스크 메트릭 계산 실패: {e}")
             return None, None, None
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _get_empty_metrics(self) -> Dict[str, Any]:
         """빈 메트릭 반환"""
         return {
@@ -229,20 +235,21 @@ class PerformanceTrackingService:
             'avg_win': 0.0,
             'avg_loss': 0.0
         }
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_performance_summary(self, strategy_id: int,
                                days: int = 30) -> Dict[str, Any]:
         """성과 요약 조회"""
         try:
             end_date = date.today()
             start_date = end_date - timedelta(days=days)
-            
+
             performances = StrategyPerformance.query.filter(
                 StrategyPerformance.strategy_id == strategy_id,
                 StrategyPerformance.date >= start_date,
                 StrategyPerformance.date <= end_date
             ).order_by(StrategyPerformance.date).all()
-            
+
             if not performances:
                 return {
                     'period_days': days,
@@ -254,13 +261,13 @@ class PerformanceTrackingService:
                     'total_trades': 0,
                     'avg_win_rate': 0.0
                 }
-            
+
             # 집계 계산
             total_pnl = sum(p.daily_pnl for p in performances)
             total_trades = sum(p.total_trades for p in performances)
             daily_pnls = [p.daily_pnl for p in performances]
             win_rates = [p.win_rate for p in performances if p.total_trades > 0]
-            
+
             return {
                 'period_days': len(performances),
                 'total_return': performances[-1].cumulative_return if performances else 0.0,
@@ -272,32 +279,34 @@ class PerformanceTrackingService:
                 'avg_win_rate': sum(win_rates) / len(win_rates) if win_rates else 0.0,
                 'max_drawdown': self._calculate_max_drawdown(performances)
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting performance summary: {e}")
             return {}
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_max_drawdown(self, performances: List[StrategyPerformance]) -> float:
         """최대 낙폭 계산"""
         if not performances:
             return 0.0
-        
+
         cumulative_pnls = [p.cumulative_pnl for p in performances]
         if not cumulative_pnls or max(cumulative_pnls) <= 0:
             return 0.0
-        
+
         peak = cumulative_pnls[0]
         max_dd = 0.0
-        
+
         for pnl in cumulative_pnls:
             if pnl > peak:
                 peak = pnl
             else:
                 drawdown = (peak - pnl) / peak * 100 if peak > 0 else 0
                 max_dd = max(max_dd, drawdown)
-        
+
         return max_dd
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:core
     def calculate_roi(self, strategy_id: int, days: int = None) -> Dict[str, Any]:
         """
         전략의 투입자본 대비 ROI 계산
@@ -416,45 +425,46 @@ class PerformanceTrackingService:
                 'error': str(e)
             }
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def batch_calculate(self, days_back: int = 7) -> Dict[str, Any]:
         """배치로 여러 전략의 성과 계산"""
         try:
             # 활성 전략 조회
             strategies = Strategy.query.filter_by(is_active=True).all()
-            
+
             results = {
                 'processed': 0,
                 'failed': 0,
                 'strategies': []
             }
-            
+
             end_date = date.today()
             start_date = end_date - timedelta(days=days_back)
-            
+
             for strategy in strategies:
                 current_date = start_date
                 while current_date <= end_date:
                     performance = self.calculate_daily_performance(
-                        strategy.id, 
+                        strategy.id,
                         current_date
                     )
-                    
+
                     if performance:
                         results['processed'] += 1
                     else:
                         results['failed'] += 1
-                    
+
                     current_date += timedelta(days=1)
-                
+
                 results['strategies'].append({
                     'id': strategy.id,
                     'name': strategy.name,
                     'group_name': strategy.group_name
                 })
-            
+
             logger.info(f"Batch calculation complete: {results}")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error in batch calculation: {e}")
             return {'error': str(e)}

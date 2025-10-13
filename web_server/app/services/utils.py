@@ -1,3 +1,4 @@
+# @FEAT:webhook-order @COMP:util @TYPE:helper
 """
 공통 유틸리티 함수들
 """
@@ -18,6 +19,7 @@ _SECURITIES_SYMBOL_ERROR_MESSAGES = {
     'OVERSEAS_FUTUREOPTION': "해외선물옵션 심볼 형식이 올바르지 않습니다 (예: ESZ4, NQH5, CL-DEC24). 영문, 숫자, 마침표(.), 하이픈(-), 언더스코어(_)만 사용 가능합니다.",
 }
 
+# @FEAT:trading @COMP:util @TYPE:helper
 def to_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
     """값을 Decimal로 안전하게 변환
 
@@ -47,11 +49,13 @@ def to_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
     except (Exception, ValueError, TypeError):
         return default
 
+# @FEAT:trading @COMP:util @TYPE:helper
 def decimal_to_float(value: Decimal) -> float:
     """Decimal을 float로 변환 (거래소 API 호출용)"""
     return float(value)
 
 
+# @FEAT:position-tracking @COMP:util @TYPE:helper
 def calculate_is_entry(current_position_qty: Decimal, side: str) -> bool:
     """
     거래가 진입인지 청산인지 판단하는 공통 헬퍼 함수
@@ -84,6 +88,7 @@ def calculate_is_entry(current_position_qty: Decimal, side: str) -> bool:
             return False
 
 
+# @FEAT:webhook-order @COMP:util @TYPE:helper
 def _suggest_symbol_format(symbol_input: str) -> str:
     """
     잘못된 심볼 포맷을 올바른 형식으로 교정 제안
@@ -122,6 +127,7 @@ def _suggest_symbol_format(symbol_input: str) -> str:
     # 추론 실패
     return None
 
+# @FEAT:webhook-order @COMP:validation @TYPE:validation
 def normalize_webhook_data(webhook_data: dict) -> dict:
     """웹훅 데이터의 필드명을 표준화 (order_type은 정확한 필드명만 허용)"""
     normalized = {}
@@ -181,7 +187,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                     f"잘못된 심볼 포맷입니다: '{symbol_input}'"
                 )
                 raise ValueError(error_msg)
-    
+
     # order_type은 정확한 필드명만 허용
     if 'order_type' in webhook_data:
         normalized['order_type'] = webhook_data['order_type']
@@ -295,15 +301,15 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         normalized.pop('side', None)
     else:
         normalized['batch_mode'] = False
-    
+
     # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 및 orders 제외)
     for key, value in webhook_data.items():
-        if (key.lower() not in field_mapping and 
-            key != 'order_type' and 
+        if (key.lower() not in field_mapping and
+            key != 'order_type' and
             key.lower() not in ['ordertype', 'orderType'] and
             key != 'orders'):
             normalized[key] = value
-    
+
     # 값들을 내부 로직에 맞게 표준화
     if 'order_type' in normalized and isinstance(normalized['order_type'], str):
         normalized['order_type'] = OrderType.normalize(normalized['order_type'])  # 표준화 (MARKET, LIMIT 등)

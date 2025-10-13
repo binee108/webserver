@@ -1,6 +1,8 @@
+# @FEAT:webhook-order @COMP:service @TYPE:core @DEPS:trading,order-tracking,telegram-notification
 """
 웹훅 처리 서비스 모듈
-웹훅 수신, 파싱, 라우팅 등 웹훅 관련 로직
+
+이 모듈은 외부 웹훅 요청(TradingView 등)을 수신하여 검증, 라우팅, 처리하는 핵심 로직을 담당합니다.
 """
 
 import logging
@@ -17,16 +19,19 @@ from app.utils.logging_security import get_secure_logger
 
 logger = get_secure_logger(__name__)
 
+# @FEAT:webhook-order @FEAT:event-sse @FEAT:securities-integration @COMP:model @TYPE:core
 class WebhookError(Exception):
     """웹훅 관련 오류"""
     pass
 
+# @FEAT:webhook-order @COMP:service @TYPE:core
 class WebhookService:
-    """웹훅 서비스 클래스"""
+    """웹훅 서비스 클래스 - 웹훅 처리 오케스트레이터"""
 
     def __init__(self):
         self.session = db.session
 
+    # @FEAT:webhook-order @COMP:validation @TYPE:validation
     def _validate_order_type_params(self, normalized_data: Dict[str, Any]) -> None:
         """주문 타입별 필수 파라미터 검증 (단일 소스)
 
@@ -59,6 +64,7 @@ class WebhookService:
                 logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
                 normalized_data.pop('price', None)
 
+    # @FEAT:webhook-order @COMP:validation @TYPE:validation
     def _validate_strategy_token(self, group_name: str, token: str) -> Strategy:
         """전략 조회 및 토큰 검증 (단일 소스)
 
@@ -107,6 +113,7 @@ class WebhookService:
 
         return strategy
 
+    # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_webhook(self, webhook_data: Dict[str, Any], webhook_received_at: Optional[float] = None) -> Dict[str, Any]:
         """웹훅 데이터 처리 메인 함수"""
         # 웹훅 수신 시간 기록 (표준화된 변수명)
@@ -114,17 +121,17 @@ class WebhookService:
             webhook_received_at = time.time()
         # 하위 호환성을 위한 기존 변수명 유지
         webhook_start_time = webhook_received_at
-        
+
         try:
             # 웹훅 데이터 표준화 (대소문자 구별 없이 처리)
             normalized_data = normalize_webhook_data(webhook_data)
 
             # 검증 완료 시점 기록
             webhook_validated_at = time.time()
-            
+
             logger.info(f"웹훅 처리 시작 - 타입: {normalized_data.get('order_type', 'UNKNOWN')}, "
                        f"전략: {normalized_data.get('group_name', 'UNKNOWN')}")
-            
+
             # 웹훅 로그 기록 (타이밍 정보 포함)
             webhook_log = WebhookLog(
                 payload=str(webhook_data),  # 원본 데이터 기록
@@ -133,17 +140,18 @@ class WebhookService:
             )
             self.session.add(webhook_log)
             self.session.commit()
-            
+
             # 전략 정보 초기 추출
             group_name = normalized_data.get('group_name')
             token = normalized_data.get('token')
             if not group_name:
                 raise WebhookError("group_name이 필요합니다")
-            
+
             # 🧪 테스트 모드 검증 우회
             test_mode = normalized_data.get("test_mode", False)
             if test_mode:
                 logger.info("🧪 테스트 모드: 전략 및 토큰 검증 우회")
+                # @FEAT:webhook-order @FEAT:event-sse @FEAT:securities-integration @COMP:model @TYPE:helper
                 # 테스트용 가상 전략 객체 생성
                 class TestStrategy:
                     def __init__(self):
@@ -161,7 +169,7 @@ class WebhookService:
                 if not normalized_data.get('batch_mode'):
                     self._validate_order_type_params(normalized_data)
 
-                
+
                 # 배치 모드 감지 및 라우팅
                 if normalized_data.get("batch_mode"):
                     result = trading_service.process_batch_trading_signal(normalized_data)
@@ -253,7 +261,7 @@ class WebhookService:
 
                 else:
                     raise WebhookError(f"지원하지 않는 market_type: {market_type}")
-            
+
             # 성공 시 로그 업데이트 (모든 타이밍 정보 저장)
             webhook_log.status = 'success'
             webhook_log.message = str(result)
@@ -267,9 +275,9 @@ class WebhookService:
                 webhook_log.trade_responded_at = timing_info.get('trade_responded_at')
 
             self.session.commit()
-            
+
             # ✅ SSE 이벤트는 trading_service에서 중앙화 처리됨
-            
+
             # 웹훅 처리 완료 시점 기록
             webhook_completed_at = time.time()
 
@@ -300,9 +308,9 @@ class WebhookService:
                     'preprocessing_time_ms': preprocessing_time_ms,
                     'total_processing_time_ms': total_processing_time_ms
                 }
-            
+
             return result
-            
+
         except Exception as e:
             # 실패 시 로그 업데이트 (타이밍 정보 포함)
             if 'webhook_log' in locals():
@@ -327,28 +335,29 @@ class WebhookService:
 
             logger.error(f"웹훅 처리 실패: {str(e)}")
             raise WebhookError(f"웹훅 처리 실패: {str(e)}")
-    
+
+    # @FEAT:webhook-order @COMP:service @TYPE:helper
     def _analyze_trading_result(self, result: Dict[str, Any], webhook_data: Dict[str, Any]):
         """거래 신호 처리 결과 분석 및 로깅"""
         try:
             strategy_name = result.get('strategy', 'UNKNOWN')
             results = result.get('results', [])
             summary = result.get('summary', {})
-            
+
             total_accounts = summary.get('total_accounts', 0)
             executed_accounts = summary.get('executed_accounts', 0)
             successful_trades = summary.get('successful_trades', 0)
             failed_trades = summary.get('failed_trades', 0)
             inactive_accounts = summary.get('inactive_accounts', 0)
             exchange_mismatch_accounts = summary.get('exchange_mismatch_accounts', 0)
-            
+
             # 🆕 최대 심볼 수 제한으로 스킵된 건수 집계
-            max_symbols_skipped = sum(1 for r in results 
+            max_symbols_skipped = sum(1 for r in results
                                     if r.get('skipped') and r.get('skip_reason') == 'max_symbols_limit_reached')
-            
+
             logger.info(f"📊 웹훅 처리 결과 분석 (전략: {strategy_name}):")
             logger.info(f"   총 계좌: {total_accounts}, 실행: {executed_accounts}, 성공: {successful_trades}, 실패: {failed_trades}")
-            
+
             # 🆕 최대 심볼 수 제한 관련 로깅
             if max_symbols_skipped > 0:
                 logger.warning(f"⚠️  최대 심볼 수 제한으로 스킵된 주문: {max_symbols_skipped}건")
@@ -357,32 +366,33 @@ class WebhookService:
                         logger.warning(f"   - 계좌 {result_item.get('account_id')}({result_item.get('account_name')}): "
                                      f"{result_item.get('symbol')} - {result_item.get('current_symbols_count', 0)}/"
                                      f"{result_item.get('max_symbols_limit', 0)}")
-            
+
             # 경고 상황 체크
             if not results:
                 logger.error(f"🚨 웹훅 처리 심각한 문제 - 어떤 계좌에서도 거래가 실행되지 않음!")
                 logger.error(f"   전략: {strategy_name}")
                 logger.error(f"   웹훅 데이터: {webhook_data}")
                 logger.error(f"   비활성 계좌: {inactive_accounts}, 거래소 불일치: {exchange_mismatch_accounts}")
-                
+
             elif successful_trades == 0:
                 logger.error(f"🚨 웹훅 처리 문제 - 모든 거래가 실패함!")
                 logger.error(f"   전략: {strategy_name}, 실패한 거래 수: {failed_trades}")
                 for result_item in results:
                     if not result_item.get('success', False):
                         logger.error(f"   실패 상세: 계좌 {result_item.get('account_id')} - {result_item.get('error')}")
-                        
+
             elif failed_trades > 0:
                 logger.warning(f"⚠️  일부 거래 실패 - 성공: {successful_trades}, 실패: {failed_trades}")
-                
+
             else:
                 logger.info(f"✅ 모든 거래 성공 - {successful_trades}개 계좌에서 거래 완료")
-                
+
         except Exception as e:
             logger.error(f"거래 결과 분석 중 오류: {str(e)}")
-    
+
     # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
-    
+
+    # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_cancel_all_orders(self, webhook_data: Dict[str, Any], webhook_received_at: float) -> Dict[str, Any]:
         """모든 주문 취소 처리 - order_service를 통해 처리 (선택적 필터링 지원)"""
         group_name = webhook_data.get('group_name')
@@ -392,10 +402,10 @@ class WebhookService:
 
         logger.info(f"🔄 주문 취소 처리 시작 - 전략: {group_name}, "
                    f"심볼: {symbol}, side: {side or '전체'}")
-        
+
         if not group_name:
             raise WebhookError("group_name이 필요합니다")
-        
+
         # 전략 조회 및 토큰 검증 (공개 전략 구독자 토큰 허용)
         strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
         if not strategy:
@@ -424,36 +434,36 @@ class WebhookService:
 
         if token not in valid_tokens:
             raise WebhookError("웹훅 토큰이 유효하지 않습니다")
-        
+
         logger.info(f"✅ 전략 조회 성공 - ID: {strategy.id}, 이름: {strategy.name}")
-        
+
         # 전략에 연결된 계좌들 조회
         strategy_accounts = strategy.strategy_accounts
         if not strategy_accounts:
             raise WebhookError(f"전략에 연결된 계좌가 없습니다: {group_name}")
-        
+
         logger.info(f"📋 전략에 연결된 계좌 수: {len(strategy_accounts)}")
-        
+
         # order_service를 통해 계좌별 주문 취소 처리
         from app.services.trading import trading_service as order_service
-        
+
         results = []
         processed_count = 0
         skipped_count = 0
-        
+
         for idx, sa in enumerate(strategy_accounts):
             account = sa.account
             logger.debug(f"[{idx+1}/{len(strategy_accounts)}] 계좌 처리 중 - StrategyAccount ID: {sa.id}")
-            
+
             # 계좌 존재 여부 확인
             if not account:
                 logger.warning(f"❌ StrategyAccount {sa.id}: 연결된 계좌가 없음")
                 skipped_count += 1
                 continue
-            
+
             logger.info(f"🏦 계좌 정보 - ID: {account.id}, 이름: {account.name}, "
                        f"거래소: {account.exchange}, 마켓: {strategy.market_type}, 활성상태: {account.is_active}")
-            
+
             # 계좌 활성화 상태 확인
             if not account.is_active:
                 logger.warning(f"❌ 계좌 {account.id}({account.name}): 비활성화 상태로 제외")
@@ -462,7 +472,7 @@ class WebhookService:
 
             logger.info(f"✅ 계좌 {account.id}({account.name}): 주문 취소 처리 대상")
             processed_count += 1
-            
+
             try:
                 # ✅ 단일 소스 원칙: cancel_all_orders_by_user()를 직접 호출
                 # account.user_id를 직접 전달하여 불필요한 DB 조회 방지
@@ -476,7 +486,7 @@ class WebhookService:
                     side=side,
                     timing_context={'webhook_received_at': webhook_received_at}
                 )
-                
+
                 if cancel_result['success']:
                     cancelled_orders_raw = cancel_result.get('cancelled_orders', [])
                     failed_orders_raw = cancel_result.get('failed_orders', [])
@@ -520,7 +530,7 @@ class WebhookService:
                         'error': error_msg,
                         'success': False
                     })
-                
+
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"❌ 계좌 {account.id}({account.name}) 주문 취소 처리 중 예외 발생: {error_msg}")
@@ -531,26 +541,26 @@ class WebhookService:
                     'error': f"처리 중 예외: {error_msg}",
                     'success': False
                 })
-        
+
         # 요약 로깅
         successful_results = [r for r in results if r.get('success', False)]
         failed_results = [r for r in results if not r.get('success', False)]
-        
+
         logger.info(f"📊 주문 취소 처리 완료 요약:")
         logger.info(f"   총 연결 계좌: {len(strategy_accounts)}")
         logger.info(f"   처리 대상: {processed_count}")
         logger.info(f"   제외됨: {skipped_count}")
         logger.info(f"   성공: {len(successful_results)}")
         logger.info(f"   실패: {len(failed_results)}")
-        
+
         if successful_results:
             total_cancelled = sum(r.get('cancelled_orders', 0) for r in successful_results)
             total_failed = sum(r.get('failed_orders', 0) for r in successful_results)
             logger.info(f"   총 취소된 주문: {total_cancelled}개 (실패: {total_failed}개)")
-        
+
         if skipped_count > 0:
             logger.warning(f"⚠️  {skipped_count}개 계좌가 제외되었습니다. 비활성화 또는 거래소 불일치를 확인하세요.")
-        
+
         return {
             'action': 'cancel_all_orders',
             'strategy': group_name,
@@ -570,6 +580,7 @@ class WebhookService:
             }
         }
 
+    # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_cancel_order(self, normalized_data: Dict[str, Any], webhook_received_at: float) -> Dict[str, Any]:
         """개별 주문 취소 처리"""
         from app.services.trading import trading_service
@@ -677,6 +688,7 @@ class WebhookService:
             }
         }
 
+    # @FEAT:webhook-order @FEAT:securities-integration @COMP:service @TYPE:integration
     def _process_securities_order(
         self,
         strategy: Strategy,
@@ -838,6 +850,7 @@ class WebhookService:
             'timing': timing_context  # 타이밍 정보 전달
         }
 
+    # @FEAT:webhook-order @FEAT:securities-integration @COMP:service @TYPE:integration
     def _cancel_securities_orders(
         self,
         strategy: Strategy,
@@ -972,6 +985,7 @@ class WebhookService:
             'results': results
         }
 
+    # @FEAT:webhook-order @FEAT:event-sse @COMP:service @TYPE:helper
     def _emit_order_event(
         self,
         account_id: int,
@@ -1026,4 +1040,4 @@ class WebhookService:
             logger.warning(f"⚠️ SSE 이벤트 발행 실패: {e}")
 
 # 전역 인스턴스
-webhook_service = WebhookService() 
+webhook_service = WebhookService()
