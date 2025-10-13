@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from .binance import BinanceExchange
 from .upbit import UpbitExchange
+from .bithumb import BithumbExchange
 from app.exchanges.metadata import ExchangeMetadata, ExchangeRegion, MarketType
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class CryptoExchangeFactory:
     _EXCHANGE_CLASSES = {
         'binance': BinanceExchange,
         'upbit': UpbitExchange,
+        'bithumb': BithumbExchange,
         # 향후 추가 예시:
         # 'bybit': BybitExchange,
     }
@@ -105,6 +107,11 @@ class CryptoExchangeFactory:
         return cls.create('upbit', api_key, secret, testnet=False)
 
     @classmethod
+    def create_bithumb(cls, api_key: str, secret: str) -> 'BithumbExchange':
+        """Bithumb 인스턴스 생성 (편의 메서드)"""
+        return cls.create('bithumb', api_key, secret, testnet=False)
+
+    @classmethod
     def is_supported(cls, exchange_name: str) -> bool:
         """지원되는 거래소인지 확인"""
         return exchange_name.lower() in cls.SUPPORTED_EXCHANGES
@@ -134,3 +141,8 @@ def create_binance(api_key: str, secret: str, testnet: bool = False) -> BinanceE
 def create_upbit(api_key: str, secret: str) -> UpbitExchange:
     """Upbit 인스턴스 생성 (편의 함수)"""
     return crypto_factory.create_upbit(api_key, secret)
+
+
+def create_bithumb(api_key: str, secret: str) -> 'BithumbExchange':
+    """Bithumb 인스턴스 생성 (편의 함수)"""
+    return crypto_factory.create_bithumb(api_key, secret)
