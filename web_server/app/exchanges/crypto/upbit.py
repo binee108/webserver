@@ -254,15 +254,22 @@ class UpbitExchange(BaseCryptoExchange):
 
             markets[standard_symbol] = MarketInfo(
                 symbol=standard_symbol,
+                base_asset=coin,
+                quote_asset=currency,
+                status='TRADING',
+                active=True,
                 amount_precision=8,  # Upbit 기본 수량 정밀도
                 price_precision=0,   # KRW는 소수점 없음
+                base_precision=8,
+                quote_precision=0,
                 min_qty=Decimal('0.00000001'),
-                max_qty=None,
+                max_qty=Decimal('9999999999'),
                 step_size=Decimal('0.00000001'),
+                min_price=Decimal('1'),
+                max_price=Decimal('9999999999'),
                 tick_size=Decimal('1'),
                 min_notional=Decimal('5000'),  # Upbit 최소 주문금액
-                market_type='SPOT',
-                raw=market_info
+                market_type='SPOT'
             )
 
         # 캐시 업데이트

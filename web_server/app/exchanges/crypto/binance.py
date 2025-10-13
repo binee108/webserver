@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:crypto-implementation
 """
 Binance 통합 API 구현 (Spot + Futures)
 
@@ -831,21 +832,21 @@ class BinanceExchange(BaseCryptoExchange):
                 # walletBalance: 전체 지갑 잔고
                 # marginBalance: 마진 잔고 (unrealizedProfit 포함)
                 # initialMargin: 사용 중인 초기 마진
-                
+
                 wallet_balance = Decimal(balance_info.get('walletBalance', '0'))
                 available_balance = Decimal(balance_info.get('availableBalance', '0'))
                 initial_margin = Decimal(balance_info.get('initialMargin', '0'))
                 maint_margin = Decimal(balance_info.get('maintMargin', '0'))
-                
+
                 # Futures에서는 walletBalance가 total, availableBalance가 free
                 free = available_balance
                 locked = initial_margin + maint_margin
                 total = wallet_balance
-                
+
                 logger.info(f"🔍 Futures balance for {asset}: wallet={wallet_balance}, available={available_balance}, "
                            f"initial_margin={initial_margin}, maint_margin={maint_margin}")
                 logger.info(f"🔍 Calculated: free={free}, locked={locked}, total={total}")
-                
+
             else:
                 # Spot API 필드 매핑 (/api/v3/account)
                 free = Decimal(balance_info.get('free', '0'))
@@ -1022,9 +1023,13 @@ class BinanceExchange(BaseCryptoExchange):
 
 
     # CCXT 호환 메서드들 (동기)
-    def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (동기)"""
-        return self.fetch_balance_impl(market_type)
+    async def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
+        """잔액 조회 (비동기 인터페이스)
+
+        BaseExchange 필수 메서드 구현.
+        내부적으로 fetch_balance_async()를 호출하여 비동기 HTTP 요청을 수행합니다.
+        """
+        return await self.fetch_balance_async(market_type)
 
     def create_market_order(self, symbol: str, side: str, amount: float,
                            market_type: str = 'spot') -> Order:
