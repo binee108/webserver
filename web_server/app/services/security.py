@@ -631,7 +631,6 @@ class SecurityService:
 
             # API 키가 변경된 경우 캐시 무효화
             if 'public_api' in update_data or 'secret_api' in update_data:
-                from app.models import Account
                 Account.clear_cache(account.id)
 
                 # ExchangeService 클라이언트 캐시도 무효화
