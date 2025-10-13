@@ -395,249 +395,43 @@ grep -r "@FEAT:background-scheduler" --include="*.py"
 
 ---
 
-## 컴포넌트 타입별 분류
-
-### Routes (@COMP:route)
-- `web_server/app/routes/webhook.py` - 웹훅 엔드포인트
-- `web_server/app/routes/strategies.py` - 전략 API (성과 조회 포함)
-- `web_server/app/routes/accounts.py` - 계좌 API
-- `web_server/app/routes/positions.py` - 포지션 API
-- `web_server/app/routes/capital.py` - 자본 API
-- `web_server/app/routes/dashboard.py` - 대시보드 API
-
-### Services (@COMP:service)
-- `web_server/app/services/webhook_service.py` - 웹훅 처리
-- `web_server/app/services/strategy_service.py` - 전략 관리
-- `web_server/app/services/analytics.py` - 통합 분석 서비스 **(Analytics + Dashboard + Capital 통합)**
-- `web_server/app/services/performance_tracking.py` - 성과 추적 **(StrategyPerformance 집계)**
-- `web_server/app/services/trading/core.py` - 거래 핵심 로직
-- `web_server/app/services/trading/order_queue_manager.py` - 주문 대기열
-- `web_server/app/services/trading/position_manager.py` - 포지션 관리
-- `web_server/app/services/order_tracking.py` - 주문 추적
-- `web_server/app/services/price_cache.py` - 가격 캐싱
-- `web_server/app/services/event_service.py` - SSE 이벤트
-- `web_server/app/services/telegram.py` - 텔레그램 알림
-
-### Exchanges (@COMP:exchange)
-- `web_server/app/exchanges/crypto/binance.py` - Binance
-- `web_server/app/exchanges/securities/korea_investment.py` - KIS
-
-### Models (@COMP:model)
-- `web_server/app/models.py` - 모든 DB 모델
-  - Strategy, StrategyAccount, StrategyCapital, StrategyPosition
-  - OpenOrder, PendingOrder, Trade, TradeExecution
-  - **StrategyPerformance** (일별 성과 집계)
-  - **DailyAccountSummary** (일일 계정 요약)
-  - Account, User (telegram_id, telegram_bot_token 필드 포함)
-  - WebhookLog, OrderTrackingSession
-  - SystemSetting (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
-
-### Jobs (@COMP:job)
-- `web_server/app/services/background/queue_rebalancer.py` - 대기열 재정렬
-
----
-
-## 로직 타입별 분류
-
-### Core (@TYPE:core)
-주요 비즈니스 로직을 담당하는 컴포넌트
-
-### Helper (@TYPE:helper)
-보조 함수 및 유틸리티
-
-### Integration (@TYPE:integration)
-외부 시스템 통합
-
-### Validation (@TYPE:validation)
-입력 검증 및 데이터 유효성 검사
-
-### Config (@TYPE:config)
-설정 및 초기화
-
----
-
-## 다중 기능 태그 예시
-
-여러 기능과 연관된 코드의 경우 여러 `@FEAT:` 태그를 사용합니다:
-
-```python
-# @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:integration
-def enqueue_webhook_order(order_data):
-    """웹훅 주문을 대기열에 추가"""
-    pass
-
-# @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:core
-def sync_position_from_orders(account_id):
-    """주문 추적 데이터로 포지션 동기화"""
-    pass
-
-# @FEAT:webhook-order @FEAT:strategy-management @COMP:validation @TYPE:validation
-def _validate_strategy_token(group_name, token):
-    """전략 조회 및 토큰 검증 (웹훅에서 사용)"""
-    pass
-
-# @FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core
-@bp.route('/strategies/<int:strategy_id>/performance/roi', methods=['GET'])
-def get_strategy_roi(strategy_id):
-    """전략 ROI 조회 (전략 관리 + 분석 기능 통합)"""
-    pass
-
-# @FEAT:telegram-notification @COMP:service @TYPE:core @DEPS:order-queue
-def send_order_failure_alert(strategy, account, symbol, error_type, error_message):
-    """복구 불가능 주문 실패 시 텔레그램 알림 (주문 큐에서 호출)"""
-    pass
-
-# @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
-def auto_allocate_capital_for_account(account_id: int) -> bool:
-    """계좌에 연결된 모든 전략에 마켓 타입별로 자동 자본 할당"""
-    pass
-
-# @FEAT:analytics @FEAT:position-tracking @COMP:service @TYPE:core
-def get_position_analysis(strategy_id: int) -> Dict[str, Any]:
-    """포지션 분석 (analytics + position-tracking 통합)"""
-    pass
-```
-
----
-
-## 검색 패턴 가이드
-
-### 기본 검색
-```bash
-# 특정 기능의 모든 코드
-grep -r "@FEAT:webhook-order" --include="*.py"
-
-# 핵심 로직만
-grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:core"
-
-# 특정 컴포넌트 타입
-grep -r "@COMP:service" --include="*.py"
-```
-
-### 다중 기능 검색
-```bash
-# 두 기능 모두 포함하는 코드 (AND)
-grep -r "@FEAT:webhook-order" --include="*.py" | grep "@FEAT:order-queue"
-
-# 두 기능 중 하나라도 포함 (OR)
-grep -r "@FEAT:webhook-order\|@FEAT:order-queue" --include="*.py"
-
-# 전략 관리와 웹훅의 통합 지점
-grep -r "@FEAT:strategy-management" --include="*.py" | grep "@FEAT:webhook-order"
-
-# 텔레그램 알림이 사용되는 모든 곳
-grep -r "telegram_service.send" --include="*.py"
-
-# analytics와 다른 기능의 통합 지점
-grep -r "@FEAT:analytics" --include="*.py" | grep "@FEAT:"
-```
-
-### 의존성 검색
-```bash
-# 특정 기능에 의존하는 코드
-grep -r "@DEPS:order-tracking" --include="*.py"
-
-# capital-management에 의존하는 전략 관리 코드
-grep -r "@FEAT:strategy-management" --include="*.py" | grep "@DEPS:capital-management"
-
-# telegram-notification에 의존하는 주문 큐 코드
-grep -r "@FEAT:order-queue" --include="*.py" | grep "@DEPS:telegram-notification"
-
-# analytics에 의존하는 코드
-grep -r "@DEPS:analytics" --include="*.py"
-```
-
-### 복합 검색
-```bash
-# 웹훅 기능의 서비스 컴포넌트
-grep -r "@FEAT:webhook-order" --include="*.py" | grep "@COMP:service"
-
-# 주문 대기열의 핵심 로직
-grep -r "@FEAT:order-queue" --include="*.py" | grep "@TYPE:core"
-
-# 거래소 통합의 Binance 관련 코드
-grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "binance"
-
-# 전략 관리의 검증 로직
-grep -r "@FEAT:strategy-management" --include="*.py" | grep "@TYPE:validation"
-
-# 텔레그램 알림 통합 지점 찾기
-grep -r "from app.services.telegram import telegram_service" --include="*.py"
-
-# analytics 기능의 리스크 메트릭 계산
-grep -rn "sharpe_ratio\|sortino_ratio\|max_drawdown" web_server/app/services/analytics.py web_server/app/services/performance_tracking.py
-```
-
----
-
-## 태그 일관성 검증
-
-### 누락된 태그 찾기
-```bash
-# 클래스나 함수가 있지만 태그가 없는 파일
-grep -l "^class\|^def" web_server/app/**/*.py | while read f; do
-    grep -q "@FEAT:" "$f" || echo "Missing tags: $f"
-done
-```
-
-### 중복/불일치 태그 찾기
-```bash
-# 동일한 기능에 다른 태그를 사용하는 경우
-grep -r "@FEAT:webhook" --include="*.py"  # webhook vs webhook-order
-grep -r "@FEAT:strategy" --include="*.py"  # strategy vs strategy-management
-grep -r "@FEAT:telegram" --include="*.py"  # telegram vs telegram-notification
-grep -r "@FEAT:analytic[^s]" --include="*.py"  # analytic vs analytics
-```
-
-### 전체 기능 태그 목록
-```bash
-# 프로젝트에 사용된 모든 @FEAT: 태그 추출 (중복 제거)
-grep -roh "@FEAT:[a-z-]*" --include="*.py" | sort -u
-```
-
----
-
-## 태그 추가 가이드
-
-### 신규 기능 추가 시
-1. 이 카탈로그에 기능 등록
-2. 모든 관련 파일에 일관된 태그 추가
-3. 검색 예시 업데이트
-4. 의존성 명시
-5. `docs/features/{feature-name}.md` 상세 문서 작성
-
-### 기존 코드 수정 시
-1. 기능 변경 시 태그 업데이트
-2. 의존성 변경 시 `@DEPS:` 업데이트
-3. 카탈로그 동기화
-4. 상세 문서 업데이트
-
----
-
-## 유지보수 체크리스트
-
-- [x] 모든 주요 클래스/함수에 태그 추가됨
-- [x] 태그 포맷 일관성 유지
-- [x] Feature Catalog가 최신 상태
-- [x] 검색 예시가 작동함
-- [x] 의존성이 정확히 명시됨
-- [x] 상세 문서 (`docs/features/*.md`)가 존재함
-- [x] 다중 기능 태그가 적절히 사용됨
-
----
-
 ### 13. account-management
 **설명**: 계좌 생성, 조회, 수정, 삭제, 연결 테스트, 잔고 조회
 **태그**: `@FEAT:account-management`
 **주요 컴포넌트**:
+- **Frontend**: `web_server/app/static/js/accounts.js` - 계좌 폼 제출, UI 업데이트
 - **Route**: `web_server/app/routes/accounts.py` - 계좌 REST API
 - **Service**: `web_server/app/services/security.py` (일부) - 계좌 관리 로직
+- **Model**: `web_server/app/models.py` - Account, DailyAccountSummary
 
 **의존성**: `exchange-integration` (연결 테스트 및 잔고 조회)
 
+**주요 기능**:
+1. **계좌 CRUD**: API 키 암호화 저장, 마스킹 조회, 수정 시 캐시 무효화, CASCADE 삭제
+2. **거래소 연동**: 연결 테스트, Spot/Futures 잔고 조회, 스냅샷 자동 저장
+3. **보안**: Fernet 암호화, 클래스 레벨 캐시 (최대 1000개), 레거시 감지
+4. **증권 계좌**: OAuth 토큰 암호화 저장, 증권사별 설정 JSON 관리
+
+**최신 수정 (2025-10-13)**:
+- **Phase 1 (백엔드)**: Variable Shadowing 버그 수정 - `security.py` Line 634의 중복 import 제거
+- **Phase 2 (프론트엔드)**: 조건부 API 키 전송 - 계좌 수정 시 빈 문자열 필드를 요청에서 제외하여 불필요한 캐시 무효화 방지
+
+**상세 문서**: [account-management.md](./features/account-management.md)
+**의사결정 문서**: [Python Variable Shadowing 예방 가이드](./decisions/004-python-variable-shadowing-prevention.md)
+
 **검색 예시**:
 ```bash
+# 모든 계좌 관리 코드 (Python + JavaScript)
+grep -r "@FEAT:account-management" --include="*.py" --include="*.js"
+
+# 백엔드만
 grep -r "@FEAT:account-management" --include="*.py"
+
+# 프론트엔드만
+grep -r "@FEAT:account-management" --include="*.js"
+
+# 핵심 로직만
+grep -r "@FEAT:account-management" --include="*.py" | grep "@TYPE:core"
 ```
 
 ---
@@ -753,6 +547,255 @@ grep -r "@FEAT:api-gateway" --include="*.py"
 
 ---
 
+## 컴포넌트 타입별 분류
+
+### Routes (@COMP:route)
+- `web_server/app/routes/webhook.py` - 웹훅 엔드포인트
+- `web_server/app/routes/strategies.py` - 전략 API (성과 조회 포함)
+- `web_server/app/routes/accounts.py` - 계좌 API
+- `web_server/app/routes/positions.py` - 포지션 API
+- `web_server/app/routes/capital.py` - 자본 API
+- `web_server/app/routes/dashboard.py` - 대시보드 API
+- `web_server/app/static/js/accounts.js` - 계좌 프론트엔드 (폼 제출, UI 업데이트)
+
+### Services (@COMP:service)
+- `web_server/app/services/webhook_service.py` - 웹훅 처리
+- `web_server/app/services/strategy_service.py` - 전략 관리
+- `web_server/app/services/analytics.py` - 통합 분석 서비스 **(Analytics + Dashboard + Capital 통합)**
+- `web_server/app/services/performance_tracking.py` - 성과 추적 **(StrategyPerformance 집계)**
+- `web_server/app/services/trading/core.py` - 거래 핵심 로직
+- `web_server/app/services/trading/order_queue_manager.py` - 주문 대기열
+- `web_server/app/services/trading/position_manager.py` - 포지션 관리
+- `web_server/app/services/order_tracking.py` - 주문 추적
+- `web_server/app/services/price_cache.py` - 가격 캐싱
+- `web_server/app/services/event_service.py` - SSE 이벤트
+- `web_server/app/services/telegram.py` - 텔레그램 알림
+- `web_server/app/services/security.py` - 계좌 관리, 인증, 세션
+
+### Exchanges (@COMP:exchange)
+- `web_server/app/exchanges/crypto/binance.py` - Binance
+- `web_server/app/exchanges/securities/korea_investment.py` - KIS
+
+### Models (@COMP:model)
+- `web_server/app/models.py` - 모든 DB 모델
+  - Strategy, StrategyAccount, StrategyCapital, StrategyPosition
+  - OpenOrder, PendingOrder, Trade, TradeExecution
+  - **StrategyPerformance** (일별 성과 집계)
+  - **DailyAccountSummary** (일일 계정 요약)
+  - Account, User (telegram_id, telegram_bot_token 필드 포함)
+  - WebhookLog, OrderTrackingSession
+  - SystemSetting (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+### Jobs (@COMP:job)
+- `web_server/app/services/background/queue_rebalancer.py` - 대기열 재정렬
+
+---
+
+## 로직 타입별 분류
+
+### Core (@TYPE:core)
+주요 비즈니스 로직을 담당하는 컴포넌트
+
+### Helper (@TYPE:helper)
+보조 함수 및 유틸리티
+
+### Integration (@TYPE:integration)
+외부 시스템 통합
+
+### Validation (@TYPE:validation)
+입력 검증 및 데이터 유효성 검사
+
+### Config (@TYPE:config)
+설정 및 초기화
+
+---
+
+## 다중 기능 태그 예시
+
+여러 기능과 연관된 코드의 경우 여러 `@FEAT:` 태그를 사용합니다:
+
+```python
+# @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:integration
+def enqueue_webhook_order(order_data):
+    """웹훅 주문을 대기열에 추가"""
+    pass
+
+# @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:core
+def sync_position_from_orders(account_id):
+    """주문 추적 데이터로 포지션 동기화"""
+    pass
+
+# @FEAT:webhook-order @FEAT:strategy-management @COMP:validation @TYPE:validation
+def _validate_strategy_token(group_name, token):
+    """전략 조회 및 토큰 검증 (웹훅에서 사용)"""
+    pass
+
+# @FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core
+@bp.route('/strategies/<int:strategy_id>/performance/roi', methods=['GET'])
+def get_strategy_roi(strategy_id):
+    """전략 ROI 조회 (전략 관리 + 분석 기능 통합)"""
+    pass
+
+# @FEAT:telegram-notification @COMP:service @TYPE:core @DEPS:order-queue
+def send_order_failure_alert(strategy, account, symbol, error_type, error_message):
+    """복구 불가능 주문 실패 시 텔레그램 알림 (주문 큐에서 호출)"""
+    pass
+
+# @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
+def auto_allocate_capital_for_account(account_id: int) -> bool:
+    """계좌에 연결된 모든 전략에 마켓 타입별로 자동 자본 할당"""
+    pass
+
+# @FEAT:analytics @FEAT:position-tracking @COMP:service @TYPE:core
+def get_position_analysis(strategy_id: int) -> Dict[str, Any]:
+    """포지션 분석 (analytics + position-tracking 통합)"""
+    pass
+
+# @FEAT:account-management @COMP:route @TYPE:core (JavaScript)
+async function submitAccount(event) {
+    /**
+     * 계좌 추가/수정 폼 제출 핸들러
+     * Phase 2: 빈 문자열 필드 제외 로직 추가
+     */
+    // ...
+}
+```
+
+---
+
+## 검색 패턴 가이드
+
+### 기본 검색
+```bash
+# 특정 기능의 모든 코드
+grep -r "@FEAT:webhook-order" --include="*.py"
+
+# 핵심 로직만
+grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:core"
+
+# 특정 컴포넌트 타입
+grep -r "@COMP:service" --include="*.py"
+
+# Python + JavaScript 동시 검색
+grep -r "@FEAT:account-management" --include="*.py" --include="*.js"
+```
+
+### 다중 기능 검색
+```bash
+# 두 기능 모두 포함하는 코드 (AND)
+grep -r "@FEAT:webhook-order" --include="*.py" | grep "@FEAT:order-queue"
+
+# 두 기능 중 하나라도 포함 (OR)
+grep -r "@FEAT:webhook-order\|@FEAT:order-queue" --include="*.py"
+
+# 전략 관리와 웹훅의 통합 지점
+grep -r "@FEAT:strategy-management" --include="*.py" | grep "@FEAT:webhook-order"
+
+# 텔레그램 알림이 사용되는 모든 곳
+grep -r "telegram_service.send" --include="*.py"
+
+# analytics와 다른 기능의 통합 지점
+grep -r "@FEAT:analytics" --include="*.py" | grep "@FEAT:"
+```
+
+### 의존성 검색
+```bash
+# 특정 기능에 의존하는 코드
+grep -r "@DEPS:order-tracking" --include="*.py"
+
+# capital-management에 의존하는 전략 관리 코드
+grep -r "@FEAT:strategy-management" --include="*.py" | grep "@DEPS:capital-management"
+
+# telegram-notification에 의존하는 주문 큐 코드
+grep -r "@FEAT:order-queue" --include="*.py" | grep "@DEPS:telegram-notification"
+
+# analytics에 의존하는 코드
+grep -r "@DEPS:analytics" --include="*.py"
+```
+
+### 복합 검색
+```bash
+# 웹훅 기능의 서비스 컴포넌트
+grep -r "@FEAT:webhook-order" --include="*.py" | grep "@COMP:service"
+
+# 주문 대기열의 핵심 로직
+grep -r "@FEAT:order-queue" --include="*.py" | grep "@TYPE:core"
+
+# 거래소 통합의 Binance 관련 코드
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "binance"
+
+# 전략 관리의 검증 로직
+grep -r "@FEAT:strategy-management" --include="*.py" | grep "@TYPE:validation"
+
+# 텔레그램 알림 통합 지점 찾기
+grep -r "from app.services.telegram import telegram_service" --include="*.py"
+
+# analytics 기능의 리스크 메트릭 계산
+grep -rn "sharpe_ratio\|sortino_ratio\|max_drawdown" web_server/app/services/analytics.py web_server/app/services/performance_tracking.py
+
+# account-management 프론트엔드 코드
+grep -r "@FEAT:account-management" --include="*.js"
+```
+
+---
+
+## 태그 일관성 검증
+
+### 누락된 태그 찾기
+```bash
+# 클래스나 함수가 있지만 태그가 없는 파일
+grep -l "^class\|^def" web_server/app/**/*.py | while read f; do
+    grep -q "@FEAT:" "$f" || echo "Missing tags: $f"
+done
+```
+
+### 중복/불일치 태그 찾기
+```bash
+# 동일한 기능에 다른 태그를 사용하는 경우
+grep -r "@FEAT:webhook" --include="*.py"  # webhook vs webhook-order
+grep -r "@FEAT:strategy" --include="*.py"  # strategy vs strategy-management
+grep -r "@FEAT:telegram" --include="*.py"  # telegram vs telegram-notification
+grep -r "@FEAT:analytic[^s]" --include="*.py"  # analytic vs analytics
+```
+
+### 전체 기능 태그 목록
+```bash
+# 프로젝트에 사용된 모든 @FEAT: 태그 추출 (중복 제거)
+grep -roh "@FEAT:[a-z-]*" --include="*.py" --include="*.js" | sort -u
+```
+
+---
+
+## 태그 추가 가이드
+
+### 신규 기능 추가 시
+1. 이 카탈로그에 기능 등록
+2. 모든 관련 파일에 일관된 태그 추가
+3. 검색 예시 업데이트
+4. 의존성 명시
+5. `docs/features/{feature-name}.md` 상세 문서 작성
+
+### 기존 코드 수정 시
+1. 기능 변경 시 태그 업데이트
+2. 의존성 변경 시 `@DEPS:` 업데이트
+3. 카탈로그 동기화
+4. 상세 문서 업데이트
+
+---
+
+## 유지보수 체크리스트
+
+- [x] 모든 주요 클래스/함수에 태그 추가됨
+- [x] 태그 포맷 일관성 유지
+- [x] Feature Catalog가 최신 상태
+- [x] 검색 예시가 작동함
+- [x] 의존성이 정확히 명시됨
+- [x] 상세 문서 (`docs/features/*.md`)가 존재함
+- [x] 다중 기능 태그가 적절히 사용됨
+- [x] 프론트엔드 파일도 태그 추가됨 (JavaScript)
+
+---
+
 ## 기존 기능 확장 (Code Review 반영)
 
 ### exchange-integration (확장)
@@ -815,8 +858,18 @@ grep -r "@FEAT:framework" --include="*.py" | grep "trading/core"
 
 ---
 
-*Last Updated: 2025-10-11*
-*Version: 2.0.0*
+*Last Updated: 2025-10-13*
+*Version: 2.1.0*
 *Total Features: 20*
 *Documented Features: 20 (기존 12 + 신규 8)*
-*Code Review Status: ✅ Approved with Changes - 기능 중복 제거 및 통합 완료*
+
+**Changelog:**
+- 2025-10-13: account-management 기능 확장 - 프론트엔드 파일 추가 (`accounts.js`), Phase 1/2 버그 수정 기록, Variable Shadowing 예방 가이드 추가
+- 2025-10-11: Code Review 완료 - 기능 중복 제거 및 통합, 태그 일관성 개선
+- 2025-10-10: 초기 작성 (20개 기능 문서화)
+
+**Recent Updates:**
+- `account-management` 기능에 프론트엔드 JavaScript 파일 추가
+- JavaScript 파일에 대한 검색 패턴 가이드 추가 (`--include="*.js"`)
+- Variable Shadowing 버그 수정 내용 기록
+- 의사결정 문서 링크 추가 (004-python-variable-shadowing-prevention.md)

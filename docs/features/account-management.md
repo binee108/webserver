@@ -5,13 +5,13 @@
 ## 태그 검색
 ```bash
 # 전체 코드
-grep -r "@FEAT:account-management" --include="*.py"
+grep -r "@FEAT:account-management" --include="*.py" --include="*.js"
 
 # 핵심 로직
-grep -r "@FEAT:account-management.*@TYPE:core" --include="*.py"
+grep -r "@FEAT:account-management.*@TYPE:core" --include="*.py" --include="*.js"
 
 # API 엔드포인트
-grep -r "@FEAT:account-management.*@COMP:route" --include="*.py"
+grep -r "@FEAT:account-management.*@COMP:route" --include="*.py" --include="*.js"
 
 # 서비스 로직
 grep -r "@FEAT:account-management.*@COMP:service" --include="*.py"
@@ -26,6 +26,7 @@ grep -r "@FEAT:account-management.*@COMP:service" --include="*.py"
 User Request → Route (accounts.py) → Service (security.py) → DB (models.py)
                 ↓ @login_required          ↓ 암호화/복호화       ↓ Account
                 ↓ 권한 검증                 ↓ 거래소 연동         ↓ DailyAccountSummary
+                ↓ Frontend (accounts.js)   ↓ 캐시 무효화
 ```
 
 ### 데이터 플로우
@@ -37,6 +38,7 @@ User Request → Route (accounts.py) → Service (security.py) → DB (models.py
 ### 주요 컴포넌트
 | 컴포넌트 | 파일 | 태그 | 역할 |
 |---------|------|------|------|
+| Frontend | `static/js/accounts.js` | `@COMP:route` | 계좌 폼 제출, UI 업데이트 |
 | Route | `routes/accounts.py` | `@COMP:route` | HTTP 요청 처리, 인증/권한 검증 |
 | Service | `services/security.py` | `@COMP:service` | 비즈니스 로직, 암호화 |
 | Model | `models.py` | `@COMP:model` | Account, DailyAccountSummary |
@@ -111,11 +113,16 @@ Content-Type: application/json
 {
   "name": "Updated Name",
   "is_active": true,
-  "public_api": "new_api_key",  // 선택
-  "secret_api": "new_secret_key"  // 선택
+  "public_api": "new_api_key",  // 선택 (빈 문자열이면 전송하지 않음 - Phase 2)
+  "secret_api": "new_secret_key"  // 선택 (빈 문자열이면 전송하지 않음 - Phase 2)
 }
 ```
 **로직**: API 키 변경 시 재암호화 + 캐시 무효화 + ExchangeService 캐시 무효화
+
+**Phase 2 개선 (2025-10-13)**:
+- 프론트엔드에서 빈 문자열/null인 API 키 필드를 요청에서 제외
+- 계좌 이름만 변경 시 불필요한 캐시 무효화 방지
+- 백엔드 `update_account` 메서드의 Variable Shadowing 버그 수정 (Phase 1)
 
 ### 5. 계좌 삭제
 ```http
@@ -279,16 +286,21 @@ from app.security.encryption import encrypt_value, decrypt_value, is_likely_lega
 
 ---
 
+## Known Issues
+
+### Variable Shadowing 방지 (security.py:634)
+**이상한 점**: `update_account` 메서드에서 캐시 무효화 시 `Account.clear_cache()` 직접 호출  
+**이유**: 함수 내 조건부 `from app.models import Account` import 시 Python이 `Account`를 지역 변수로 인식하여 UnboundLocalError 발생. 모듈 레벨 import만 사용하여 회피.  
+**참고**: `docs/decisions/004-python-variable-shadowing-prevention.md`
+
+---
+
 ## 관련 문서
 - [거래소 통합](./exchange-integration.md)
 - [전략 관리](./strategy-management.md)
 - [아키텍처 개요](../ARCHITECTURE.md)
+- [Variable Shadowing 예방 가이드](../decisions/004-python-variable-shadowing-prevention.md) (신규)
 
 ---
 
-*Last Updated: 2025-10-12*
-*Lines: ~230*
-
-**Changelog:**
-- 2025-10-12: 증권 계좌 필드 추가 (`account_type`, `securities_config`, `access_token`), 암호화 알고리즘 정확도 개선 (Fernet 명시), 캐시 구현 세부사항 추가
-- 2025-10-11: 초기 작성 (627줄에서 65% 축소)
+*Last Updated: 2025-10-13*
