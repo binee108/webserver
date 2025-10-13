@@ -39,6 +39,12 @@ API_VERSION = "v1"
 RATE_LIMIT_PER_MINUTE = 300  # ESTIMATED
 RATE_LIMIT_PER_SECOND = 5    # ESTIMATED
 
+# RCE 예방: 허용된 query parameter allowlist (defense-in-depth)
+ALLOWED_QUERY_PARAMS = {
+    'market', 'side', 'ord_type', 'volume', 'price', 'uuid',
+    'state', 'page', 'limit', 'order_by', 'isDetails'
+}
+
 # API 엔드포인트
 class BithumbEndpoints:
     # 공개 API (인증 불필요)
@@ -120,10 +126,15 @@ class BithumbExchange(BaseCryptoExchange):
         }
 
         if query_params:
-            # 🔒 RCE 예방: 입력 검증 (타입 검증)
+            # 🔒 RCE 예방: 입력 검증 (allowlist + 타입 검증)
             for key, value in query_params.items():
                 if not isinstance(key, str):
                     raise ValueError(f"Invalid query parameter key type: {key} ({type(key)})")
+
+                # Allowlist validation (defense-in-depth)
+                if key not in ALLOWED_QUERY_PARAMS:
+                    raise ValueError(f"Unauthorized query parameter: {key}")
+
                 if not isinstance(value, (str, int, float, Decimal, bool)):
                     raise ValueError(f"Invalid query parameter value type: {key}={type(value)}")
 

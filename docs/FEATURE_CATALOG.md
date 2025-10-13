@@ -133,22 +133,40 @@ grep -r "@FEAT:analytics" --include="*.py" | grep "@FEAT:capital-management"
 ---
 
 ### 6. exchange-integration
-**설명**: 거래소 통합 레이어 (Binance, Bybit, KIS, Upbit)
+**설명**: 거래소 통합 레이어 (Binance, Bybit, KIS, Upbit, Bithumb)
 **태그**: `@FEAT:exchange-integration`
 **주요 컴포넌트**:
 - **Exchange**: `web_server/app/exchanges/` - 거래소 어댑터
-  - `crypto/binance.py` - Binance 구현
+  - `crypto/binance.py` - Binance 구현 (Spot, Futures)
   - `crypto/bybit.py` - Bybit 구현 (미완성)
-  - `crypto/upbit.py` - Upbit 구현 (2025-10-13 추가)
-  - `securities/korea_investment.py` - 한국투자증권
+  - `crypto/upbit.py` - Upbit 구현 (SPOT 전용, 2025-10-13 추가)
+  - **`crypto/bithumb.py` - Bithumb 구현 (SPOT 전용, 2025-10-13 추가)**
+  - `securities/korea_investment.py` - 한국투자증권 KIS
+  - `crypto/factory.py` - CryptoExchangeFactory
   - `unified_factory.py` - 통합 팩토리
 - **Service**: `web_server/app/services/exchange.py` - 거래소 서비스
+- **Metadata**: `web_server/app/exchanges/metadata.py` - 거래소 메타데이터
+- **Util**: `web_server/app/utils/symbol_utils.py` - 심볼 변환 (`to_bithumb_format`, `from_bithumb_format`)
 
 **의존성**: None
 
 **최신 수정 (2025-10-13)**:
+- **Bithumb 거래소 통합 완료** (SPOT 전용, KRW + USDT 듀얼 마켓)
+- **Allowlist validation 추가** (RCE 예방 강화)
+- **배치 주문 지원** (SEQUENTIAL_FALLBACK, 5 req/s)
 - Upbit 거래소 통합 완료 (SPOT 전용, 215개 심볼)
 - ExchangeMetadata 기반 market_type 필터링 구현
+
+**Bithumb 차별화 포인트** (vs. Upbit):
+1. **KRW + USDT 듀얼 마켓** (Upbit은 KRW만)
+2. **동적 Precision 처리** (KRW: 정수, USDT: 소수점 2자리)
+3. **Allowlist validation** (Upbit에는 없는 보안 계층)
+4. **보수적 Rate Limit** (5 req/s vs Upbit 8 req/s)
+5. **state=wait 파라미터** (Upbit은 `/orders/open` 엔드포인트)
+
+**구현 문서**:
+- `.plan/bithumb_implementation_summary.md` (996줄 코드, Code Review 9.5/10)
+- `.plan/bithumb_api_research.md` (Phase 0.5 API 조사)
 
 **검색 예시**:
 ```bash
@@ -160,6 +178,12 @@ grep -r "@FEAT:exchange-integration" --include="*.py" | grep "binance"
 
 # Upbit 특화
 grep -r "@FEAT:exchange-integration" --include="*.py" | grep "upbit"
+
+# Bithumb 특화 (신규)
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep "bithumb"
+
+# 배치 주문 구현 (Bithumb, Upbit)
+grep -r "create_batch_orders" --include="*.py" | grep -E "upbit|bithumb"
 ```
 
 ---
@@ -502,7 +526,7 @@ grep -r "@FEAT:health-monitoring" --include="*.py"
 **최신 수정 (2025-10-13)**:
 - **CryptoExchangeFactory 기반 동적 로딩**: 하드코딩 제거, 새 거래소 추가 시 코드 수정 불필요
 - **메타데이터 기반 market_type 필터링**: ExchangeMetadata.supported_markets로 자동 필터링
-- **Upbit SPOT 지원**: 215개 심볼 로드, "Upbit은 Futures 지원하지 않음" 에러 제거
+- **Upbit + Bithumb SPOT 지원**: Upbit 215개, Bithumb 약 200개 심볼 로드
 - **Background Job 개선**: 메타데이터 기반 필터링으로 거래소별 지원 market_type 자동 감지
 
 **변경 내역**:
@@ -606,9 +630,10 @@ grep -r "@FEAT:api-gateway" --include="*.py"
 - `web_server/app/services/symbol_validator.py` - 심볼 검증 **(2025-10-13 업데이트)**
 
 ### Exchanges (@COMP:exchange)
-- `web_server/app/exchanges/crypto/binance.py` - Binance
-- `web_server/app/exchanges/crypto/upbit.py` - Upbit **(2025-10-13 추가)**
-- `web_server/app/exchanges/securities/korea_investment.py` - KIS
+- `web_server/app/exchanges/crypto/binance.py` - Binance (Spot, Futures)
+- `web_server/app/exchanges/crypto/upbit.py` - Upbit (SPOT) **(2025-10-13 추가)**
+- **`web_server/app/exchanges/crypto/bithumb.py` - Bithumb (SPOT) **(2025-10-13 추가)****
+- `web_server/app/exchanges/securities/korea_investment.py` - 한국투자증권 KIS
 
 ### Models (@COMP:model)
 - `web_server/app/models.py` - 모든 DB 모델
@@ -704,6 +729,15 @@ def load_initial_symbols(self):
     - 메타데이터 활용: ExchangeMetadata의 supported_markets로 market_type 자동 필터링
     """
     pass
+
+# @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
+async def create_batch_orders_async(self, orders: List[Dict], market_type: str):
+    """
+    배치 주문 생성 (Bithumb - SEQUENTIAL_FALLBACK, 5 req/s)
+
+    Rate Limit: 초당 5회 (보수적 추정)
+    """
+    pass
 ```
 
 ---
@@ -772,6 +806,9 @@ grep -r "@FEAT:order-queue" --include="*.py" | grep "@TYPE:core"
 # 거래소 통합의 Binance 관련 코드
 grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "binance"
 
+# 거래소 통합의 Bithumb 관련 코드 (신규)
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "bithumb"
+
 # 전략 관리의 검증 로직
 grep -r "@FEAT:strategy-management" --include="*.py" | grep "@TYPE:validation"
 
@@ -786,6 +823,9 @@ grep -r "@FEAT:account-management" --include="*.js"
 
 # symbol-validation의 메타데이터 기반 로딩
 grep -rn "ExchangeMetadata" web_server/app/services/symbol_validator.py
+
+# Bithumb 배치 주문 구현
+grep -rn "create_batch_orders" web_server/app/exchanges/crypto/bithumb.py
 ```
 
 ---
@@ -852,7 +892,7 @@ grep -roh "@FEAT:[a-z-]*" --include="*.py" --include="*.js" | sort -u
 ### exchange-integration (확장)
 **확장 내역**:
 - `services/exchange.py` 추가 (ExchangeService, RateLimiter, PrecisionCache)
-- `exchanges/crypto/*` 추가 (Binance, Upbit 구현)
+- `exchanges/crypto/*` 추가 (Binance, Upbit, **Bithumb** 구현)
 - `exchanges/securities/*` 추가 (한국투자증권 KIS 구현)
 - `exchanges/metadata.py`, `unified_factory.py` 추가
 
@@ -874,6 +914,9 @@ grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "securities"
 
 # Upbit 구현
 grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "upbit"
+
+# Bithumb 구현 (신규)
+grep -r "@FEAT:exchange-integration" --include="*.py" | grep -i "bithumb"
 ```
 
 ### order-tracking (확장)
@@ -913,18 +956,20 @@ grep -r "@FEAT:framework" --include="*.py" | grep "trading/core"
 ---
 
 *Last Updated: 2025-10-13*
-*Version: 2.2.0*
+*Version: 2.3.0*
 *Total Features: 20*
-*Documented Features: 20 (기존 12 + 신규 8)*
+*Documented Features: 20*
 
 **Changelog:**
-- 2025-10-13: **symbol-validation 기능 업데이트** - CryptoExchangeFactory 기반 동적 로딩, 메타데이터 기반 market_type 필터링, Upbit SPOT 지원 추가
+- **2025-10-13**: **Bithumb Exchange Integration** - SPOT 전용 통합 완료 (KRW + USDT 듀얼 마켓, Allowlist validation, 배치 주문 5 req/s, 996줄 코드, Code Review 9.5/10)
+- 2025-10-13: **symbol-validation 기능 업데이트** - CryptoExchangeFactory 기반 동적 로딩, 메타데이터 기반 market_type 필터링, Upbit + Bithumb SPOT 지원 추가
 - 2025-10-13: account-management 기능 확장 - 프론트엔드 파일 추가 (`accounts.js`), Phase 1/2 버그 수정 기록, Variable Shadowing 예방 가이드 추가
 - 2025-10-11: Code Review 완료 - 기능 중복 제거 및 통합, 태그 일관성 개선
 - 2025-10-10: 초기 작성 (20개 기능 문서화)
 
 **Recent Updates:**
-- `symbol-validation` 기능에 메타데이터 기반 동적 로딩 구현 추가
+- **Bithumb 거래소 통합** (국내 2위, KRW + USDT 마켓, Allowlist 보안 강화)
+- `symbol-validation` 기능에 Bithumb 지원 추가 (약 200개 심볼)
 - Upbit 거래소 통합 (SPOT 전용, 215개 심볼)
 - 하드코딩 제거 및 확장성 개선 (DRY 원칙)
-- Background Job "Upbit은 Futures 지원하지 않음" 에러 제거
+- Background Job "Upbit/Bithumb은 Futures 지원하지 않음" 에러 제거
