@@ -6,6 +6,7 @@
 거래소별 변환:
 - Binance: BTCUSDT
 - Upbit: KRW-BTC
+- Bithumb: KRW-BTC, USDT-BTC
 """
 
 from typing import Tuple, Optional
@@ -190,6 +191,66 @@ def from_upbit_format(upbit_symbol: str) -> str:
     return format_symbol(coin, currency)
 
 
+def to_bithumb_format(symbol: str) -> str:
+    """
+    표준 심볼을 Bithumb 형식으로 변환
+
+    Args:
+        symbol: 표준 형식 심볼 (예: BTC/KRW, BTC/USDT)
+
+    Returns:
+        Bithumb 형식 심볼 (예: KRW-BTC, USDT-BTC)
+
+    Raises:
+        SymbolFormatError: KRW 또는 USDT 마켓이 아닌 경우
+
+    Examples:
+        >>> to_bithumb_format("BTC/KRW")
+        'KRW-BTC'
+        >>> to_bithumb_format("ETH/KRW")
+        'KRW-ETH'
+        >>> to_bithumb_format("BTC/USDT")
+        'USDT-BTC'
+        >>> to_bithumb_format("BTC/BTC")  # doctest: +SKIP
+        SymbolFormatError: Bithumb only supports KRW and USDT markets. Got: BTC/BTC
+    """
+    coin, currency = parse_symbol(symbol)
+    if currency not in ['KRW', 'USDT']:
+        raise SymbolFormatError(f"Bithumb only supports KRW and USDT markets. Got: {symbol}")
+    return f"{currency}-{coin}"
+
+
+def from_bithumb_format(bithumb_symbol: str) -> str:
+    """
+    Bithumb 형식 심볼을 표준 형식으로 변환
+
+    Args:
+        bithumb_symbol: Bithumb 형식 심볼 (예: KRW-BTC, USDT-BTC)
+
+    Returns:
+        표준 형식 심볼 (예: BTC/KRW, BTC/USDT)
+
+    Raises:
+        SymbolFormatError: 잘못된 Bithumb 형식
+
+    Examples:
+        >>> from_bithumb_format("KRW-BTC")
+        'BTC/KRW'
+        >>> from_bithumb_format("KRW-ETH")
+        'ETH/KRW'
+        >>> from_bithumb_format("USDT-BTC")
+        'BTC/USDT'
+        >>> from_bithumb_format("INVALID")  # doctest: +SKIP
+        SymbolFormatError: Invalid Bithumb format: INVALID. Expected: CURRENCY-COIN
+    """
+    parts = bithumb_symbol.split('-')
+    if len(parts) != 2:
+        raise SymbolFormatError(f"Invalid Bithumb format: {bithumb_symbol}. Expected: CURRENCY-COIN")
+
+    currency, coin = parts
+    return format_symbol(coin, currency)
+
+
 def normalize_symbol_from_db(symbol: str, exchange: str = None) -> str:
     """
     DB에서 읽은 심볼을 표준 형식으로 변환 (하위 호환성)
@@ -208,6 +269,10 @@ def normalize_symbol_from_db(symbol: str, exchange: str = None) -> str:
         'BTC/USDT'
         >>> normalize_symbol_from_db("KRW-BTC", "UPBIT")
         'BTC/KRW'
+        >>> normalize_symbol_from_db("KRW-BTC", "BITHUMB")
+        'BTC/KRW'
+        >>> normalize_symbol_from_db("USDT-BTC", "BITHUMB")
+        'BTC/USDT'
     """
     # 이미 표준 형식인 경우
     if '/' in symbol:
@@ -215,8 +280,13 @@ def normalize_symbol_from_db(symbol: str, exchange: str = None) -> str:
 
     # 레거시 형식 감지 및 변환
     if '-' in symbol:
-        # Upbit 형식 (KRW-BTC)
-        return from_upbit_format(symbol)
+        # Upbit/Bithumb 형식 (KRW-BTC, USDT-BTC)
+        # exchange 힌트를 사용하여 구분
+        if exchange and exchange.upper() == 'BITHUMB':
+            return from_bithumb_format(symbol)
+        else:
+            # 기본값: Upbit (하위 호환성)
+            return from_upbit_format(symbol)
     else:
         # Binance 형식으로 간주 (BTCUSDT)
         return from_binance_format(symbol)

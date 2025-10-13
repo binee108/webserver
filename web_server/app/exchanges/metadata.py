@@ -93,17 +93,29 @@ class ExchangeMetadata:
             }
         },
 
+        'bithumb': {
+            'region': ExchangeRegion.DOMESTIC,
+            'name': 'Bithumb',
+            'country': 'South Korea',
+            'api_version': 'v1',
+            'supported_markets': [MarketType.SPOT],
+            'base_currency': ['KRW', 'USDT'],
+            'auth_type': 'jwt_hmac_sha256',
+            'testnet_available': False,
+            'rate_limit': {
+                'requests_per_minute': 300,
+                'orders_per_second': 5,
+                'weight_limit': None
+            },
+            'features': {
+                'leverage': False,
+                'position_mode': False,
+                'funding_rate': False,
+                'websocket': True
+            }
+        },
+
         # === 향후 추가 예정 (주석 템플릿) ===
-        # 'bithumb': {
-        #     'region': ExchangeRegion.DOMESTIC,
-        #     'name': 'Bithumb',
-        #     'country': 'South Korea',
-        #     'api_version': 'v1',
-        #     'supported_markets': [MarketType.SPOT],
-        #     'base_currency': ['KRW'],
-        #     'auth_type': 'hmac_sha512',
-        #     'testnet_available': False,
-        # },
 
         # 'okx': {
         #     'region': ExchangeRegion.GLOBAL,

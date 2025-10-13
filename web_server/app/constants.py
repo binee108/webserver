@@ -222,6 +222,7 @@ class Exchange:
     BYBIT = 'BYBIT'
     OKX = 'OKX'
     UPBIT = 'UPBIT'
+    BITHUMB = 'BITHUMB'
 
     # 증권 거래소
     KIS = 'KIS'           # 한국투자증권
@@ -234,12 +235,13 @@ class Exchange:
     BYBIT_LOWER = 'bybit'
     OKX_LOWER = 'okx'
     UPBIT_LOWER = 'upbit'
+    BITHUMB_LOWER = 'bithumb'
 
     # 유효한 값 목록
-    VALID_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, KIS, KIWOOM, LS, EBEST]
+    VALID_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, BITHUMB, KIS, KIWOOM, LS, EBEST]
     VALID_EXCHANGES_LOWER = [x.lower() for x in VALID_EXCHANGES]
 
-    CRYPTO_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT]
+    CRYPTO_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, BITHUMB]
     SECURITIES_EXCHANGES = [KIS, KIWOOM, LS, EBEST]
 
     @classmethod
@@ -644,6 +646,9 @@ class MinOrderAmount:
     # Upbit (KRW 기준)
     UPBIT_SPOT = 5000        # 현물 5000 KRW
 
+    # Bithumb (KRW 기준)
+    BITHUMB_SPOT = 5000      # 현물 5000 KRW (ESTIMATED - 업비트와 유사)
+
     # 조정 배수 (안전 마진 2배)
     ADJUSTMENT_MULTIPLIER = 2.0
 
@@ -690,6 +695,9 @@ class MinOrderAmount:
             },
             'UPBIT': {
                 'SPOT': cls.UPBIT_SPOT
+            },
+            'BITHUMB': {
+                'SPOT': cls.BITHUMB_SPOT
             }
         }
 
@@ -1119,6 +1127,13 @@ class ExchangeLimits:
                 'per_symbol': None,
                 'per_account': None,
                 'conditional': 20       # 조건부 주문만 제한
+            }
+        },
+        'BITHUMB': {
+            MarketType.SPOT: {
+                'per_symbol': None,     # 공식 문서 없음 - 보수적 기본값 사용
+                'per_account': None,
+                'conditional': 20       # ESTIMATED - 업비트와 유사 (공식 문서 없음)
             }
         }
     }
