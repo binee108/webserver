@@ -1023,13 +1023,12 @@ class BinanceExchange(BaseCryptoExchange):
 
 
     # CCXT 호환 메서드들 (동기)
-    async def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (비동기 인터페이스)
+    def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
+        """잔액 조회 (동기)
 
         BaseExchange 필수 메서드 구현.
-        내부적으로 fetch_balance_async()를 호출하여 비동기 HTTP 요청을 수행합니다.
         """
-        return await self.fetch_balance_async(market_type)
+        return self.fetch_balance_impl(market_type)
 
     def create_market_order(self, symbol: str, side: str, amount: float,
                            market_type: str = 'spot') -> Order:

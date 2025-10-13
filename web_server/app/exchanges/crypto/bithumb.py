@@ -244,120 +244,329 @@ class BithumbExchange(BaseCryptoExchange):
             logger.error(f"Bithumb API 요청 실패: {e}")
             raise ExchangeError(f"Bithumb API 오류: {str(e)}")
 
-    # ===== Phase 4에서 구현될 메서드들 (Placeholder) =====
+    # ===== 핵심 거래 메서드 구현 =====
 
     def load_markets_impl(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
-        """마켓 정보 로드 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """마켓 정보 로드 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        cache_key = "markets"
+
+        # 캐시 확인
+        if not reload and cache_key in self.cache_time:
+            if time.time() - self.cache_time[cache_key] < self.cache_ttl:
+                return self.markets_cache
+
+        # 마켓 코드 조회 (Public API - 인증 불필요)
+        data = self._request('GET', BithumbEndpoints.MARKET_ALL, params={'isDetails': 'true'})
+
+        markets = {}
+        for market_info in data:
+            market_code = market_info['market']  # 예: KRW-BTC, USDT-BTC
+
+            # KRW 또는 USDT 마켓만 처리
+            if not (market_code.startswith('KRW-') or market_code.startswith('USDT-')):
+                continue
+
+            # Bithumb 마켓 코드를 표준 형식으로 변환 (KRW-BTC → BTC/KRW)
+            standard_symbol = from_bithumb_format(market_code)
+            coin, currency = parse_symbol(standard_symbol)
+
+            # USDT 마켓 precision 다르게 설정
+            price_precision = 0 if currency == 'KRW' else 2
+            quote_precision = 0 if currency == 'KRW' else 2
+            min_notional = Decimal('5000') if currency == 'KRW' else Decimal('10')
+
+            markets[standard_symbol] = MarketInfo(
+                symbol=standard_symbol,
+                base_asset=coin,
+                quote_asset=currency,
+                status='TRADING',
+                active=True,
+                amount_precision=8,
+                price_precision=price_precision,
+                base_precision=8,
+                quote_precision=quote_precision,
+                min_qty=Decimal('0.00000001'),
+                max_qty=Decimal('9999999999'),
+                step_size=Decimal('0.00000001'),
+                min_price=Decimal('1') if currency == 'KRW' else Decimal('0.01'),
+                max_price=Decimal('9999999999'),
+                tick_size=Decimal('1') if currency == 'KRW' else Decimal('0.01'),
+                min_notional=min_notional,
+                market_type='SPOT'
+            )
+
+        # 캐시 업데이트
+        self.markets_cache = markets
+        self.cache_time[cache_key] = time.time()
+
+        logger.info(f"✅ Bithumb 마켓 정보 로드 완료: {len(markets)}개")
+        return markets
 
     def fetch_balance_impl(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """잔액 조회 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        data = self._request('GET', BithumbEndpoints.ACCOUNTS, signed=True)
+
+        balances = {}
+        for account_info in data:
+            currency = account_info.get('currency')
+            if not currency:
+                continue
+
+            balance = Decimal(account_info.get('balance', '0'))
+            locked = Decimal(account_info.get('locked', '0'))
+            total = balance + locked
+
+            # 0이 아닌 잔액만 포함
+            if total > 0:
+                balances[currency] = Balance(
+                    asset=currency,
+                    free=balance,
+                    locked=locked,
+                    total=total
+                )
+
+        logger.info(f"✅ Bithumb 잔액 조회 완료: {len(balances)}개")
+        return balances
 
     def create_order_impl(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
                          market_type: str = 'spot', **params) -> Order:
-        """주문 생성 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 생성 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        # 심볼 변환: 표준 형식(BTC/KRW) → Bithumb 형식(KRW-BTC)
+        market_code = to_bithumb_format(symbol)
+        logger.info(f"🔄 심볼 변환: {symbol} → {market_code}")
+
+        # Bithumb 주문 파라미터
+        order_params = {
+            'market': market_code,
+            'side': 'bid' if side.lower() == 'buy' else 'ask',
+            'ord_type': 'limit' if order_type.upper() == 'LIMIT' else 'price',
+        }
+
+        # 주문 타입별 파라미터 설정
+        if order_type.upper() == 'LIMIT':
+            if not price:
+                raise InvalidOrder("LIMIT 주문은 price 파라미터가 필수입니다")
+
+            # KRW인 경우 정수로 변환
+            _, currency = parse_symbol(symbol)
+            if currency == 'KRW':
+                order_params['price'] = str(int(price))
+            else:
+                order_params['price'] = str(price)
+
+            order_params['volume'] = str(amount)
+        elif order_type.upper() == 'MARKET':
+            if side.lower() == 'buy':
+                # 매수 시장가: 주문 금액
+                if not price:
+                    raise InvalidOrder("시장가 매수는 price(주문금액) 파라미터가 필요합니다")
+                order_params['price'] = str(int(price * amount))
+            else:
+                # 매도 시장가: 주문 수량
+                order_params['volume'] = str(amount)
+        else:
+            raise InvalidOrder(f"지원하지 않는 주문 타입: {order_type}")
+
+        logger.info(f"🔍 Bithumb API 호출: {BithumbEndpoints.ORDER}")
+        logger.info(f"🔍 주문 파라미터: {order_params}")
+
+        data = self._request('POST', BithumbEndpoints.ORDER, params=order_params, signed=True)
+        logger.info(f"🔍 Bithumb API 응답: {data}")
+
+        return self._parse_order(data)
 
     def cancel_order_impl(self, order_id: str, symbol: str = None, market_type: str = 'spot') -> Dict[str, Any]:
-        """주문 취소 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 취소 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        params = {'uuid': order_id}
+        data = self._request('DELETE', BithumbEndpoints.ORDER_CANCEL, params=params, signed=True)
+
+        return {
+            'success': True,
+            'order_id': data.get('uuid'),
+            'symbol': data.get('market'),
+            'status': data.get('state'),
+            'message': f"주문 {order_id} 취소 완료"
+        }
 
     def fetch_open_orders_impl(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
-        """미체결 주문 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """미체결 주문 조회 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        params = {'state': 'wait'}  # 미체결 주문 필터
+        if symbol:
+            # 심볼 변환: 표준 형식(BTC/KRW) → Bithumb 형식(KRW-BTC)
+            bithumb_market = to_bithumb_format(symbol)
+            params['market'] = bithumb_market
+
+        data = self._request('GET', BithumbEndpoints.ORDERS, params=params, signed=True)
+        return [self._parse_order(order_data) for order_data in data]
 
     def fetch_order_impl(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
-        """단일 주문 상세 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """단일 주문 상세 조회 (동기)"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        params = {'uuid': order_id}
+        data = self._request('GET', BithumbEndpoints.ORDER_INFO, params=params, signed=True)
+
+        logger.debug(f"🔍 주문 상세 조회 완료: order_id={order_id}")
+        return self._parse_order(data)
 
     def _parse_order(self, order_data: Dict[str, Any]) -> Order:
-        """주문 데이터 파싱 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 데이터 파싱 - Bithumb 응답을 프로젝트 표준으로 변환"""
+        # Bithumb 마켓 코드를 표준 심볼로 변환 (KRW-BTC → BTC/KRW)
+        market_code = order_data.get('market', '')
+        standard_symbol = from_bithumb_format(market_code)
+        logger.debug(f"🔄 응답 심볼 변환: {market_code} → {standard_symbol}")
 
-    # ===== 비동기 메서드들 (동기 구현을 래핑) - Phase 4에서 구현 =====
+        # Bithumb 주문 상태 매핑
+        state = order_data.get('state', 'wait')
+        status_map = {
+            'wait': 'NEW',
+            'watch': 'NEW',
+            'done': 'FILLED',
+            'cancel': 'CANCELED'
+        }
+        status = status_map.get(state, state.upper())
+
+        # Side 변환 (bid → buy, ask → sell)
+        side = 'buy' if order_data.get('side') == 'bid' else 'sell'
+
+        # 주문 타입 변환
+        ord_type = order_data.get('ord_type', 'limit')
+        order_type = 'market' if ord_type == 'price' else 'limit'
+
+        # 수량 및 가격 정보
+        volume = Decimal(order_data.get('volume', '0'))
+        executed_volume = Decimal(order_data.get('executed_volume', '0'))
+        remaining_volume = volume - executed_volume
+
+        price = None
+        if order_data.get('price'):
+            price = Decimal(str(order_data['price']))
+
+        avg_price = None
+        if order_data.get('avg_buy_price'):
+            avg_price = Decimal(str(order_data['avg_buy_price']))
+
+        # 총 거래금액
+        cost = None
+        if executed_volume > 0 and avg_price and avg_price > 0:
+            cost = executed_volume * avg_price
+
+        return Order(
+            id=order_data.get('uuid'),
+            symbol=standard_symbol,  # 표준 형식 심볼 사용
+            side=side,
+            amount=volume,
+            price=price,
+            stop_price=None,  # Bithumb은 스탑 주문 미지원
+            filled=executed_volume,
+            remaining=remaining_volume,
+            status=status,
+            timestamp=int(datetime.fromisoformat(order_data.get('created_at', '').replace('Z', '+00:00')).timestamp() * 1000) if order_data.get('created_at') else 0,
+            type=order_type,
+            market_type='SPOT',
+            average=avg_price if avg_price and avg_price > 0 else None,
+            cost=cost
+        )
+
+    # ===== 비동기 메서드들 (동기 구현을 래핑) =====
 
     async def load_markets_async(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
-        """마켓 정보 로드 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """마켓 정보 로드 (비동기)"""
+        return self.load_markets_impl(market_type, reload)
 
     async def fetch_balance_async(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """잔액 조회 (비동기)"""
+        return self.fetch_balance_impl(market_type)
 
     async def create_order_async(self, symbol: str, order_type: str, side: str,
                           amount: Decimal, price: Optional[Decimal] = None,
                           market_type: str = 'spot', **params) -> Order:
-        """주문 생성 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 생성 (비동기)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
     async def cancel_order_async(self, order_id: str, symbol: str = None,
                           market_type: str = 'spot') -> Dict[str, Any]:
-        """주문 취소 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 취소 (비동기)"""
+        return self.cancel_order_impl(order_id, symbol, market_type)
 
     async def fetch_order_async(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
-        """단일 주문 상세 조회 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """단일 주문 상세 조회 (비동기)"""
+        return self.fetch_order_impl(symbol, order_id, market_type)
 
     async def fetch_open_orders_async(self, symbol: Optional[str] = None,
                                market_type: str = 'spot') -> List[Order]:
-        """미체결 주문 조회 (비동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """미체결 주문 조회 (비동기)"""
+        return self.fetch_open_orders_impl(symbol, market_type)
 
-    # ===== BaseExchange 필수 메서드 구현 (비동기 버전을 기본으로 사용) - Phase 4에서 구현 =====
+    # ===== BaseExchange 필수 메서드 구현 (동기) =====
 
-    async def load_markets(self, market_type: str = 'spot', reload: bool = False):
-        """마켓 정보 로드 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def load_markets(self, market_type: str = 'spot', reload: bool = False):
+        """마켓 정보 로드 (동기)"""
+        return self.load_markets_impl(market_type, reload)
 
-    async def fetch_balance(self, market_type: str = 'spot'):
-        """잔액 조회 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def fetch_balance(self, market_type: str = 'spot'):
+        """잔액 조회 (동기)"""
+        return self.fetch_balance_impl(market_type)
 
-    async def create_order(self, symbol: str, order_type: str, side: str,
-                          amount: Decimal, price: Optional[Decimal] = None,
-                          market_type: str = 'spot', **params):
-        """주문 생성 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def create_order(self, symbol: str, order_type: str, side: str,
+                     amount: Decimal, price: Optional[Decimal] = None,
+                     market_type: str = 'spot', **params):
+        """주문 생성 (동기)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
-    async def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
-        """주문 취소 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
+        """주문 취소 (동기)"""
+        return self.cancel_order_impl(order_id, symbol, market_type)
 
-    async def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
-        """미체결 주문 조회 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
+        """미체결 주문 조회 (동기)"""
+        return self.fetch_open_orders_impl(symbol, market_type)
 
-    async def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
-        """단일 주문 조회 - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+    def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
+        """단일 주문 조회 (동기)"""
+        return self.fetch_order_impl(symbol, order_id, market_type)
 
-    # ===== 동기 래퍼 메서드들 - Phase 4에서 구현 =====
+    # ===== 동기 래퍼 메서드들 (하위 호환성) =====
 
     def fetch_balance_sync(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """잔액 조회 (동기)"""
+        return self.fetch_balance_impl(market_type)
 
     def create_order_sync(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
                          market_type: str = 'spot', **params) -> Order:
-        """주문 생성 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 생성 (동기)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
     def load_markets_sync(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
-        """마켓 정보 로드 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """마켓 정보 로드 (동기)"""
+        return self.load_markets_impl(market_type, reload)
 
     def cancel_order_sync(self, order_id: str, symbol: str = None, market_type: str = 'spot') -> Dict[str, Any]:
-        """주문 취소 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """주문 취소 (동기)"""
+        return self.cancel_order_impl(order_id, symbol, market_type)
 
     def fetch_open_orders_sync(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
-        """미체결 주문 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """미체결 주문 조회 (동기)"""
+        return self.fetch_open_orders_impl(symbol, market_type)
 
     def fetch_order_sync(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
-        """단일 주문 상세 조회 (동기) - Phase 4에서 구현"""
-        raise NotImplementedError("Phase 4에서 구현 예정")
+        """단일 주문 상세 조회 (동기)"""
+        return self.fetch_order_impl(symbol, order_id, market_type)

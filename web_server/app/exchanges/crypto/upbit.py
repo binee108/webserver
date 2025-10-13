@@ -555,64 +555,50 @@ class UpbitExchange(BaseCryptoExchange):
         """미체결 주문 조회 (비동기)"""
         return self.fetch_open_orders_impl(symbol, market_type)
 
-    # BaseExchange 필수 메서드 구현 (비동기 버전을 기본으로 사용)
-    async def load_markets(self, market_type: str = 'spot', reload: bool = False):
-        """마켓 정보 로드"""
-        return await self.load_markets_async(market_type, reload)
-
-    async def fetch_balance(self, market_type: str = 'spot'):
-        """잔액 조회"""
-        return await self.fetch_balance_async(market_type)
-
-    async def create_order(self, symbol: str, order_type: str, side: str,
-                          amount: Decimal, price: Optional[Decimal] = None,
-                          market_type: str = 'spot', **params):
-        """주문 생성"""
-        return await self.create_order_async(symbol, order_type, side, amount, price, market_type, **params)
-
-    async def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
-        """주문 취소"""
-        return await self.cancel_order_async(order_id, symbol, market_type)
-
-    async def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
-        """미체결 주문 조회"""
-        return await self.fetch_open_orders_async(symbol, market_type)
-
-    async def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
-        """단일 주문 조회"""
-        return await self.fetch_order_async(symbol, order_id, market_type)
-
-    # 동기 래퍼 메서드들
-    def fetch_balance_sync(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (동기)"""
-        return self.fetch_balance_impl(market_type)
-
-    def create_order_sync(self, symbol: str, order_type: str, side: str,
-                         amount: Decimal, price: Optional[Decimal] = None,
-                         market_type: str = 'spot', **params) -> Order:
-        """주문 생성 (동기)"""
-        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
-
-    def load_markets_sync(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+    # BaseExchange 필수 메서드 구현 (동기)
+    def load_markets(self, market_type: str = 'spot', reload: bool = False):
         """마켓 정보 로드 (동기)"""
         return self.load_markets_impl(market_type, reload)
 
-    def cancel_order_sync(self, order_id: str, symbol: str = None, market_type: str = 'spot') -> Dict[str, Any]:
+    def fetch_balance(self, market_type: str = 'spot'):
+        """잔액 조회 (동기)"""
+        return self.fetch_balance_impl(market_type)
+
+    def create_order(self, symbol: str, order_type: str, side: str,
+                     amount: Decimal, price: Optional[Decimal] = None,
+                     market_type: str = 'spot', **params):
+        """주문 생성 (동기)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
+
+    def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
         """주문 취소 (동기)"""
         return self.cancel_order_impl(order_id, symbol, market_type)
 
-    def fetch_open_orders_sync(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
+    def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
         """미체결 주문 조회 (동기)"""
         return self.fetch_open_orders_impl(symbol, market_type)
 
-    def fetch_order_sync(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
-        """단일 주문 상세 조회 (동기)"""
+    def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
+        """단일 주문 조회 (동기)"""
         return self.fetch_order_impl(symbol, order_id, market_type)
 
     # ===== 배치 주문 기능 =====
 
     # @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
-    async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+    def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """배치 주문 생성 (동기 래퍼)"""
+        # 비동기 구현을 동기 컨텍스트에서 실행
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(self.create_batch_orders_async(orders, market_type))
+
+    # @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
+    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
         """
         배치 주문 생성 (순차 폴백 - Rate Limit 준수)
 
