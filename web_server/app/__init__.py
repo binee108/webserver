@@ -48,9 +48,9 @@ if config is None:
             'max_overflow': 0,
             'pool_pre_ping': True
         }
-        LOG_LEVEL = 'INFO'
+        LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
         LOG_FILE = 'logs/app.log'
-        BACKGROUND_LOG_LEVEL = 'WARNING'
+        BACKGROUND_LOG_LEVEL = os.environ.get('BACKGROUND_LOG_LEVEL', 'WARNING')
         SCHEDULER_API_ENABLED = True
         WTF_CSRF_ENABLED = True
         WTF_CSRF_TIME_LIMIT = None
@@ -805,7 +805,7 @@ def _refresh_price_cache(app, *, source: str = 'scheduler') -> dict:
             continue
 
         exchange_name = account.exchange or Exchange.BINANCE
-        market_type = strategy.market_type or account.market_type or MarketType.SPOT
+        market_type = strategy.market_type or MarketType.SPOT
 
         normalized_exchange = Exchange.normalize(exchange_name) or Exchange.BINANCE
         normalized_market = MarketType.normalize(market_type) if market_type else MarketType.SPOT

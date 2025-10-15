@@ -1448,39 +1448,72 @@ class ExchangeService:
     def warm_up_precision_cache(self) -> None:
         """
         Precision 캐시 웜업 (admin.py에서 호출)
-        활성 계정의 주요 심볼에 대한 precision 정보를 미리 로드
+        활성 StrategyAccount의 주요 심볼에 대한 precision 정보를 미리 로드
         """
         try:
-            from app.models import Account, StrategyPosition
+            from app.models import StrategyAccount, Account
+            from app.constants import AccountType
+            from sqlalchemy.orm import contains_eager
+            from app import db
 
-            # 활성 계정 조회
-            active_accounts = Account.query.filter_by(is_active=True).all()
+            # StrategyAccount 기준으로 웜업 (Account 대신)
+            # Eager loading으로 N+1 쿼리 방지
+            strategy_accounts = StrategyAccount.query.join(
+                StrategyAccount.account
+            ).join(
+                StrategyAccount.strategy
+            ).options(
+                contains_eager(StrategyAccount.account),
+                contains_eager(StrategyAccount.strategy)
+            ).filter(
+                StrategyAccount.is_active == True,
+                Account.is_active == True
+            ).all()
 
-            for account in active_accounts:
+            logger.info(f"🔍 Precision 캐시 웜업 시작 - {len(strategy_accounts)}개 StrategyAccount")
+
+            success_count = 0
+            skip_count = 0
+            error_count = 0
+
+            for sa in strategy_accounts:
+                account = sa.account
+                strategy = sa.strategy
+
+                # CRYPTO 계좌만 웜업 (증권은 precision 개념 없음)
+                if not AccountType.is_crypto(account.account_type):
+                    skip_count += 1
+                    logger.debug(f"증권 계좌 웜업 스킵 - Account: {account.name}, Type: {account.account_type}")
+                    continue
+
                 try:
                     client = self.get_exchange_client(account)
                     if not client:
+                        error_count += 1
                         continue
 
-                    # 해당 계정의 최근 포지션에서 심볼 추출
-                    # Skip position-based warmup for now
-                    recent_positions = []
-
-                    symbols = list(set(pos.symbol for pos in recent_positions if pos.symbol))
-
-                    if not symbols:
-                        # 포지션이 없으면 주요 심볼 사용
-                        if account.exchange.lower() == 'binance':
-                            symbols = ['BTCUSDT', 'ETHUSDT']
+                    # 주요 심볼 목록 (전략별로 확장 가능)
+                    symbols = ['BTCUSDT', 'ETHUSDT']
 
                     for symbol in symbols:
-                        # Symbol Validator를 사용하여 precision 정보 로드
                         try:
                             from app.services.symbol_validator import symbol_validator
+
+                            # strategy.market_type 사용 (account.market_type 제거)
+                            # AttributeError 대비 방어 코드
+                            try:
+                                market_type = strategy.market_type.lower() if strategy.market_type else 'spot'
+                            except AttributeError:
+                                logger.warning(
+                                    f"Strategy {strategy.id} has no market_type, defaulting to 'spot'. "
+                                    f"Account: {account.name}, Exchange: {account.exchange}"
+                                )
+                                market_type = 'spot'
+
                             market_info = symbol_validator.get_market_info(
                                 account.exchange,
                                 symbol,
-                                'futures' if account.market_type == 'futures' else 'spot'
+                                market_type
                             )
 
                             if market_info:
@@ -1488,7 +1521,7 @@ class ExchangeService:
                                 self.precision_cache.set_precision_info(
                                     account.exchange,
                                     symbol,
-                                    account.market_type or 'spot',
+                                    market_type,
                                     {
                                         'amount': market_info.quantity_precision,
                                         'price': market_info.price_precision,
@@ -1501,17 +1534,36 @@ class ExchangeService:
                                         }
                                     }
                                 )
-                                logger.info(f"✅ Precision 캐시 웜업: {account.exchange} {symbol}")
+                                success_count += 1
+                                logger.debug(
+                                    f"✅ Precision 캐시 웜업 성공 - "
+                                    f"Exchange: {account.exchange}, Symbol: {symbol}, "
+                                    f"Strategy: {strategy.name}, Market: {market_type}"
+                                )
                         except Exception as e:
-                            logger.warning(f"Symbol {symbol} precision 로드 실패: {e}")
+                            error_count += 1
+                            logger.debug(
+                                f"Symbol {symbol} precision 로드 실패 - "
+                                f"Exchange: {account.exchange}, Symbol: {symbol}, "
+                                f"Strategy: {strategy.name}, Account: {account.name}, "
+                                f"Error: {e}"
+                            )
 
                 except Exception as e:
-                    logger.error(f"계정 {account.name} precision 웜업 실패: {e}")
+                    error_count += 1
+                    logger.error(
+                        f"StrategyAccount {sa.id} precision 웜업 실패 - "
+                        f"Strategy: {strategy.name}, Account: {account.name}, "
+                        f"Error: {e}"
+                    )
 
-            logger.info("✅ Precision 캐시 웜업 완료")
+            logger.info(
+                f"✅ Precision 캐시 웜업 완료 - "
+                f"성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}"
+            )
 
         except Exception as e:
-            logger.error(f"Precision 캐시 웜업 실패: {e}")
+            logger.error(f"Precision 캐시 웜업 실패: {e}", exc_info=True)
 
 
 # 싱글톤 인스턴스

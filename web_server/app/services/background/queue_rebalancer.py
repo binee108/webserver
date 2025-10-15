@@ -12,11 +12,13 @@ from typing import Set, Tuple, List
 from sqlalchemy import distinct
 from flask import Flask
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('trading_system.background.queue_rebalancer')
 
 # 모듈 레벨 변수 (메모리 체크용)
 _last_memory_check = 0
 _psutil_warning_shown = False
+# 상태 요약 로그용 (5분 간격 - 메모리 체크와 동일한 간격 사용)
+_last_status_log = 0
 
 
 # @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core
@@ -41,7 +43,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
 
     참고:
         - 스케줄러에서 1초마다 실행
-        - max_instances=1로 동시 실행 방지
+        - max_instances=1로 동시 실행 방지 (APScheduler 설정에 의해 thread-safe)
+        - 모듈 변수 _last_status_log는 max_instances=1 설정에 의존하여 thread-safe
         - 에러 발생 시에도 스케줄러 중단 방지
     """
     with app.app_context():
@@ -50,7 +53,7 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
             from app.services.trading.order_queue_manager import OrderQueueManager
 
-            global _last_memory_check, _psutil_warning_shown
+            global _last_memory_check, _psutil_warning_shown, _last_status_log
 
             # 메모리 사용량 체크 (5분마다 1회)
             current_time = time.time()
@@ -89,6 +92,16 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                 except Exception as e:
                     logger.error(f"❌ 메모리 체크 실패: {e}")
 
+            # 5분마다 상태 요약 로그 (메모리 체크와 동일한 간격)
+            if current_time - _last_status_log > 300:  # 5분
+                active_accounts_count = Account.query.filter_by(is_active=True).count()
+                logger.info(
+                    f"📊 대기열 재정렬 상태 요약 - "
+                    f"활성 계정: {active_accounts_count}개, "
+                    f"주기: 1초"
+                )
+                _last_status_log = current_time
+
             # Step 1: 활성 계정 조회
             active_accounts = Account.query.filter_by(is_active=True).all()
             active_account_ids = {account.id for account in active_accounts}
@@ -120,8 +133,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             # 2-3. 합집합 (Set으로 중복 제거)
             all_pairs: Set[Tuple[int, str]] = set(open_order_pairs) | set(pending_order_pairs)
 
-            # 🔍 디버깅: 중복 검증
-            logger.info(
+            # 디버깅: 중복 검증 (DEBUG 레벨)
+            logger.debug(
                 f"🔍 재정렬 대상 조합 - "
                 f"OpenOrder: {len(open_order_pairs)}개, "
                 f"PendingOrder: {len(pending_order_pairs)}개, "
@@ -129,12 +142,12 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             )
 
             if all_pairs:
-                logger.info(f"🔍 재정렬 대상 상세:")
+                logger.debug(f"🔍 재정렬 대상 상세:")
                 for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
-                    logger.info(f"  [{idx}] Account {account_id}: {symbol}")
+                    logger.debug(f"  [{idx}] Account {account_id}: {symbol}")
 
             if not all_pairs:
-                # 재정렬할 주문이 없으면 종료 (로그 스팸 방지)
+                # 재정렬할 주문이 없으면 조용히 종료 (로그 스팸 방지)
                 return
 
             # Step 3: 대기열 적체 모니터링 (재정렬 전 체크)
@@ -184,13 +197,13 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             from app.services.trading import trading_service
             queue_manager = trading_service.order_queue_manager
 
-            # 🔍 디버깅: 처리 순서 추적
+            # 디버깅: 처리 순서 추적
             processed_pairs = []
 
             for account_id, symbol in all_pairs:
                 try:
-                    # 🔍 디버깅: 처리 시작
-                    logger.info(f"🔍 재정렬 처리 시작 - Account {account_id}, Symbol: {symbol}")
+                    # 디버깅: 처리 시작 (DEBUG 레벨)
+                    logger.debug(f"🔍 재정렬 처리 시작 - Account {account_id}, Symbol: {symbol}")
                     processed_pairs.append((account_id, symbol))
 
                     result = queue_manager.rebalance_symbol(
@@ -198,8 +211,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                         symbol=symbol
                     )
 
-                    # 🔍 디버깅: 처리 완료
-                    logger.info(
+                    # 디버깅: 처리 완료 (DEBUG 레벨)
+                    logger.debug(
                         f"🔍 재정렬 처리 완료 - Account {account_id}, Symbol: {symbol}, "
                         f"결과: {result.get('success')}, 취소: {result.get('cancelled')}, 실행: {result.get('executed')}"
                     )
@@ -261,13 +274,19 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             elif still_large_queues:
                 logger.warning(f"⚠️ 대기열 적체 지속 - {len(still_large_queues)}개 심볼 (10개 미만이므로 텔레그램 알림 생략)")
 
-            # Step 6: 결과 로깅 (변경사항이 있을 때만)
-            if total_cancelled > 0 or total_executed > 0 or total_errors > 0:
+            # Step 6: 결과 로깅 (실제 작업 발생 시에만 INFO)
+            if total_cancelled > 0 or total_executed > 0:
                 logger.info(
                     f"🔄 대기열 재정렬 완료 - "
                     f"대상: {len(all_pairs)}개 심볼, "
                     f"취소: {total_cancelled}개, "
                     f"실행: {total_executed}개, "
+                    f"오류: {total_errors}개"
+                )
+            elif total_errors > 0:
+                logger.warning(
+                    f"⚠️ 대기열 재정렬 중 오류 발생 - "
+                    f"대상: {len(all_pairs)}개 심볼, "
                     f"오류: {total_errors}개"
                 )
 

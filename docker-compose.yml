@@ -31,6 +31,8 @@ services:
       - FLASK_APP=app:create_app
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - BACKGROUND_LOG_LEVEL=${BACKGROUND_LOG_LEVEL:-WARNING}
     depends_on:
       postgres:
         condition: service_healthy

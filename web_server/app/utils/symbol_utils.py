@@ -125,9 +125,14 @@ def from_binance_format(binance_symbol: str, default_currency: str = 'USDT') -> 
     """
     Binance 형식 심볼을 표준 형식으로 변환
 
+    지원 기능:
+    - 40+ quote currencies 자동 인식 (스테이블코인, 법정화폐, 암호화폐)
+    - Futures 만기 suffix 자동 제거 (예: BTCUSDT_251226 → BTC/USDT)
+    - Greedy matching (긴 suffix 우선 매칭으로 오매칭 방지)
+
     Args:
-        binance_symbol: Binance 형식 심볼 (예: BTCUSDT)
-        default_currency: 기본 기준 통화 (추론 실패 시 사용)
+        binance_symbol: Binance 형식 심볼 (예: BTCUSDT, BTCUSDT_251226)
+        default_currency: 기본 기준 통화 (추론 실패 시 사용, 기본값: USDT)
 
     Returns:
         표준 형식 심볼 (예: BTC/USDT)
@@ -135,15 +140,45 @@ def from_binance_format(binance_symbol: str, default_currency: str = 'USDT') -> 
     Examples:
         >>> from_binance_format("BTCUSDT")
         'BTC/USDT'
-        >>> from_binance_format("ETHBTC")
-        'ETH/BTC'
-        >>> from_binance_format("BNBBUSD")
-        'BNB/BUSD'
+        >>> from_binance_format("ETHEUR")
+        'ETH/EUR'
+        >>> from_binance_format("BTCFDUSD")
+        'BTC/FDUSD'
+        >>> from_binance_format("BTCUSDT_251226")  # Futures
+        'BTC/USDT'
+
+    Last Updated: 2025-10-15
+    Changes: 40+ quote currencies 지원, Futures 만기 suffix 처리 추가
     """
     binance_symbol = binance_symbol.upper()
 
-    # 일반적인 quote currency 목록 (우선순위 순)
-    quote_currencies = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB']
+    # Futures 만기 suffix 제거 (BTCUSDT_251226 → BTCUSDT)
+    if '_' in binance_symbol:
+        parts = binance_symbol.split('_')
+        if len(parts) == 2 and len(parts[1]) == 6 and parts[1].isdigit():
+            # 간단한 날짜 검증 (YYMMDD 형식)
+            year, month, day = parts[1][:2], parts[1][2:4], parts[1][4:6]
+            if '01' <= month <= '12' and '01' <= day <= '31':
+                logger.debug(f"🔄 Futures 만기 suffix 제거: {binance_symbol} → {parts[0]}")
+                binance_symbol = parts[0]
+
+    # Binance 지원 quote currencies (동적 길이 정렬 적용)
+    # 긴 suffix 우선 매칭으로 오매칭 방지 (예: IDRT vs TRY)
+    quote_currencies = sorted([
+        # 스테이블코인 (우선순위 높음)
+        'FDUSD', 'USDP', 'USDS', 'TUSD', 'BUSD', 'USDC', 'USDT',
+        'AEUR', 'EURI', 'DAI', 'PAX', 'VAI', 'UST',
+
+        # 법정화폐 (4자리)
+        'BKRW', 'BVND', 'IDRT', 'BIDR',
+
+        # 법정화폐 (3자리)
+        'EUR', 'GBP', 'JPY', 'TRY', 'RUB', 'NGN', 'ZAR', 'UAH',
+        'AUD', 'BRL', 'PLN', 'RON', 'ARS', 'MXN', 'COP', 'CZK',
+
+        # 암호화폐
+        'DOGE', 'BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'TRX', 'DOT'
+    ], key=len, reverse=True)
 
     # quote currency 추론
     detected_currency = None
@@ -158,7 +193,9 @@ def from_binance_format(binance_symbol: str, default_currency: str = 'USDT') -> 
     else:
         # 추론 실패 시 기본 통화 사용
         logger.warning(
-            f"Cannot infer quote currency from {binance_symbol}, using default: {default_currency}"
+            f"⚠️ Binance 심볼 '{binance_symbol}'에서 quote currency 추론 실패 "
+            f"(지원: {len(quote_currencies)}개 - FDUSD, USDT, EUR, JPY...) "
+            f"→ 기본값 '{default_currency}' 사용"
         )
         coin = binance_symbol[:-len(default_currency)]
         return format_symbol(coin, default_currency)
