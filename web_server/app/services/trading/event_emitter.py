@@ -251,12 +251,29 @@ class EventEmitter:
         """Emit the order cancelled notification."""
         try:
             from app.services.event_service import event_service, OrderEvent
-            from app.models import Account
+            from app.models import Account, OpenOrder
 
             # 계좌 정보 조회
             account = Account.query.get(account_id)
             if not account:
                 logger.warning("계좌를 찾을 수 없어 이벤트 발송 스킵: %s", account_id)
+                return
+
+            # OpenOrder에서 strategy_id 추출 시도
+            open_order = OpenOrder.query.filter_by(exchange_order_id=order_id).first()
+            strategy_id = 0
+
+            if open_order and open_order.strategy_account:
+                strategy_account = open_order.strategy_account
+                if strategy_account.strategy_id:
+                    strategy_id = strategy_account.strategy_id
+                    logger.debug(f"OpenOrder에서 strategy_id 추출: {strategy_id}")
+
+            # strategy_id 검증
+            if strategy_id <= 0:
+                logger.warning(
+                    f"OpenOrder {order_id}에 유효한 strategy_id 없음 - SSE 발송 스킵"
+                )
                 return
 
             # OrderEvent 객체 생성
@@ -266,7 +283,7 @@ class EventEmitter:
                 event_type='order_cancelled',
                 order_id=order_id,
                 symbol=symbol,
-                strategy_id=0,  # 취소 이벤트는 전략 ID 불필요
+                strategy_id=strategy_id,  # OpenOrder에서 추출한 strategy_id 사용
                 user_id=account.user_id,
                 side='',  # 취소 이벤트는 방향 불필요
                 quantity=0.0,
@@ -283,7 +300,7 @@ class EventEmitter:
             )
 
             event_service.emit_order_event(order_event)
-            logger.info("✅ 주문 취소 이벤트 발송 완료: %s", order_id)
+            logger.info("✅ 주문 취소 이벤트 발송 완료: %s (전략: %s)", order_id, strategy_id)
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("주문 취소 이벤트 발송 실패: %s", exc)
@@ -315,12 +332,22 @@ class EventEmitter:
                 )
                 return
 
+            # strategy_id 추출 (pending_order.strategy_account → strategy_id)
+            strategy_account = pending_order.strategy_account
+            if not strategy_account or not strategy_account.strategy_id:
+                logger.warning(
+                    f"PendingOrder {pending_order.id}에 strategy_account 또는 strategy_id 없음 - SSE 발송 스킵"
+                )
+                return
+
+            strategy_id = strategy_account.strategy_id
+
             # OrderEvent 생성 (PendingOrder용)
             order_event = OrderEvent(
                 event_type=event_type,
                 order_id=f'p_{pending_order.id}',  # PendingOrder는 'p_' prefix
                 symbol=pending_order.symbol,
-                strategy_id=0,  # PendingOrder에는 strategy_id 직접 없음
+                strategy_id=strategy_id,  # pending_order.strategy_account.strategy_id 사용
                 user_id=user_id,
                 side=pending_order.side.upper(),
                 quantity=float(pending_order.quantity),
@@ -338,10 +365,11 @@ class EventEmitter:
 
             event_service.emit_order_event(order_event)
             logger.info(
-                "✅ PendingOrder 이벤트 발송 완료: %s - %s (ID: p_%s)",
+                "✅ PendingOrder 이벤트 발송 완료: %s - %s (ID: p_%s, 전략: %s)",
                 event_type,
                 pending_order.symbol,
-                pending_order.id
+                pending_order.id,
+                strategy_id
             )
 
         except Exception as exc:  # pragma: no cover - defensive logging

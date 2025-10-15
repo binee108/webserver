@@ -366,8 +366,17 @@ class OpenOrder(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # @FEAT:order-tracking @COMP:model @TYPE:core
+    # Phase 2: Processing lock fields (Optimistic Locking)
+    is_processing = db.Column(db.Boolean, default=False, nullable=False, index=True)  # 처리 중 플래그
+    processing_started_at = db.Column(db.DateTime, nullable=True, index=True)  # 처리 시작 시각
+
     def __repr__(self):
-        return f'<OpenOrder {self.symbol} {self.side} {self.order_type} {self.quantity} @ {self.price} ({self.market_type})>'
+        return (
+            f'<OpenOrder {self.symbol} {self.side} {self.order_type} '
+            f'{self.quantity} @ {self.price} ({self.market_type}) '
+            f'processing={self.is_processing}>'
+        )
 
 class WebhookLog(db.Model):
     """웹훅 수신 로그 테이블"""

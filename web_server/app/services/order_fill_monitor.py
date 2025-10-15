@@ -15,6 +15,12 @@ from flask import Flask
 from app import db
 from app.models import OpenOrder, Account
 from app.services.exchange import exchange_service
+from app.utils.symbol_utils import (
+    from_binance_format,
+    from_upbit_format,
+    from_bithumb_format,
+    SymbolFormatError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,25 +52,72 @@ class OrderFillMonitor:
         Args:
             account_id: 계정 ID
             exchange_order_id: 거래소 주문 ID
-            symbol: 심볼 (예: "BTCUSDT")
+            symbol: 심볼 (예: "BTCUSDT" - 거래소 네이티브 포맷)
             status: WebSocket에서 받은 상태 (예: "FILLED")
         """
         try:
             logger.info(
                 f"📦 주문 업데이트 이벤트 수신 - "
                 f"계정: {account_id}, 주문 ID: {exchange_order_id}, "
-                f"심볼: {symbol}, 상태: {status}"
+                f"심볼: {symbol} (원본), 상태: {status}"
             )
 
-            # Step 1: REST API로 주문 상태 확인 (WebSocket 신뢰도 이슈 방지)
+            # Step 0: 거래소별 심볼 포맷 정규화
+            normalized_symbol = symbol  # 기본값: 원본 유지
+            try:
+                # 계좌 정보로 거래소 확인
+                with self.app.app_context():
+                    account = Account.query.get(account_id)
+                    if not account:
+                        logger.error(f"❌ 계좌를 찾을 수 없음: account_id={account_id}")
+                        return
+
+                    exchange_name = account.exchange.upper()
+
+                    # 거래소별 심볼 포맷 변환
+                    if exchange_name == 'BINANCE':
+                        normalized_symbol = from_binance_format(symbol)  # BTCUSDT → BTC/USDT
+                        logger.debug(f"🔄 Binance 심볼 변환: {symbol} → {normalized_symbol}")
+                    elif exchange_name == 'UPBIT':
+                        normalized_symbol = from_upbit_format(symbol)    # KRW-BTC → BTC/KRW
+                        logger.debug(f"🔄 Upbit 심볼 변환: {symbol} → {normalized_symbol}")
+                    elif exchange_name == 'BITHUMB':
+                        normalized_symbol = from_bithumb_format(symbol)  # KRW-BTC → BTC/KRW
+                        logger.debug(f"🔄 Bithumb 심볼 변환: {symbol} → {normalized_symbol}")
+                    else:
+                        # 알 수 없는 거래소 또는 이미 표준 포맷
+                        normalized_symbol = symbol
+                        logger.warning(
+                            f"⚠️ 알 수 없는 거래소 또는 표준 포맷: "
+                            f"exchange={exchange_name}, symbol={symbol}"
+                        )
+
+            except SymbolFormatError as e:
+                logger.error(
+                    f"❌ 심볼 포맷 오류: symbol={symbol}, account_id={account_id}, "
+                    f"error={str(e)}",
+                    exc_info=True
+                )
+                # 악의적인 입력 거부
+                return
+            except Exception as e:
+                logger.error(
+                    f"❌ 심볼 정규화 실패: symbol={symbol}, account_id={account_id}, "
+                    f"error={type(e).__name__}: {str(e)}",
+                    exc_info=True
+                )
+                # 정규화 실패 시 원본 사용 (하위 호환성)
+                normalized_symbol = symbol
+
+            # Step 1: REST API로 주문 상태 확인 (정규화된 심볼 사용)
             confirmed_order = await self._confirm_order_status(
-                account_id, exchange_order_id, symbol
+                account_id, exchange_order_id, normalized_symbol
             )
 
             if not confirmed_order:
                 logger.warning(
                     f"⚠️ REST API 주문 확인 실패 - "
-                    f"주문 ID: {exchange_order_id}, DB 업데이트 스킵"
+                    f"주문 ID: {exchange_order_id}, 심볼: {normalized_symbol}, DB 업데이트 스킵"
                 )
                 return
 
@@ -83,7 +136,7 @@ class OrderFillMonitor:
 
                         result = queue_manager.rebalance_symbol(
                             account_id=account_id,
-                            symbol=symbol,
+                            symbol=normalized_symbol,  # 정규화된 심볼 사용
                             commit=False  # 커밋하지 않음
                         )
 
@@ -95,13 +148,16 @@ class OrderFillMonitor:
 
                     if confirmed_status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
                         logger.info(
-                            f"🔄 WebSocket 트리거 재정렬 완료 - {symbol}: "
+                            f"🔄 WebSocket 트리거 재정렬 완료 - {normalized_symbol}: "
                             f"취소 {result.get('cancelled', 0)}개, 실행 {result.get('executed', 0)}개"
                         )
 
                 except Exception as e:
                     db.session.rollback()
-                    logger.error(f"❌ WebSocket 트리거 처리 실패 - {symbol}: {e}", exc_info=True)
+                    logger.error(
+                        f"❌ WebSocket 트리거 처리 실패 - {normalized_symbol}: {e}",
+                        exc_info=True
+                    )
 
         except Exception as e:
             logger.error(f"❌ 주문 업데이트 처리 실패: {e}", exc_info=True)
@@ -203,54 +259,158 @@ class OrderFillMonitor:
             logger.error(f"❌ REST API 주문 확인 실패: {e}")
             return None
 
+    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:core
+    def _check_and_lock_order(self, exchange_order_id: str, order_info: dict) -> tuple:
+        """
+        Step 1: Optimistic Locking으로 OpenOrder 획득
+
+        Returns:
+            (open_order, should_process_fill):
+            - open_order이 None이면 이미 처리 중이거나 없음
+            - should_process_fill이 True면 process_order_fill() 호출 필요
+        """
+        from datetime import datetime
+
+        open_order = OpenOrder.query.filter_by(
+            exchange_order_id=exchange_order_id,
+            is_processing=False
+        ).with_for_update(skip_locked=True).first()
+
+        if not open_order:
+            return None, False
+
+        open_order.is_processing = True
+        open_order.processing_started_at = datetime.utcnow()
+        db.session.flush()
+
+        status = order_info.get('status', '').upper()
+        should_process_fill = status in ['FILLED', 'PARTIALLY_FILLED']
+
+        return open_order, should_process_fill
+
+    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:core
+    def _process_fill_for_order(self, open_order: OpenOrder, order_info: dict) -> dict:
+        """
+        Step 2: process_order_fill() 호출 (별도 transaction)
+
+        CRITICAL: order_result 포맷 변환 필수
+        - order_info['exchange_order_id'] → order_result['order_id']
+        - position_manager.py:84에서 'order_id' 키를 기대함
+        """
+        # TradingService import
+        from app.services.trading import trading_service
+
+        # 포맷 변환: exchange_order_id → order_id
+        order_result = self._convert_order_info_to_result(order_info, open_order)
+
+        fill_summary = trading_service.position_manager.process_order_fill(
+            strategy_account=open_order.strategy_account,
+            order_id=order_info.get('exchange_order_id'),
+            symbol=open_order.symbol,
+            side=open_order.side,
+            order_type=open_order.order_type,
+            order_result=order_result,
+            market_type=open_order.strategy_account.strategy.market_type
+        )
+
+        return fill_summary
+
+    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:helper
+    def _convert_order_info_to_result(self, order_info: dict, open_order: OpenOrder) -> dict:
+        """
+        공통 로직: order_info → order_result 포맷 변환
+        Phase 1, 2에서 공유
+        """
+        return {
+            'order_id': order_info.get('exchange_order_id'),
+            'status': order_info.get('status'),
+            'filled_quantity': order_info.get('filled_quantity'),
+            'average_price': order_info.get('average_price'),
+            'side': order_info.get('side') or open_order.side,
+            'order_type': order_info.get('order_type') or open_order.order_type
+        }
+
+    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:core
+    def _finalize_order_update(self, open_order: OpenOrder, status: str, order_info: dict):
+        """
+        Step 3: OpenOrder 업데이트 또는 삭제
+
+        - PARTIALLY_FILLED: 업데이트 후 계속 모니터링
+        - FILLED/CANCELED/EXPIRED: 삭제
+        """
+        if status == 'PARTIALLY_FILLED':
+            open_order.status = status
+            open_order.filled_quantity = float(order_info.get('filled_quantity', 0))
+            open_order.is_processing = False  # 계속 모니터링
+            db.session.flush()
+        elif status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
+            db.session.delete(open_order)
+
     # @FEAT:order-tracking @COMP:service @TYPE:core
     def _update_order_in_db(self, order_info: Dict[str, Any], commit: bool = True):
-        """DB의 OpenOrder 업데이트 또는 삭제
+        """DB의 OpenOrder 업데이트 또는 삭제 (Phase 2: 낙관적 잠금 적용)
 
         Args:
             order_info: 주문 정보
             commit: 트랜잭션 커밋 여부 (기본값: True)
         """
+        from datetime import datetime
+
         try:
             exchange_order_id = order_info['exchange_order_id']
             status = order_info['status'].upper()
 
-            # OpenOrder 조회
-            open_order = OpenOrder.query.filter_by(
-                exchange_order_id=exchange_order_id
-            ).first()
+            # Step 1: 낙관적 잠금 획득 및 체결 여부 확인
+            open_order, should_process_fill = self._check_and_lock_order(exchange_order_id, order_info)
 
             if not open_order:
                 logger.debug(
-                    f"OpenOrder를 찾을 수 없습니다 - 주문 ID: {exchange_order_id} "
-                    f"(이미 처리되었거나 WebSocket이 먼저 도착했을 수 있습니다)"
+                    f"OpenOrder를 찾을 수 없거나 이미 처리 중입니다 - 주문 ID: {exchange_order_id} "
+                    f"(중복 처리 방지됨)"
                 )
-                # OpenOrder가 없어도 완료 상태면 그대로 반환 (재정렬은 상위에서 처리)
                 return
 
-            # FILLED/CANCELED/EXPIRED → OpenOrder 삭제
-            if status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
-                logger.info(
-                    f"🗑️ OpenOrder 삭제 - 주문 ID: {exchange_order_id}, "
-                    f"심볼: {open_order.symbol}, "
-                    f"계정: {open_order.strategy_account.account.id if open_order.strategy_account else 'N/A'}, "
-                    f"상태: {status}"
-                )
-                db.session.delete(open_order)
-            else:
-                # PARTIALLY_FILLED → filled_quantity 업데이트
-                logger.info(
-                    f"📝 OpenOrder 업데이트 - 주문 ID: {exchange_order_id}, "
-                    f"심볼: {open_order.symbol}, "
-                    f"상태: {status}, "
-                    f"체결량: {order_info['filled_quantity']}"
-                )
-                open_order.status = status
-                open_order.filled_quantity = float(order_info['filled_quantity'])
+            try:
+                # Step 2: 체결 처리 (FILLED/PARTIALLY_FILLED)
+                if should_process_fill:
+                    fill_summary = self._process_fill_for_order(open_order, order_info)
 
-            # 호출자가 commit 제어
-            if commit:
-                db.session.commit()
+                    if not fill_summary.get('success'):
+                        logger.error(
+                            f"❌ 체결 처리 실패 - 주문 ID: {exchange_order_id}, "
+                            f"error: {fill_summary.get('error')}"
+                        )
+                        # 플래그 해제 후 재시도 가능하도록
+                        if open_order in db.session:
+                            open_order.is_processing = False
+                            open_order.processing_started_at = None
+                        if commit:
+                            db.session.rollback()
+                        return
+
+                    logger.info(
+                        f"✅ 체결 처리 완료 - 주문 ID: {exchange_order_id}, "
+                        f"심볼: {open_order.symbol}, "
+                        f"Trade ID: {fill_summary.get('trade_id')}"
+                    )
+
+                # Step 3: OpenOrder 업데이트 또는 삭제
+                self._finalize_order_update(open_order, status, order_info)
+
+                # 호출자가 commit 제어
+                if commit:
+                    db.session.commit()
+
+            except Exception as inner_e:
+                # 에러 발생 시 플래그 해제
+                if open_order in db.session:
+                    open_order.is_processing = False
+                    open_order.processing_started_at = None
+
+                if commit:
+                    db.session.rollback()
+                logger.error(f"❌ DB 업데이트 실패: {inner_e}", exc_info=True)
+                raise
 
         except Exception as e:
             if commit:

@@ -41,43 +41,64 @@ class RateLimiter:
         self._order_history = defaultdict(list)
         self._lock = Lock()
 
-    def acquire_slot(self, exchange: str, endpoint_type: str = 'general') -> None:
-        """요청 가능 시점까지 대기한 뒤 슬롯을 확보"""
-        exchange = exchange.lower()
+    def acquire_slot(self, exchange: str, endpoint_type: str = 'general',
+                     account_id: Optional[int] = None) -> None:
+        """
+        거래소 API Rate Limit 슬롯 획득 (블로킹)
 
-        if exchange not in self._limits:
+        Args:
+            exchange: 거래소 이름 (binance, upbit, bybit 등)
+            endpoint_type: 엔드포인트 타입 ('general', 'order')
+            account_id: 계좌 ID (제공 시 계좌별 Rate Limit 적용)
+
+        계좌별 Rate Limit:
+            - account_id 제공 시: key = f"{exchange}_{account_id}" (예: "binance_1", "binance_2")
+            - account_id 없을 시: key = exchange (기존 동작 유지, 예: "binance")
+            - 효과: 동일 거래소의 여러 계좌가 독립적으로 Rate Limit 적용됨
+        """
+        # 계좌별 키 생성 (account_id 제공 시)
+        key = f"{exchange.lower()}_{account_id}" if account_id is not None else exchange.lower()
+
+        # Rate Limit 설정 확인 (exchange 이름 기준)
+        exchange_lower = exchange.lower()
+        if exchange_lower not in self._limits:
             return
 
         while True:
             with self._lock:
                 current_time = time.time()
 
-                self._request_history[exchange] = [
-                    t for t in self._request_history[exchange]
+                self._request_history[key] = [
+                    t for t in self._request_history[key]
                     if current_time - t < 60
                 ]
-                self._order_history[exchange] = [
-                    t for t in self._order_history[exchange]
+                self._order_history[key] = [
+                    t for t in self._order_history[key]
                     if current_time - t < 1
                 ]
 
                 wait_seconds = 0.0
 
-                limit_per_minute = self._limits[exchange]['requests_per_minute']
-                if len(self._request_history[exchange]) >= limit_per_minute:
-                    oldest = min(self._request_history[exchange])
+                limit_per_minute = self._limits[exchange_lower]['requests_per_minute']
+                if len(self._request_history[key]) >= limit_per_minute:
+                    oldest = min(self._request_history[key])
                     wait_seconds = max(wait_seconds, oldest + 60 - current_time)
 
                 if endpoint_type == 'order':
-                    limit_per_second = self._limits[exchange]['orders_per_second']
-                    if len(self._order_history[exchange]) >= limit_per_second:
-                        oldest_order = min(self._order_history[exchange])
+                    limit_per_second = self._limits[exchange_lower]['orders_per_second']
+                    if len(self._order_history[key]) >= limit_per_second:
+                        oldest_order = min(self._order_history[key])
                         wait_seconds = max(wait_seconds, oldest_order + 1 - current_time)
 
                 if wait_seconds <= 0:
-                    self._request_history[exchange].append(current_time)
+                    self._request_history[key].append(current_time)
                     if endpoint_type == 'order':
-                        self._order_history[exchange].append(current_time)
+                        self._order_history[key].append(current_time)
+
+                    # 디버깅 로그 추가 (선택적)
+                    logger.debug(
+                        f"Rate Limit 슬롯 획득: key={key}, endpoint_type={endpoint_type}"
+                    )
                     return
 
             time.sleep(wait_seconds)
@@ -770,11 +791,12 @@ class ExchangeService:
             logger.error(f"잔액 조회 실패: {e}")
             return {'success': False, 'error': str(e)}
 
-    # @FEAT:exchange-integration @COMP:service @TYPE:core
+    # @FEAT:batch-parallel-processing @FEAT:exchange-integration @COMP:service @TYPE:core
     def create_batch_orders(self, account: Account, orders: List[Dict[str, Any]],
-                           market_type: str = 'spot') -> Dict[str, Any]:
+                           market_type: str = 'spot',
+                           account_id: Optional[int] = None) -> Dict[str, Any]:
         """
-        배치 주문 생성 (스레드별 이벤트 루프 재사용)
+        배치 주문 생성 (스레드별 이벤트 루프 재사용, 병렬 처리 지원)
 
         Args:
             account: 계정 정보
@@ -791,6 +813,7 @@ class ExchangeService:
                     ...
                 ]
             market_type: 'spot' or 'futures'
+            account_id: 계좌 ID (Phase 0 Rate Limiting용, Optional - 병렬 처리 시 필수)
 
         Returns:
             {
@@ -822,7 +845,12 @@ class ExchangeService:
                 }
 
             # Rate limit 체크 (배치 주문도 order 엔드포인트)
-            self.rate_limiter.acquire_slot(account.exchange, 'order')
+            # CRITICAL FIX: account_id 전달하여 Phase 0 계좌별 Rate Limiting 활성화
+            self.rate_limiter.acquire_slot(
+                account.exchange,
+                'order',
+                account_id=account_id or account.id  # ✅ 계좌별 Rate Limiting
+            )
 
             # 스레드별 이벤트 루프 재사용
             loop = self._get_or_create_loop()
@@ -1084,6 +1112,118 @@ class ExchangeService:
 
     # === 공용 가격 조회 (가격 캐시 등에서 사용) ===
 
+    def get_ticker(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: str = 'futures'
+    ) -> Optional[Dict[str, Any]]:
+        """거래소 공개 API로 현재 시세 조회 (인증 불필요)
+
+        Args:
+            exchange: 거래소 이름 (BINANCE, BYBIT 등)
+            symbol: 심볼 (BTC/USDT)
+            market_type: 마켓 타입 ('spot', 'futures')
+
+        Returns:
+            {
+                'symbol': 'BTC/USDT',
+                'last': 95000.5,
+                'bid': 94999.0,
+                'ask': 95001.0,
+                'timestamp': 1697123456789
+            }
+            또는 실패 시 None
+        """
+        try:
+            logger.info(
+                "🔍 get_ticker 호출: exchange=%s, symbol=%s, market_type=%s",
+                exchange,
+                symbol,
+                market_type
+            )
+
+            # Rate limit 체크 (공개 API도 제한 있음)
+            self.rate_limiter.acquire_slot(exchange, 'general')
+
+            # 거래소 정규화
+            from app.constants import Exchange
+            normalized_exchange = Exchange.normalize(exchange)
+            logger.info(
+                "✅ 거래소 정규화 완료: %s → %s",
+                exchange,
+                normalized_exchange
+            )
+
+            # get_price_quotes를 활용하여 단일 심볼 조회
+            quotes = self.get_price_quotes(
+                exchange=normalized_exchange,
+                market_type=market_type,
+                symbols=[symbol]
+            )
+
+            logger.info(
+                "📊 get_price_quotes 결과: quotes_count=%d, keys=%s",
+                len(quotes) if quotes else 0,
+                list(quotes.keys()) if quotes else []
+            )
+
+            if not quotes:
+                logger.warning(
+                    "⚠️ 공개 API 시세 조회 실패: exchange=%s, symbol=%s (quotes 없음)",
+                    exchange,
+                    symbol
+                )
+                return None
+
+            # 심볼 정규화 (BTC/USDT, BTCUSDT 모두 대응)
+            symbol_upper = symbol.upper().replace('/', '')
+            quote = quotes.get(symbol.upper()) or quotes.get(symbol_upper)
+
+            logger.info(
+                "🔍 심볼 검색: symbol_original=%s, symbol_upper=%s, symbol_no_slash=%s, found=%s",
+                symbol,
+                symbol.upper(),
+                symbol_upper,
+                quote is not None
+            )
+
+            if not quote:
+                logger.warning(
+                    "⚠️ 공개 API 시세 조회 실패: exchange=%s, symbol=%s (quote 없음)",
+                    exchange,
+                    symbol
+                )
+                return None
+
+            # ccxt 호환 형식으로 반환
+            ticker = {
+                'symbol': symbol,
+                'last': float(quote.last_price),
+                'bid': float(quote.bid_price) if quote.bid_price else None,
+                'ask': float(quote.ask_price) if quote.ask_price else None,
+                'timestamp': int(datetime.utcnow().timestamp() * 1000)
+            }
+
+            logger.info(
+                "✅ 공개 API 시세 조회 성공: %s %s = %s",
+                exchange,
+                symbol,
+                ticker['last']
+            )
+
+            return ticker
+
+        except Exception as e:
+            logger.error(
+                "❌ 공개 API 시세 조회 실패: exchange=%s, symbol=%s, error=%s",
+                exchange,
+                symbol,
+                str(e),
+                exc_info=True
+            )
+            return None
+
     def _get_public_exchange_client(self, exchange_name: str) -> Optional[Any]:
         """인증 불필요한 공용 엔드포인트용 클라이언트 반환 (크립토 전용)"""
         if not self.legacy_factory:
@@ -1112,6 +1252,13 @@ class ExchangeService:
     def get_price_quotes(self, exchange: str, market_type: str,
                          symbols: Optional[List[str]] = None) -> Dict[str, PriceQuote]:
         """거래소 무관 표준화된 현재가 정보 조회"""
+        logger.info(
+            "🔍 get_price_quotes 호출: exchange=%s, market_type=%s, symbols=%s",
+            exchange,
+            market_type,
+            symbols
+        )
+
         exchange_name = Exchange.normalize(exchange) if exchange else Exchange.BINANCE
         if not exchange_name or exchange_name not in Exchange.VALID_EXCHANGES:
             exchange_name = Exchange.BINANCE
@@ -1120,9 +1267,25 @@ class ExchangeService:
         client_market_type = 'futures' if normalized_market_type == MarketType.FUTURES else 'spot'
         symbol_filter = [symbol.upper() for symbol in symbols] if symbols else None
 
+        logger.info(
+            "✅ 정규화 완료: exchange_name=%s, market_type=%s→%s, symbol_filter=%s",
+            exchange_name,
+            market_type,
+            client_market_type,
+            symbol_filter
+        )
+
         client = self._get_public_exchange_client(exchange_name)
+        logger.info("🔍 _get_public_exchange_client 결과: client=%s", client is not None)
+
         if not client:
+            logger.error("❌ 공용 클라이언트 생성 실패 - exchange=%s", exchange_name)
             return {}
+
+        logger.info(
+            "✅ 공용 클라이언트 생성 성공, fetch_price_quotes 존재 여부: %s",
+            hasattr(client, 'fetch_price_quotes')
+        )
 
         if not hasattr(client, 'fetch_price_quotes'):
             logger.error(
@@ -1132,14 +1295,28 @@ class ExchangeService:
             return {}
 
         try:
+            logger.info(
+                "📡 fetch_price_quotes 호출 시작: market_type=%s, symbols=%s",
+                client_market_type,
+                symbol_filter
+            )
+
             quotes = client.fetch_price_quotes(
                 market_type=client_market_type,
                 symbols=symbol_filter
             )
+
+            logger.info(
+                "✅ fetch_price_quotes 결과: type=%s, count=%d",
+                type(quotes),
+                len(quotes) if isinstance(quotes, dict) else 0
+            )
+
         except Exception as e:
             logger.error(
                 "❌ 가격 정보 조회 실패 - exchange=%s market_type=%s error=%s",
-                exchange_name, client_market_type, e
+                exchange_name, client_market_type, e,
+                exc_info=True
             )
             return {}
 
@@ -1335,17 +1512,6 @@ class ExchangeService:
 
         except Exception as e:
             logger.error(f"Precision 캐시 웜업 실패: {e}")
-
-    def get_ticker(
-        self,
-        symbol: str,
-        exchange: Optional[str] = None,
-        market_type: str = MarketType.SPOT
-    ) -> Dict[str, Any]:
-        """간단한 시세 조회 (테스트 및 호환성용)"""
-        raise NotImplementedError(
-            'get_ticker는 외부 거래소 클라이언트가 연결된 환경에서 구현되어야 합니다.'
-        )
 
 
 # 싱글톤 인스턴스

@@ -224,6 +224,13 @@ def update_strategy(strategy_id):
             strategy.description = data["description"]
 
         if "is_active" in data:
+            # Phase 3: 비활성화 시 SSE 클라이언트 정리
+            if strategy.is_active and not data["is_active"]:  # 활성 -> 비활성으로 변경
+                from app.services.event_service import event_service
+                cleaned_count = event_service.cleanup_strategy_clients(strategy_id)
+                current_app.logger.info(
+                    f"전략 {strategy_id} 비활성화 - SSE 클라이언트 {cleaned_count}개 정리됨"
+                )
             strategy.is_active = data["is_active"]
 
         # market_type 수정 (검증 포함)
@@ -257,12 +264,27 @@ def update_strategy(strategy_id):
             new_public = bool(data["is_public"])
             # 공개 -> 비공개로 바뀌는 경우, 소유자 외 구독 연결 비활성화
             if strategy.is_public and not new_public:
+                # Phase 4: SSE 강제 종료 (비활성화되는 구독자들)
+                from app.services.event_service import event_service
                 deactivated = 0
+                total_sse_cleaned = 0
+
                 for sa in strategy.strategy_accounts:
                     if sa.account.user_id != current_user.id and sa.is_active:
                         sa.is_active = False
                         deactivated += 1
-                current_app.logger.info(f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화")
+
+                        # 구독자의 SSE 연결 종료
+                        cleaned = event_service.disconnect_client(
+                            sa.account.user_id,
+                            strategy_id,
+                            reason='permission_revoked'
+                        )
+                        total_sse_cleaned += cleaned
+
+                current_app.logger.info(
+                    f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화, SSE {total_sse_cleaned}개 종료"
+                )
             strategy.is_public = new_public
 
         # 계좌 연결 정보 업데이트
@@ -337,6 +359,14 @@ def toggle_strategy(strategy_id):
             return create_error_response(
                 error_code=ErrorCode.STRATEGY_NOT_FOUND,
                 message='전략을 찾을 수 없습니다.'
+            )
+
+        # Phase 3: 비활성화 전 SSE 클라이언트 정리
+        if strategy.is_active:  # 활성 -> 비활성으로 변경 시
+            from app.services.event_service import event_service
+            cleaned_count = event_service.cleanup_strategy_clients(strategy_id)
+            current_app.logger.info(
+                f"전략 {strategy_id} 비활성화 - SSE 클라이언트 {cleaned_count}개 정리됨"
             )
 
         # 상태 토글
@@ -536,13 +566,28 @@ def disconnect_strategy_account(strategy_id, account_id):
                     message='활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.'
                 )
 
+        # Phase 4: 계좌 소유자의 SSE 연결 강제 종료
+        affected_user_id = strategy_account.account.user_id
         account_name = strategy_account.account.name
-        account_id = strategy_account.account_id
+        account_id_value = strategy_account.account_id
+
+        # 삭제 전 SSE 클라이언트 정리
+        from app.services.event_service import event_service
+        cleaned = event_service.disconnect_client(
+            affected_user_id,
+            strategy_id,
+            reason='permission_revoked'
+        )
+        if cleaned > 0:
+            current_app.logger.info(
+                f"StrategyAccount 삭제 - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+            )
+
         db.session.delete(strategy_account)
         db.session.commit()
 
         # 해당 계좌의 남은 전략들에 대해 자본 재할당
-        capital_service.auto_allocate_capital_for_account(account_id)
+        capital_service.auto_allocate_capital_for_account(account_id_value)
 
         # 자본 배분 완료 후 업데이트된 전략 정보 조회
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)

@@ -52,6 +52,7 @@ class QuantityCalculator:
             return Decimal(str(stop_price))
 
         if symbol:
+            # ✅ 1차 시도: price_cache (빠른 응답)
             price_info = price_cache.get_price(
                 symbol=symbol,
                 exchange=exchange,
@@ -69,6 +70,39 @@ class QuantityCalculator:
                     price_info.get('age_seconds', 0.0),
                 )
                 return Decimal(price_info['price'])
+
+            # ✅ 2차 시도: exchange_service 직접 호출 (캐시 우회)
+            logger.warning(
+                "⚠️ price_cache 실패, exchange_service 직접 호출 시도: %s",
+                symbol
+            )
+
+            try:
+                from app.services.exchange import exchange_service
+
+                # exchange_service.get_ticker() 호출 (공개 API)
+                ticker = exchange_service.get_ticker(
+                    exchange=exchange,
+                    symbol=symbol,
+                    market_type=market_type.lower()
+                )
+
+                if ticker and 'last' in ticker:
+                    price_value = Decimal(str(ticker['last']))
+                    logger.info(
+                        "✅ exchange_service 직접 호출 성공: %s = %s",
+                        symbol,
+                        price_value
+                    )
+                    return price_value
+
+            except Exception as e:
+                logger.error(
+                    "❌ exchange_service 직접 호출 실패: %s - %s",
+                    symbol,
+                    str(e),
+                    exc_info=True
+                )
 
         logger.critical("❌ 가격 결정 실패: %s - 캐시/거래소 가격을 가져올 수 없습니다", symbol)
         return None

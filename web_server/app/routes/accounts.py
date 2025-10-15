@@ -181,6 +181,33 @@ def update_account(account_id):
                 message='유효하지 않은 JSON 데이터입니다.'
             )
 
+        # Phase 4: 계좌 비활성화 시 연결된 모든 전략의 SSE 종료
+        if 'is_active' in data and not data['is_active']:
+            from app.models import Account, StrategyAccount
+            from app.services.event_service import event_service
+
+            account = Account.query.get(account_id)
+            if account and account.user_id == current_user.id:
+                # 해당 계좌가 연결된 모든 활성 전략 찾기
+                strategy_accounts = StrategyAccount.query.filter_by(
+                    account_id=account_id,
+                    is_active=True
+                ).all()
+
+                total_cleaned = 0
+                for sa in strategy_accounts:
+                    cleaned = event_service.disconnect_client(
+                        current_user.id,
+                        sa.strategy_id,
+                        reason='account_deactivated'
+                    )
+                    total_cleaned += cleaned
+
+                if total_cleaned > 0:
+                    current_app.logger.info(
+                        f"계좌 {account_id} 비활성화 - 총 {total_cleaned}개 SSE 종료"
+                    )
+
         result = account_service.update_account(account_id, current_user.id, data)
 
         # result 성공 여부 확인 후 처리

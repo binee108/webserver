@@ -681,17 +681,42 @@ class StrategyService:
             if not strategy_account:
                 raise StrategyError('연결된 계좌를 찾을 수 없습니다.')
 
+            # Phase 4: is_active 변경 감지 (활성 -> 비활성)
+            should_disconnect_sse = False
+            if 'is_active' in account_data:
+                new_active_state = account_data['is_active']
+                if strategy_account.is_active and not new_active_state:
+                    should_disconnect_sse = True
+                strategy_account.is_active = new_active_state
+
             # 설정 업데이트
-            strategy_account.weight = account_data.get('weight', strategy_account.weight)
-            strategy_account.leverage = account_data.get('leverage', strategy_account.leverage)
-            strategy_account.max_symbols = account_data.get('max_symbols', strategy_account.max_symbols)
+            if 'weight' in account_data:
+                strategy_account.weight = account_data['weight']
+            if 'leverage' in account_data:
+                strategy_account.leverage = account_data['leverage']
+            if 'max_symbols' in account_data:
+                strategy_account.max_symbols = account_data['max_symbols']
 
             self.session.commit()
+
+            # Phase 4: SSE 강제 종료 (비활성화 시)
+            if should_disconnect_sse:
+                from app.services.event_service import event_service
+                cleaned = event_service.disconnect_client(
+                    account.user_id,
+                    strategy_id,
+                    reason='permission_revoked'
+                )
+                if cleaned > 0:
+                    logger.info(
+                        f"StrategyAccount 비활성화 - 사용자 {account.user_id} SSE {cleaned}개 종료"
+                    )
 
             # 자동 자본 할당 실행 (설정 변경으로 인한 재할당)
             analytics_service.auto_allocate_capital_for_account(account.id)
 
             logger.info(f'전략-계좌 설정 업데이트: 전략 {strategy.name} - 계좌 {account.name}' +
+                       (f' (is_active={strategy_account.is_active})' if 'is_active' in account_data else '') +
                        (f' (최대 심볼: {account_data.get("max_symbols")})' if account_data.get("max_symbols") else ''))
 
             return {
@@ -699,7 +724,8 @@ class StrategyService:
                 'account_id': account.id,
                 'weight': strategy_account.weight,
                 'leverage': strategy_account.leverage,
-                'max_symbols': strategy_account.max_symbols
+                'max_symbols': strategy_account.max_symbols,
+                'is_active': strategy_account.is_active
             }
 
         except StrategyError:
@@ -732,8 +758,22 @@ class StrategyService:
                     raise StrategyError('활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.')
 
             account_name = strategy_account.account.name
+            affected_user_id = strategy_account.account.user_id
             # 세션 분리/삭제 후 lazy load 방지를 위해 미리 참조값 보관
             strategy_name = strategy_account.strategy.name if hasattr(strategy_account, 'strategy') and strategy_account.strategy else '알수없음'
+
+            # Phase 4: 구독 해제 전 SSE 클라이언트 정리
+            from app.services.event_service import event_service
+            cleaned = event_service.disconnect_client(
+                affected_user_id,
+                strategy_id,
+                reason='permission_revoked'
+            )
+            if cleaned > 0:
+                logger.info(
+                    f"구독 해제 - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+                )
+
             self.session.delete(strategy_account)
             self.session.commit()
 
@@ -775,6 +815,11 @@ class StrategyService:
 
             if has_positions:
                 raise StrategyError('활성 포지션이 있는 전략은 삭제할 수 없습니다.')
+
+            # Phase 3: 전략 삭제 전 SSE 클라이언트 정리
+            from app.services.event_service import event_service
+            cleaned_count = event_service.cleanup_strategy_clients(strategy_id)
+            logger.info(f"전략 {strategy_id} 삭제 - SSE 클라이언트 {cleaned_count}개 정리됨")
 
             self.session.delete(strategy)
             self.session.commit()

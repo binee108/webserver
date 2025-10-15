@@ -467,28 +467,40 @@ class BinanceExchange(BaseCryptoExchange):
         else:
             data_items = response or []
 
-        symbol_filter = {s.upper() for s in symbols} if symbols else None
+        # 양방향 심볼 포맷 필터 생성 (표준 포맷 + Binance 포맷 모두 지원)
+        if symbols:
+            symbol_filter = set()
+            for s in symbols:
+                s_upper = s.upper()
+                symbol_filter.add(s_upper)  # 표준 포맷: 'BTC/USDT'
+                symbol_filter.add(to_binance_format(s_upper))  # Binance 포맷: 'BTCUSDT'
+        else:
+            symbol_filter = None
+
         timestamp = datetime.utcnow()
         standard_market_type = 'FUTURES' if market_type_lower == 'futures' else 'SPOT'
 
         quotes: Dict[str, PriceQuote] = {}
         for item in data_items:
-            symbol = item.get('symbol')
+            binance_symbol = item.get('symbol')  # Binance API 응답: 'BTCUSDT'
             price = item.get('price')
-            if not symbol or price is None:
+            if not binance_symbol or price is None:
                 continue
 
-            symbol_upper = symbol.upper()
-            if symbol_filter and symbol_upper not in symbol_filter:
+            # Binance 포맷으로 필터링
+            if symbol_filter and binance_symbol.upper() not in symbol_filter:
                 continue
+
+            # 표준 포맷으로 변환하여 키로 사용
+            standard_symbol = from_binance_format(binance_symbol)  # 'BTCUSDT' → 'BTC/USDT'
 
             last_price = Decimal(str(price))
             bid_value = item.get('bidPrice', price)
             ask_value = item.get('askPrice', price)
             volume_value = item.get('volume')
 
-            quotes[symbol_upper] = PriceQuote(
-                symbol=symbol_upper,
+            quotes[standard_symbol] = PriceQuote(
+                symbol=standard_symbol,  # 표준 포맷 저장
                 exchange='BINANCE',
                 market_type=standard_market_type,
                 last_price=last_price,
@@ -498,6 +510,18 @@ class BinanceExchange(BaseCryptoExchange):
                 timestamp=timestamp,
                 raw=item
             )
+
+        # 디버그 로그 추가 (문제 추적용)
+        if symbol_filter and len(symbol_filter) < 10:
+            logger.debug(
+                f"✅ fetch_price_quotes 완료: symbol_filter={symbol_filter}, found={len(quotes)} quotes"
+            )
+        elif symbol_filter:
+            logger.debug(
+                f"✅ fetch_price_quotes 완료: {len(symbol_filter)} symbols filtered, found={len(quotes)} quotes"
+            )
+        else:
+            logger.debug(f"✅ fetch_price_quotes 완료: 필터 없음, found={len(quotes)} quotes")
 
         return quotes
 

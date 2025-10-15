@@ -643,6 +643,18 @@ def register_background_jobs(app):
         max_instances=1
     )
 
+    # Phase 2: 오래된 처리 잠금 해제 (60초마다)
+    scheduler.add_job(
+        func=release_stale_order_locks_with_context,
+        args=[app],
+        trigger="interval",
+        seconds=60,
+        id='release_stale_order_locks',
+        name='Release Stale Order Locks',
+        replace_existing=True,
+        max_instances=1
+    )
+
     # Phase 4: WebSocket 연결 상태 모니터링 (1분마다)
     scheduler.add_job(
         func=check_websocket_health_with_context,
@@ -1056,6 +1068,20 @@ def calculate_daily_performance_with_context(app):
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
+
+def release_stale_order_locks_with_context(app):
+    """
+    Phase 2: Flask 앱 컨텍스트 내에서 오래된 처리 잠금 해제
+
+    5분 이상 처리 중인 주문의 잠금을 해제하여 프로세스 크래시 시 복구합니다.
+    60초마다 실행됩니다.
+    """
+    with app.app_context():
+        try:
+            from app.services.trading import trading_service
+            trading_service.order_manager.release_stale_order_locks()
+        except Exception as e:
+            app.logger.error(f"❌ 오래된 처리 잠금 해제 실패: {str(e)}")
 
 def check_websocket_health_with_context(app):
     """

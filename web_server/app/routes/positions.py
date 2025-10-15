@@ -5,13 +5,13 @@ Positions and Orders API Routes
 Provides RESTful APIs for position management, order tracking, and real-time updates via SSE.
 """
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response
 from flask_login import login_required, current_user
 
 from app.constants import OrderStatus
 from app.models import Strategy
 from app.services.trading import trading_service as position_service
-from app.services.strategy_service import strategy_service
+from app.services.strategy_service import strategy_service, StrategyService
 from app.services.trading import trading_service as order_service
 
 bp = Blueprint('positions', __name__, url_prefix='/api')
@@ -268,50 +268,44 @@ def event_stream():
     """실시간 포지션/주문 업데이트 이벤트 스트림 (SSE)
 
     Query Parameters:
-        strategy_id (int, optional): 특정 전략의 이벤트만 수신.
-                                     생략 시 모든 전략의 이벤트를 수신 (하위 호환성)
+        strategy_id (int, 필수): 특정 전략의 이벤트만 수신
     """
     try:
-        # 쿼리 파라미터에서 strategy_id 추출
+        # strategy_id 필수 파라미터 확인
         strategy_id = request.args.get('strategy_id', type=int)
+        if strategy_id is None:
+            current_app.logger.warning(f'SSE 연결 실패 - strategy_id 누락: 사용자={current_user.id}')
+            return Response(
+                f"data: {{'type': 'error', 'message': 'strategy_id 파라미터가 필요합니다.'}}\n\n",
+                mimetype='text/event-stream',
+                status=400
+            )
 
-        # strategy_id가 제공된 경우 권한 검증
-        if strategy_id is not None:
-            from app.services.strategy_service import StrategyService
-            from flask import Response
+        # 권한 검증 (모듈 레벨 import 사용)
+        has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+        if not has_access:
+            current_app.logger.warning(
+                f'SSE 연결 권한 검증 실패 - 사용자: {current_user.id}, 전략: {strategy_id}'
+            )
+            return Response(
+                f"data: {{'type': 'error', 'message': '{error_msg}'}}\n\n",
+                mimetype='text/event-stream',
+                status=403
+            )
 
-            has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
-            if not has_access:
-                # 보안상 항상 403 반환 (404 분기 제거)
-                current_app.logger.warning(
-                    f'SSE 연결 권한 검증 실패 - 사용자: {current_user.id}, 전략: {strategy_id}'
-                )
-                return Response(
-                    f"data: {{'type': 'error', 'message': '{error_msg}'}}\n\n",
-                    mimetype='text/event-stream',
-                    status=403
-                )
-
-        current_app.logger.info(
-            f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, 전략: {strategy_id}, URL: /api/events/stream'
-        )
-
+        # EventService로 SSE 스트림 생성
+        current_app.logger.info(f'🔗 SSE 연결 요청 - 사용자: {current_user.id}, 전략: {strategy_id}')
         from app.services.event_service import event_service
-
-        # SSE 스트림 반환 (전략별 필터링 지원)
         response = event_service.get_event_stream(current_user.id, strategy_id)
         current_app.logger.info(f'✅ SSE 스트림 생성 완료 - 사용자: {current_user.id}, 전략: {strategy_id}')
         return response
 
     except Exception as e:
-        current_app.logger.error(
-            f'이벤트 스트림 생성 실패 - 사용자: {current_user.id}, 오류: {str(e)}'
-        )
-        # SSE 형식의 오류 메시지 반환
-        from flask import Response
+        current_app.logger.error(f'SSE 스트림 생성 오류: {str(e)}')
         return Response(
-            f"data: {{'type': 'error', 'message': '{str(e)}'}}\n\n",
-            mimetype='text/event-stream'
+            f"data: {{'type': 'error', 'message': '서버 오류가 발생했습니다.'}}\n\n",
+            mimetype='text/event-stream',
+            status=500
         )
 
 # @FEAT:api-gateway @COMP:route @TYPE:validation

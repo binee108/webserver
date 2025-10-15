@@ -58,97 +58,157 @@ class EventService:
     """실시간 이벤트 서비스 클래스"""
 
     def __init__(self):
-        self.clients = defaultdict(set)  # user_id -> set of client connections
-        self.event_queues = defaultdict(lambda: deque(maxlen=100))  # user_id -> event queue
+        # (user_id, strategy_id) 튜플을 키로 사용 - defaultdict로 안전성 확보
+        self.clients = defaultdict(set)  # Dict[(user_id, strategy_id), set] - 자동 set 생성
+        self.event_queues = defaultdict(lambda: deque(maxlen=100))  # 자동 deque 생성
         self.lock = threading.RLock()
         self._cleanup_interval = 60  # 60초마다 정리
         self._last_cleanup = time.time()
 
-        logger.info("이벤트 서비스 초기화 완료")
+        logger.info("이벤트 서비스 초기화 완료 (전략별 격리 모드)")
 
     # @FEAT:event-sse @COMP:service @TYPE:helper
-    def add_client(self, user_id: int, client_generator):
-        """클라이언트 연결 추가"""
+    def add_client(self, user_id: int, strategy_id: int, client_generator):
+        """클라이언트 연결 추가 (전략별)
+
+        Args:
+            user_id: 사용자 ID
+            strategy_id: 전략 ID (필수)
+            client_generator: Queue 객체
+        """
         with self.lock:
-            self.clients[user_id].add(client_generator)
-            logger.info(f"사용자 {user_id} 클라이언트 연결 추가 (총 {len(self.clients[user_id])}개)")
+            key = (user_id, strategy_id)
+            # defaultdict이므로 자동으로 set 생성됨
+            self.clients[key].add(client_generator)
+            logger.info(f"클라이언트 연결 추가 - 사용자: {user_id}, 전략: {strategy_id}, 총: {len(self.clients[key])}개")
 
     # @FEAT:event-sse @COMP:service @TYPE:helper
-    def remove_client(self, user_id: int, client_generator):
-        """클라이언트 연결 제거"""
+    def remove_client(self, user_id: int, strategy_id: int, client_generator):
+        """클라이언트 연결 제거 (전략별)
+
+        Args:
+            user_id: 사용자 ID
+            strategy_id: 전략 ID (필수)
+            client_generator: Queue 객체
+        """
         with self.lock:
-            self.clients[user_id].discard(client_generator)
-            if not self.clients[user_id]:
-                del self.clients[user_id]
-            logger.info(f"사용자 {user_id} 클라이언트 연결 제거")
+            key = (user_id, strategy_id)
+            if key in self.clients:
+                self.clients[key].discard(client_generator)
+                if not self.clients[key]:
+                    del self.clients[key]
+                logger.info(f"클라이언트 연결 제거 - 사용자: {user_id}, 전략: {strategy_id}")
 
     # @FEAT:event-sse @COMP:service @TYPE:core
     def emit_position_event(self, position_event: PositionEvent):
-        """포지션 이벤트 발송"""
+        """포지션 이벤트 발송 (전략별)"""
         try:
+            # strategy_id 검증 강화: None 또는 0 이하 차단
+            if not hasattr(position_event, 'strategy_id') or position_event.strategy_id is None or position_event.strategy_id <= 0:
+                logger.warning(
+                    f"포지션 이벤트 검증 실패 - 사용자: {getattr(position_event, 'user_id', 'N/A')}, "
+                    f"전략: {getattr(position_event, 'strategy_id', 'N/A')}, "
+                    f"사유: 유효하지 않은 strategy_id (None 또는 0 이하)"
+                )
+                return
+
             event_data = {
                 'type': 'position_update',
                 'data': asdict(position_event)
             }
 
-            self._emit_to_user(position_event.user_id, event_data)
-            logger.debug(f"포지션 이벤트 발송: {position_event.event_type} - {position_event.symbol}")
+            self._emit_to_user(position_event.user_id, position_event.strategy_id, event_data)
+            logger.debug(f"포지션 이벤트 발송: {position_event.event_type} - {position_event.symbol} (전략: {position_event.strategy_id})")
 
         except Exception as e:
             logger.error(f"포지션 이벤트 발송 실패: {str(e)}")
 
     # @FEAT:event-sse @COMP:service @TYPE:core
     def emit_order_event(self, order_event: OrderEvent):
-        """주문 이벤트 발송"""
+        """주문 이벤트 발송 (전략별)"""
         try:
+            # strategy_id 검증 강화: None 또는 0 이하 차단
+            if not hasattr(order_event, 'strategy_id') or order_event.strategy_id is None or order_event.strategy_id <= 0:
+                logger.warning(
+                    f"주문 이벤트 검증 실패 - 사용자: {getattr(order_event, 'user_id', 'N/A')}, "
+                    f"전략: {getattr(order_event, 'strategy_id', 'N/A')}, "
+                    f"사유: 유효하지 않은 strategy_id (None 또는 0 이하)"
+                )
+                return
+
             event_data = {
                 'type': 'order_update',
                 'data': asdict(order_event)
             }
 
-            self._emit_to_user(order_event.user_id, event_data)
-            logger.info(f"📤 주문 이벤트 발송: {order_event.event_type} - {order_event.symbol} ({order_event.order_id})")
+            self._emit_to_user(order_event.user_id, order_event.strategy_id, event_data)
+            logger.info(f"📤 주문 이벤트 발송: {order_event.event_type} - {order_event.symbol} (전략: {order_event.strategy_id})")
 
         except Exception as e:
             logger.error(f"주문 이벤트 발송 실패: {str(e)}")
 
     # @FEAT:event-sse @COMP:service @TYPE:helper
-    def _emit_to_user(self, user_id: int, event_data: Dict[str, Any]):
-        """특정 사용자에게 이벤트 발송"""
-        with self.lock:
-            # 이벤트 큐에 추가
-            self.event_queues[user_id].append(event_data)
+    def _emit_to_user(self, user_id: int, strategy_id: int, event_data: Dict[str, Any]):
+        """특정 사용자의 특정 전략에게 이벤트 발송
 
-            # 연결된 클라이언트들에게 이벤트 전송
+        Args:
+            user_id: 사용자 ID
+            strategy_id: 전략 ID (필수)
+            event_data: 이벤트 데이터
+        """
+        with self.lock:
+            key = (user_id, strategy_id)
+
+            # 전략 존재 확인 (Phase 3 추가)
+            from app.models import Strategy
+            strategy = Strategy.query.filter_by(id=strategy_id).first()
+            if not strategy or not strategy.is_active:
+                logger.warning(
+                    f"이벤트 발송 스킵 (전략 없음/비활성) - 사용자: {user_id}, 전략: {strategy_id}"
+                )
+                return
+
+            # 이벤트 큐에 추가 (defaultdict가 자동으로 deque 생성)
+            self.event_queues[key].append(event_data)
+
+            # 해당 전략을 구독 중인 클라이언트에게만 이벤트 전송
             dead_clients = set()
 
-            for client in self.clients.get(user_id, set()):
+            for client in self.clients.get(key, set()):
                 try:
-                    client.put(event_data, timeout=1.0)  # 1초 타임아웃 추가
+                    client.put(event_data, timeout=1.0)
                 except:
                     dead_clients.add(client)
 
             # 죽은 클라이언트 제거
             if dead_clients:
-                self.clients[user_id] -= dead_clients
-                logger.debug(f"사용자 {user_id}의 죽은 클라이언트 {len(dead_clients)}개 제거")
+                self.clients[key] -= dead_clients
+                logger.debug(f"사용자 {user_id}, 전략 {strategy_id}의 죽은 클라이언트 {len(dead_clients)}개 제거")
 
     # @FEAT:event-sse @COMP:service @TYPE:core
-    def get_event_stream(self, user_id: int):
-        """SSE 이벤트 스트림 생성"""
+    def get_event_stream(self, user_id: int, strategy_id: int):
+        """SSE 이벤트 스트림 생성 (전략별)
+
+        Args:
+            user_id: 사용자 ID
+            strategy_id: 전략 ID (필수)
+
+        Returns:
+            Flask Response (SSE 스트림)
+        """
         from queue import Queue, Empty
 
-        logger.info(f"🚀 SSE 스트림 생성 시작 - 사용자: {user_id}")
+        logger.info(f"🚀 SSE 스트림 생성 시작 - 사용자: {user_id}, 전략: {strategy_id}")
         client_queue = Queue(maxsize=50)
 
         # @FEAT:event-sse @COMP:service @TYPE:core
         def event_generator():
             """SSE 이벤트 스트림 생성"""
             try:
-                logger.info(f"📡 SSE 이벤트 제너레이터 시작 - 사용자: {user_id}")
+                logger.info(f"📡 SSE 이벤트 제너레이터 시작 - 사용자: {user_id}, 전략: {strategy_id}")
 
-                # 클라이언트 등록
-                self.add_client(user_id, client_queue)
+                # 클라이언트 등록 (전략별)
+                self.add_client(user_id, strategy_id, client_queue)
 
                 # 연결 확인 이벤트 전송
                 connection_message = {
@@ -156,28 +216,23 @@ class EventService:
                     'data': {
                         'status': 'connected',
                         'timestamp': datetime.utcnow().isoformat(),
-                        'user_id': user_id
+                        'user_id': user_id,
+                        'strategy_id': strategy_id  # 전략 ID 추가
                     }
                 }
-                logger.info(f"📤 연결 확인 메시지 전송 - 사용자: {user_id}")
+                logger.info(f"📤 연결 확인 메시지 전송 - 사용자: {user_id}, 전략: {strategy_id}")
                 connection_msg = self._format_sse_message(connection_message)
-                logger.debug(f"연결 메시지 내용: {connection_msg.strip()}")
                 yield connection_msg
 
                 # 즉시 추가 데이터 전송하여 연결 안정화
-                yield ": keepalive\n\n"  # SSE 주석 (브라우저에서 무시됨)
-
-                # 새로운 연결에서는 과거 이벤트를 재전송하지 않음
-                # 실시간 이벤트만 전송하여 중복 처리 방지
+                yield ": keepalive\n\n"
 
                 # 실시간 이벤트 처리
                 while True:
                     try:
-                        # 10초 타임아웃으로 이벤트 대기 (응답성 향상)
                         event = client_queue.get(timeout=10)
-                        logger.info(f"📤 실시간 이벤트 전송 - 사용자: {user_id}, 타입: {event.get('type')}")
+                        logger.info(f"📤 실시간 이벤트 전송 - 사용자: {user_id}, 전략: {strategy_id}, 타입: {event.get('type')}")
                         event_msg = self._format_sse_message(event)
-                        logger.debug(f"이벤트 메시지 내용: {event_msg.strip()}")
                         yield event_msg
 
                     except Empty:
@@ -188,7 +243,7 @@ class EventService:
                                 'timestamp': datetime.utcnow().isoformat()
                             }
                         }
-                        logger.debug(f"💓 하트비트 전송 - 사용자: {user_id}")
+                        logger.debug(f"💓 하트비트 전송 - 사용자: {user_id}, 전략: {strategy_id}")
                         heartbeat_msg = self._format_sse_message(heartbeat_message)
                         yield heartbeat_msg
 
@@ -196,12 +251,12 @@ class EventService:
                         self._periodic_cleanup()
 
             except GeneratorExit:
-                logger.debug(f"사용자 {user_id} 이벤트 스트림 종료")
+                logger.debug(f"이벤트 스트림 종료 - 사용자: {user_id}, 전략: {strategy_id}")
             except Exception as e:
-                logger.error(f"사용자 {user_id} 이벤트 스트림 오류: {str(e)}")
+                logger.error(f"이벤트 스트림 오류 - 사용자: {user_id}, 전략: {strategy_id}, 오류: {str(e)}")
             finally:
-                # 클라이언트 제거
-                self.remove_client(user_id, client_queue)
+                # 클라이언트 제거 (전략별)
+                self.remove_client(user_id, strategy_id, client_queue)
 
         response = Response(
             event_generator(),
@@ -218,6 +273,136 @@ class EventService:
         )
         response.timeout = None  # 타임아웃 비활성화
         return response
+
+    # @FEAT:event-sse @COMP:service @TYPE:helper
+    def cleanup_strategy_clients(self, strategy_id: int) -> int:
+        """특정 전략의 모든 SSE 클라이언트 정리
+
+        전략 삭제/비활성화 시 호출하여:
+        1. force_disconnect 이벤트를 모든 클라이언트에게 발송
+        2. 해당 전략의 모든 클라이언트 연결 제거
+        3. 이벤트 큐 정리
+
+        Args:
+            strategy_id: 정리할 전략 ID
+
+        Returns:
+            int: 정리된 클라이언트 수
+        """
+        cleaned_count = 0
+
+        with self.lock:
+            # 해당 전략의 모든 (user_id, strategy_id) 키 찾기
+            keys_to_remove = [
+                key for key in self.clients.keys()
+                if key[1] == strategy_id  # key[1]은 strategy_id
+            ]
+
+            logger.info(f"🧹 전략 {strategy_id} SSE 정리 시작 - 대상 키: {len(keys_to_remove)}개")
+
+            for key in keys_to_remove:
+                user_id, strat_id = key
+                clients = self.clients.get(key, set()).copy()  # 복사본으로 순회
+
+                # 각 클라이언트에게 force_disconnect 이벤트 전송
+                disconnect_event = {
+                    'type': 'force_disconnect',
+                    'data': {
+                        'reason': 'strategy_deleted',
+                        'message': '전략이 삭제되었습니다. 연결을 종료합니다.',
+                        'strategy_id': strategy_id,
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                }
+
+                for client in clients:
+                    try:
+                        client.put(disconnect_event, timeout=0.5)
+                        cleaned_count += 1
+                        logger.debug(f"강제 종료 이벤트 전송 - 사용자: {user_id}, 전략: {strat_id}")
+                    except Exception as e:
+                        logger.warning(f"강제 종료 이벤트 전송 실패 - 사용자: {user_id}, 오류: {str(e)}")
+
+                # 클라이언트 및 큐 제거
+                if key in self.clients:
+                    del self.clients[key]
+                if key in self.event_queues:
+                    del self.event_queues[key]
+
+                logger.info(f"전략 {strategy_id} 클라이언트 정리 완료 - 사용자: {user_id}, 클라이언트 수: {len(clients)}")
+
+        logger.info(f"✅ 전략 {strategy_id} SSE 정리 완료 - 총 {cleaned_count}개 클라이언트 정리됨")
+        return cleaned_count
+
+    # @FEAT:event-sse @COMP:service @TYPE:helper
+    def disconnect_client(self, user_id: int, strategy_id: int, reason: str = 'permission_revoked') -> int:
+        """특정 사용자의 특정 전략 SSE 클라이언트 강제 종료
+
+        권한 변경 시 호출하여:
+        1. force_disconnect 이벤트를 해당 클라이언트에게 발송
+        2. (user_id, strategy_id) 클라이언트 연결 제거
+        3. 이벤트 큐 정리
+
+        Args:
+            user_id: 사용자 ID
+            strategy_id: 전략 ID
+            reason: 종료 사유 ('permission_revoked', 'account_deactivated' 등)
+
+        Returns:
+            int: 정리된 클라이언트 수
+        """
+        cleaned_count = 0
+        key = (user_id, strategy_id)
+
+        with self.lock:
+            clients = self.clients.get(key, set()).copy()
+
+            if not clients:
+                logger.debug(f"강제 종료 대상 없음 - 사용자: {user_id}, 전략: {strategy_id}")
+                return 0
+
+            logger.info(f"🚫 SSE 강제 종료 시작 - 사용자: {user_id}, 전략: {strategy_id}, 사유: {reason}")
+
+            # force_disconnect 이벤트 생성
+            disconnect_event = {
+                'type': 'force_disconnect',
+                'data': {
+                    'reason': reason,
+                    'message': self._get_disconnect_message(reason),
+                    'strategy_id': strategy_id,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }
+
+            # 각 클라이언트에게 이벤트 전송
+            for client in clients:
+                try:
+                    client.put(disconnect_event, timeout=0.5)
+                    cleaned_count += 1
+                    logger.debug(f"강제 종료 이벤트 전송 - 사용자: {user_id}, 전략: {strategy_id}")
+                except Exception as e:
+                    logger.warning(f"강제 종료 이벤트 전송 실패 - 사용자: {user_id}, 오류: {str(e)}")
+
+            # 클라이언트 및 큐 제거
+            if key in self.clients:
+                del self.clients[key]
+            if key in self.event_queues:
+                del self.event_queues[key]
+
+            logger.info(f"✅ SSE 강제 종료 완료 - 사용자: {user_id}, 전략: {strategy_id}, 클라이언트: {cleaned_count}개")
+
+        return cleaned_count
+
+    # @FEAT:event-sse @COMP:service @TYPE:helper
+    def _get_disconnect_message(self, reason: str) -> str:
+        """종료 사유에 따른 메시지 반환"""
+        messages = {
+            'permission_revoked': '전략 접근 권한이 제거되었습니다. 연결을 종료합니다.',
+            'account_deactivated': '계정이 비활성화되었습니다. 연결을 종료합니다.',
+            'strategy_deleted': '전략이 삭제되었습니다. 연결을 종료합니다.',
+            'session_expired': '세션이 만료되었습니다. 다시 로그인해주세요.'
+        }
+        return messages.get(reason, '연결이 종료되었습니다.')
 
     # @FEAT:event-sse @COMP:service @TYPE:helper
     def _format_sse_message(self, data: Dict[str, Any]) -> str:
