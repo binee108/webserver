@@ -286,6 +286,83 @@ class TradingCore:
                 failure_payload['account_id'] = account.id
             return failure_payload
 
+    # @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:integration
+    def _execute_exchange_order(self, account: Account, symbol: str, side: str,
+                                quantity: Decimal, order_type: str, market_type: str,
+                                price: Optional[Decimal] = None,
+                                stop_price: Optional[Decimal] = None,
+                                timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """
+        거래소 주문 실행
+
+        Args:
+            account: 계정 정보
+            symbol: 거래 심볼
+            side: 매수/매도 방향
+            quantity: 수량
+            order_type: 주문 유형
+            market_type: 마켓 유형 (spot/futures)
+            price: 지정가 (선택)
+            stop_price: 스탑 가격 (선택)
+            timing_context: 타이밍 컨텍스트 (사용하지 않음, 호환성 유지)
+
+        Returns:
+            주문 실행 결과
+        """
+        # exchange_service를 통한 주문 생성
+        return exchange_service.create_order(
+            account=account,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            order_type=order_type,
+            market_type=market_type,
+            price=price,
+            stop_price=stop_price
+        )
+
+    # @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:helper
+    def _merge_order_with_exchange(self, account: Account, symbol: str,
+                                   market_type: str, order_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        거래소에서 최신 주문 정보를 조회하여 로컬 주문 결과와 병합
+
+        Args:
+            account: Account 객체
+            symbol: 거래 심볼
+            market_type: 마켓 유형 (spot/futures)
+            order_result: 로컬 주문 결과 딕셔너리
+
+        Returns:
+            병합된 주문 정보
+        """
+        order_id = order_result.get('order_id')
+        if not order_id:
+            logger.warning("주문 ID가 없어 거래소 조회를 건너뜁니다")
+            return order_result
+
+        try:
+            # 거래소에서 최신 주문 정보 조회
+            fetched_order = exchange_service.fetch_order(
+                account=account,
+                symbol=symbol,
+                order_id=order_id,
+                market_type=market_type
+            )
+
+            if fetched_order and fetched_order.get('success'):
+                # 거래소 데이터로 업데이트 (로컬 데이터 우선 유지)
+                merged = {**order_result, **fetched_order}
+                logger.debug(f"주문 정보 병합 완료: order_id={order_id}, status={merged.get('status')}")
+                return merged
+            else:
+                logger.warning(f"거래소 주문 조회 실패, 로컬 데이터 사용: order_id={order_id}")
+                return order_result
+
+        except Exception as e:
+            logger.error(f"주문 정보 병합 중 오류: {e}, 로컬 데이터 사용")
+            return order_result
+
     # @FEAT:market-order-fill @COMP:service @TYPE:helper
     def _handle_market_order_immediate_fill(
         self,
