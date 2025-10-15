@@ -245,12 +245,13 @@ class OrderQueueManager:
         """심볼별 동적 재정렬 (핵심 알고리즘)
 
         ✅ v2: threading.Lock으로 동시성 보호 (조건 4)
+        ✅ v2.2: Side별 분리 정렬 (Phase 2.2)
 
         처리 단계:
         1. 제한 계산 (ExchangeLimits.calculate_symbol_limit)
         2. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
-        3. 전체 통합 정렬 (priority, sort_price, created_at)
-        4. 상위 N개 선택 (STOP 이중 제한 적용)
+        3. Side별 분리 정렬 (BUY/SELL 독립 정렬 - priority, sort_price, created_at)
+        4. Side별 상위 N개 선택 (각 side에서 max_orders_per_side개 선택, STOP 제한 적용)
         5. Sync:
            - 하위로 밀린 거래소 주문 → 취소 + 대기열 이동
            - 상위로 올라온 대기열 주문 → 거래소 실행
@@ -347,57 +348,81 @@ class OrderQueueManager:
                             f"Priority: {po.priority}, Created: {po.created_at}"
                         )
 
-                # Step 3: 통합 정렬
-                all_orders = []
+                # Step 3: Side별 분리 정렬
+                buy_orders = []
+                sell_orders = []
 
+                # Active 주문 분리
                 for order in active_orders:
-                    all_orders.append({
+                    order_dict = {
                         'source': 'active',
                         'db_record': order,
                         'priority': OrderType.get_priority(order.order_type),
                         'sort_price': self._get_order_sort_price(order),
                         'created_at': order.created_at,
                         'is_stop': OrderType.requires_stop_price(order.order_type)
-                    })
+                    }
+                    if order.side.upper() == 'BUY':
+                        buy_orders.append(order_dict)
+                    else:
+                        sell_orders.append(order_dict)
 
+                # Pending 주문 분리
                 for order in pending_orders:
-                    all_orders.append({
+                    order_dict = {
                         'source': 'pending',
                         'db_record': order,
                         'priority': order.priority,
                         'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
                         'created_at': order.created_at,
                         'is_stop': OrderType.requires_stop_price(order.order_type)
-                    })
+                    }
+                    if order.side.upper() == 'BUY':
+                        buy_orders.append(order_dict)
+                    else:
+                        sell_orders.append(order_dict)
 
-                # 정렬 키: (priority ASC, sort_price DESC, created_at ASC)
-                all_orders.sort(key=lambda x: (
+                # 각 side별 정렬 (정렬 키: priority ASC, sort_price DESC, created_at ASC)
+                buy_orders.sort(key=lambda x: (
                     x['priority'],
                     -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
                     x['created_at']
                 ))
 
-                logger.debug(f"📊 정렬 완료 - 총 {len(all_orders)}개 주문")
+                sell_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
 
-                # Step 4: 상위 N개 선택 (이중 제한)
-                selected_orders = []
-                stop_count = 0
+                logger.debug(f"📊 Side별 정렬 완료 - Buy: {len(buy_orders)}개, Sell: {len(sell_orders)}개")
 
-                for order in all_orders:
-                    if len(selected_orders) >= max_orders:
-                        break  # 전체 제한 도달
+                # Step 4: Side별 상위 N개 선택 (헬퍼 함수 사용)
+                # Phase 1에서 추가한 side별 제한 사용
+                max_orders_per_side = limits['max_orders_per_side']
+                max_stop_orders_per_side = limits['max_stop_orders_per_side']
 
-                    if order['is_stop']:
-                        if stop_count >= max_stop_orders:
-                            continue  # STOP 제한 초과 → 건너뛰기
-                        stop_count += 1
+                # Buy 주문 선택
+                selected_buy_orders, buy_stop_count = self._select_top_orders(
+                    buy_orders, max_orders_per_side, max_stop_orders_per_side
+                )
 
-                    selected_orders.append(order)
+                # Sell 주문 선택
+                selected_sell_orders, sell_stop_count = self._select_top_orders(
+                    sell_orders, max_orders_per_side, max_stop_orders_per_side
+                )
 
                 logger.info(
-                    f"✅ 선택 완료 - {len(selected_orders)}개 주문 "
-                    f"(STOP: {stop_count}개)"
+                    f"✅ 선택 완료 - "
+                    f"BUY: {len(selected_buy_orders)}/{len(buy_orders)}개 "
+                    f"(STOP: {buy_stop_count}/{max_stop_orders_per_side}), "
+                    f"SELL: {len(selected_sell_orders)}/{len(sell_orders)}개 "
+                    f"(STOP: {sell_stop_count}/{max_stop_orders_per_side})"
                 )
+
+                # 통합 (Step 5에서 사용)
+                selected_orders = selected_buy_orders + selected_sell_orders
+                all_orders = buy_orders + sell_orders
 
                 # Step 5: 액션 결정
                 to_cancel = []  # 취소할 거래소 주문
@@ -507,6 +532,37 @@ class OrderQueueManager:
             price=price,
             stop_price=stop_price
         )
+
+    # @FEAT:order-queue @COMP:service @TYPE:helper
+    def _select_top_orders(
+        self,
+        orders: List[Dict[str, Any]],
+        max_orders: int,
+        max_stop_orders: int
+    ) -> tuple:
+        """상위 N개 주문 선택 (STOP 제한 적용)
+
+        Args:
+            orders: 정렬된 주문 리스트
+            max_orders: 최대 주문 개수
+            max_stop_orders: 최대 STOP 주문 개수
+
+        Returns:
+            tuple: (선택된 주문 리스트, STOP 주문 개수)
+        """
+        selected = []
+        stop_count = 0
+
+        for order in orders:
+            if len(selected) >= max_orders:
+                break
+            if order['is_stop']:
+                if stop_count >= max_stop_orders:
+                    continue  # STOP 제한 초과 → 건너뛰기
+                stop_count += 1
+            selected.append(order)
+
+        return selected, stop_count
 
     # @FEAT:order-queue @COMP:service @TYPE:helper
     def _classify_failure_type(self, error_message: str) -> str:

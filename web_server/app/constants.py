@@ -1077,6 +1077,7 @@ class KISOrderType:
         return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
 
 
+# @FEAT:order-queue @COMP:config @TYPE:core
 class ExchangeLimits:
     """거래소별 열린 주문 제한 관리
 
@@ -1144,6 +1145,7 @@ class ExchangeLimits:
     MIN_LIMIT = 1                    # 최소 제한
     DEFAULT_STOP_LIMIT = 5          # STOP 주문 기본 제한
 
+    # @FEAT:order-queue @COMP:config @TYPE:core
     @classmethod
     def calculate_symbol_limit(cls, exchange: str, market_type: str, symbol: str = None) -> dict:
         """심볼당 열린 주문 제한 계산
@@ -1158,6 +1160,14 @@ class ExchangeLimits:
         - 최소: 1개
         - STOP 주문: 별도 제한 (기본 5개)
 
+        BREAKING CHANGE (Side-based separation v2.0):
+        - max_orders: 이제 총 허용량을 나타냄 (Buy + Sell 합계)
+        - max_orders_per_side: 각 side(Buy/Sell)의 독립적인 제한
+        - max_stop_orders: 이제 총 STOP 허용량을 나타냄 (Buy + Sell 합계)
+        - max_stop_orders_per_side: 각 side(Buy/Sell)의 독립적인 STOP 제한
+        - 기존 동작: 심볼당 10개 제한
+        - 신규 동작: 각 side당 10개 제한 (총 최대 20개)
+
         Args:
             exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
             market_type: 마켓 타입 (SPOT, FUTURES)
@@ -1165,19 +1175,21 @@ class ExchangeLimits:
 
         Returns:
             dict: {
-                'max_orders': int,           # 일반 주문 최대 개수
-                'max_stop_orders': int,      # STOP 주문 최대 개수
-                'per_symbol_limit': int,     # 거래소 심볼당 원본 제한
-                'per_account_limit': int,    # 거래소 계정당 원본 제한
-                'calculation_method': str    # 계산 방법 (per_symbol, per_account, default)
+                'max_orders': int,                # 총 허용량 (Buy + Sell 합계)
+                'max_orders_per_side': int,       # 각 side별 제한 (Buy 또는 Sell)
+                'max_stop_orders': int,           # 총 STOP 허용량 (Buy + Sell 합계)
+                'max_stop_orders_per_side': int,  # 각 side별 STOP 제한
+                'per_symbol_limit': int,          # 거래소 심볼당 원본 제한
+                'per_account_limit': int,         # 거래소 계정당 원본 제한
+                'calculation_method': str         # 계산 방법 (per_symbol, per_account, default)
             }
 
         Examples:
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'FUTURES')
-            {'max_orders': 20, 'max_stop_orders': 5, ...}
+            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 20, 'max_stop_orders_per_side': 10, ...}
 
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'SPOT')
-            {'max_orders': 3, 'max_stop_orders': 5, ...}
+            {'max_orders': 4, 'max_orders_per_side': 2, 'max_stop_orders': 10, 'max_stop_orders_per_side': 5, ...}
         """
         exchange_upper = exchange.upper()
         market_type_normalized = MarketType.normalize(market_type)
@@ -1208,15 +1220,21 @@ class ExchangeLimits:
             calculation_method = 'default'
 
         # 제약 조건 적용
-        max_orders = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
+        max_orders_per_side = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
 
         # STOP 주문 제한 (별도)
-        max_stop_orders = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
-        max_stop_orders = min(max_stop_orders, max_orders)  # STOP은 전체 제한을 초과할 수 없음
+        max_stop_orders_per_side = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
+        max_stop_orders_per_side = min(max_stop_orders_per_side, max_orders_per_side)  # STOP은 전체 제한을 초과할 수 없음
+
+        # Side별 제한을 총 허용량으로 변환 (Buy + Sell)
+        max_orders = max_orders_per_side * 2
+        max_stop_orders = max_stop_orders_per_side * 2
 
         return {
-            'max_orders': max_orders,
-            'max_stop_orders': max_stop_orders,
+            'max_orders': max_orders,                          # 총 허용량 (각 side 10개 × 2 = 20개)
+            'max_orders_per_side': max_orders_per_side,        # 각 side별 제한 (10개)
+            'max_stop_orders': max_stop_orders,                # 총 STOP 허용량 (각 side 5개 × 2 = 10개)
+            'max_stop_orders_per_side': max_stop_orders_per_side,  # 각 side별 STOP 제한 (5개)
             'per_symbol_limit': per_symbol,
             'per_account_limit': per_account,
             'calculation_method': calculation_method,

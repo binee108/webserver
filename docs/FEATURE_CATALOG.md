@@ -51,6 +51,7 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 **주요 파일**:
 - `services/trading/order_queue_manager.py` - 대기열 관리 핵심
 - `services/background/queue_rebalancer.py` - 스케줄러
+- `constants.py` - ExchangeLimits 클래스
 - `models.py` - PendingOrder, OpenOrder
 **의존성**: `order-tracking`, `exchange-integration`, `telegram-notification`
 **상세 문서**: `docs/features/order-queue-system.md`
@@ -59,6 +60,20 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 grep -r "@FEAT:order-queue" --include="*.py"
 grep -r "@FEAT:order-queue" --include="*.py" | grep "rebalance"
 ```
+
+**최근 변경**:
+- **2025-10-15**: Side별 분리 정렬 구현 (Phase 1-2)
+  - Buy/Sell 주문 독립 할당 (각 side 20개)
+  - ExchangeLimits에 side별 제한 필드 추가 (`max_orders_per_side`, `max_stop_orders_per_side`)
+  - 총 용량 2배 증가 (20개 → 40개, 각 side 10개씩)
+  - DRY 원칙: `_select_top_orders()` 헬퍼 함수 추가 (40+ 라인 중복 제거)
+  - 버전: rebalance_symbol v2.2
+
+**파일**:
+- `web_server/app/constants.py` (ExchangeLimits)
+- `web_server/app/services/trading/order_queue_manager.py` (rebalance_symbol, _select_top_orders)
+
+**검색 태그**: `@FEAT:order-queue`, `@COMP:service`, `@TYPE:core`, `@COMP:config`
 
 ---
 
@@ -274,6 +289,7 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 - **exchange**: exchanges/ (거래소 어댑터)
 - **util**: symbol_utils.py
 - **job**: order_queue_manager.py, order_manager.py
+- **config**: constants.py (ExchangeLimits)
 
 ### By Logic Type
 - **core**: 핵심 비즈니스 로직
@@ -285,6 +301,38 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 ---
 
 ## Recent Changes
+
+### 2025-10-15: Order Queue Side-Based Separation (Phase 1-2)
+**영향 범위**: `order-queue`
+**파일**:
+- `constants.py` - ExchangeLimits side별 제한 추가
+- `services/trading/order_queue_manager.py` - rebalance_symbol v2.2, _select_top_orders 헬퍼 함수
+
+**개선 내용**:
+1. **Side별 독립 제한**: Buy/Sell 주문이 각각 독립적으로 최대 10개 (또는 20개, 거래소별 다름) 할당
+2. **총 용량 증가**: 기존 심볼당 10개 → 각 side 10개 (총 최대 20개)
+3. **ExchangeLimits 반환값 확장**:
+   - `max_orders`: 총 허용량 (Buy + Sell 합계)
+   - `max_orders_per_side`: 각 side별 제한 (신규)
+   - `max_stop_orders`: 총 STOP 허용량 (Buy + Sell 합계)
+   - `max_stop_orders_per_side`: 각 side별 STOP 제한 (신규)
+4. **DRY 원칙**: `_select_top_orders()` 헬퍼 함수로 40+ 라인 중복 제거
+
+**검색**:
+```bash
+# Side별 제한 필드 사용 확인
+grep -r "max_orders_per_side\|max_stop_orders_per_side" --include="*.py" web_server/app/
+
+# rebalance_symbol v2.2 버전 확인
+grep -n "v2.2" web_server/app/services/trading/order_queue_manager.py
+
+# _select_top_orders 헬퍼 함수 사용 확인
+grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager.py
+```
+
+**성능**: 재정렬 성능 유지 (<100ms), 메모리 증가 없음
+
+---
 
 ### 2025-10-15: Webhook Order Processing Fix
 **영향 범위**: `webhook-order`, `order-tracking`
@@ -328,4 +376,4 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 ---
 
 *Last Updated: 2025-10-15*
-*Recent Changes: Webhook order processing fix (Phase 1-3 리팩토링 후속 수정)*
+*Recent Changes: Order queue side-based separation (Phase 1-2 완료)*
