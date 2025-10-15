@@ -345,6 +345,72 @@ class BithumbExchange(BaseCryptoExchange):
         logger.info(f"✅ Bithumb 잔액 조회 완료: {len(balances)}개")
         return balances
 
+    def fetch_price_quotes(self, market_type: str = 'spot',
+                           symbols: Optional[List[str]] = None) -> Dict[str, PriceQuote]:
+        """표준화된 현재가 정보 조회"""
+        if market_type.lower() != 'spot':
+            raise ValueError("Bithumb은 Spot 거래만 지원합니다")
+
+        # 심볼을 Bithumb 마켓 코드로 변환
+        markets = []
+        if symbols:
+            for symbol in symbols:  # symbol = "BTC/KRW" or "BTC/USDT" (표준 형식)
+                bithumb_market = to_bithumb_format(symbol)  # "KRW-BTC" or "USDT-BTC"
+                markets.append(bithumb_market)
+        else:
+            # 전체 마켓 조회
+            all_markets = self.load_markets_impl(market_type)
+            for symbol in all_markets.keys():  # symbol = "BTC/KRW" or "BTC/USDT"
+                bithumb_market = to_bithumb_format(symbol)  # "KRW-BTC" or "USDT-BTC"
+                markets.append(bithumb_market)
+
+        if not markets:
+            return {}
+
+        # Bithumb 현재가 조회 (최대 100개까지 한 번에 조회 가능)
+        params = {'markets': ','.join(markets)}
+
+        try:
+            response = self._request('GET', BithumbEndpoints.TICKER, params=params)
+        except Exception as e:
+            logger.error(f"Bithumb 가격 조회 실패: error={e}")
+            return {}
+
+        timestamp = datetime.utcnow()
+        quotes: Dict[str, PriceQuote] = {}
+
+        for item in response:
+            market_code = item.get('market')  # KRW-BTC or USDT-BTC
+            if not market_code:
+                continue
+
+            # Bithumb 형식 → 표준 형식 변환
+            parts = market_code.split('-')
+            if len(parts) != 2:
+                continue
+
+            quote_currency = parts[0]  # KRW or USDT
+            base_currency = parts[1]   # BTC
+            symbol = f"{base_currency}{quote_currency}"  # BTCKRW or BTCUSDT
+
+            trade_price = item.get('trade_price')
+            if trade_price is None:
+                continue
+
+            quotes[symbol] = PriceQuote(
+                symbol=symbol,
+                exchange='BITHUMB',
+                market_type='SPOT',
+                last_price=Decimal(str(trade_price)),
+                bid_price=None,  # Bithumb ticker에는 호가 정보 없음
+                ask_price=None,
+                volume=Decimal(str(item.get('acc_trade_volume_24h', 0))),
+                timestamp=timestamp,
+                raw=item
+            )
+
+        return quotes
+
     def create_order_impl(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
                          market_type: str = 'spot', **params) -> Order:

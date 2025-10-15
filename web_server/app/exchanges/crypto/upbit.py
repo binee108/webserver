@@ -285,23 +285,18 @@ class UpbitExchange(BaseCryptoExchange):
         if market_type.lower() != 'spot':
             raise ValueError("Upbit은 Spot 거래만 지원합니다")
 
-        # 심볼을 Upbit 마켓 코드로 변환 (BTCKRW → KRW-BTC)
+        # 심볼을 Upbit 마켓 코드로 변환
         markets = []
         if symbols:
-            for symbol in symbols:
-                # BTCKRW → KRW-BTC
-                base = symbol[:-3]  # BTC
-                quote = symbol[-3:]  # KRW
-                if quote == 'KRW':
-                    markets.append(f"{quote}-{base}")
+            for symbol in symbols:  # symbol = "BTC/KRW" (표준 형식)
+                upbit_market = to_upbit_format(symbol)  # "KRW-BTC"
+                markets.append(upbit_market)
         else:
             # 전체 마켓 조회
             all_markets = self.load_markets_impl(market_type)
-            for symbol in all_markets.keys():
-                base = symbol[:-3]
-                quote = symbol[-3:]
-                if quote == 'KRW':
-                    markets.append(f"{quote}-{base}")
+            for symbol in all_markets.keys():  # symbol = "BTC/KRW"
+                upbit_market = to_upbit_format(symbol)  # "KRW-BTC"
+                markets.append(upbit_market)
 
         if not markets:
             return {}
@@ -315,7 +310,7 @@ class UpbitExchange(BaseCryptoExchange):
             logger.error(f"Upbit 가격 조회 실패: error={e}")
             return {}
 
-        timestamp = datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        timestamp = datetime.utcnow()
         quotes: Dict[str, PriceQuote] = {}
 
         for item in response:
