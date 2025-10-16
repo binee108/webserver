@@ -122,6 +122,25 @@ class TradingCore:
 
             logger.info(f"📊 전략 마켓타입: {strategy_market_type} → 거래소 마켓타입: {market_type}")
 
+            # 주문 제한 검증 (거래소 API 호출 전 - CRITICAL FIX)
+            # MARKET 주문은 제한 검증 스킵 (즉시 체결되므로 OpenOrder 미생성)
+            if order_type.upper() != OrderType.MARKET:
+                try:
+                    self.service.order_manager._validate_order_limits(
+                        account_id=account.id,
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type
+                    )
+                except ValueError as e:
+                    logger.warning(f"주문 제한 초과: {e}")
+                    return {
+                        'success': False,
+                        'error': str(e),
+                        'error_type': 'limit_exceeded',
+                        'account_id': account.id
+                    }
+
             # 거래소 주문 실행 (타이밍 정보 포함)
             order_result = self._execute_exchange_order(
                 account=account,
@@ -261,9 +280,12 @@ class TradingCore:
                 'order_id': order_result.get('order_id'),
                 'filled_quantity': filled_qty_num,  # 숫자로 반환
                 'average_price': avg_price_num,  # 실제 체결가 반환
+                'price': float(adjusted_price) if adjusted_price else None,  # 🆕 지정가 (LIMIT 주문용)
+                'stop_price': float(adjusted_stop_price) if adjusted_stop_price else None,  # 🆕 스탑 가격
                 'status': order_result.get('status'),
                 'trade_status': fill_summary.get('trade_status'),
                 'execution_status': fill_summary.get('execution_status'),
+                'order_type': order_type,  # 🆕 주문 타입
                 'account_id': account.id,
                 'results': results  # 체결 상세 정보 배열
             }
