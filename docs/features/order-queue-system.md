@@ -45,6 +45,7 @@
 - **독립 할당**: Buy와 Sell이 각각 독립적인 할당량 보유
 - **용량 증가**: BINANCE FUTURES 기준 20개 → 40개 (Buy 20 + Sell 20)
 - **정확한 우선순위**: 각 side 내에서만 비교하여 우선순위 왜곡 방지
+- **STOP 할당 제한 (v2.3)**: 25% cap으로 LIMIT 주문 공간 보장 (BINANCE FUTURES: STOP 10→5개/side)
 
 ## 주요 컴포넌트
 
@@ -86,7 +87,7 @@ sell_orders.sort(key=lambda x: (x['priority'], -x['sort_price'], x['created_at']
 
 # Step 3: 각 Side별 상위 N개 선택 (헬퍼 함수 사용)
 max_orders_per_side = limits['max_orders_per_side']  # 예: 20
-max_stop_orders_per_side = limits['max_stop_orders_per_side']  # 예: 10
+max_stop_orders_per_side = limits['max_stop_orders_per_side']  # 예: 5 (v2.3부터)
 
 selected_buy_orders, buy_stop_count = _select_top_orders(
     buy_orders, max_orders_per_side, max_stop_orders_per_side
@@ -105,7 +106,7 @@ selected_sell_orders, sell_stop_count = _select_top_orders(
 - **명확한 의도**: Side별 분리로 정렬 로직 의도가 명시적으로 드러남
 - **독립 제한**: Buy 20개 + Sell 20개 = 총 40개 동시 관리 가능
 
-### 2. ExchangeLimits (v2.2 업데이트)
+### 2. ExchangeLimits (v2.3 업데이트)
 **@FEAT:order-queue @COMP:config @TYPE:core**
 
 **파일**: `web_server/app/constants.py`
@@ -113,28 +114,40 @@ selected_sell_orders, sell_stop_count = _select_top_orders(
 **주요 메서드**:
 - `calculate_symbol_limit(exchange, market_type, symbol)`: 심볼별 최대 주문 수 계산
 
-**반환값 (v2.2 - BREAKING CHANGE)**:
+**반환값 (v2.3 - 25% STOP 할당 제한)**:
 ```python
 {
     'max_orders': 40,              # 총 허용량 (Buy 20 + Sell 20)
     'max_orders_per_side': 20,     # 각 side별 독립 제한
-    'max_stop_orders': 20,         # 총 STOP 허용량
-    'max_stop_orders_per_side': 10 # 각 side별 STOP 제한
+    'max_stop_orders': 10,         # 총 STOP 허용량 (v2.3: 25% cap 적용)
+    'max_stop_orders_per_side': 5  # 각 side별 STOP 제한 (v2.3: 25% cap)
 }
 ```
 
 **거래소별 제한 (BINANCE FUTURES 예시)**:
-| 항목 | v2.0 | v2.2 | 변화 |
-|------|------|------|------|
-| max_orders | 20 (총합) | 40 (총합) | +100% |
-| max_orders_per_side | - | 20 (각 side) | 신규 |
-| Buy 할당 | 0-20 (공유) | 0-20 (독립) | 독립 보장 |
-| Sell 할당 | 0-20 (공유) | 0-20 (독립) | 독립 보장 |
+| 항목 | v2.0 | v2.2 | v2.3 (2025-10-16) | 변화 |
+|------|------|------|-------------------|------|
+| max_orders | 20 (총합) | 40 (총합) | 40 (총합) | +100% (v2.2) |
+| max_orders_per_side | - | 20 (각 side) | 20 (각 side) | 신규 (v2.2) |
+| max_stop_orders | - | 20 (총합) | **10 (총합)** | **-50% (v2.3)** |
+| max_stop_orders_per_side | - | 10 (각 side) | **5 (각 side)** | **25% cap (v2.3)** |
+| Buy 할당 | 0-20 (공유) | 0-20 (독립) | 0-20 (독립) | 독립 보장 (v2.2) |
+| Sell 할당 | 0-20 (공유) | 0-20 (독립) | 0-20 (독립) | 독립 보장 (v2.2) |
+
+**v2.3 25% STOP 할당 정책**:
+- **목적**: STOP 주문이 대기열을 독점하여 LIMIT 주문 공간을 고갈시키는 것을 방지
+- **계산식**: `max_stop_per_side = min(ceil(max_orders_per_side * 0.25), exchange_conditional, max_orders_per_side)`
+- **최소 보장**: `math.ceil()` 적용으로 대기열 공간이 있으면 최소 1개 STOP 주문 할당
+- **예시**:
+  - BINANCE FUTURES (20개/side): 5개 STOP (25%)
+  - BINANCE SPOT (2개/side): 1개 STOP (50%, ceil로 인한 오버)
+  - BYBIT FUTURES (20개/side): 5개 STOP (exchange conditional=10이지만 25% cap 우선)
 
 **주요 개선**:
 - **의미 명확화**: `max_orders`가 총 허용량임을 명시
 - **Side별 제한**: 신규 필드로 각 side의 독립 제한 지원
 - **용량 증가**: 실질적인 주문 용량 2배 증가
+- **STOP 제약**: 25% cap으로 LIMIT 주문 보호
 
 ### 3. QueueRebalancer
 **@FEAT:order-queue @COMP:job @TYPE:core**
@@ -283,6 +296,35 @@ if os.environ.get('WERKZEUG_RUN_MAIN'):
     init_scheduler(app)
 ```
 
+## 마이그레이션 가이드 (v2.3)
+
+### 25% STOP 할당 제한 적용 (2025-10-16)
+
+**변경 사항**:
+- BINANCE FUTURES: max_stop_per_side **10 → 5**
+- BINANCE SPOT: max_stop_per_side **5 → 1**
+- 기타 거래소: 25% cap 또는 exchange conditional 중 낮은 값 적용
+
+**영향**:
+- 기존 6-10개의 STOP 주문이 있는 경우, queue_rebalancer가 점진적으로 5개로 축소
+- 축소 과정은 1초마다 실행되는 재정렬 로직이 자동 처리
+- 우선순위가 낮은 STOP 주문부터 PendingOrder로 이동
+
+**모니터링**:
+로그에서 다음 패턴 확인:
+```
+🔄 재정렬 완료 - 취소: 3개, 실행: 0개
+✅ 선택 완료 - BUY: 20/25개 (STOP: 5/5)
+```
+취소된 주문은 STOP 제한 초과로 인한 자동 조정입니다.
+
+**롤백 방법**:
+```bash
+# constants.py 라인 1151 수정
+STOP_ALLOCATION_RATIO = 0.50  # 25% → 50%로 변경
+python run.py restart
+```
+
 ## Quick Search
 
 ```bash
@@ -309,7 +351,7 @@ grep -r "_rebalance_locks" --include="*.py"
 ---
 
 *Last Updated: 2025-10-16*
-*Version: 2.2.0 (Side별 분리 정렬 구현)*
+*Version: 2.3.0 (25% STOP 할당 제한 적용)*
 
 **v2.2 주요 변경사항**:
 - Buy/Sell 주문 독립 정렬 및 할당
@@ -318,3 +360,11 @@ grep -r "_rebalance_locks" --include="*.py"
 - 용량 2배 증가: BINANCE FUTURES 기준 20개 → 40개
 - 성능 개선: 재정렬 <100ms (효율적 O(N log N) 정렬)
 - Known Issues 섹션 추가: sort_price 부호 반전 로직 문서화
+
+**v2.3 주요 변경사항 (2025-10-16)**:
+- 25% STOP 할당 제한 적용: STOP 주문이 전체 주문의 25%를 초과하지 않도록 제한
+- `STOP_ALLOCATION_RATIO = 0.25` 상수 추가 (constants.py)
+- `math.ceil()` 적용으로 최소 1개 STOP 주문 보장 (대기열 공간 존재 시)
+- BINANCE FUTURES: max_stop_orders_per_side 10 → 5로 변경
+- BINANCE SPOT: max_stop_orders_per_side 5 → 1로 변경
+- 목적: LIMIT 주문이 충분한 대기열 공간 확보, STOP 주문 독점 방지

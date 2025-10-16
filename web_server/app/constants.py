@@ -4,6 +4,7 @@
 """
 
 from typing import List, Optional
+import math
 
 class AccountType:
     """계좌 타입"""
@@ -1145,6 +1146,10 @@ class ExchangeLimits:
     MIN_LIMIT = 1                    # 최소 제한
     DEFAULT_STOP_LIMIT = 5          # STOP 주문 기본 제한
 
+    # STOP 주문 할당 비율 (전체 주문의 25%)
+    # 예: max_orders_per_side=20 → max_stop=5
+    STOP_ALLOCATION_RATIO = 0.25
+
     # @FEAT:order-queue @COMP:config @TYPE:core
     @classmethod
     def calculate_symbol_limit(cls, exchange: str, market_type: str, symbol: str = None) -> dict:
@@ -1168,6 +1173,12 @@ class ExchangeLimits:
         - 기존 동작: 심볼당 10개 제한
         - 신규 동작: 각 side당 10개 제한 (총 최대 20개)
 
+        STOP 주문 할당 정책 (v2.3 - 2025-10-16):
+        - STOP 주문은 전체 주문의 25%로 제한하여 LIMIT 주문이 충분한 대기열 공간 확보
+        - 계산식: max_stop_per_side = min(ceil(max_orders_per_side * 0.25), exchange_conditional, max_orders_per_side)
+        - 올림(ceil) 적용으로 최소 1개 STOP 주문 보장 (단, max_orders_per_side > 0 조건)
+        - 예: BINANCE FUTURES (20개/side) → 5개 STOP, BINANCE SPOT (2개/side) → 1개 STOP
+
         Args:
             exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
             market_type: 마켓 타입 (SPOT, FUTURES)
@@ -1186,10 +1197,10 @@ class ExchangeLimits:
 
         Examples:
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'FUTURES')
-            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 20, 'max_stop_orders_per_side': 10, ...}
+            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 10, 'max_stop_orders_per_side': 5, ...}
 
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'SPOT')
-            {'max_orders': 4, 'max_orders_per_side': 2, 'max_stop_orders': 10, 'max_stop_orders_per_side': 5, ...}
+            {'max_orders': 4, 'max_orders_per_side': 2, 'max_stop_orders': 2, 'max_stop_orders_per_side': 1, ...}
         """
         exchange_upper = exchange.upper()
         market_type_normalized = MarketType.normalize(market_type)
@@ -1222,9 +1233,15 @@ class ExchangeLimits:
         # 제약 조건 적용
         max_orders_per_side = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
 
-        # STOP 주문 제한 (별도)
-        max_stop_orders_per_side = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
-        max_stop_orders_per_side = min(max_stop_orders_per_side, max_orders_per_side)  # STOP은 전체 제한을 초과할 수 없음
+        # STOP 주문 제한 (25% cap 적용)
+        # 25% cap 계산 (올림으로 최소 1 보장)
+        max_stop_25_percent = math.ceil(max_orders_per_side * cls.STOP_ALLOCATION_RATIO)
+
+        # 거래소 조건부 제한 또는 기본값 사용
+        exchange_stop_limit = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
+
+        # 25% cap, 거래소 제한, 전체 제한의 최소값 적용
+        max_stop_orders_per_side = min(max_stop_25_percent, exchange_stop_limit, max_orders_per_side)
 
         # Side별 제한을 총 허용량으로 변환 (Buy + Sell)
         max_orders = max_orders_per_side * 2
