@@ -518,6 +518,14 @@ def register_background_jobs(app):
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 캐시 웜업 실패: {str(e)}')
 
+        # ✅ NEW: MarketInfo warmup (Phase 1)
+        # @FEAT:precision-system @COMP:service @TYPE:integration
+        try:
+            warm_up_market_info_with_context()
+            app.logger.info('✅ 애플리케이션 시작 시 MarketInfo 웜업 완료')
+        except Exception as e:
+            app.logger.error(f'❌ 애플리케이션 시작 시 MarketInfo 웜업 실패: {str(e)}')
+
     # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시 7분 - 소수 시간대)
     scheduler.add_job(
         func=update_precision_cache_with_context,
@@ -668,6 +676,42 @@ def register_background_jobs(app):
     )
 
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
+
+# @FEAT:precision-system @COMP:service @TYPE:helper
+def warm_up_market_info_with_context():
+    """
+    Flask app context 내에서 MarketInfo warmup 실행
+
+    Note:
+        - Werkzeug reloader 중복 실행 방지 (WERKZEUG_RUN_MAIN 체크)
+        - 비동기 실행하여 서버 시작 블로킹 방지
+        - 실패해도 서버 시작 계속 (degraded mode)
+    """
+    import os
+    from flask import current_app
+    from app.services.exchange import ExchangeService
+
+    # Werkzeug reloader 중복 실행 방지
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        return
+
+    try:
+        with current_app.app_context():
+            exchange_service = ExchangeService()
+            result = exchange_service.warm_up_all_market_info()
+
+            # 결과 검증
+            if result['failed']:
+                current_app.logger.warning(
+                    f"⚠️ Warmup 일부 실패 - degraded mode로 시작 "
+                    f"(실패: {len(result['failed'])}개)"
+                )
+            else:
+                current_app.logger.info("✅ Warmup 완료 - 모든 거래소 캐시 준비됨")
+
+    except Exception as e:
+        current_app.logger.error(f"❌ Warmup 실패: {e} - degraded mode로 시작")
+        # 실패해도 서버 시작은 계속
 
 def warm_up_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""

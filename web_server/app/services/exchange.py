@@ -1445,6 +1445,145 @@ class ExchangeService:
                 self.precision_cache.last_update.clear()
                 logger.info(f"✅ 전체 precision 캐시 {count}개 항목 정리")
 
+    # @FEAT:precision-system @COMP:service @TYPE:core
+    def warm_up_all_market_info(self) -> Dict[str, Any]:
+        """
+        서버 시작 시 모든 거래소의 MarketInfo를 선행 로드 (Warmup)
+
+        Returns:
+            Dict: {
+                'total_exchanges': int,      # 로딩 시도한 거래소 수
+                'total_markets': int,         # 로드된 총 마켓 수
+                'failed': List[str],          # 실패한 거래소 목록
+                'elapsed': float              # 소요 시간 (초)
+            }
+
+        Note:
+            - ThreadPoolExecutor로 병렬 로딩 (60초 per-exchange, 120초 total)
+            - 일부 실패해도 계속 진행 (degraded mode)
+            - 첫 주문부터 캐시 히트 보장 (딜레이 제로)
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+        import time
+
+        start_time = time.time()
+        logger.info("🔄 MarketInfo Warmup 시작...")
+
+        # 활성 계좌 조회 (거래소별 그룹화)
+        active_accounts = Account.query.filter_by(is_active=True).all()
+        if not active_accounts:
+            logger.warning("⚠️ 활성 계좌 없음 - Warmup 건너뜀")
+            return {
+                'total_exchanges': 0,
+                'total_markets': 0,
+                'failed': [],
+                'elapsed': time.time() - start_time
+            }
+
+        # 거래소별 그룹화 (중복 제거)
+        exchange_accounts = {}
+        for acc in active_accounts:
+            key = f"{acc.exchange}_{acc.account_type}"
+            if key not in exchange_accounts:
+                exchange_accounts[key] = acc
+
+        # 병렬 로딩 함수
+        def load_exchange_markets(exchange_key: str, account: Account) -> Tuple[str, int]:
+            """단일 거래소 MarketInfo 로드 (60초 타임아웃)"""
+            try:
+                adapter = self.get_exchange(account)
+                if not adapter:
+                    logger.error(f"  ❌ {exchange_key}: 어댑터 생성 실패")
+                    return (exchange_key, 0)
+
+                # Spot markets
+                spot_count = 0
+                try:
+                    spot_markets = adapter.load_markets('spot', reload=False)
+                    spot_count = len(spot_markets) if spot_markets else 0
+                except Exception as e:
+                    logger.debug(f"  ℹ️  {exchange_key}: spot 미지원 또는 로드 실패 - {e}")
+
+                # Futures markets (지원하는 경우)
+                futures_count = 0
+                try:
+                    futures_markets = adapter.load_markets('futures', reload=False)
+                    futures_count = len(futures_markets) if futures_markets else 0
+                except Exception as e:
+                    logger.debug(f"  ℹ️  {exchange_key}: futures 미지원 또는 로드 실패 - {e}")
+
+                total_count = spot_count + futures_count
+                logger.info(f"  ✅ {exchange_key}: {total_count}개 마켓 로드 (spot: {spot_count}, futures: {futures_count})")
+                return (exchange_key, total_count)
+
+            except Exception as e:
+                logger.error(f"  ❌ {exchange_key} 로드 실패: {e}")
+                return (exchange_key, 0)
+
+        # ThreadPoolExecutor로 병렬 실행
+        total_markets = 0
+        failed_exchanges = []
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            futures = {
+                executor.submit(load_exchange_markets, key, acc): key
+                for key, acc in exchange_accounts.items()
+            }
+
+            # Collect results with 120-second total timeout
+            try:
+                for future in as_completed(futures, timeout=120):
+                    exchange_key = futures[future]
+                    try:
+                        # 60-second per-exchange timeout
+                        exchange_name, count = future.result(timeout=60)
+                        if count > 0:
+                            total_markets += count
+                        else:
+                            failed_exchanges.append(exchange_name)
+
+                    except TimeoutError:
+                        logger.error(f"  ⏱️ {exchange_key} 타임아웃 (>60초)")
+                        failed_exchanges.append(exchange_key)
+                    except Exception as e:
+                        logger.error(f"  ❌ {exchange_key} 실패: {e}")
+                        failed_exchanges.append(exchange_key)
+
+            except TimeoutError:
+                logger.error("⏱️ Warmup 전체 타임아웃 (>120초) - 완료된 거래소만 사용")
+                # 타임아웃 된 거래소들은 failed로 처리
+                for future, key in futures.items():
+                    if not future.done():
+                        failed_exchanges.append(key)
+
+        elapsed = time.time() - start_time
+
+        # 결과 로깅
+        success_count = len(exchange_accounts) - len(failed_exchanges)
+        if failed_exchanges:
+            logger.warning(
+                f"⚠️ MarketInfo Warmup 완료 (일부 실패) - "
+                f"성공: {success_count}/{len(exchange_accounts)}, "
+                f"마켓: {total_markets}개, "
+                f"소요: {elapsed:.1f}초, "
+                f"실패: {failed_exchanges}"
+            )
+        else:
+            logger.info(
+                f"✅ MarketInfo Warmup 완료 - "
+                f"거래소: {len(exchange_accounts)}개, "
+                f"마켓: {total_markets}개, "
+                f"소요: {elapsed:.1f}초"
+            )
+
+        return {
+            'total_exchanges': len(exchange_accounts),
+            'total_markets': total_markets,
+            'failed': failed_exchanges,
+            'elapsed': elapsed
+        }
+
     def warm_up_precision_cache(self) -> None:
         """
         Precision 캐시 웜업 (admin.py에서 호출)
