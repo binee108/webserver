@@ -48,12 +48,31 @@ class EventEmitter:
                 logger.warning("계좌 정보를 찾을 수 없음: account_id=%s", account_id)
                 return
 
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # 단일 소스 원칙: core.py Line 265에서 제공하는 stop_price 직접 사용
+            # 폴백 로직 제거 (CLAUDE.md 준수)
             stop_price_value = None
-            raw_response = order_result.get('raw_response')
-            if raw_response and hasattr(raw_response, 'stop_price') and raw_response.stop_price is not None:
-                stop_price_value = float(raw_response.stop_price)
-            elif order_result.get('adjusted_stop_price') is not None:
-                stop_price_value = float(order_result.get('adjusted_stop_price'))
+            stop_price = order_result.get('stop_price')
+
+            if stop_price is not None:
+                try:
+                    stop_price_value = float(stop_price)
+                except (ValueError, TypeError) as e:
+                    order_type = order_result.get('order_type', '')
+                    order_id = order_result.get('order_id')
+                    logger.error(
+                        f"❌ stop_price 변환 실패: order_id={order_id}, "
+                        f"value={stop_price}, type={order_type}, error={e}"
+                    )
+                    # STOP 주문인데 변환 실패 시 명시적 에러
+                    if order_type in ['STOP_LIMIT', 'STOP_MARKET']:
+                        raise ValueError(
+                            f"STOP 주문 stop_price 변환 실패: order_id={order_id}, "
+                            f"value={stop_price}"
+                        )
+
+            # 🆕 가격 정보 추출 (OpenOrder 모델의 get_display_price() 로직 사용)
+            price = self._extract_display_price(order_result)
 
             event = OrderEvent(
                 event_type=event_type,
@@ -63,7 +82,7 @@ class EventEmitter:
                 user_id=strategy.user_id,
                 side=side.upper(),
                 quantity=float(quantity),
-                price=float(order_result.get('average_price', 0)),
+                price=price,
                 status='FILLED' if event_type == 'trade_executed' else order_result.get('status', 'UNKNOWN'),
                 timestamp=datetime.utcnow().isoformat(),
                 order_type=order_result.get('order_type', 'MARKET'),
@@ -76,15 +95,140 @@ class EventEmitter:
             )
             event_service.emit_order_event(event)
             logger.debug(
-                "📡 이벤트 발송 완료: %s - %s %s %s",
+                "📡 이벤트 발송 완료: %s - %s %s %s (price=%s)",
                 event_type,
                 symbol,
                 side,
                 quantity,
+                price,
             )
+
+        except ValueError as exc:
+            # 가격 정보 누락 시 명시적 에러 처리
+            logger.error(
+                "❌ SSE 이벤트 발송 실패 - 가격 정보 누락\n"
+                "order_id=%s, type=%s, status=%s\n"
+                "에러: %s",
+                order_result.get('order_id'),
+                order_result.get('order_type'),
+                order_result.get('status'),
+                str(exc),
+            )
+            # Telegram 알림 (관리자 즉시 인지)
+            try:
+                from app.services.telegram_service import send_admin_alert
+                send_admin_alert(
+                    f"🚨 SSE 가격 데이터 누락\n"
+                    f"주문 ID: {order_result.get('order_id')}\n"
+                    f"타입: {order_result.get('order_type')}\n"
+                    f"에러: {str(exc)}"
+                )
+            except Exception:
+                pass  # Telegram 서비스 없어도 에러 로그는 남김
+            raise  # 에러 전파 (SSE 이벤트 발송 중단)
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("이벤트 발송 실패: %s", exc)
+
+    def _extract_display_price(self, order_result: Dict[str, object]) -> float:
+        """order_result에서 표시할 가격 추출
+
+        @FEAT:order-tracking @COMP:service @TYPE:core
+
+        Raises:
+            ValueError: 필수 가격 정보가 누락된 경우
+
+        Returns:
+            float: 표시할 가격
+        """
+        from decimal import Decimal, InvalidOperation
+
+        order_id = order_result.get('order_id')
+        order_type = order_result.get('order_type', 'UNKNOWN')
+        status = order_result.get('status', 'UNKNOWN')
+
+        # MARKET 미체결은 가격 미정 (정상 케이스)
+        if order_type == 'MARKET' and status in ['OPEN', 'NEW']:
+            return 0.0
+
+        # 1. 체결 가격 우선 (체결된 주문)
+        average_price = order_result.get('average_price')
+        if average_price is not None and average_price > 0:
+            try:
+                avg_decimal = Decimal(str(average_price))
+                if avg_decimal > 0:
+                    return float(avg_decimal)
+            except (ValueError, InvalidOperation, TypeError) as e:
+                raise ValueError(
+                    f"Invalid average_price format: {average_price}, "
+                    f"order_id={order_id}, error: {e}"
+                )
+
+        # 2. 미체결 주문: 타입별 필수 가격 정보
+        if order_type in ['LIMIT', 'STOP_LIMIT']:
+            price = order_result.get('price')
+            adjusted_price = order_result.get('adjusted_price')
+
+            # 명시적 우선순위: adjusted_price → price
+            if adjusted_price is not None and adjusted_price > 0:
+                try:
+                    price_decimal = Decimal(str(adjusted_price))
+                    if price_decimal > 0:
+                        return float(price_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid adjusted_price format: {adjusted_price}, "
+                        f"order_id={order_id}, error: {e}"
+                    )
+            elif price is not None and price > 0:
+                try:
+                    price_decimal = Decimal(str(price))
+                    if price_decimal > 0:
+                        return float(price_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid price format: {price}, "
+                        f"order_id={order_id}, error: {e}"
+                    )
+            else:
+                raise ValueError(
+                    f"{order_type} 주문(order_id={order_id})에 price가 없습니다. "
+                    f"status={status}, available_fields={list(order_result.keys())}"
+                )
+
+        elif order_type == 'STOP_MARKET':
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # 단일 소스 원칙: core.py Line 265에서 제공하는 stop_price 직접 사용
+            stop_price = order_result.get('stop_price')
+
+            if stop_price is not None and stop_price > 0:
+                try:
+                    stop_decimal = Decimal(str(stop_price))
+                    if stop_decimal > 0:
+                        return float(stop_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid stop_price format: {stop_price}, "
+                        f"order_id={order_id}, error={e}"
+                    )
+            else:
+                raise ValueError(
+                    f"STOP_MARKET 주문(order_id={order_id})에 stop_price가 없습니다. "
+                    f"status={status}, available_fields={list(order_result.keys())}"
+                )
+
+        # MARKET 체결된 경우인데 average_price가 없으면 에러
+        if order_type == 'MARKET':
+            raise ValueError(
+                f"MARKET 체결 주문(order_id={order_id})에 average_price가 없습니다. "
+                f"status={status}, available_fields={list(order_result.keys())}"
+            )
+
+        # 알 수 없는 주문 타입
+        raise ValueError(
+            f"알 수 없는 주문 타입: {order_type} (order_id={order_id}), "
+            f"available_fields={list(order_result.keys())}"
+        )
 
     # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:core
     def emit_order_events_smart(
