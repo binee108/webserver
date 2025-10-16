@@ -384,15 +384,20 @@ class OrderType:
     VALID_TYPES = VALID_TRADING_TYPES + [CANCEL, CANCEL_ALL_ORDER]
 
     # 주문 우선순위 (낮은 숫자 = 높은 우선순위)
-    # 배치 주문 처리 순서: MARKET > CANCEL > LIMIT > STOP
+    # 배치 주문 처리 순서: MARKET(1) > CANCEL(2) > LIMIT(3) > STOP(10-12)
+    #
+    # 설계 원칙:
+    # - LIMIT 주문은 즉시 실행 가능하므로 STOP보다 우선 처리
+    # - STOP 주문은 트리거 대기 상태이므로 하위 우선순위
+    # - 같은 타입 내에서는 stop_price/price를 2순위로 정렬
     PRIORITY = {
         MARKET: 1,             # 시장가 주문 최우선
         CANCEL: 2,             # 주문 취소
         CANCEL_ALL_ORDER: 2,   # 전체 주문 취소 (CANCEL과 동일)
         LIMIT: 3,              # 지정가
-        STOP_MARKET: 4,        # 스탑 시장가
-        STOP_LIMIT: 5,         # 스탑 지정가
-        CONDITIONAL_LIMIT: 6,  # 조건부 지정가
+        STOP_MARKET: 10,       # 스탑 시장가 (트리거 대기)
+        STOP_LIMIT: 11,        # 스탑 지정가 (트리거 대기)
+        CONDITIONAL_LIMIT: 12, # 조건부 지정가 (트리거 대기)
         BEST_LIMIT: 3,         # 최유리 지정가 (LIMIT과 동일)
         PRE_MARKET: 3,         # 시간외 단일가 (LIMIT과 동일)
         AFTER_MARKET: 3        # 시간외 종가 (LIMIT과 동일)
