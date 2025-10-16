@@ -16,7 +16,7 @@ from datetime import datetime
 
 from app import db
 from app.models import OpenOrder, PendingOrder, StrategyAccount, Account
-from app.constants import ExchangeLimits, OrderType
+from app.constants import ExchangeLimits, OrderType, ORDER_TYPE_GROUPS, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
 from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -246,12 +246,13 @@ class OrderQueueManager:
 
         ✅ v2: threading.Lock으로 동시성 보호 (조건 4)
         ✅ v2.2: Side별 분리 정렬 (Phase 2.2)
+        ✅ v3: 타입 그룹별 4-way 분리 (Phase 2 - 2025-10-16)
 
         처리 단계:
         1. 제한 계산 (ExchangeLimits.calculate_symbol_limit)
         2. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
-        3. Side별 분리 정렬 (BUY/SELL 독립 정렬 - priority, sort_price, created_at)
-        4. Side별 상위 N개 선택 (각 side에서 max_orders_per_side개 선택, STOP 제한 적용)
+        3. 타입 그룹별 + Side별 4-way 분리 (LIMIT/STOP × BUY/SELL 독립 버킷)
+        4. 각 버킷별 상위 5개 선택 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE=5)
         5. Sync:
            - 하위로 밀린 거래소 주문 → 취소 + 대기열 이동
            - 상위로 올라온 대기열 주문 → 거래소 실행
@@ -348,11 +349,21 @@ class OrderQueueManager:
                             f"Priority: {po.priority}, Created: {po.created_at}"
                         )
 
-                # Step 3: Side별 분리 정렬
-                buy_orders = []
-                sell_orders = []
+                # Step 3: 타입 그룹별 + Side별 4-way 분리
+                limit_buy_orders = []
+                limit_sell_orders = []
+                stop_buy_orders = []
+                stop_sell_orders = []
 
-                # Active 주문 분리
+                # 타입 그룹 판별 헬퍼
+                def get_order_type_group(order_type: str) -> Optional[str]:
+                    """주문 타입의 그룹 반환 (LIMIT 또는 STOP)"""
+                    for group_name, types in ORDER_TYPE_GROUPS.items():
+                        if order_type.upper() in types:
+                            return group_name
+                    return None  # MARKET 등
+
+                # Active 주문 4-way 분리
                 for order in active_orders:
                     order_dict = {
                         'source': 'active',
@@ -360,14 +371,22 @@ class OrderQueueManager:
                         'priority': OrderType.get_priority(order.order_type),
                         'sort_price': self._get_order_sort_price(order),
                         'created_at': order.created_at,
-                        'is_stop': OrderType.requires_stop_price(order.order_type)
                     }
-                    if order.side.upper() == 'BUY':
-                        buy_orders.append(order_dict)
-                    else:
-                        sell_orders.append(order_dict)
 
-                # Pending 주문 분리
+                    type_group = get_order_type_group(order.order_type)
+                    side = order.side.upper()
+
+                    if type_group == 'LIMIT' and side == 'BUY':
+                        limit_buy_orders.append(order_dict)
+                    elif type_group == 'LIMIT' and side == 'SELL':
+                        limit_sell_orders.append(order_dict)
+                    elif type_group == 'STOP' and side == 'BUY':
+                        stop_buy_orders.append(order_dict)
+                    elif type_group == 'STOP' and side == 'SELL':
+                        stop_sell_orders.append(order_dict)
+                    # MARKET 등은 무시 (재정렬 대상 아님)
+
+                # Pending 주문 4-way 분리 (동일 로직)
                 for order in pending_orders:
                     order_dict = {
                         'source': 'pending',
@@ -375,54 +394,77 @@ class OrderQueueManager:
                         'priority': order.priority,
                         'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
                         'created_at': order.created_at,
-                        'is_stop': OrderType.requires_stop_price(order.order_type)
                     }
-                    if order.side.upper() == 'BUY':
-                        buy_orders.append(order_dict)
-                    else:
-                        sell_orders.append(order_dict)
 
-                # 각 side별 정렬 (정렬 키: priority ASC, sort_price DESC, created_at ASC)
-                buy_orders.sort(key=lambda x: (
-                    x['priority'],
-                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
-                    x['created_at']
-                ))
+                    type_group = get_order_type_group(order.order_type)
+                    side = order.side.upper()
 
-                sell_orders.sort(key=lambda x: (
-                    x['priority'],
-                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
-                    x['created_at']
-                ))
+                    if type_group == 'LIMIT' and side == 'BUY':
+                        limit_buy_orders.append(order_dict)
+                    elif type_group == 'LIMIT' and side == 'SELL':
+                        limit_sell_orders.append(order_dict)
+                    elif type_group == 'STOP' and side == 'BUY':
+                        stop_buy_orders.append(order_dict)
+                    elif type_group == 'STOP' and side == 'SELL':
+                        stop_sell_orders.append(order_dict)
 
-                logger.debug(f"📊 Side별 정렬 완료 - Buy: {len(buy_orders)}개, Sell: {len(sell_orders)}개")
-
-                # Step 4: Side별 상위 N개 선택 (헬퍼 함수 사용)
-                # Phase 1에서 추가한 side별 제한 사용
-                max_orders_per_side = limits['max_orders_per_side']
-                max_stop_orders_per_side = limits['max_stop_orders_per_side']
-
-                # Buy 주문 선택
-                selected_buy_orders, buy_stop_count = self._select_top_orders(
-                    buy_orders, max_orders_per_side, max_stop_orders_per_side
+                logger.info(
+                    f"📊 4-way 분리 완료 - "
+                    f"LIMIT(buy:{len(limit_buy_orders)}, sell:{len(limit_sell_orders)}), "
+                    f"STOP(buy:{len(stop_buy_orders)}, sell:{len(stop_sell_orders)})"
                 )
 
-                # Sell 주문 선택
-                selected_sell_orders, sell_stop_count = self._select_top_orders(
-                    sell_orders, max_orders_per_side, max_stop_orders_per_side
+                # Step 4: 각 버킷별 상위 5개 선택 (타입 그룹별 독립 할당)
+
+                # 각 버킷 정렬 (정렬 키: priority ASC, sort_price DESC, created_at ASC)
+                limit_buy_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
+                limit_sell_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
+                stop_buy_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
+                stop_sell_orders.sort(key=lambda x: (
+                    x['priority'],
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    x['created_at']
+                ))
+
+                # 각 버킷별 상위 5개 선택
+                selected_limit_buy = self._select_top_orders_by_priority(
+                    limit_buy_orders, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
+                )
+                selected_limit_sell = self._select_top_orders_by_priority(
+                    limit_sell_orders, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
+                )
+                selected_stop_buy = self._select_top_orders_by_priority(
+                    stop_buy_orders, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
+                )
+                selected_stop_sell = self._select_top_orders_by_priority(
+                    stop_sell_orders, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
                 )
 
                 logger.info(
                     f"✅ 선택 완료 - "
-                    f"BUY: {len(selected_buy_orders)}/{len(buy_orders)}개 "
-                    f"(STOP: {buy_stop_count}/{max_stop_orders_per_side}), "
-                    f"SELL: {len(selected_sell_orders)}/{len(sell_orders)}개 "
-                    f"(STOP: {sell_stop_count}/{max_stop_orders_per_side})"
+                    f"LIMIT(buy:{len(selected_limit_buy)}/{len(limit_buy_orders)}, "
+                    f"sell:{len(selected_limit_sell)}/{len(limit_sell_orders)}), "
+                    f"STOP(buy:{len(selected_stop_buy)}/{len(stop_buy_orders)}, "
+                    f"sell:{len(selected_stop_sell)}/{len(stop_sell_orders)})"
                 )
 
                 # 통합 (Step 5에서 사용)
-                selected_orders = selected_buy_orders + selected_sell_orders
-                all_orders = buy_orders + sell_orders
+                selected_orders = (selected_limit_buy + selected_limit_sell +
+                                   selected_stop_buy + selected_stop_sell)
+                all_orders = (limit_buy_orders + limit_sell_orders +
+                              stop_buy_orders + stop_sell_orders)
 
                 # Step 5: 액션 결정
                 to_cancel = []  # 취소할 거래소 주문
@@ -534,35 +576,21 @@ class OrderQueueManager:
         )
 
     # @FEAT:order-queue @COMP:service @TYPE:helper
-    def _select_top_orders(
+    def _select_top_orders_by_priority(
         self,
         orders: List[Dict[str, Any]],
-        max_orders: int,
-        max_stop_orders: int
-    ) -> tuple:
-        """상위 N개 주문 선택 (STOP 제한 적용)
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """우선순위 기반 상위 주문 선택 (이미 정렬된 리스트에서 상위 N개)
 
         Args:
-            orders: 정렬된 주문 리스트
-            max_orders: 최대 주문 개수
-            max_stop_orders: 최대 STOP 주문 개수
+            orders: 이미 정렬된 주문 리스트
+            limit: 선택할 주문 수 (기본값: 5)
 
         Returns:
-            tuple: (선택된 주문 리스트, STOP 주문 개수)
+            상위 N개 주문 리스트
         """
-        selected = []
-        stop_count = 0
-
-        for order in orders:
-            if len(selected) >= max_orders:
-                break
-            if order['is_stop']:
-                if stop_count >= max_stop_orders:
-                    continue  # STOP 제한 초과 → 건너뛰기
-                stop_count += 1
-            selected.append(order)
-
-        return selected, stop_count
+        return orders[:limit]
 
     # @FEAT:order-queue @COMP:service @TYPE:helper
     def _classify_failure_type(self, error_message: str) -> str:
@@ -699,7 +727,7 @@ class OrderQueueManager:
             account = strategy_account.account
             strategy = strategy_account.strategy
 
-            # TradingCore의 execute_trade 호출
+            # TradingCore의 execute_trade 호출 (재정렬 경로 플래그 전달)
             result = self.service.execute_trade(
                 strategy=strategy,
                 symbol=pending_order.symbol,
@@ -709,7 +737,8 @@ class OrderQueueManager:
                 price=Decimal(str(pending_order.price)) if pending_order.price else None,
                 stop_price=Decimal(str(pending_order.stop_price)) if pending_order.stop_price else None,
                 strategy_account_override=strategy_account,
-                schedule_refresh=False  # 재정렬 중에는 잔고 갱신 스킵
+                schedule_refresh=False,  # 재정렬 중에는 잔고 갱신 스킵
+                from_pending_queue=True  # 재정렬 경로임을 명시 (대기열 재진입 방지)
             )
 
             if result.get('success'):

@@ -14,12 +14,7 @@ from sqlalchemy.orm import joinedload
 from app import db
 from app.models import Account, OpenOrder, Strategy, StrategyAccount
 from app.services.exchange import exchange_service
-from app.constants import (
-    OrderType,
-    MAX_ORDERS_PER_SYMBOL_SIDE,
-    MAX_ORDERS_PER_SYMBOL_TYPE_SIDE,
-    ORDER_TYPE_GROUPS
-)
+from app.constants import OrderType
 
 logger = logging.getLogger(__name__)
 
@@ -30,70 +25,6 @@ class OrderManager:
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
         self.db = db.session  # SQLAlchemy session for queries
-
-    def _validate_order_limits(self, account_id: int, symbol: str, side: str, order_type: str) -> None:
-        """주문 제한 검증 (전체 + 타입 그룹별)
-
-        3차원 검증: symbol, side, order_type_group
-
-        Args:
-            account_id: 계좌 ID
-            symbol: 심볼 (BTC/USDT 등)
-            side: 주문 방향 (buy/sell)
-            order_type: 주문 타입 (LIMIT, STOP_LIMIT 등)
-
-        Raises:
-            ValueError: 제한 초과 시
-        """
-        from app.constants import OrderStatus
-
-        # order_type null 검증
-        if not order_type:
-            raise ValueError("order_type is required for validation")
-
-        # 1. 전체 제한 검증 (기존 유지)
-        total_count = self.db.query(OpenOrder).join(StrategyAccount).filter(
-            StrategyAccount.account_id == account_id,
-            OpenOrder.symbol == symbol,
-            OpenOrder.side == side.upper(),
-            OpenOrder.status.in_(OrderStatus.get_open_statuses())
-        ).count()
-
-        if total_count >= MAX_ORDERS_PER_SYMBOL_SIDE:
-            raise ValueError(
-                f"심볼당 side별 제한 초과: {total_count}/{MAX_ORDERS_PER_SYMBOL_SIDE} "
-                f"(account_id={account_id}, symbol={symbol}, side={side})"
-            )
-
-        # 2. 타입 그룹별 제한 검증 (신규)
-        # 타입 그룹 찾기
-        order_group = None
-        for group_name, types in ORDER_TYPE_GROUPS.items():
-            if order_type.upper() in types:
-                order_group = group_name
-                break
-
-        if not order_group:
-            # MARKET 등 그룹에 속하지 않는 타입은 전체 제한만 적용
-            return
-
-        # 그룹 타입 리스트
-        group_types = ORDER_TYPE_GROUPS[order_group]
-
-        # 그룹별 주문 개수 조회
-        group_count = self.db.query(OpenOrder).join(StrategyAccount).filter(
-            StrategyAccount.account_id == account_id,
-            OpenOrder.symbol == symbol,
-            OpenOrder.side == side.upper(),
-            OpenOrder.order_type.in_(group_types),
-            OpenOrder.status.in_(OrderStatus.get_open_statuses())
-        ).count()
-
-        if group_count >= MAX_ORDERS_PER_SYMBOL_TYPE_SIDE:
-            raise ValueError(
-                f"{order_group} 그룹 제한 초과: {group_count}/{MAX_ORDERS_PER_SYMBOL_TYPE_SIDE} "
-                f"(account_id={account_id}, symbol={symbol}, side={side})"
-            )
 
     def create_order(self, strategy_id: int, symbol: str, side: str,
                     quantity: Decimal, order_type: str = 'MARKET',

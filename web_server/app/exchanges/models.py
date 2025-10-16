@@ -5,10 +5,13 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Sequence
+from typing import Dict, List, Optional, Any, Sequence, TYPE_CHECKING
 from decimal import Decimal
 from datetime import datetime
 import logging
+
+if TYPE_CHECKING:
+    from app.exchanges.precision_providers import PrecisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,13 @@ class MarketInfo:
 
     # Market type
     market_type: str = "SPOT"  # SPOT, FUTURES
+
+    # ✅ NEW FIELD (Phase 1 - REQUIRED, Clean Architecture)
+    # @FEAT:precision-system @COMP:model @TYPE:core
+    precision_provider: 'PrecisionProvider' = None  # Phase 1 default, Phase 2+ will set this
+
+    # Note: tick_size, step_size는 참조용으로 유지 (직접 사용 안 함)
+    # 실제 가격/수량 정밀도는 precision_provider.get_tick_size(), get_step_size() 사용
 
     # CCXT 호환성 속성들
     @property

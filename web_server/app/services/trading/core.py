@@ -74,16 +74,22 @@ class TradingCore:
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
-    # @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
+    # @FEAT:webhook-order @FEAT:order-tracking @FEAT:order-queue @COMP:service @TYPE:core
     def execute_trade(self, strategy: Strategy, symbol: str, side: str,
                      quantity: Decimal, order_type: str,
                      price: Optional[Decimal] = None,
                      stop_price: Optional[Decimal] = None,
                      strategy_account_override: Optional[StrategyAccount] = None,
                      schedule_refresh: bool = True,
-                     timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                     timing_context: Optional[Dict[str, float]] = None,
+                     from_pending_queue: bool = False) -> Dict[str, Any]:
         """
-        거래 실행 (통합된 로직, 안전장치 제거됨)
+        거래 실행 (Phase 3: 즉시 대기열 진입)
+
+        Phase 3 변경사항:
+        - MARKET 주문: 기존대로 즉시 거래소 제출
+        - LIMIT/STOP 주문: 검증 없이 즉시 PendingOrder에 추가
+        - 재정렬 트리거: enqueue 후 즉시 rebalance_symbol() 호출
 
         Args:
             strategy: 전략 객체
@@ -122,26 +128,78 @@ class TradingCore:
 
             logger.info(f"📊 전략 마켓타입: {strategy_market_type} → 거래소 마켓타입: {market_type}")
 
-            # 주문 제한 검증 (거래소 API 호출 전 - CRITICAL FIX)
-            # MARKET 주문은 제한 검증 스킵 (즉시 체결되므로 OpenOrder 미생성)
-            if order_type.upper() != OrderType.MARKET:
-                try:
-                    self.service.order_manager._validate_order_limits(
-                        account_id=account.id,
+            # @FEAT:order-queue @COMP:service @TYPE:core
+            # Phase 3: LIMIT/STOP 주문 → 즉시 대기열 진입
+            from app.constants import ORDER_TYPE_GROUPS
+
+            type_group = None
+            for group_name, types in ORDER_TYPE_GROUPS.items():
+                if order_type.upper() in types:
+                    type_group = group_name
+                    break
+
+            # LIMIT/STOP 그룹: 재정렬 경로가 아니면 대기열 진입
+            if type_group in ['LIMIT', 'STOP']:
+                # 재정렬 경로에서는 거래소 직접 제출
+                if from_pending_queue:
+                    logger.info(
+                        f"🔄 재정렬 실행 (PendingOrder → 거래소) - "
+                        f"타입: {order_type}, 심볼: {symbol}, side: {side}"
+                    )
+                    # 거래소 직접 제출 (아래 MARKET 로직으로 fall-through)
+                else:
+                    # 웹훅 경로: 대기열 진입
+                    logger.info(
+                        f"📥 대기열 진입 (웹훅) - "
+                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
+                        f"수량: {quantity}, price: {price}, stop_price: {stop_price}"
+                    )
+
+                    enqueue_result = self.service.order_queue_manager.enqueue(
+                        strategy_account_id=strategy_account.id,
                         symbol=symbol,
                         side=side,
-                        order_type=order_type
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=price,
+                        stop_price=stop_price,
+                        market_type=strategy_market_type,
+                        reason='WEBHOOK_ORDER',
+                        commit=True
                     )
-                except ValueError as e:
-                    logger.warning(f"주문 제한 초과: {e}")
+
+                    if not enqueue_result.get('success'):
+                        logger.error(f"대기열 추가 실패: {enqueue_result.get('error')}")
+                        return {
+                            'success': False,
+                            'error': enqueue_result.get('error'),
+                            'error_type': 'queue_error',
+                            'strategy': strategy.group_name,
+                            'account_id': account.id
+                        }
+
+                    # NOTE: 재정렬은 백그라운드 작업(queue_rebalancer)이 자동 처리
+                    # 즉시 재정렬 호출 시 웹훅 응답이 지연되어 nginx 504 timeout 발생
+
+                    logger.info(
+                        f"✅ 대기열 추가 완료 - "
+                        f"pending_id: {enqueue_result.get('pending_order_id')}, "
+                        f"우선순위: {enqueue_result.get('priority')}"
+                    )
+
                     return {
-                        'success': False,
-                        'error': str(e),
-                        'error_type': 'limit_exceeded',
-                        'account_id': account.id
+                        'success': True,
+                        'queued': True,
+                        'pending_order_id': enqueue_result.get('pending_order_id'),
+                        'priority': enqueue_result.get('priority'),
+                        'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
+                        'strategy': strategy.group_name,
+                        'account_id': account.id,
+                        'action': 'queued',  # SSE 이벤트용
+                        'summary': f'{order_type} {side} 주문 대기열 진입'
                     }
 
-            # 거래소 주문 실행 (타이밍 정보 포함)
+            # MARKET/CANCEL 주문: 기존대로 즉시 거래소 제출
             order_result = self._execute_exchange_order(
                 account=account,
                 symbol=symbol,
@@ -687,15 +745,28 @@ class TradingCore:
                                  stop_price: Optional[Decimal], qty_per: Decimal,
                                  market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
-        """병렬 거래 실행 (qty_per → quantity 변환 포함, 대기열 분기)"""
+        """
+        병렬 거래 실행 (Phase 4: 배치 처리 통합)
+
+        Phase 4 변경사항:
+        - MARKET 주문: 즉시 거래소 제출
+        - LIMIT/STOP 주문: 즉시 PendingOrder에 추가 (검증 없음)
+        - 배치 커밋: commit=False로 개별 커밋 방지, 마지막 한 번만 커밋
+        """
         results = []
         max_workers = min(10, len(filtered_accounts))
 
         # Flask app context를 미리 캡처
         app = current_app._get_current_object()
 
-        # 🆕 MARKET/CANCEL은 즉시 실행, LIMIT/STOP은 제한 체크 후 분기
-        is_immediate_order = order_type in [OrderType.MARKET, OrderType.CANCEL, OrderType.CANCEL_ALL_ORDER]
+        # Phase 4: LIMIT/STOP 주문 타입 그룹 확인
+        from app.constants import ORDER_TYPE_GROUPS
+
+        type_group = None
+        for group_name, types in ORDER_TYPE_GROUPS.items():
+            if order_type.upper() in types:
+                type_group = group_name
+                break
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
@@ -734,56 +805,50 @@ class TradingCore:
                     })
                     continue
 
-                # 🆕 LIMIT/STOP 주문: 제한 체크 후 대기열 분기
-                if not is_immediate_order:
-                    can_place_result = self.service.exchange_limit_tracker.can_place_order(
-                        account_id=account.id,
-                        symbol=symbol,
-                        order_type=order_type,
-                        market_type=market_type
+                # Phase 4: LIMIT/STOP 주문 → 즉시 대기열 진입 (검증 없음)
+                if type_group in ['LIMIT', 'STOP']:
+                    logger.info(
+                        f"📥 대기열 진입 (배치) - "
+                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
+                        f"수량: {calculated_quantity}, 계좌: {account.name}"
                     )
 
-                    if not can_place_result.get('can_place'):
-                        # 제한 초과 → 대기열에 추가
-                        reason = can_place_result.get('reason', 'QUEUE_LIMIT')
-                        enqueue_result = self.service.order_queue_manager.enqueue(
-                            strategy_account_id=sa.id,
-                            symbol=symbol,
-                            side=side,
-                            order_type=order_type,
-                            quantity=calculated_quantity,
-                            price=price,
-                            stop_price=stop_price,
-                            market_type=market_type,
-                            reason=reason
+                    enqueue_result = self.service.order_queue_manager.enqueue(
+                        strategy_account_id=sa.id,
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type,
+                        quantity=calculated_quantity,
+                        price=price,
+                        stop_price=stop_price,
+                        market_type=market_type,
+                        reason='BATCH_ORDER',
+                        commit=False  # 배치는 마지막에 한 번만 커밋
+                    )
+
+                    if enqueue_result.get('success'):
+                        results.append({
+                            'success': True,
+                            'queued': True,
+                            'pending_order_id': enqueue_result.get('pending_order_id'),
+                            'priority': enqueue_result.get('priority'),
+                            'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
+                            'account_id': account.id,
+                            'account_name': account.name
+                        })
+                    else:
+                        logger.error(
+                            f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
+                            f"error: {enqueue_result.get('error')}"
                         )
+                        results.append({
+                            'success': False,
+                            'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
+                            'account_id': account.id
+                        })
+                    continue  # 거래소 실행 건너뛰기
 
-                        if enqueue_result.get('success'):
-                            logger.info(
-                                f"📥 대기열 추가 (제한 초과) - 계좌: {account.id}, "
-                                f"심볼: {symbol}, 사유: {reason}"
-                            )
-                            results.append({
-                                'success': True,
-                                'queued': True,
-                                'pending_order_id': enqueue_result.get('pending_order_id'),
-                                'message': f'대기열에 추가되었습니다 - {reason}',
-                                'account_id': account.id,
-                                'account_name': account.name
-                            })
-                        else:
-                            logger.error(
-                                f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
-                                f"error: {enqueue_result.get('error')}"
-                            )
-                            results.append({
-                                'success': False,
-                                'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
-                                'account_id': account.id
-                            })
-                        continue  # 거래소 실행 건너뛰기
-
-                # 거래소 즉시 실행 (Flask app context 포함)
+                # MARKET/CANCEL 주문: 즉시 거래소 제출 (기존 로직)
                 def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
                     with app.app_context():
                         return self.execute_trade(
@@ -816,6 +881,9 @@ class TradingCore:
                         'error': str(e),
                         'account_id': account.id
                     })
+
+        # 배치 커밋 (대기열 추가 + 거래소 주문)
+        db.session.commit()
 
         return results
 

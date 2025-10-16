@@ -143,7 +143,8 @@ class TradingService:
                       stop_price: Optional[Decimal] = None,
                       strategy_account_override: Optional[StrategyAccount] = None,
                       schedule_refresh: bool = True,
-                      timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                      timing_context: Optional[Dict[str, float]] = None,
+                      from_pending_queue: bool = False) -> Dict[str, Any]:
         return self.core.execute_trade(
             strategy=strategy,
             symbol=symbol,
@@ -155,6 +156,7 @@ class TradingService:
             strategy_account_override=strategy_account_override,
             schedule_refresh=schedule_refresh,
             timing_context=timing_context,
+            from_pending_queue=from_pending_queue,
         )
 
     def _execute_exchange_order(self, account: Account, symbol: str, side: str,
