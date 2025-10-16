@@ -29,11 +29,22 @@
 
 ## 우선순위 정렬 규칙
 
-주문은 다음 순서로 정렬됩니다:
+**v2.2 업데이트 (2025-10-15)**: Side별 분리 정렬 구현
+
+주문은 **Buy와 Sell이 독립적으로** 다음 순서로 정렬됩니다:
 
 1. **priority** (낮을수록 높음, default: 999999)
-2. **sort_price** (BUY: 높을수록 우선 | SELL: 낮을수록 우선)
+2. **sort_price** (DESC 정렬, 부호 변환으로 side별 정확한 우선순위 보장)
+   - BUY LIMIT: `sort_price = +price` → 높은 가격 우선
+   - SELL LIMIT: `sort_price = -price` → 낮은 가격 우선 (높은 음수값)
+   - BUY STOP: `sort_price = -stop_price`
+   - SELL STOP: `sort_price = +stop_price`
 3. **created_at** (먼저 생성된 것 우선)
+
+**주요 개선**:
+- **독립 할당**: Buy와 Sell이 각각 독립적인 할당량 보유
+- **용량 증가**: BINANCE FUTURES 기준 20개 → 40개 (Buy 20 + Sell 20)
+- **정확한 우선순위**: 각 side 내에서만 비교하여 우선순위 왜곡 방지
 
 ## 주요 컴포넌트
 
@@ -43,51 +54,87 @@
 **파일**: `web_server/app/services/trading/order_queue_manager.py`
 
 **주요 메서드**:
-- `rebalance_symbol(account_id, symbol)`: 심볼별 동적 재정렬 (핵심 알고리즘)
+- `rebalance_symbol(account_id, symbol)`: 심볼별 동적 재정렬 (핵심 알고리즘, v2.2)
+- `_select_top_orders(orders, max_orders, max_stop_orders)`: 상위 N개 주문 선택 헬퍼 함수 (v2.2)
 - `add_pending_order(order_data)`: PendingOrder 추가
 - `promote_pending_order(pending_order_id)`: PendingOrder → OpenOrder
 - `demote_open_order(open_order_id)`: OpenOrder → PendingOrder
-- `_get_sorted_orders(account, symbol)`: 통합 정렬된 주문 목록
 
-**재정렬 알고리즘**:
+**재정렬 알고리즘 (v2.2 - Side별 분리)**:
 ```python
-# 1. OpenOrder + PendingOrder 통합 조회 및 정렬
-# 참고: OpenOrder는 priority/sort_price 없음 → getattr로 기본값 999999 사용
-combined_orders = sorted(
-    open_orders + pending_orders,
-    key=lambda o: (
-        getattr(o, 'priority', 999999),  # OpenOrder는 999999 (최하위 우선순위)
-        -getattr(o, 'sort_price', 0) if o.side == 'buy' else getattr(o, 'sort_price', 0),
-        getattr(o, 'created_at', datetime.min)
-    )
+# Step 1: OpenOrder + PendingOrder 조회 및 Side별 분리
+buy_orders = []
+sell_orders = []
+
+for order in active_orders + pending_orders:
+    order_dict = {
+        'source': 'active' or 'pending',
+        'db_record': order,
+        'priority': OrderType.get_priority(order.order_type),
+        'sort_price': _calculate_sort_price(order),  # 부호 변환 적용
+        'created_at': order.created_at,
+        'is_stop': OrderType.requires_stop_price(order.order_type)
+    }
+    if order.side.upper() == 'BUY':
+        buy_orders.append(order_dict)
+    else:
+        sell_orders.append(order_dict)
+
+# Step 2: 각 Side별 독립 정렬
+buy_orders.sort(key=lambda x: (x['priority'], -x['sort_price'], x['created_at']))
+sell_orders.sort(key=lambda x: (x['priority'], -x['sort_price'], x['created_at']))
+
+# Step 3: 각 Side별 상위 N개 선택 (헬퍼 함수 사용)
+max_orders_per_side = limits['max_orders_per_side']  # 예: 20
+max_stop_orders_per_side = limits['max_stop_orders_per_side']  # 예: 10
+
+selected_buy_orders, buy_stop_count = _select_top_orders(
+    buy_orders, max_orders_per_side, max_stop_orders_per_side
+)
+selected_sell_orders, sell_stop_count = _select_top_orders(
+    sell_orders, max_orders_per_side, max_stop_orders_per_side
 )
 
-# 2. 상위 N개 선택 (거래소 제한 내)
-top_orders = combined_orders[:symbol_limit]
-bottom_orders = combined_orders[symbol_limit:]
-
-# 3. Sync
-# - 하위 OpenOrder → 취소 + PendingOrder로 이동
-# - 상위 PendingOrder → 거래소 전송
+# Step 4: Sync (기존 로직 유지)
+# - 하위로 밀린 OpenOrder → 취소 + PendingOrder로 이동
+# - 상위로 올라온 PendingOrder → 거래소 전송
 ```
 
-### 2. ExchangeLimitTracker
-**@FEAT:order-queue @FEAT:exchange-integration @COMP:service @TYPE:validation**
+**v2.2 주요 개선사항**:
+- **DRY 원칙**: `_select_top_orders()` 헬퍼 함수로 40+ 라인 중복 제거
+- **명확한 의도**: Side별 분리로 정렬 로직 의도가 명시적으로 드러남
+- **독립 제한**: Buy 20개 + Sell 20개 = 총 40개 동시 관리 가능
 
-**파일**: `web_server/app/services/trading/exchange_limit_tracker.py`
+### 2. ExchangeLimits (v2.2 업데이트)
+**@FEAT:order-queue @COMP:config @TYPE:core**
+
+**파일**: `web_server/app/constants.py`
 
 **주요 메서드**:
-- `can_add_symbol(account, symbol)`: 새 심볼 추가 가능 여부
-- `calculate_symbol_limit(account, symbol)`: 심볼별 최대 주문 수
-- `get_current_symbols_count(account)`: 현재 활성 심볼 수
+- `calculate_symbol_limit(exchange, market_type, symbol)`: 심볼별 최대 주문 수 계산
 
-**거래소별 제한**:
-| 거래소 | 최대 심볼 수 |
-|--------|-------------|
-| Binance FUTURES | 200 |
-| Binance SPOT | 9999 (제한 없음) |
-| Bybit | 500 |
-| 증권사 | 9999 (제한 없음) |
+**반환값 (v2.2 - BREAKING CHANGE)**:
+```python
+{
+    'max_orders': 40,              # 총 허용량 (Buy 20 + Sell 20)
+    'max_orders_per_side': 20,     # 각 side별 독립 제한
+    'max_stop_orders': 20,         # 총 STOP 허용량
+    'max_stop_orders_per_side': 10 # 각 side별 STOP 제한
+}
+```
+
+**거래소별 제한 (BINANCE FUTURES 예시)**:
+| 항목 | v2.0 | v2.2 | 변화 |
+|------|------|------|------|
+| max_orders | 20 (총합) | 40 (총합) | +100% |
+| max_orders_per_side | - | 20 (각 side) | 신규 |
+| Buy 할당 | 0-20 (공유) | 0-20 (독립) | 독립 보장 |
+| Sell 할당 | 0-20 (공유) | 0-20 (독립) | 독립 보장 |
+
+**주요 개선**:
+- **의미 명확화**: `max_orders`가 총 허용량임을 명시
+- **Side별 제한**: 신규 필드로 각 side의 독립 제한 지원
+- **용량 증가**: 실질적인 주문 용량 2배 증가
 
 ### 3. QueueRebalancer
 **@FEAT:order-queue @COMP:job @TYPE:core**
@@ -254,5 +301,12 @@ grep -r "_rebalance_locks" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-12*
-*Version: 2.0.1 (DB Schema Corrections - OpenOrder/PendingOrder fields aligned with actual code)*
+*Last Updated: 2025-10-15*
+*Version: 2.2.0 (Side별 분리 정렬 구현)*
+
+**v2.2 주요 변경사항**:
+- Buy/Sell 주문 독립 정렬 및 할당
+- ExchangeLimits에 side별 제한 필드 추가 (BREAKING CHANGE)
+- `_select_top_orders()` 헬퍼 함수 추가 (DRY 원칙)
+- 용량 2배 증가: BINANCE FUTURES 기준 20개 → 40개
+- 성능 개선: 재정렬 <10ms (목표 100ms 대비 10배 빠름)
