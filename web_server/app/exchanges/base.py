@@ -86,9 +86,20 @@ class BaseExchange(ABC):
     # === 필수 메서드 (모든 거래소 구현 - 동기) ===
 
     @abstractmethod
-    def load_markets(self, market_type: str = 'spot', reload: bool = False):
+    def load_markets(self, market_type: str = 'spot', reload: bool = False, force_cache: bool = False):
         """
         마켓 정보 로드 (동기 - 필수 구현)
+
+        Args:
+            market_type: 'spot' or 'futures'
+            reload: True면 캐시 무시하고 API 재호출
+            force_cache: True면 TTL 무시하고 무조건 캐시 반환 (주문 경로용)
+
+        Note:
+            - force_cache=True: 캐시 있으면 TTL 무시하고 즉시 반환 (주문 경로)
+            - force_cache=False + reload=False: 캐시 TTL 체크 후 만료 시 reload (정상 모드)
+            - force_cache=False + reload=True: 캐시 무시하고 API 호출 (백그라운드 갱신)
+            - force_cache=True + 캐시 없음: ExchangeError 발생 (예상치 못한 API 호출 방지)
 
         모든 거래소는 이 동기 메서드를 구현해야 합니다.
         """

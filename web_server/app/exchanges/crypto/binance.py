@@ -407,15 +407,36 @@ class BinanceExchange(BaseCryptoExchange):
             logger.error(f"Binance API 요청 실패: {error_details}")
             raise ExchangeError(f"Binance API 오류: {str(e)}")
 
-    def load_markets_impl(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+    def load_markets_impl(self, market_type: str = 'spot', reload: bool = False, force_cache: bool = False) -> Dict[str, MarketInfo]:
         """마켓 정보 로드 (동기 구현)"""
+        from app.exceptions import ExchangeError
+
         cache_key = f"{market_type}_markets"
 
-        # 캐시 확인
+        # @FEAT:precision-system @COMP:exchange @TYPE:core
+        # force_cache=True: 주문 경로 보호 - 캐시 무조건 반환 (TTL 무시)
+        if force_cache:
+            cached_markets = getattr(self, f"{market_type}_markets_cache", {})
+
+            # 캐시 없음 = Warmup 실패 또는 비정상 상황
+            # 주문 경로에서 예상치 못한 API 호출 방지를 위해 명시적 Exception
+            if cache_key not in self.cache_time or not cached_markets:
+                raise ExchangeError(
+                    f"Cache miss on order path - warmup failed? "
+                    f"exchange={self.__class__.__name__}, "
+                    f"market_type={market_type}, cache_key={cache_key}"
+                )
+
+            logger.debug(f"🔒 캐시 강제 사용 (TTL 무시): {cache_key}, {len(cached_markets)}개 마켓")
+            return cached_markets
+
+        # 캐시 확인 (TTL 체크)
         if not reload and cache_key in self.cache_time:
             if time.time() - self.cache_time[cache_key] < self.cache_ttl:
                 return getattr(self, f"{market_type}_markets_cache", {})
 
+        # API 호출 (캐시 없거나 만료됨)
+        logger.info(f"📡 MarketInfo API 호출: {market_type}")
         base_url = self._get_base_url(market_type)
         endpoints = self._get_endpoints(market_type)
 
@@ -433,9 +454,15 @@ class BinanceExchange(BaseCryptoExchange):
 
             # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
             if market_type.lower() == 'spot':
-                markets[standard_symbol] = MarketInfo.from_binance_spot(symbol_info)
+                market_info = MarketInfo.from_binance_spot(symbol_info)
             else:  # futures
-                markets[standard_symbol] = MarketInfo.from_binance_futures(symbol_info)
+                market_info = MarketInfo.from_binance_futures(symbol_info)
+
+            # @FEAT:precision-system @COMP:exchange @TYPE:integration
+            # Phase 2: precision_provider 설정 (Factory 패턴 사용)
+            market_info.precision_provider = self._create_precision_provider(market_info)
+
+            markets[standard_symbol] = market_info
 
         # 캐시 업데이트
         if market_type == 'spot':
@@ -446,6 +473,14 @@ class BinanceExchange(BaseCryptoExchange):
         self.cache_time[cache_key] = time.time()
 
         logger.info(f"✅ {market_type.title()} 마켓 정보 로드 완료: {len(markets)}개")
+
+        # ✅ TEMPORARY: Phase 2.3 Validation - Verify precision_provider is set (remove after validation)
+        if 'BTC/USDT' in markets:
+            btc_market = markets['BTC/USDT']
+            logger.info(f"🔍 Phase 2 Validation - BTC/USDT precision_provider: {btc_market.precision_provider}")
+            logger.info(f"   - tick_size: {btc_market.precision_provider.get_tick_size(Decimal('90000'))}")
+            logger.info(f"   - step_size: {btc_market.precision_provider.get_step_size()}")
+
         return markets
 
     def fetch_price_quotes(self, market_type: str = 'spot',
@@ -813,9 +848,15 @@ class BinanceExchange(BaseCryptoExchange):
 
             # MarketInfo.from_binance_* 메서드를 사용하여 filters 정보 완전 파싱
             if market_type.lower() == 'spot':
-                markets[standard_symbol] = MarketInfo.from_binance_spot(symbol_info)
+                market_info = MarketInfo.from_binance_spot(symbol_info)
             else:  # futures
-                markets[standard_symbol] = MarketInfo.from_binance_futures(symbol_info)
+                market_info = MarketInfo.from_binance_futures(symbol_info)
+
+            # @FEAT:precision-system @COMP:exchange @TYPE:integration
+            # Phase 2: precision_provider 설정 (Factory 패턴 사용)
+            market_info.precision_provider = self._create_precision_provider(market_info)
+
+            markets[standard_symbol] = market_info
 
         # 캐시 업데이트
         if market_type == 'spot':
@@ -1130,9 +1171,9 @@ class BinanceExchange(BaseCryptoExchange):
         """주문 생성 (동기 래퍼)"""
         return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
-    def load_markets(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+    def load_markets(self, market_type: str = 'spot', reload: bool = False, force_cache: bool = False) -> Dict[str, MarketInfo]:
         """마켓 정보 로드 (동기)"""
-        return self.load_markets_impl(market_type, reload)
+        return self.load_markets_impl(market_type, reload, force_cache)
 
 
     def cancel_order(self, order_id: str, symbol: str, market_type: str = 'spot') -> Dict[str, Any]:
