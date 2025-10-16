@@ -14,7 +14,11 @@ from sqlalchemy.orm import joinedload
 from app import db
 from app.models import Account, OpenOrder, Strategy, StrategyAccount
 from app.services.exchange import exchange_service
-from app.constants import OrderType
+from app.constants import (
+    OrderType,
+    MAX_ORDERS_PER_SYMBOL_TYPE_SIDE,
+    ORDER_TYPE_GROUPS
+)
 
 logger = logging.getLogger(__name__)
 

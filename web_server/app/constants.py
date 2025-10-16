@@ -384,20 +384,22 @@ class OrderType:
     VALID_TYPES = VALID_TRADING_TYPES + [CANCEL, CANCEL_ALL_ORDER]
 
     # 주문 우선순위 (낮은 숫자 = 높은 우선순위)
-    # 배치 주문 처리 순서: MARKET(1) > CANCEL(2) > LIMIT(3) > STOP(10-12)
+    # 배치 주문 처리 순서: MARKET(1) > CANCEL(2) > LIMIT(3) ≈ STOP(4-5)
     #
     # 설계 원칙:
-    # - LIMIT 주문은 즉시 실행 가능하므로 STOP보다 우선 처리
-    # - STOP 주문은 트리거 대기 상태이므로 하위 우선순위
-    # - 같은 타입 내에서는 stop_price/price를 2순위로 정렬
+    # - MARKET 주문이 최우선 (즉시 체결)
+    # - CANCEL이 2순위 (기존 주문 제거)
+    # - LIMIT/STOP은 비슷한 우선순위 범위 (3-6)
+    #   → 같은 레벨에서 price/stop_price로 2차 정렬
+    # - STOP_MARKET(4) < STOP_LIMIT(5): stop_price 동일 시 STOP_MARKET 우선
     PRIORITY = {
         MARKET: 1,             # 시장가 주문 최우선
         CANCEL: 2,             # 주문 취소
         CANCEL_ALL_ORDER: 2,   # 전체 주문 취소 (CANCEL과 동일)
         LIMIT: 3,              # 지정가
-        STOP_MARKET: 10,       # 스탑 시장가 (트리거 대기)
-        STOP_LIMIT: 11,        # 스탑 지정가 (트리거 대기)
-        CONDITIONAL_LIMIT: 12, # 조건부 지정가 (트리거 대기)
+        STOP_MARKET: 4,        # 스탑 시장가 (stop_price 동일 시 LIMIT보다 우선)
+        STOP_LIMIT: 5,         # 스탑 지정가
+        CONDITIONAL_LIMIT: 6,  # 조건부 지정가
         BEST_LIMIT: 3,         # 최유리 지정가 (LIMIT과 동일)
         PRE_MARKET: 3,         # 시간외 단일가 (LIMIT과 동일)
         AFTER_MARKET: 3        # 시간외 종가 (LIMIT과 동일)
@@ -876,6 +878,22 @@ class OrderStatus:
         return cls.CLOSED_STATUSES.copy()
 
 
+# @FEAT:order-limits @COMP:validation @TYPE:config
+# 주문 제한 관련 상수
+MAX_ORDERS_PER_SYMBOL_SIDE = 10  # 심볼당 side별 전체 제한 (LIMIT + STOP 합계)
+MAX_ORDERS_PER_SYMBOL_TYPE_SIDE = 5  # 심볼당 타입 그룹별 side별 제한
+
+# 주문 타입 그룹 분류
+# Purpose: 심볼당 타입 그룹별 주문 제한 관리 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE 적용)
+# - LIMIT 그룹: 일반 지정가 주문 (심볼당 side별 최대 5개)
+# - STOP 그룹: 스톱 주문 (심볼당 side별 최대 5개)
+# 예시: BTC/USDT buy 방향 - LIMIT 5개 + STOP 5개 = 총 10개 허용
+ORDER_TYPE_GROUPS = {
+    "LIMIT": ["LIMIT", "LIMIT_MAKER"],
+    "STOP": ["STOP", "STOP_LIMIT", "STOP_MARKET"]
+}
+
+
 class OrderEventType:
     """주문 이벤트 타입"""
     ORDER_CREATED = 'order_created'     # 주문 생성
@@ -1151,9 +1169,6 @@ class ExchangeLimits:
     MIN_LIMIT = 1                    # 최소 제한
     DEFAULT_STOP_LIMIT = 5          # STOP 주문 기본 제한
 
-    # STOP 주문 할당 비율 (전체 주문의 25%)
-    # 예: max_orders_per_side=20 → max_stop=5
-    STOP_ALLOCATION_RATIO = 0.25
 
     # @FEAT:order-queue @COMP:config @TYPE:core
     @classmethod
@@ -1178,11 +1193,13 @@ class ExchangeLimits:
         - 기존 동작: 심볼당 10개 제한
         - 신규 동작: 각 side당 10개 제한 (총 최대 20개)
 
-        STOP 주문 할당 정책 (v2.3 - 2025-10-16):
-        - STOP 주문은 전체 주문의 25%로 제한하여 LIMIT 주문이 충분한 대기열 공간 확보
-        - 계산식: max_stop_per_side = min(ceil(max_orders_per_side * 0.25), exchange_conditional, max_orders_per_side)
-        - 올림(ceil) 적용으로 최소 1개 STOP 주문 보장 (단, max_orders_per_side > 0 조건)
-        - 예: BINANCE FUTURES (20개/side) → 5개 STOP, BINANCE SPOT (2개/side) → 1개 STOP
+        STOP 주문 할당 정책 (v2.4 - 2025-10-16):
+        - STOP 주문은 전체 주문의 50%로 고정 할당하여 예측 가능성 향상
+        - 계산식: max_stop_per_side = max_orders_per_side // 2 (정수 나눗셈)
+        - 엣지 케이스: max_orders_per_side=1 시 STOP=1, LIMIT=0 (STOP 우선 정책)
+        - 예: BINANCE FUTURES (20개/side) → STOP 10개, LIMIT 10개
+        - 예: BINANCE SPOT (2개/side) → STOP 1개, LIMIT 1개
+        - 거래소 조건부 제한(conditional) 우선 적용
 
         Args:
             exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
@@ -1202,7 +1219,7 @@ class ExchangeLimits:
 
         Examples:
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'FUTURES')
-            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 10, 'max_stop_orders_per_side': 5, ...}
+            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 20, 'max_stop_orders_per_side': 10, ...}
 
             >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'SPOT')
             {'max_orders': 4, 'max_orders_per_side': 2, 'max_stop_orders': 2, 'max_stop_orders_per_side': 1, ...}
@@ -1238,25 +1255,28 @@ class ExchangeLimits:
         # 제약 조건 적용
         max_orders_per_side = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
 
-        # STOP 주문 제한 (25% cap 적용)
-        # 25% cap 계산 (올림으로 최소 1 보장)
-        max_stop_25_percent = math.ceil(max_orders_per_side * cls.STOP_ALLOCATION_RATIO)
+        # STOP 주문 제한 (고정 50:50 할당)
+        # 엣지 케이스 보호: max_orders_per_side=1 시 STOP 우선 정책
+        if max_orders_per_side == 1:
+            max_stop_orders_per_side = 1  # STOP 우선 (LIMIT은 0개)
+        else:
+            # 50:50 분할: STOP = 절반, LIMIT = 나머지
+            max_stop_orders_per_side = max_orders_per_side // 2
 
-        # 거래소 조건부 제한 또는 기본값 사용
-        exchange_stop_limit = conditional_limit if conditional_limit is not None else cls.DEFAULT_STOP_LIMIT
-
-        # 25% cap, 거래소 제한, 전체 제한의 최소값 적용
-        max_stop_orders_per_side = min(max_stop_25_percent, exchange_stop_limit, max_orders_per_side)
+            # 거래소 조건부 제한 적용
+            if conditional_limit is not None:
+                max_stop_orders_per_side = min(max_stop_orders_per_side, conditional_limit)
 
         # Side별 제한을 총 허용량으로 변환 (Buy + Sell)
         max_orders = max_orders_per_side * 2
         max_stop_orders = max_stop_orders_per_side * 2
 
         return {
-            'max_orders': max_orders,                          # 총 허용량 (각 side 10개 × 2 = 20개)
-            'max_orders_per_side': max_orders_per_side,        # 각 side별 제한 (10개)
-            'max_stop_orders': max_stop_orders,                # 총 STOP 허용량 (각 side 5개 × 2 = 10개)
-            'max_stop_orders_per_side': max_stop_orders_per_side,  # 각 side별 STOP 제한 (5개)
+            'max_orders': max_orders,
+            'max_orders_per_side': max_orders_per_side,
+            'max_stop_orders': max_stop_orders,
+            'max_stop_orders_per_side': max_stop_orders_per_side,
+            # max_limit는 호출자가 계산: max_orders_per_side - max_stop_orders_per_side
             'per_symbol_limit': per_symbol,
             'per_account_limit': per_account,
             'calculation_method': calculation_method,
