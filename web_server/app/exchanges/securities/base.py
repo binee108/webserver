@@ -63,7 +63,7 @@ class BaseSecuritiesExchange(ABC):
     # ========================================
 
     @abstractmethod
-    async def authenticate(self) -> Dict[str, Any]:
+    def authenticate(self) -> Dict[str, Any]:
         """
         OAuth 토큰 발급
 
@@ -81,7 +81,7 @@ class BaseSecuritiesExchange(ABC):
         pass
 
     @abstractmethod
-    async def refresh_token(self) -> Dict[str, Any]:
+    def refresh_token(self) -> Dict[str, Any]:
         """
         OAuth 토큰 갱신
 
@@ -93,7 +93,7 @@ class BaseSecuritiesExchange(ABC):
         """
         pass
 
-    async def ensure_token(self) -> str:
+    def ensure_token(self) -> str:
         """
         유효한 토큰 보장 (자동 갱신)
 
@@ -124,7 +124,7 @@ class BaseSecuritiesExchange(ABC):
                 logger.info(f"🔄 토큰 재발급 필요 (account_id={self.account.id})")
 
                 try:
-                    token_data = await self.authenticate()
+                    token_data = self.authenticate()
                 except Exception as e:
                     logger.error(f"❌ 토큰 발급 실패 (account_id={self.account.id}): {e}")
                     raise AuthenticationError(f"OAuth 토큰 발급 실패: {e}")
@@ -158,7 +158,7 @@ class BaseSecuritiesExchange(ABC):
                 logger.info(f"🔄 토큰 갱신 (account_id={self.account.id})")
 
                 try:
-                    token_data = await self.refresh_token()
+                    token_data = self.refresh_token()
                 except Exception as e:
                     logger.error(f"❌ 토큰 갱신 실패 (account_id={self.account.id}): {e}")
                     raise AuthenticationError(f"OAuth 토큰 갱신 실패: {e}")
@@ -191,7 +191,7 @@ class BaseSecuritiesExchange(ABC):
     # ========================================
 
     @abstractmethod
-    async def create_stock_order(
+    def create_stock_order(
         self,
         symbol: str,
         side: str,
@@ -222,7 +222,7 @@ class BaseSecuritiesExchange(ABC):
         pass
 
     @abstractmethod
-    async def cancel_stock_order(self, order_id: str, symbol: str) -> bool:
+    def cancel_stock_order(self, order_id: str, symbol: str) -> bool:
         """
         국내주식 주문 취소
 
@@ -239,7 +239,7 @@ class BaseSecuritiesExchange(ABC):
         pass
 
     @abstractmethod
-    async def fetch_order(self, order_id: str, symbol: str) -> StockOrder:
+    def fetch_order(self, order_id: str, symbol: str) -> StockOrder:
         """
         국내주식 주문 조회
 
@@ -256,7 +256,7 @@ class BaseSecuritiesExchange(ABC):
         pass
 
     @abstractmethod
-    async def fetch_open_orders(self, symbol: Optional[str] = None) -> List[StockOrder]:
+    def fetch_open_orders(self, symbol: Optional[str] = None) -> List[StockOrder]:
         """
         미체결 주문 조회
 
@@ -273,7 +273,7 @@ class BaseSecuritiesExchange(ABC):
     # ========================================
 
     @abstractmethod
-    async def fetch_balance(self, currency: str = 'KRW') -> StockBalance:
+    def fetch_balance(self, currency: str = 'KRW') -> StockBalance:
         """
         현금 잔고 조회
 
@@ -286,7 +286,7 @@ class BaseSecuritiesExchange(ABC):
         pass
 
     @abstractmethod
-    async def fetch_positions(self, symbol: Optional[str] = None) -> List[StockPosition]:
+    def fetch_positions(self, symbol: Optional[str] = None) -> List[StockPosition]:
         """
         보유 종목 조회
 
@@ -303,7 +303,7 @@ class BaseSecuritiesExchange(ABC):
     # ========================================
 
     @abstractmethod
-    async def fetch_quote(self, symbol: str) -> StockQuote:
+    def fetch_quote(self, symbol: str) -> StockQuote:
         """
         현재가 조회
 
@@ -319,7 +319,7 @@ class BaseSecuritiesExchange(ABC):
     # 선택적 메서드 (증권사별 특수 기능)
     # ========================================
 
-    async def generate_hashkey(self, data: Dict[str, Any]) -> str:
+    def generate_hashkey(self, data: Dict[str, Any]) -> str:
         """
         해시키 생성 (한국투자증권 전용)
 
@@ -346,6 +346,6 @@ class BaseSecuritiesExchange(ABC):
         """
         return self.config.get('market_type', 'DOMESTIC_STOCK')
 
-    async def close(self):
+    def close(self):
         """리소스 정리 (필요시 하위 클래스에서 구현)"""
         pass
