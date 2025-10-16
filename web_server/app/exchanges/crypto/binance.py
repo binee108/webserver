@@ -1045,6 +1045,59 @@ class BinanceExchange(BaseCryptoExchange):
             cost=cumulative_quote if cumulative_quote > 0 else None
         )
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
+    def _to_order_dict(self, order_obj: Order) -> Dict[str, Any]:
+        """
+        Order 객체를 프로젝트 표준 필드명을 가진 dict로 변환.
+
+        **목적**: 거래소 계층에서 필드명 정규화 (단일 소스 원칙)
+        - Order 모델의 'type' (소문자) → 프로젝트 표준 'order_type' (대문자)
+        - 다른 거래소(OKX, Upbit) 추가 시 동일 패턴 적용 가능
+
+        **CLAUDE.md 준수**:
+        - 단일 소스: 거래소 계층에서 한 번만 정규화
+        - 계층 책임: Exchange = 데이터 정규화 / EventEmitter = SSE 발송만
+        - 확장성: 다른 거래소에도 동일 메서드 추가
+
+        Args:
+            order_obj (Order): _parse_order가 반환한 Order 객체
+
+        Returns:
+            Dict[str, Any]: 프로젝트 표준 필드명을 가진 dict
+                - 'type': 원본 필드 유지 (하위 호환성)
+                - 'order_type': 대문자 변환된 필드 추가 (프로젝트 표준)
+
+        Examples:
+            >>> order_obj = Order(type='limit', ...)
+            >>> result = self._to_order_dict(order_obj)
+            >>> result['order_type']
+            'LIMIT'
+            >>> result['type']  # 원본 필드도 유지
+            'limit'
+        """
+        # vars()로 Order 객체의 속성을 dict로 변환
+        order_dict = vars(order_obj).copy()
+
+        # type → order_type 정규화 (None/빈 문자열 안전 처리)
+        if order_dict.get('type'):
+            order_dict['order_type'] = order_dict['type'].upper()
+        else:
+            # 방어 코드: type 필드 누락 시 로그 (실제로는 발생 안 함)
+            logger.error(
+                f"⚠️ Order 객체에 type 필드 누락 - order_id={order_obj.id}"
+            )
+            order_dict['order_type'] = 'UNKNOWN'
+
+        # stop_price 이상 케이스 감지 (stop_limit 외 주문에 존재)
+        if order_dict.get('stop_price') and order_dict.get('type') != 'stop_limit':
+            logger.warning(
+                f"⚠️ 비STOP 주문에 stop_price 존재 - "
+                f"order_id={order_obj.id}, type={order_dict.get('type')}, "
+                f"stop_price={order_dict.get('stop_price')}"
+            )
+
+        return order_dict
+
 
     # CCXT 호환 메서드들 (동기)
     def fetch_balance(self, market_type: str = 'spot') -> Dict[str, Balance]:
@@ -1294,7 +1347,7 @@ class BinanceExchange(BaseCryptoExchange):
                             'order_index': global_idx,
                             'success': True,
                             'order_id': order_obj.id,
-                            'order': order_obj.__dict__
+                            'order': self._to_order_dict(order_obj)  # 필드명 정규화: type → order_type
                         })
                         successful_count += 1
 
@@ -1443,7 +1496,7 @@ class BinanceExchange(BaseCryptoExchange):
                 'order_index': order_index,
                 'success': True,
                 'order_id': order_obj.id,
-                'order': order_obj.__dict__
+                'order': self._to_order_dict(order_obj)  # 필드명 정규화: type → order_type
             }
 
         except Exception as e:
