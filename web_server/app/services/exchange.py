@@ -778,17 +778,13 @@ class ExchangeService:
             # Rate limit 체크
             self.rate_limiter.acquire_slot(account.exchange)
 
-            # 스레드별 이벤트 루프 재사용
-            loop = self._get_or_create_loop()
+            # Crypto/Securities 모두 동기 메서드 호출 (Phase 1-2에서 비동기 제거 완료)
+            balance_map = client.fetch_balance(market_type)
 
-            # 비동기 메서드를 동기 컨텍스트에서 실행
-            balance_map = loop.run_until_complete(
-                client.fetch_balance(market_type)
-            )
             return {'success': True, 'balance': balance_map}
 
         except Exception as e:
-            logger.error(f"잔액 조회 실패: {e}")
+            logger.error(f"잔액 조회 실패: account_id={account.id}, error={e}")
             return {'success': False, 'error': str(e)}
 
     # @FEAT:batch-parallel-processing @FEAT:exchange-integration @COMP:service @TYPE:core
