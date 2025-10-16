@@ -8,7 +8,7 @@ BaseSecuritiesExchange를 상속하여 한국투자증권 REST API를 구현합�
 import logging
 import hashlib
 import base64
-import aiohttp
+import requests
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -69,7 +69,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
     # OAuth 인증
     # ========================================
 
-    async def authenticate(self) -> Dict[str, Any]:
+    def authenticate(self) -> Dict[str, Any]:
         """
         OAuth 토큰 발급
 
@@ -99,42 +99,42 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"🔑 한투 OAuth 토큰 발급 요청 (account_id={self.account.id})")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.post(url, headers=headers, json=body, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 에러 응답 처리
-                    if data.get('msg_cd') != 'O0001':
-                        error_msg = data.get('msg1', 'Unknown error')
-                        logger.error(f"❌ 한투 OAuth 실패: {data.get('msg_cd')} - {error_msg}")
-                        raise AuthenticationError(
-                            f"한투 토큰 발급 실패: {error_msg}",
-                            code=data.get('msg_cd'),
-                            response=data
-                        )
+            # 에러 응답 처리
+            if data.get('msg_cd') != 'O0001':
+                error_msg = data.get('msg1', 'Unknown error')
+                logger.error(f"❌ 한투 OAuth 실패: {data.get('msg_cd')} - {error_msg}")
+                raise AuthenticationError(
+                    f"한투 토큰 발급 실패: {error_msg}",
+                    code=data.get('msg_cd'),
+                    response=data
+                )
 
-                    # 성공 응답 파싱
-                    access_token = data['access_token']
-                    expires_in = data['expires_in']
-                    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            # 성공 응답 파싱
+            access_token = data['access_token']
+            expires_in = data['expires_in']
+            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
-                    logger.info(f"✅ 한투 OAuth 성공 (만료: {expires_at}, 유효기간: {expires_in}초)")
+            logger.info(f"✅ 한투 OAuth 성공 (만료: {expires_at}, 유효기간: {expires_in}초)")
 
-                    return {
-                        'access_token': access_token,
-                        'token_type': data.get('token_type', 'Bearer'),
-                        'expires_in': expires_in,
-                        'expires_at': expires_at
-                    }
+            return {
+                'access_token': access_token,
+                'token_type': data.get('token_type', 'Bearer'),
+                'expires_in': expires_in,
+                'expires_at': expires_at
+            }
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 한투 OAuth 네트워크 에러: {e}")
             raise NetworkError(f"한투 OAuth 네트워크 에러: {e}")
         except KeyError as e:
             logger.error(f"❌ 한투 OAuth 응답 파싱 실패: {e}, data={data}")
             raise AuthenticationError(f"한투 OAuth 응답 형식 오류: 필수 필드 {e} 누락")
 
-    async def refresh_token(self) -> Dict[str, Any]:
+    def refresh_token(self) -> Dict[str, Any]:
         """
         OAuth 토큰 갱신
 
@@ -145,13 +145,13 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             authenticate()와 동일한 포맷
         """
         logger.info(f"🔄 한투 토큰 갱신 (실제로는 재발급, account_id={self.account.id})")
-        return await self.authenticate()
+        return self.authenticate()
 
     # ========================================
     # 해시키 생성 (주문 API 보안)
     # ========================================
 
-    async def generate_hashkey(self, data: Dict[str, Any]) -> str:
+    def generate_hashkey(self, data: Dict[str, Any]) -> str:
         """
         SHA256 해시키 생성 (로컬 생성)
 
@@ -173,7 +173,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
 
         Example:
             >>> body = {"CANO": "12345678", "PDNO": "005930"}
-            >>> hashkey = await exchange.generate_hashkey(body)
+            >>> hashkey = exchange.generate_hashkey(body)
             >>> print(len(hashkey))  # Base64 문자열 (44자)
         """
         try:
@@ -203,7 +203,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
     # 국내주식 주문
     # ========================================
 
-    async def create_stock_order(
+    def create_stock_order(
         self,
         symbol: str,
         side: str,
@@ -234,7 +234,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             NetworkError: 네트워크 에러
         """
         # 1. 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # 2. 파라미터 검증
         if order_type not in ('LIMIT', 'MARKET'):
@@ -273,7 +273,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         }
 
         # 7. 해시키 생성
-        hashkey = await self.generate_hashkey(body)
+        hashkey = self.generate_hashkey(body)
 
         # 8. API 요청 전송
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
@@ -289,59 +289,59 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"📤 한투 주문 생성 요청: {side} {order_type} {symbol} {quantity}주 @{ord_unpr}")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.post(url, headers=headers, json=body, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 9. 에러 응답 처리
-                    rt_cd = data.get('rt_cd')
-                    msg_cd = data.get('msg_cd')
-                    msg1 = data.get('msg1', 'Unknown error')
+            # 9. 에러 응답 처리
+            rt_cd = data.get('rt_cd')
+            msg_cd = data.get('msg_cd')
+            msg1 = data.get('msg1', 'Unknown error')
 
-                    if rt_cd != '0':
-                        logger.error(f"❌ 한투 주문 실패: rt_cd={rt_cd}, msg_cd={msg_cd}, msg={msg1}")
+            if rt_cd != '0':
+                logger.error(f"❌ 한투 주문 실패: rt_cd={rt_cd}, msg_cd={msg_cd}, msg={msg1}")
 
-                        # 에러 유형별 예외 분류
-                        if 'token' in msg1.lower() or 'auth' in msg1.lower():
-                            raise AuthenticationError(f"한투 주문 인증 실패: {msg1}", code=msg_cd, response=data)
-                        elif '잔고' in msg1 or '부족' in msg1 or 'insufficient' in msg1.lower():
-                            raise InsufficientBalance(f"한투 주문 잔액 부족: {msg1}", code=msg_cd, response=data)
-                        elif '파라미터' in msg1 or 'parameter' in msg1.lower() or '형식' in msg1:
-                            raise InvalidOrder(f"한투 주문 파라미터 오류: {msg1}", code=msg_cd, response=data)
-                        else:
-                            raise InvalidOrder(f"한투 주문 실패: {msg1}", code=msg_cd, response=data)
+                # 에러 유형별 예외 분류
+                if 'token' in msg1.lower() or 'auth' in msg1.lower():
+                    raise AuthenticationError(f"한투 주문 인증 실패: {msg1}", code=msg_cd, response=data)
+                elif '잔고' in msg1 or '부족' in msg1 or 'insufficient' in msg1.lower():
+                    raise InsufficientBalance(f"한투 주문 잔액 부족: {msg1}", code=msg_cd, response=data)
+                elif '파라미터' in msg1 or 'parameter' in msg1.lower() or '형식' in msg1:
+                    raise InvalidOrder(f"한투 주문 파라미터 오류: {msg1}", code=msg_cd, response=data)
+                else:
+                    raise InvalidOrder(f"한투 주문 실패: {msg1}", code=msg_cd, response=data)
 
-                    # 10. 성공 응답 확인
-                    if msg_cd != 'MCA00000':
-                        logger.warning(f"⚠️ 한투 주문 비정상 응답: msg_cd={msg_cd}, msg={msg1}")
+            # 10. 성공 응답 확인
+            if msg_cd != 'MCA00000':
+                logger.warning(f"⚠️ 한투 주문 비정상 응답: msg_cd={msg_cd}, msg={msg1}")
 
-                    # 11. StockOrder 모델 변환
-                    output1 = data.get('output1', {})
-                    order_id = output1.get('ODNO', '')
-                    order_time = output1.get('ORD_TMD', '')
+            # 11. StockOrder 모델 변환
+            output1 = data.get('output1', {})
+            order_id = output1.get('ODNO', '')
+            order_time = output1.get('ORD_TMD', '')
 
-                    logger.info(f"✅ 한투 주문 성공: 주문번호={order_id}, 주문시각={order_time}")
+            logger.info(f"✅ 한투 주문 성공: 주문번호={order_id}, 주문시각={order_time}")
 
-                    # 12. 요청 파라미터와 함께 StockOrder 생성
-                    stock_order = StockOrder.from_kis_response(
-                        data,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        quantity=quantity,
-                        price=price
-                    )
+            # 12. 요청 파라미터와 함께 StockOrder 생성
+            stock_order = StockOrder.from_kis_response(
+                data,
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                price=price
+            )
 
-                    return stock_order
+            return stock_order
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 한투 주문 네트워크 에러: {e}")
             raise NetworkError(f"한투 주문 네트워크 에러: {e}")
         except KeyError as e:
             logger.error(f"❌ 한투 주문 응답 파싱 실패: {e}, data={data}")
             raise InvalidOrder(f"한투 주문 응답 형식 오류: 필수 필드 {e} 누락")
 
-    async def cancel_stock_order(self, order_id: str, symbol: str) -> bool:
+    def cancel_stock_order(self, order_id: str, symbol: str) -> bool:
         """
         국내주식 주문 취소
 
@@ -365,11 +365,11 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             - fetch_order()로 조직번호를 조회하여 취소하도록 구현
         """
         # 1. 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # 2. 주문 조회하여 KRX_FWDG_ORD_ORGNO 획득
         try:
-            order = await self.fetch_order(order_id, symbol)
+            order = self.fetch_order(order_id, symbol)
             krx_org_no = order.raw_data.get('output1', {}).get('ord_gno_brno', '') if order.raw_data else ''
             logger.debug(f"주문조직번호 조회: {krx_org_no}")
         except OrderNotFound:
@@ -396,7 +396,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         }
 
         # 5. 해시키 생성
-        hashkey = await self.generate_hashkey(body)
+        hashkey = self.generate_hashkey(body)
 
         # 6. API 요청 전송
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-rvsecncl"
@@ -412,47 +412,47 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"🗑️ 한투 주문 취소 요청: 주문번호={order_id}, 종목={symbol}")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.post(url, headers=headers, json=body, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 7. 에러 응답 처리
-                    rt_cd = data.get('rt_cd')
-                    msg_cd = data.get('msg_cd')
-                    msg1 = data.get('msg1', 'Unknown error')
+            # 7. 에러 응답 처리
+            rt_cd = data.get('rt_cd')
+            msg_cd = data.get('msg_cd')
+            msg1 = data.get('msg1', 'Unknown error')
 
-                    if rt_cd != '0':
-                        logger.error(f"❌ 한투 주문 취소 실패: rt_cd={rt_cd}, msg_cd={msg_cd}, msg={msg1}")
+            if rt_cd != '0':
+                logger.error(f"❌ 한투 주문 취소 실패: rt_cd={rt_cd}, msg_cd={msg_cd}, msg={msg1}")
 
-                        # 에러 유형별 예외 분류
-                        if 'token' in msg1.lower() or 'auth' in msg1.lower():
-                            raise AuthenticationError(f"한투 취소 인증 실패: {msg1}", code=msg_cd, response=data)
-                        elif '존재' in msg1 or '없' in msg1 or 'not found' in msg1.lower():
-                            raise OrderNotFound(f"한투 취소 실패 (주문 없음): {msg1}", order_id=order_id, response=data)
-                        elif '취소' in msg1 or '불가' in msg1 or 'cannot' in msg1.lower():
-                            raise InvalidOrder(f"한투 취소 불가: {msg1}", code=msg_cd, response=data)
-                        else:
-                            raise InvalidOrder(f"한투 취소 실패: {msg1}", code=msg_cd, response=data)
+                # 에러 유형별 예외 분류
+                if 'token' in msg1.lower() or 'auth' in msg1.lower():
+                    raise AuthenticationError(f"한투 취소 인증 실패: {msg1}", code=msg_cd, response=data)
+                elif '존재' in msg1 or '없' in msg1 or 'not found' in msg1.lower():
+                    raise OrderNotFound(f"한투 취소 실패 (주문 없음): {msg1}", order_id=order_id, response=data)
+                elif '취소' in msg1 or '불가' in msg1 or 'cannot' in msg1.lower():
+                    raise InvalidOrder(f"한투 취소 불가: {msg1}", code=msg_cd, response=data)
+                else:
+                    raise InvalidOrder(f"한투 취소 실패: {msg1}", code=msg_cd, response=data)
 
-                    # 8. 성공 응답 확인
-                    if msg_cd != 'MCA00000':
-                        logger.warning(f"⚠️ 한투 취소 비정상 응답: msg_cd={msg_cd}, msg={msg1}")
+            # 8. 성공 응답 확인
+            if msg_cd != 'MCA00000':
+                logger.warning(f"⚠️ 한투 취소 비정상 응답: msg_cd={msg_cd}, msg={msg1}")
 
-                    output1 = data.get('output1', {})
-                    cancel_order_id = output1.get('ODNO', '')
+            output1 = data.get('output1', {})
+            cancel_order_id = output1.get('ODNO', '')
 
-                    logger.info(f"✅ 한투 주문 취소 성공: 원주문번호={order_id}, 취소주문번호={cancel_order_id}")
+            logger.info(f"✅ 한투 주문 취소 성공: 원주문번호={order_id}, 취소주문번호={cancel_order_id}")
 
-                    return True
+            return True
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 한투 취소 네트워크 에러: {e}")
             raise NetworkError(f"한투 취소 네트워크 에러: {e}")
         except KeyError as e:
             logger.error(f"❌ 한투 취소 응답 파싱 실패: {e}, data={data}")
             raise InvalidOrder(f"한투 취소 응답 형식 오류: 필수 필드 {e} 누락")
 
-    async def fetch_order(self, order_id: str, symbol: str) -> StockOrder:
+    def fetch_order(self, order_id: str, symbol: str) -> StockOrder:
         """
         국내주식 주문 상세 조회
 
@@ -469,7 +469,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             OrderNotFound: 주문이 없는 경우
         """
         # 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # tr_id 설정 (실전/모의투자)
         tr_id = 'VTTC0081R' if self.is_virtual else 'TTTC0081R'
@@ -509,34 +509,34 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"📋 주문 조회 요청 (주문번호: {order_id}, 종목: {symbol})")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 에러 응답 처리
-                    if data.get('rt_cd') != '0':
-                        error_msg = data.get('msg1', 'Unknown error')
-                        logger.error(f"❌ 주문 조회 실패: {data.get('msg_cd')} - {error_msg}")
-                        raise NetworkError(f"주문 조회 실패: {error_msg}", response=data)
+            # 에러 응답 처리
+            if data.get('rt_cd') != '0':
+                error_msg = data.get('msg1', 'Unknown error')
+                logger.error(f"❌ 주문 조회 실패: {data.get('msg_cd')} - {error_msg}")
+                raise NetworkError(f"주문 조회 실패: {error_msg}", response=data)
 
-                    # output1 배열에서 해당 주문 찾기
-                    orders = data.get('output1', [])
-                    if not orders:
-                        logger.error(f"❌ 주문 없음 (주문번호: {order_id})")
-                        raise OrderNotFound(f"주문을 찾을 수 없습니다 (주문번호: {order_id})")
+            # output1 배열에서 해당 주문 찾기
+            orders = data.get('output1', [])
+            if not orders:
+                logger.error(f"❌ 주문 없음 (주문번호: {order_id})")
+                raise OrderNotFound(f"주문을 찾을 수 없습니다 (주문번호: {order_id})")
 
-                    # 첫 번째 주문 반환 (ODNO로 필터링했으므로 1개만 존재)
-                    order_data = orders[0]
-                    order = StockOrder.from_kis_response(order_data)
+            # 첫 번째 주문 반환 (ODNO로 필터링했으므로 1개만 존재)
+            order_data = orders[0]
+            order = StockOrder.from_kis_response(order_data)
 
-                    logger.info(f"✅ 주문 조회 성공 (주문번호: {order.order_id}, 상태: {order.status})")
-                    return order
+            logger.info(f"✅ 주문 조회 성공 (주문번호: {order.order_id}, 상태: {order.status})")
+            return order
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 주문 조회 네트워크 에러: {e}")
             raise NetworkError(f"주문 조회 네트워크 에러: {e}")
 
-    async def fetch_open_orders(self, symbol: Optional[str] = None) -> List[StockOrder]:
+    def fetch_open_orders(self, symbol: Optional[str] = None) -> List[StockOrder]:
         """
         미체결 주문 조회
 
@@ -549,7 +549,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             List[StockOrder]: 미체결 주문 리스트
         """
         # 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # tr_id 설정 (실전/모의투자)
         tr_id = 'VTTC0081R' if self.is_virtual else 'TTTC0081R'
@@ -589,26 +589,26 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"📋 미체결 주문 조회 요청 (종목: {symbol or '전체'})")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 에러 응답 처리
-                    if data.get('rt_cd') != '0':
-                        error_msg = data.get('msg1', 'Unknown error')
-                        logger.error(f"❌ 미체결 주문 조회 실패: {data.get('msg_cd')} - {error_msg}")
-                        raise NetworkError(f"미체결 주문 조회 실패: {error_msg}", response=data)
+            # 에러 응답 처리
+            if data.get('rt_cd') != '0':
+                error_msg = data.get('msg1', 'Unknown error')
+                logger.error(f"❌ 미체결 주문 조회 실패: {data.get('msg_cd')} - {error_msg}")
+                raise NetworkError(f"미체결 주문 조회 실패: {error_msg}", response=data)
 
-                    # output1 배열을 StockOrder 리스트로 변환
-                    orders = []
-                    for item in data.get('output1', []):
-                        order = StockOrder.from_kis_response(item)
-                        orders.append(order)
+            # output1 배열을 StockOrder 리스트로 변환
+            orders = []
+            for item in data.get('output1', []):
+                order = StockOrder.from_kis_response(item)
+                orders.append(order)
 
-                    logger.info(f"✅ 미체결 주문 조회 성공 (총 {len(orders)}개)")
-                    return orders
+            logger.info(f"✅ 미체결 주문 조회 성공 (총 {len(orders)}개)")
+            return orders
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 미체결 주문 조회 네트워크 에러: {e}")
             raise NetworkError(f"미체결 주문 조회 네트워크 에러: {e}")
 
@@ -616,7 +616,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
     # 잔고/포지션 조회
     # ========================================
 
-    async def fetch_balance(self, currency: str = 'KRW') -> StockBalance:
+    def fetch_balance(self, currency: str = 'KRW') -> StockBalance:
         """
         현금 잔고 조회
 
@@ -629,7 +629,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             StockBalance: 잔고 정보
         """
         # 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # tr_id 설정 (실전/모의투자)
         tr_id = 'VTTC8434R' if self.is_virtual else 'TTTC8434R'
@@ -663,66 +663,66 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"💰 잔고 조회 요청")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 에러 응답 처리
-                    if data.get('rt_cd') != '0':
-                        error_msg = data.get('msg1', 'Unknown error')
-                        logger.error(f"❌ 잔고 조회 실패: {data.get('msg_cd')} - {error_msg}")
-                        raise NetworkError(f"잔고 조회 실패: {error_msg}", response=data)
+            # 에러 응답 처리
+            if data.get('rt_cd') != '0':
+                error_msg = data.get('msg1', 'Unknown error')
+                logger.error(f"❌ 잔고 조회 실패: {data.get('msg_cd')} - {error_msg}")
+                raise NetworkError(f"잔고 조회 실패: {error_msg}", response=data)
 
-                    # output2 (계좌 요약 정보)
-                    output2 = data.get('output2', [{}])[0] if data.get('output2') else {}
+            # output2 (계좌 요약 정보)
+            output2 = data.get('output2', [{}])[0] if data.get('output2') else {}
 
-                    # 총 평가금액
-                    tot_evlu_amt = Decimal(output2.get('tot_evlu_amt', '0'))
-                    # 예수금 총액 (현금)
-                    dnca_tot_amt = Decimal(output2.get('dnca_tot_amt', '0'))
-                    # 익일정산금액 (주문가능금액)
-                    nxdy_excc_amt = Decimal(output2.get('nxdy_excc_amt', '0'))
-                    # 매입금액 합계
-                    pchs_amt_smtl = Decimal(output2.get('pchs_amt_smtl_amt', '0'))
-                    # 평가금액 합계
-                    evlu_amt_smtl = Decimal(output2.get('evlu_amt_smtl_amt', '0'))
-                    # 평가손익 합계
-                    evlu_pfls_smtl = Decimal(output2.get('evlu_pfls_smtl_amt', '0'))
+            # 총 평가금액
+            tot_evlu_amt = Decimal(output2.get('tot_evlu_amt', '0'))
+            # 예수금 총액 (현금)
+            dnca_tot_amt = Decimal(output2.get('dnca_tot_amt', '0'))
+            # 익일정산금액 (주문가능금액)
+            nxdy_excc_amt = Decimal(output2.get('nxdy_excc_amt', '0'))
+            # 매입금액 합계
+            pchs_amt_smtl = Decimal(output2.get('pchs_amt_smtl_amt', '0'))
+            # 평가금액 합계
+            evlu_amt_smtl = Decimal(output2.get('evlu_amt_smtl_amt', '0'))
+            # 평가손익 합계
+            evlu_pfls_smtl = Decimal(output2.get('evlu_pfls_smtl_amt', '0'))
 
-                    # output1 (보유 종목 리스트)
-                    positions = []
-                    for item in data.get('output1', []):
-                        position = StockPosition(
-                            symbol=item.get('pdno', ''),
-                            symbol_name=item.get('prdt_name', ''),
-                            quantity=int(item.get('hldg_qty', '0')),
-                            avg_price=Decimal(item.get('pchs_avg_pric', '0')),
-                            current_price=Decimal(item.get('prpr', '0')),
-                            purchase_amount=Decimal(item.get('pchs_amt', '0')),
-                            evaluation_amount=Decimal(item.get('evlu_amt', '0')),
-                            unrealized_pnl=Decimal(item.get('evlu_pfls_amt', '0')),
-                            profit_loss_rate=Decimal(item.get('evlu_pfls_rt', '0'))
-                        )
-                        positions.append(position)
+            # output1 (보유 종목 리스트)
+            positions = []
+            for item in data.get('output1', []):
+                position = StockPosition(
+                    symbol=item.get('pdno', ''),
+                    symbol_name=item.get('prdt_name', ''),
+                    quantity=int(item.get('hldg_qty', '0')),
+                    avg_price=Decimal(item.get('pchs_avg_pric', '0')),
+                    current_price=Decimal(item.get('prpr', '0')),
+                    purchase_amount=Decimal(item.get('pchs_amt', '0')),
+                    evaluation_amount=Decimal(item.get('evlu_amt', '0')),
+                    unrealized_pnl=Decimal(item.get('evlu_pfls_amt', '0')),
+                    profit_loss_rate=Decimal(item.get('evlu_pfls_rt', '0'))
+                )
+                positions.append(position)
 
-                    # StockBalance 생성
-                    balance = StockBalance(
-                        total_balance=tot_evlu_amt,
-                        available_balance=nxdy_excc_amt,
-                        total_purchase_amount=pchs_amt_smtl,
-                        total_evaluation_amount=evlu_amt_smtl,
-                        total_profit_loss=evlu_pfls_smtl,
-                        positions=positions
-                    )
+            # StockBalance 생성
+            balance = StockBalance(
+                total_balance=tot_evlu_amt,
+                available_balance=nxdy_excc_amt,
+                total_purchase_amount=pchs_amt_smtl,
+                total_evaluation_amount=evlu_amt_smtl,
+                total_profit_loss=evlu_pfls_smtl,
+                positions=positions
+            )
 
-                    logger.info(f"✅ 잔고 조회 성공 (총 평가: {tot_evlu_amt:,}, 주문가능: {nxdy_excc_amt:,}, 보유 종목: {len(positions)}개)")
-                    return balance
+            logger.info(f"✅ 잔고 조회 성공 (총 평가: {tot_evlu_amt:,}, 주문가능: {nxdy_excc_amt:,}, 보유 종목: {len(positions)}개)")
+            return balance
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 잔고 조회 네트워크 에러: {e}")
             raise NetworkError(f"잔고 조회 네트워크 에러: {e}")
 
-    async def fetch_positions(self, symbol: Optional[str] = None) -> List[StockPosition]:
+    def fetch_positions(self, symbol: Optional[str] = None) -> List[StockPosition]:
         """
         보유 종목 조회
 
@@ -735,7 +735,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             List[StockPosition]: 보유 종목 리스트
         """
         # fetch_balance에서 positions를 추출하여 반환
-        balance = await self.fetch_balance()
+        balance = self.fetch_balance()
         positions = balance.positions
 
         # symbol 필터링
@@ -751,7 +751,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
     # 시세 조회
     # ========================================
 
-    async def fetch_quote(self, symbol: str) -> StockQuote:
+    def fetch_quote(self, symbol: str) -> StockQuote:
         """
         현재가 조회
 
@@ -764,7 +764,7 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
             StockQuote: 현재가 정보
         """
         # 토큰 자동 갱신
-        token = await self.ensure_token()
+        token = self.ensure_token()
 
         # tr_id 설정 (시세 조회는 실전/모의투자 구분 없음)
         tr_id = 'FHKST01010100'
@@ -789,50 +789,50 @@ class KoreaInvestmentExchange(BaseSecuritiesExchange):
         logger.info(f"📈 현재가 조회 요청 (종목: {symbol})")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    data = await response.json()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
 
-                    # 에러 응답 처리
-                    if data.get('rt_cd') != '0':
-                        error_msg = data.get('msg1', 'Unknown error')
-                        logger.error(f"❌ 현재가 조회 실패: {data.get('msg_cd')} - {error_msg}")
-                        raise NetworkError(f"현재가 조회 실패: {error_msg}", response=data)
+            # 에러 응답 처리
+            if data.get('rt_cd') != '0':
+                error_msg = data.get('msg1', 'Unknown error')
+                logger.error(f"❌ 현재가 조회 실패: {data.get('msg_cd')} - {error_msg}")
+                raise NetworkError(f"현재가 조회 실패: {error_msg}", response=data)
 
-                    # output (시세 정보)
-                    output = data.get('output', {})
+            # output (시세 정보)
+            output = data.get('output', {})
 
-                    # 현재가
-                    stck_prpr = Decimal(output.get('stck_prpr', '0'))
-                    # 전일대비
-                    prdy_vrss = Decimal(output.get('prdy_vrss', '0'))
-                    # 전일대비율
-                    prdy_ctrt = Decimal(output.get('prdy_ctrt', '0'))
-                    # 시가
-                    stck_oprc = Decimal(output.get('stck_oprc', '0'))
-                    # 고가
-                    stck_hgpr = Decimal(output.get('stck_hgpr', '0'))
-                    # 저가
-                    stck_lwpr = Decimal(output.get('stck_lwpr', '0'))
-                    # 누적거래량
-                    acml_vol = int(output.get('acml_vol', '0'))
+            # 현재가
+            stck_prpr = Decimal(output.get('stck_prpr', '0'))
+            # 전일대비
+            prdy_vrss = Decimal(output.get('prdy_vrss', '0'))
+            # 전일대비율
+            prdy_ctrt = Decimal(output.get('prdy_ctrt', '0'))
+            # 시가
+            stck_oprc = Decimal(output.get('stck_oprc', '0'))
+            # 고가
+            stck_hgpr = Decimal(output.get('stck_hgpr', '0'))
+            # 저가
+            stck_lwpr = Decimal(output.get('stck_lwpr', '0'))
+            # 누적거래량
+            acml_vol = int(output.get('acml_vol', '0'))
 
-                    # StockQuote 생성
-                    quote = StockQuote(
-                        symbol=symbol,
-                        current_price=stck_prpr,
-                        change_amount=prdy_vrss,
-                        change_rate=prdy_ctrt,
-                        open_price=stck_oprc,
-                        high_price=stck_hgpr,
-                        low_price=stck_lwpr,
-                        volume=acml_vol,
-                        timestamp=datetime.now()
-                    )
+            # StockQuote 생성
+            quote = StockQuote(
+                symbol=symbol,
+                current_price=stck_prpr,
+                change_amount=prdy_vrss,
+                change_rate=prdy_ctrt,
+                open_price=stck_oprc,
+                high_price=stck_hgpr,
+                low_price=stck_lwpr,
+                volume=acml_vol,
+                timestamp=datetime.now()
+            )
 
-                    logger.info(f"✅ 현재가 조회 성공 (종목: {symbol}, 현재가: {stck_prpr:,})")
-                    return quote
+            logger.info(f"✅ 현재가 조회 성공 (종목: {symbol}, 현재가: {stck_prpr:,})")
+            return quote
 
-        except aiohttp.ClientError as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ 현재가 조회 네트워크 에러: {e}")
             raise NetworkError(f"현재가 조회 네트워크 에러: {e}")
