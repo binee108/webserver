@@ -552,6 +552,25 @@ def register_background_jobs(app):
         max_instances=1
     )
 
+    # ✅ NEW: MarketInfo 백그라운드 갱신 (Phase 2)
+    # @FEAT:precision-system @COMP:service @TYPE:integration
+
+    # 317초 = 5분 17초 (소수 시간대)
+    # - Prime number → 정각 트래픽 피크 회피 (3600 % 317 != 0)
+    # - MarketInfo 변경 빈도: 월 1-2회 (filters), 분기 1회 (precision)
+    # - SymbolValidator 15분 갱신과 겹치지 않도록 설계
+    # - 5분 TTL보다 짧아 캐시 만료 전 선행 갱신 보장
+    scheduler.add_job(
+        func=refresh_market_info_with_context,
+        trigger='interval',
+        seconds=317,  # 5분 17초 (소수 주기)
+        id='refresh_market_info',
+        name='Market Info Background Refresh',
+        replace_existing=True,
+        max_instances=1
+    )
+    app.logger.info("📅 MarketInfo 백그라운드 갱신 등록: 5분 17초마다 (소수 주기)")
+
     # 🆕 가격 캐시 업데이트 (31초마다, 소수 주기로 정각 집중 트래픽 회피)
     scheduler.add_job(
         func=update_price_cache_with_context,
@@ -712,6 +731,30 @@ def warm_up_market_info_with_context():
     except Exception as e:
         current_app.logger.error(f"❌ Warmup 실패: {e} - degraded mode로 시작")
         # 실패해도 서버 시작은 계속
+
+# @FEAT:precision-system @COMP:service @TYPE:helper
+def refresh_market_info_with_context():
+    """
+    Flask app context 내에서 MarketInfo 백그라운드 갱신 실행
+
+    Note:
+        - 317초(5분 17초) 주기로 실행 (소수 시간대, 정각 트래픽 회피)
+        - API 기반 거래소만 갱신 (Binance, Bybit)
+        - 고정 규칙 거래소는 건너뜀 (Upbit, Bithumb)
+        - 갱신 실패 시 기존 캐시 유지 (안전)
+    """
+    try:
+        with current_app.app_context():
+            exchange_service = ExchangeService()
+            result = exchange_service.refresh_api_based_market_info()
+
+            # DEBUG 로그 (고빈도 작업)
+            current_app.logger.debug(
+                f"🔄 백그라운드 갱신: {len(result['refreshed_exchanges'])}개 거래소, "
+                f"{result['total_markets']}개 마켓"
+            )
+    except Exception as e:
+        current_app.logger.error(f"❌ MarketInfo 백그라운드 갱신 실패: {e}")
 
 def warm_up_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""

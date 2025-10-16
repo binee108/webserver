@@ -1580,6 +1580,105 @@ class ExchangeService:
             'elapsed': elapsed
         }
 
+    # @FEAT:precision-system @COMP:service @TYPE:core
+    def refresh_api_based_market_info(self) -> Dict[str, Any]:
+        """
+        API 기반 거래소의 MarketInfo 백그라운드 갱신
+
+        - Binance, Bybit 등 API 기반 거래소만 선택적 갱신
+        - Upbit, Bithumb 등 고정 규칙 거래소는 건너뜀
+        - 5분 17초(317초) 주기로 실행 (소수 시간대)
+
+        Returns:
+            Dict: {
+                'refreshed_exchanges': List[str],  # 갱신된 거래소 목록
+                'total_markets': int,               # 갱신된 총 마켓 수
+                'skipped': List[str],               # 건너뛴 거래소 목록
+                'elapsed': float                    # 소요 시간 (초)
+            }
+
+        Note:
+            - DEBUG 로그 레벨 (고빈도 작업, CLAUDE.md 백그라운드 로깅 가이드라인)
+            - 갱신 실패 시 기존 캐시 유지 (stale data better than crash)
+            - 주문 경로는 영향 없음 (항상 캐시 사용)
+        """
+        from app.models import Account
+        from app.exchanges.metadata import requires_market_refresh
+        import time
+
+        logger.debug("🔄 MarketInfo 백그라운드 갱신 시작...")
+        start_time = time.time()
+
+        # 활성 계좌 조회
+        active_accounts = Account.query.filter_by(is_active=True).all()
+        if not active_accounts:
+            logger.debug("⚠️ 활성 계좌 없음 - 백그라운드 갱신 건너뜀")
+            return {
+                'refreshed_exchanges': [],
+                'total_markets': 0,
+                'skipped': [],
+                'elapsed': time.time() - start_time
+            }
+
+        # 거래소별 그룹화 (중복 제거)
+        exchange_accounts = {}
+        for acc in active_accounts:
+            key = f"{acc.exchange}_{acc.account_type}"
+            if key not in exchange_accounts:
+                exchange_accounts[key] = acc
+
+        refreshed = []
+        skipped = []
+        total_markets = 0
+
+        for exchange_key, account in exchange_accounts.items():
+            exchange_name = account.exchange
+
+            # requires_refresh 체크
+            if not requires_market_refresh(exchange_name):
+                logger.debug(f"  ⏭️ {exchange_name} 건너뛰기 (고정 규칙 기반)")
+                skipped.append(exchange_name)
+                continue
+
+            try:
+                adapter = self.get_exchange(account)
+
+                # Spot 갱신
+                spot_markets = adapter.load_markets('spot', reload=True)
+                spot_count = len(spot_markets)
+                total_markets += spot_count
+                logger.debug(f"  ✅ {exchange_name} SPOT 갱신: {spot_count}개")
+
+                # Futures 갱신 (지원하는 경우)
+                if hasattr(adapter, 'futures_markets_cache'):
+                    futures_markets = adapter.load_markets('futures', reload=True)
+                    futures_count = len(futures_markets)
+                    total_markets += futures_count
+                    logger.debug(f"  ✅ {exchange_name} FUTURES 갱신: {futures_count}개")
+
+                refreshed.append(exchange_name)
+
+            except Exception as e:
+                logger.error(f"  ❌ {exchange_name} 갱신 실패: {e}")
+                # 실패해도 계속 진행 (기존 캐시 유지)
+
+        elapsed = time.time() - start_time
+
+        # 결과 로깅 (DEBUG 레벨 - 고빈도 작업)
+        if refreshed or skipped:
+            logger.debug(
+                f"🔄 MarketInfo 백그라운드 갱신 완료 - "
+                f"갱신: {len(refreshed)}개, 건너뜀: {len(skipped)}개, "
+                f"마켓: {total_markets}개, 소요: {elapsed:.1f}초"
+            )
+
+        return {
+            'refreshed_exchanges': refreshed,
+            'total_markets': total_markets,
+            'skipped': skipped,
+            'elapsed': elapsed
+        }
+
     def warm_up_precision_cache(self) -> None:
         """
         Precision 캐시 웜업 (admin.py에서 호출)
