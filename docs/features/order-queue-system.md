@@ -235,6 +235,13 @@ class OrderQueueManager:
 
 **효과**: 동일 (account_id, symbol) 조합에 대한 동시 재정렬 방지
 
+## Known Issues & Counterintuitive Code
+
+### sort_price 부호 반전 로직 (v2.2)
+**이상한 점**: SELL LIMIT 주문의 sort_price는 음수(`-price`)이고, 정렬은 DESC(`-sort_price`)
+**이유**: SELL은 낮은 가격 우선이지만, DESC 정렬에서는 높은 값이 앞에 옴. 부호를 반전하여 "높은 음수(= 절대값이 낮음) = 낮은 원본 가격"으로 매핑하여 의도대로 동작 보장
+**참고**: `order_queue_manager.py:219-224` (`_calculate_sort_price()` 메서드)
+
 ## 트러블슈팅
 
 ### 주문이 계속 PendingOrder에 머무름
@@ -301,7 +308,7 @@ grep -r "_rebalance_locks" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-15*
+*Last Updated: 2025-10-16*
 *Version: 2.2.0 (Side별 분리 정렬 구현)*
 
 **v2.2 주요 변경사항**:
@@ -309,4 +316,5 @@ grep -r "_rebalance_locks" --include="*.py"
 - ExchangeLimits에 side별 제한 필드 추가 (BREAKING CHANGE)
 - `_select_top_orders()` 헬퍼 함수 추가 (DRY 원칙)
 - 용량 2배 증가: BINANCE FUTURES 기준 20개 → 40개
-- 성능 개선: 재정렬 <10ms (목표 100ms 대비 10배 빠름)
+- 성능 개선: 재정렬 <100ms (효율적 O(N log N) 정렬)
+- Known Issues 섹션 추가: sort_price 부호 반전 로직 문서화
