@@ -170,64 +170,6 @@ class BaseExchange(ABC):
         """
         pass
 
-    # === 선택적 비동기 래퍼 (WebSocket 등에서 사용) ===
-
-    async def load_markets_async(self, market_type: str = 'spot', reload: bool = False):
-        """
-        마켓 정보 로드 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.load_markets(market_type, reload)
-
-    async def fetch_balance_async(self, market_type: str = 'spot'):
-        """
-        잔액 조회 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.fetch_balance(market_type)
-
-    async def create_order_async(self, symbol: str, order_type: str, side: str,
-                                  amount: Decimal, price: Optional[Decimal] = None,
-                                  market_type: str = 'spot', **params):
-        """
-        주문 생성 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.create_order(symbol, order_type, side, amount, price, market_type, **params)
-
-    async def cancel_order_async(self, order_id: str, symbol: str, market_type: str = 'spot'):
-        """
-        주문 취소 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.cancel_order(order_id, symbol, market_type)
-
-    async def fetch_open_orders_async(self, symbol: Optional[str] = None, market_type: str = 'spot'):
-        """
-        미체결 주문 조회 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.fetch_open_orders(symbol, market_type)
-
-    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
-        """
-        배치 주문 생성 (비동기 래퍼 - 선택적)
-
-        기본 구현: 동기 메서드를 호출
-        거래소별로 필요시 재정의 가능
-        """
-        return self.create_batch_orders(orders, market_type)
-
     # === 공통 편의 메서드 ===
 
     # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
@@ -293,29 +235,3 @@ class BaseExchange(ABC):
     def close(self):
         """리소스 정리 (필요시 하위 클래스에서 구현) (동기 - 선택적)"""
         pass
-
-    # === 선택적 메서드 비동기 래퍼 ===
-
-    async def set_leverage_async(self, symbol: str, leverage: int, **params) -> Dict:
-        """레버리지 설정 (비동기 래퍼 - 선택적)"""
-        return self.set_leverage(symbol, leverage, **params)
-
-    async def set_position_mode_async(self, dual_side: bool, **params) -> Dict:
-        """포지션 모드 설정 (비동기 래퍼 - 선택적)"""
-        return self.set_position_mode(dual_side, **params)
-
-    async def fetch_positions_async(self, symbol: Optional[str] = None, **params) -> List[Dict]:
-        """포지션 조회 (비동기 래퍼 - 선택적)"""
-        return self.fetch_positions(symbol, **params)
-
-    async def fetch_funding_rate_async(self, symbol: str) -> Dict:
-        """펀딩비 조회 (비동기 래퍼 - 선택적)"""
-        return self.fetch_funding_rate(symbol)
-
-    async def get_balance_async(self, currency: str = 'USDT', market_type: str = 'spot') -> float:
-        """사용 가능 잔액 조회 (비동기 래퍼 - 선택적)"""
-        return self.get_balance(currency, market_type)
-
-    async def close_async(self):
-        """리소스 정리 (비동기 래퍼 - 선택적)"""
-        return self.close()
