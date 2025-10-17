@@ -7,6 +7,7 @@ class SSEManager {
     constructor(options = {}) {
         // Configuration
         this.url = options.url || '/api/events/stream';
+        this.strategyId = options.strategyId || null;  // NEW: strategyId option for SSE connection
         this.maxReconnectAttempts = options.maxReconnectAttempts || 5;
         this.reconnectInterval = options.reconnectInterval || 3000;
         this.heartbeatTimeout = options.heartbeatTimeout || 60000; // 60 seconds
@@ -42,7 +43,7 @@ class SSEManager {
         this.on('heartbeat', (data) => {
             this.handleHeartbeat(data);
         });
-        
+
         // Connection handler
         this.on('connection', (data) => {
             this.logger.info('SSE connection confirmed:', data);
@@ -50,7 +51,12 @@ class SSEManager {
                 this.eventBus.emit('sse-connected', data);
             }
         });
-        
+
+        // Force disconnect handler
+        this.on('force_disconnect', (data) => {
+            this.handleForceDisconnect(data);
+        });
+
         // Error handler
         this.on('error', (data) => {
             this.logger.error('SSE error event:', data);
@@ -133,17 +139,25 @@ class SSEManager {
         try {
             this.logger.info('SSE 연결 시작...');
             this.connectionManager.setStatus(window.RealtimeCore?.ConnectionStatus.CONNECTING);
-            
-            // Create EventSource
-            const fullUrl = this.url.startsWith('http') ? this.url : `${window.location.origin}${this.url}`;
-            this.logger.info('SSE URL:', fullUrl);
-            
+
+            // Build URL with strategy_id query parameter
+            let fullUrl = this.url.startsWith('http') ? this.url : `${window.location.origin}${this.url}`;
+
+            if (this.strategyId) {
+                const separator = fullUrl.includes('?') ? '&' : '?';
+                fullUrl += `${separator}strategy_id=${this.strategyId}`;
+                this.logger.info('SSE URL with strategy_id:', fullUrl);
+            } else {
+                this.logger.warn('⚠️ No strategyId provided - backend may reject connection');
+                this.logger.info('SSE URL:', fullUrl);
+            }
+
             this.eventSource = new EventSource(fullUrl);
             this.logger.info('EventSource 생성됨 - readyState:', this.eventSource.readyState);
-            
+
             // Set up event handlers
             this.setupEventHandlers();
-            
+
         } catch (error) {
             this.logger.error('SSE 연결 실패:', error);
             this.connectionManager.setStatus(window.RealtimeCore?.ConnectionStatus.ERROR);
@@ -192,7 +206,8 @@ class SSEManager {
             'error',
             'trade_update',
             'balance_update',
-            'strategy_update'
+            'strategy_update',
+            'force_disconnect'
         ];
         
         eventTypes.forEach(eventType => {
@@ -287,11 +302,64 @@ class SSEManager {
     handleHeartbeat(data) {
         this.logger.debug('💓 Heartbeat received:', data);
         this.lastHeartbeat = Date.now();
-        
+
         // Reset heartbeat timer
         this.resetHeartbeatTimer();
     }
-    
+
+    /**
+     * Handle force_disconnect event from server
+     */
+    handleForceDisconnect(data) {
+        this.logger.warn('🚫 SSE 강제 종료:', data);
+
+        const reason = data.data?.reason || data.reason || 'unknown';
+        const message = data.data?.message || data.message || '연결이 종료되었습니다.';
+        const strategyId = data.data?.strategy_id || data.strategy_id;
+
+        // 사용자에게 알림 표시
+        if (window.showToast) {
+            window.showToast(message, 'warning', 5000);
+        } else {
+            alert(message);
+        }
+
+        // EventBus로 이벤트 발행
+        if (this.eventBus) {
+            this.eventBus.emit('sse-force-disconnect', { reason, message, strategyId });
+        }
+
+        // 로그에 이유별 상세 정보 기록
+        switch (reason) {
+            case 'strategy_deleted':
+                this.logger.error('전략이 삭제되어 연결이 종료되었습니다.');
+                break;
+            case 'permission_revoked':
+                this.logger.error('전략 접근 권한이 제거되어 연결이 종료되었습니다.');
+                break;
+            case 'account_deactivated':
+                this.logger.error('계정이 비활성화되어 연결이 종료되었습니다.');
+                break;
+            case 'session_expired':
+                this.logger.error('세션이 만료되어 연결이 종료되었습니다.');
+                window.location.href = '/login';  // 로그인 페이지로 리다이렉트
+                return;
+            default:
+                this.logger.warn(`알 수 없는 이유로 연결이 종료되었습니다: ${reason}`);
+        }
+
+        // SSE 연결 종료
+        this.disconnect();
+
+        // 전략 삭제 또는 권한 제거 시 전략 목록 페이지로 리다이렉트
+        if (reason === 'strategy_deleted' || reason === 'permission_revoked') {
+            setTimeout(() => {
+                this.logger.info('Redirecting to strategies page...');
+                window.location.href = '/strategies';
+            }, 3000);  // 3초 후 리다이렉트 (사용자가 메시지 읽을 시간)
+        }
+    }
+
     /**
      * Start heartbeat monitoring
      */

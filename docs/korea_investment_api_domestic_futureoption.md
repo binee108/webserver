@@ -4,7 +4,11 @@
 
 ### 1.1 주문 (신규/청산)
 - **Endpoint**: `POST /uapi/domestic-futureoption/v1/trading/order`
-- **tr_id**: `OTFM1411U`
+- **tr_id**:
+  - **실전투자 (주간)**: `TTTO1101U`
+  - **실전투자 (야간)**: `STTN1101U`
+  - **모의투자 (주간)**: `VTTO1101U`
+  - **모의투자 (야간)**: `VTTN1101U`
 
 #### 요청
 ```json

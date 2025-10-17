@@ -1,3 +1,4 @@
+# @FEAT:capital-management @COMP:service @TYPE:core
 """
 자본 배분 서비스 모듈
 
@@ -17,17 +18,20 @@ from app.utils.logging_security import get_secure_logger
 logger = get_secure_logger(__name__)
 
 
+# @FEAT:capital-management @COMP:model @TYPE:core
 class CapitalAllocationError(Exception):
     """자본 배분 관련 오류"""
     pass
 
 
+# @FEAT:capital-management @COMP:service @TYPE:core
 class CapitalAllocationService:
     """자본 배분 서비스 클래스"""
 
     def __init__(self):
         self.session = db.session
 
+    # @FEAT:capital-management @COMP:service @TYPE:core
     def recalculate_strategy_capital(self, account_id: int, use_live_balance: bool = False) -> Dict[str, Any]:
         """
         계좌의 전략별 자본을 재배분합니다.
@@ -139,6 +143,7 @@ class CapitalAllocationService:
             'timestamp': datetime.utcnow().isoformat()
         }
 
+    # @FEAT:capital-management @COMP:service @TYPE:helper @DEPS:exchange-integration
     def _get_total_capital(self, account: Account, use_live_balance: bool) -> tuple[Decimal, str]:
         """
         계좌의 총 자산을 조회합니다.
@@ -189,6 +194,7 @@ class CapitalAllocationService:
             logger.error(f"❌ 잔고 조회 실패: {e}")
             raise CapitalAllocationError(f"잔고를 조회할 수 없습니다: {e}")
 
+    # @FEAT:capital-management @COMP:service @TYPE:helper @DEPS:position-tracking
     def has_open_positions(self, account_id: int) -> bool:
         """
         계좌의 모든 전략에 대해 열린 포지션이 있는지 확인합니다.
@@ -233,6 +239,7 @@ class CapitalAllocationService:
             # 예외 발생 시 안전하게 True 반환 (리밸런싱 방지)
             return True
 
+    # @FEAT:capital-management @COMP:service @TYPE:validation
     def should_rebalance(self, account_id: int, min_interval_hours: int = 1) -> Dict[str, Any]:
         """
         자동 리밸런싱 실행 여부를 판단합니다.
@@ -341,6 +348,7 @@ class CapitalAllocationService:
                 'time_since_last': None
             }
 
+    # @FEAT:capital-management @COMP:service @TYPE:helper @DEPS:order-tracking
     def calculate_unreflected_pnl(self, strategy_account_id: int, since: datetime = None) -> Decimal:
         """
         특정 전략 계좌의 미반영 실현 손익을 계산합니다.
@@ -373,6 +381,7 @@ class CapitalAllocationService:
             logger.error(f"실현 손익 계산 실패 - 전략 계좌 {strategy_account_id}: {e}")
             return Decimal('0')
 
+    # @FEAT:capital-management @COMP:service @TYPE:core
     def apply_realized_pnl_to_capital(self, strategy_account_id: int, update_timestamp: bool = True) -> Dict[str, Any]:
         """
         전략의 실현 손익을 할당 자본에 반영합니다 (복리 효과).

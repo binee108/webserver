@@ -116,44 +116,62 @@ class RealtimeOpenOrdersManager {
     handleOrderUpdate(data) {
         try {
             this.logger.info('주문 업데이트 처리:', data);
-            
+
+            // Account 정보 평탄화 (Backend에서 중첩 구조로 보내므로)
+            if (data.account) {
+                data.account_name = data.account.name;
+                data.exchange = data.account.exchange;
+            }
+
+            // PendingOrder 여부 판단 (status 또는 order_id prefix 기반)
+            const isPendingOrder = data.status === 'PENDING_QUEUE' ||
+                                  (data.order_id && data.order_id.startsWith('p_'));
+
+            // source 필드 추가 (UI에서 구분하기 위함)
+            if (isPendingOrder) {
+                data.source = 'pending_order';
+                this.logger.info('📥 PendingOrder 이벤트 감지:', data.order_id);
+            } else {
+                data.source = 'open_order';
+            }
+
             // Check for market orders (should not appear in open orders)
             if (data.order_type && data.order_type.toUpperCase() === 'MARKET') {
                 this.logger.warn('⚠️ Market order received in open orders (unexpected):', data);
             }
-            
+
             // Determine event type from data.event_type
             const eventType = data.event_type;
-            
+
             if (!eventType) {
                 this.logger.error('Event type is missing from order data');
                 return;
             }
-            
+
             switch (eventType) {
                 case 'order_created':
                     this.upsertOrder(data);
                     break;
-                    
+
                 case 'order_filled':
                 case 'order_cancelled':
                     this.removeOrder(data.order_id);
                     break;
-                    
+
                 case 'order_updated':
                     this.upsertOrder(data);
                     break;
-                    
+
                 default:
                     this.logger.warn('Unknown order event type:', eventType);
             }
-            
+
             // Update order count
             this.updateOpenOrdersCount();
-            
+
             // Show notification
             this.showOrderNotification(eventType, data);
-            
+
         } catch (error) {
             this.logger.error('Failed to handle order update:', error);
         }
@@ -245,9 +263,21 @@ class RealtimeOpenOrdersManager {
      */
     createOrderRow(orderData) {
         const row = document.createElement('tr');
-        row.className = 'order-row';
+
+        // Determine if this is a pending order (multiple checks for robustness)
+        const isPendingOrder = orderData.source === 'pending_order' ||
+                              orderData.status === 'PENDING_QUEUE' ||
+                              (orderData.order_id && orderData.order_id.startsWith('p_'));
+        const rowClass = isPendingOrder ? 'order-row order-row-pending' : 'order-row';
+
+        row.className = rowClass;
         row.setAttribute('data-order-id', orderData.order_id);
-        
+
+        // Add tooltip for pending orders
+        if (isPendingOrder) {
+            row.setAttribute('title', '거래소 제출 대기 중');
+        }
+
         // Standardize side value
         const side = (orderData.side || '').toUpperCase();
         const isBuy = side === 'BUY';
@@ -267,7 +297,7 @@ class RealtimeOpenOrdersManager {
         const formattedQuantity = this.format ? this.format.formatQuantity(quantity) : quantity.toFixed(8);
         const formattedPrice = (price > 0 && !isNaN(price)) ? (this.format ? this.format.formatPrice(price) : `$${price.toFixed(4)}`) : '-';
         const formattedStopPrice = (stopPrice > 0 && !isNaN(stopPrice)) ? (this.format ? this.format.formatPrice(stopPrice) : `$${stopPrice.toFixed(4)}`) : '-';
-        
+
         // Order type badge styling
         const orderTypeBadgeClass = {
             'MARKET': 'badge-info',
@@ -275,7 +305,17 @@ class RealtimeOpenOrdersManager {
             'STOP_LIMIT': 'badge-warning',
             'STOP_MARKET': 'badge-error'
         }[orderType] || 'badge-secondary';
-        
+
+        // Status badge - different for pending orders
+        const statusBadge = isPendingOrder
+            ? `<span class="badge badge-secondary">
+                 <svg class="w-3 h-3 mr-1 inline-block" fill="currentColor" viewBox="0 0 20 20">
+                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
+                 </svg>
+                 대기열
+               </span>`
+            : `<span class="badge badge-warning realtime-status">${orderData.status || 'NEW'}</span>`;
+
         row.innerHTML = `
             <td>
                 <div class="account-info">
@@ -315,10 +355,10 @@ class RealtimeOpenOrdersManager {
                 ${formattedStopPrice}
             </td>
             <td>
-                <span class="badge badge-warning realtime-status">${orderData.status || 'NEW'}</span>
+                ${statusBadge}
             </td>
             <td>
-                <button data-order-id="${orderData.order_id}" 
+                <button data-order-id="${orderData.order_id}"
                         data-symbol="${orderData.symbol}"
                         class="cancel-order-btn btn btn-warning btn-sm">
                     <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,7 +368,7 @@ class RealtimeOpenOrdersManager {
                 </button>
             </td>
         `;
-        
+
         // Add cancel button event listener
         const cancelBtn = row.querySelector('.cancel-order-btn');
         if (cancelBtn) {
@@ -338,7 +378,7 @@ class RealtimeOpenOrdersManager {
                 this.handleCancelOrder(orderId, symbol);
             });
         }
-        
+
         return row;
     }
     
@@ -525,6 +565,9 @@ class RealtimeOpenOrdersManager {
         const eventTypeText = eventTypeMap[eventType] || '주문 업데이트';
         const side = (data.side || '').toUpperCase();
 
+        // PendingOrder 여부 판단
+        const isPendingOrder = data.source === 'pending_order';
+
         // 색상 타입 결정
         let toastType;
         if (eventType === 'order_filled') {
@@ -533,13 +576,18 @@ class RealtimeOpenOrdersManager {
         } else if (eventType === 'order_cancelled') {
             toastType = 'warning';
         } else if (eventType === 'order_created') {
-            toastType = 'info';
+            // PendingOrder는 info, 일반 주문은 success
+            toastType = isPendingOrder ? 'info' : 'success';
         } else {
             toastType = 'info';
         }
 
         const quantity = Math.abs(data.quantity || 0);
-        const message = `${eventTypeText}: ${data.symbol} ${side} ${quantity}`;
+
+        // PendingOrder인 경우 메시지에 "(대기열)" 추가
+        const message = isPendingOrder
+            ? `${eventTypeText} (대기열): ${data.symbol} ${side} ${quantity}`
+            : `${eventTypeText}: ${data.symbol} ${side} ${quantity}`;
 
         if (window.showToast) {
             window.showToast(message, toastType, 2000);

@@ -1,3 +1,4 @@
+# @FEAT:framework @COMP:model @TYPE:boilerplate
 from datetime import datetime
 import threading
 from flask_sqlalchemy import SQLAlchemy
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class User(UserMixin, db.Model):
     """사용자 정보 테이블"""
     __tablename__ = 'users'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
@@ -27,19 +28,19 @@ class User(UserMixin, db.Model):
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)  # 비밀번호 변경 강제 여부
     last_login = db.Column(db.DateTime, nullable=True)  # 마지막 로그인 시간
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # 관계 설정
     accounts = db.relationship('Account', backref='user', lazy=True, cascade='all, delete-orphan')
     strategies = db.relationship('Strategy', backref='user', lazy=True, cascade='all, delete-orphan')
-    
+
     def set_password(self, password):
         """비밀번호 해싱"""
         self.password_hash = generate_password_hash(password)
-    
+
     def check_password(self, password):
         """비밀번호 확인"""
         return check_password_hash(self.password_hash, password)
-    
+
     def __repr__(self):
         return f'<User {self.username}>'
 
@@ -74,7 +75,7 @@ class Account(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)  # 계좌명
-    exchange = db.Column(db.String(50), nullable=False)  # BINANCE, BYBIT, OKX 등
+    exchange = db.Column(db.String(50), nullable=False)  # BINANCE, BYBIT, OKX, KIS, KIWOOM 등
     public_api = db.Column(db.Text, nullable=False)  # 기존 필드 유지
     secret_api = db.Column(db.Text, nullable=False)
     passphrase = db.Column(db.Text, nullable=True)  # OKX 등에서 필요한 passphrase
@@ -82,11 +83,27 @@ class Account(db.Model):
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 활성화 상태
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 마지막 업데이트
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
+    # 🆕 계좌 타입 (CRYPTO or STOCK)
+    account_type = db.Column(db.String(20), default='CRYPTO', nullable=False, index=True)
+
+    # 🆕 증권 전용 필드 (증권사별 설정을 JSON으로 유연하게 저장)
+    # securities_config 구조 예시:
+    # {
+    #   "account_number": "12345678",     # 계좌번호
+    #   "product_code": "01",             # 상품코드
+    #   "market_type": "DOMESTIC_STOCK",  # 마켓 타입
+    #   "cert_password": "...",           # 공인인증서 비밀번호 (암호화, 키움용)
+    #   "additional_params": {}           # 증권사별 추가 파라미터
+    # }
+    _securities_config = db.Column('securities_config', db.Text, nullable=True)  # 암호화된 JSON 문자열 저장
+    _access_token = db.Column('access_token', db.Text, nullable=True)  # OAuth 토큰 (암호화)
+    token_expires_at = db.Column(db.DateTime, nullable=True)
+
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='account', lazy=True, cascade='all, delete-orphan')
     daily_summaries = db.relationship('DailyAccountSummary', backref='account_ref', lazy=True, cascade='all, delete-orphan')
-    
+
     @staticmethod
     def _decode_api_value(value: str) -> str:
         if not value:
@@ -153,6 +170,55 @@ class Account(db.Model):
         """거래소 클라이언트에 전달할 API 시크릿 (캐싱 적용)"""
         return self._get_cached_decrypted_value("api_secret", self.secret_api)
 
+    @property
+    def securities_config(self) -> dict:
+        """복호화된 증권 설정 (딕셔너리)"""
+        if not self._securities_config:
+            return {}
+
+        from app.security.encryption import decrypt_value
+        import json
+
+        decrypted = decrypt_value(self._securities_config)
+        if not decrypted:
+            return {}
+
+        try:
+            return json.loads(decrypted)
+        except json.JSONDecodeError:
+            logger.error(f"증권 설정 JSON 파싱 실패 (Account {self.id})")
+            return {}
+
+    @securities_config.setter
+    def securities_config(self, value: dict):
+        """증권 설정 암호화 저장"""
+        if value is None:
+            self._securities_config = None
+            return
+
+        from app.security.encryption import encrypt_value
+        import json
+
+        json_str = json.dumps(value)
+        self._securities_config = encrypt_value(json_str)
+
+    @property
+    def access_token(self) -> str:
+        """복호화된 OAuth 토큰"""
+        if not self._access_token:
+            return ""
+        return self._get_cached_decrypted_value("access_token", self._access_token)
+
+    @access_token.setter
+    def access_token(self, value: str):
+        """OAuth 토큰 암호화 저장"""
+        if value is None:
+            self._access_token = None
+            return
+
+        from app.security.encryption import encrypt_value
+        self._access_token = encrypt_value(value)
+
     @classmethod
     def get_cache_stats(cls) -> dict:
         """캐시 통계 반환"""
@@ -183,7 +249,7 @@ class Account(db.Model):
 class Strategy(db.Model):
     """전략 정보 테이블"""
     __tablename__ = 'strategies'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)  # 전략명
@@ -198,14 +264,14 @@ class Strategy(db.Model):
 
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='strategy', lazy=True, cascade='all, delete-orphan')
-    
+
     def __repr__(self):
         return f'<Strategy {self.name} ({self.group_name}) - {self.market_type}>'
 
 class StrategyAccount(db.Model):
     """전략-계좌 연결 및 설정 테이블"""
     __tablename__ = 'strategy_accounts'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=False)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
@@ -214,16 +280,16 @@ class StrategyAccount(db.Model):
     max_symbols = db.Column(db.Integer, nullable=True, default=None)  # 최대 보유 심볼 수 (None은 제한 없음)
     # 공개 전략 비공개 전환 등으로 연결을 비활성화할 때 사용
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
-    
+
     # 복합 유니크 제약조건
     __table_args__ = (db.UniqueConstraint('strategy_id', 'account_id'),)
-    
+
     # 관계 설정
     strategy_capital = db.relationship('StrategyCapital', backref='strategy_account', uselist=False, cascade='all, delete-orphan')
     strategy_positions = db.relationship('StrategyPosition', backref='strategy_account', lazy=True, cascade='all, delete-orphan')
     trades = db.relationship('Trade', backref='strategy_account', lazy=True, cascade='all, delete-orphan')
     open_orders = db.relationship('OpenOrder', backref='strategy_account', lazy=True, cascade='all, delete-orphan')
-    
+
     def __repr__(self):
         max_symbols_str = f", max_symbols: {self.max_symbols}" if self.max_symbols is not None else ""
         return f'<StrategyAccount {self.strategy.group_name} - {self.account.name}{max_symbols_str}>'
@@ -245,24 +311,24 @@ class StrategyCapital(db.Model):
 class StrategyPosition(db.Model):
     """전략별 가상 포지션 관리 테이블"""
     __tablename__ = 'strategy_positions'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
     symbol = db.Column(db.String(20), nullable=False)  # 거래 페어 (예: BTCUSDT)
     quantity = db.Column(db.Float, default=0.0, nullable=False)  # 포지션 수량 (양수: 롱, 음수: 숏)
     entry_price = db.Column(db.Float, default=0.0, nullable=False)  # 평균 진입 가격
     last_updated = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # 복합 유니크 제약조건
     __table_args__ = (db.UniqueConstraint('strategy_account_id', 'symbol'),)
-    
+
     def __repr__(self):
         return f'<StrategyPosition {self.symbol}: {self.quantity}>'
 
 class Trade(db.Model):
     """거래 기록 테이블"""
     __tablename__ = 'trades'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
     exchange_order_id = db.Column(db.String(100), nullable=False)  # 거래소 주문 ID
@@ -277,14 +343,14 @@ class Trade(db.Model):
     fee = db.Column(db.Float, nullable=True)  # 거래 수수료
     is_entry = db.Column(db.Boolean, nullable=True)  # 진입/청산 여부
     market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
-    
+
     def __repr__(self):
         return f'<Trade {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'
 
 class OpenOrder(db.Model):
     """미체결 주문 정보 테이블"""
     __tablename__ = 'open_orders'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
     exchange_order_id = db.Column(db.String(100), unique=True, nullable=False)  # 거래소 주문 ID
@@ -299,9 +365,18 @@ class OpenOrder(db.Model):
     market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
+    # @FEAT:order-tracking @COMP:model @TYPE:core
+    # Phase 2: Processing lock fields (Optimistic Locking)
+    is_processing = db.Column(db.Boolean, default=False, nullable=False, index=True)  # 처리 중 플래그
+    processing_started_at = db.Column(db.DateTime, nullable=True, index=True)  # 처리 시작 시각
+
     def __repr__(self):
-        return f'<OpenOrder {self.symbol} {self.side} {self.order_type} {self.quantity} @ {self.price} ({self.market_type})>'
+        return (
+            f'<OpenOrder {self.symbol} {self.side} {self.order_type} '
+            f'{self.quantity} @ {self.price} ({self.market_type}) '
+            f'processing={self.is_processing}>'
+        )
 
 class WebhookLog(db.Model):
     """웹훅 수신 로그 테이블"""
@@ -333,7 +408,7 @@ class WebhookLog(db.Model):
 class DailyAccountSummary(db.Model):
     """일일 계정 요약 테이블"""
     __tablename__ = 'daily_account_summaries'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
     date = db.Column(db.Date, nullable=False)
@@ -352,17 +427,17 @@ class DailyAccountSummary(db.Model):
     total_volume = db.Column(db.Float, default=0.0, nullable=False)  # 총 거래량
     total_fees = db.Column(db.Float, default=0.0, nullable=False)  # 총 수수료
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # 복합 유니크 제약조건
     __table_args__ = (db.UniqueConstraint('account_id', 'date'),)
-    
+
     def __repr__(self):
         return f'<DailyAccountSummary {self.date} - Account {self.account_id}>'
 
 class SystemSummary(db.Model):
     """시스템 전체 요약 테이블"""
     __tablename__ = 'system_summaries'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, nullable=False, unique=True)
     total_balance = db.Column(db.Float, default=0.0, nullable=False)  # 전체 잔고
@@ -372,26 +447,26 @@ class SystemSummary(db.Model):
     active_strategies = db.Column(db.Integer, default=0, nullable=False)  # 활성 전략 수
     system_mdd = db.Column(db.Float, default=0.0, nullable=False)  # 시스템 최대 낙폭 (%)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     def __repr__(self):
         return f'<SystemSummary {self.date}>'
 
 class SystemSetting(db.Model):
     """시스템 전역 설정 테이블"""
     __tablename__ = 'system_settings'
-    
+
     key = db.Column(db.String(100), primary_key=True)
     value = db.Column(db.Text, nullable=True)
     description = db.Column(db.Text, nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     @classmethod
     def get_setting(cls, key: str, default_value: str = None) -> str:
         """설정 값 조회"""
         setting = cls.query.filter_by(key=key).first()
         return setting.value if setting and setting.value else default_value
-    
+
     @classmethod
     def set_setting(cls, key: str, value: str, description: str = None):
         """설정 값 업데이트 또는 생성"""
@@ -407,9 +482,9 @@ class SystemSetting(db.Model):
             db.session.add(setting)
         db.session.commit()
         return setting
-    
+
     def __repr__(self):
-        return f'<SystemSetting {self.key}={self.value}>' 
+        return f'<SystemSetting {self.key}={self.value}>'
 
 # ============================================
 # Phase 1: 열린 주문 트래킹 시스템 테이블
@@ -418,7 +493,7 @@ class SystemSetting(db.Model):
 class OrderTrackingSession(db.Model):
     """WebSocket 연결 세션 관리 테이블"""
     __tablename__ = 'order_tracking_sessions'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     session_id = db.Column(db.String(100), unique=True, nullable=False)  # WebSocket 세션 ID
@@ -431,18 +506,18 @@ class OrderTrackingSession(db.Model):
     ended_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
     meta_data = db.Column(db.JSON, nullable=True)  # 추가 메타데이터 저장
-    
+
     # 관계 설정
     user = db.relationship('User', backref='tracking_sessions')
     account = db.relationship('Account', backref='tracking_sessions')
-    
+
     # 인덱스
     __table_args__ = (
         db.Index('idx_tracking_session_user', 'user_id'),
         db.Index('idx_tracking_session_status', 'status'),
         db.Index('idx_tracking_session_started', 'started_at'),
     )
-    
+
     def __repr__(self):
         return f'<OrderTrackingSession {self.session_id} - {self.status}>'
 
@@ -450,10 +525,10 @@ class OrderTrackingSession(db.Model):
 class TradeExecution(db.Model):
     """체결된 거래 상세 정보 테이블 (기존 trades 테이블 보완)"""
     __tablename__ = 'trade_executions'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     trade_id = db.Column(db.Integer, db.ForeignKey('trades.id'), nullable=True)  # 기존 Trade와 연결
-    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=True)  # 계좌 연결 해제 시 NULL 가능
     exchange_trade_id = db.Column(db.String(100), nullable=False)  # 거래소 거래 ID
     exchange_order_id = db.Column(db.String(100), nullable=False)  # 거래소 주문 ID
     symbol = db.Column(db.String(20), nullable=False)
@@ -468,11 +543,11 @@ class TradeExecution(db.Model):
     market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
     meta_data = db.Column(db.JSON, nullable=True)  # 추가 거래소별 메타데이터
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # 관계 설정
     trade = db.relationship('Trade', backref='executions')
     strategy_account = db.relationship('StrategyAccount', backref='trade_executions')
-    
+
     # 인덱스
     __table_args__ = (
         db.Index('idx_trade_exec_symbol', 'symbol'),
@@ -480,14 +555,14 @@ class TradeExecution(db.Model):
         db.Index('idx_trade_exec_strategy', 'strategy_account_id'),
         db.UniqueConstraint('exchange_trade_id', 'strategy_account_id', name='uq_exchange_trade'),
     )
-    
+
     @property
     def exchange(self):
         """거래소 정보 가져오기"""
         if self.strategy_account and self.strategy_account.account:
             return self.strategy_account.account.exchange
         return None
-    
+
     def __repr__(self):
         return f'<TradeExecution {self.symbol} {self.side} {self.execution_quantity}@{self.execution_price}>'
 
@@ -495,53 +570,53 @@ class TradeExecution(db.Model):
 class StrategyPerformance(db.Model):
     """전략별 성과 메트릭 테이블"""
     __tablename__ = 'strategy_performance'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=False)
     date = db.Column(db.Date, nullable=False)
-    
+
     # 수익률 메트릭
     daily_return = db.Column(db.Float, default=0.0, nullable=False)  # 일일 수익률 (%)
     cumulative_return = db.Column(db.Float, default=0.0, nullable=False)  # 누적 수익률 (%)
-    
+
     # 손익 메트릭
     daily_pnl = db.Column(db.Float, default=0.0, nullable=False)  # 일일 손익
     cumulative_pnl = db.Column(db.Float, default=0.0, nullable=False)  # 누적 손익
-    
+
     # 거래 통계
     total_trades = db.Column(db.Integer, default=0, nullable=False)  # 총 거래 수
     winning_trades = db.Column(db.Integer, default=0, nullable=False)  # 수익 거래 수
     losing_trades = db.Column(db.Integer, default=0, nullable=False)  # 손실 거래 수
     win_rate = db.Column(db.Float, default=0.0, nullable=False)  # 승률 (%)
-    
+
     # 리스크 메트릭
     max_drawdown = db.Column(db.Float, default=0.0, nullable=False)  # 최대 낙폭 (%)
     sharpe_ratio = db.Column(db.Float, nullable=True)  # 샤프 비율
     sortino_ratio = db.Column(db.Float, nullable=True)  # 소르티노 비율
     volatility = db.Column(db.Float, nullable=True)  # 변동성 (%)
-    
+
     # 포지션 통계
     avg_position_size = db.Column(db.Float, nullable=True)  # 평균 포지션 크기
     max_position_size = db.Column(db.Float, nullable=True)  # 최대 포지션 크기
     active_positions = db.Column(db.Integer, default=0, nullable=False)  # 활성 포지션 수
-    
+
     # 수수료 통계
     total_commission = db.Column(db.Float, default=0.0, nullable=False)  # 총 수수료
     commission_ratio = db.Column(db.Float, default=0.0, nullable=False)  # 수수료 비율 (%)
-    
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # 관계 설정
     strategy = db.relationship('Strategy', backref='performances')
-    
+
     # 인덱스 및 제약
     __table_args__ = (
         db.UniqueConstraint('strategy_id', 'date', name='uq_strategy_date'),
         db.Index('idx_performance_date', 'date'),
         db.Index('idx_performance_strategy', 'strategy_id'),
     )
-    
+
     def __repr__(self):
         return f'<StrategyPerformance {self.strategy_id} {self.date}: {self.daily_return:.2f}%>'
 
@@ -549,7 +624,7 @@ class StrategyPerformance(db.Model):
 class TrackingLog(db.Model):
     """시스템 추적 로그 테이블"""
     __tablename__ = 'tracking_logs'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     log_type = db.Column(db.String(50), nullable=False)  # order_update, trade_execution, error, sync, etc.
     severity = db.Column(db.String(20), nullable=False, default='info')  # debug, info, warning, error, critical
@@ -557,27 +632,27 @@ class TrackingLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=True)
-    
+
     # 로그 내용
     message = db.Column(db.Text, nullable=False)
     details = db.Column(db.JSON, nullable=True)  # 구조화된 추가 정보
-    
+
     # 관련 엔티티 참조
     order_id = db.Column(db.String(100), nullable=True)  # 거래소 주문 ID
     trade_id = db.Column(db.String(100), nullable=True)  # 거래소 거래 ID
     symbol = db.Column(db.String(20), nullable=True)
-    
+
     # 성능 메트릭
     execution_time_ms = db.Column(db.Float, nullable=True)  # 처리 시간 (밀리초)
-    
+
     # 타임스탬프
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # 관계 설정
     user = db.relationship('User', backref='tracking_logs')
     account = db.relationship('Account', backref='tracking_logs')
     strategy = db.relationship('Strategy', backref='tracking_logs')
-    
+
     # 인덱스
     __table_args__ = (
         db.Index('idx_tracking_log_type', 'log_type'),
@@ -587,7 +662,7 @@ class TrackingLog(db.Model):
         db.Index('idx_tracking_log_symbol', 'symbol'),
         db.Index('idx_tracking_log_order', 'order_id'),
     )
-    
+
     @classmethod
     def log(cls, log_type, message, source, severity='info', **kwargs):
         """간편한 로그 생성 메서드"""
@@ -605,6 +680,223 @@ class TrackingLog(db.Model):
             db.session.rollback()
             logger.error(f"Failed to write tracking log: {e}")
         return log_entry
-    
+
     def __repr__(self):
         return f'<TrackingLog [{self.severity}] {self.log_type}: {self.message[:50]}...>'
+
+
+class SecuritiesToken(db.Model):
+    """
+    증권 거래소 OAuth 토큰 캐시
+
+    특징:
+    - 계좌당 1개 토큰 (UNIQUE 제약조건)
+    - 자동 갱신 (Background Job)
+    - 암호화 저장 (access_token 프로퍼티)
+
+    관계:
+    - Account (1:1) - CASCADE 동작:
+      * Account 삭제 → Token 자동 삭제 (SQL FK CASCADE)
+      * Token 삭제 → Account 유지 (역방향 cascade 방지)
+    """
+    __tablename__ = 'securities_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id', ondelete='CASCADE'), unique=True, nullable=False)
+    _access_token = db.Column('access_token', db.Text, nullable=False)  # 암호화된 토큰
+    token_type = db.Column(db.String(20), default='Bearer')
+    expires_in = db.Column(db.Integer, nullable=False)  # 유효기간(초)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_refreshed_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # 🆕 Relationship 추가 (CRITICAL FIX - Priority 1)
+    # 1:1 관계: 계좌 삭제 시 토큰도 자동 삭제 (SQL FK CASCADE)
+    # ⚠️ backref에 cascade 없음 → Token 삭제 시 Account 유지 (역방향 cascade 방지)
+    account = db.relationship(
+        'Account',
+        backref=db.backref('securities_token', uselist=False),  # cascade 제거로 역방향 cascade 방지
+        foreign_keys=[account_id]
+    )
+
+    @property
+    def access_token(self) -> str:
+        """복호화된 토큰"""
+        from app.security.encryption import decrypt_value
+        return decrypt_value(self._access_token) if self._access_token else ""
+
+    @access_token.setter
+    def access_token(self, value: str):
+        """토큰 암호화 저장"""
+        from app.security.encryption import encrypt_value
+        self._access_token = encrypt_value(value) if value else None
+
+    def is_expired(self) -> bool:
+        """토큰 만료 여부 확인 (5분 버퍼)"""
+        from datetime import timedelta
+        return datetime.utcnow() > (self.expires_at - timedelta(minutes=5))
+
+    def needs_refresh(self) -> bool:
+        """토큰 갱신 필요 여부 (6시간 기준)"""
+        from datetime import timedelta
+        return datetime.utcnow() > (self.last_refreshed_at + timedelta(hours=6))
+
+    def __repr__(self):
+        return f'<SecuritiesToken account_id={self.account_id}, expires_at={self.expires_at}>'
+
+
+# ============================================
+# 주문 대기열 시스템 테이블 (Phase 1)
+# ============================================
+
+class PendingOrder(db.Model):
+    """대기열 주문 테이블
+
+    거래소 제한 초과로 즉시 실행하지 못한 주문을 저장합니다.
+    우선순위와 가격 기반으로 정렬되어 처리됩니다.
+
+    관리 단위: (account_id, symbol) 조합
+    """
+    __tablename__ = 'pending_orders'
+
+    # 식별자
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+
+    # 주문 정보
+    symbol = db.Column(db.String(20), nullable=False)
+    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
+    order_type = db.Column(db.String(20), nullable=False)  # LIMIT, STOP_LIMIT, STOP_MARKET
+    price = db.Column(db.Numeric(20, 8), nullable=True)  # LIMIT 가격
+    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # STOP 트리거 가격
+    quantity = db.Column(db.Numeric(20, 8), nullable=False)
+
+    # 우선순위 계산
+    priority = db.Column(db.Integer, nullable=False)  # OrderType.PRIORITY 값 (1-5)
+    sort_price = db.Column(db.Numeric(20, 8), nullable=True)  # 정렬용 가격 (계산값)
+
+    # 메타데이터
+    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
+    reason = db.Column(db.String(50), nullable=False, default='QUEUE_LIMIT')  # 대기열 진입 사유
+    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # 관계 설정
+    account = db.relationship('Account', backref='pending_orders')
+    strategy_account = db.relationship('StrategyAccount', backref='pending_orders')
+
+    # 인덱스
+    __table_args__ = (
+        db.Index('idx_pending_account_symbol', 'account_id', 'symbol'),
+        db.Index('idx_pending_priority_sort', 'account_id', 'symbol', 'priority', 'sort_price', 'created_at'),
+        db.Index('idx_pending_strategy', 'strategy_account_id'),
+    )
+
+    def __init__(self, **kwargs):
+        """PendingOrder 초기화 - priority와 sort_price 자동 계산"""
+        from app.constants import OrderType
+        from decimal import Decimal
+
+        # priority 자동 계산
+        if 'priority' not in kwargs and 'order_type' in kwargs:
+            kwargs['priority'] = OrderType.get_priority(kwargs['order_type'])
+
+        super().__init__(**kwargs)
+
+        # sort_price 자동 계산 (생성 후)
+        if self.sort_price is None and self.order_type:
+            self.sort_price = self._calculate_sort_price()
+
+    def _calculate_sort_price(self):
+        """정렬용 가격 계산
+
+        정렬 로직:
+        - LIMIT BUY:   sort_price = price          (높을수록 우선)
+        - LIMIT SELL:  sort_price = -price         (낮을수록 우선)
+        - STOP BUY:    sort_price = -stop_price    (낮을수록 우선)
+        - STOP SELL:   sort_price = stop_price     (높을수록 우선)
+        - MARKET:      sort_price = None
+        """
+        from app.constants import OrderType
+        from decimal import Decimal
+
+        # MARKET 주문은 정렬 가격 없음
+        if self.order_type == 'MARKET':
+            return None
+
+        # LIMIT 주문
+        if self.order_type == 'LIMIT':
+            if self.price is None:
+                return None
+
+            price_decimal = Decimal(str(self.price))
+            if self.side.upper() == 'BUY':
+                # 높을수록 우선
+                return price_decimal
+            else:  # SELL
+                # 낮을수록 우선 → 음수 변환
+                return -price_decimal
+
+        # STOP 주문 (STOP_LIMIT, STOP_MARKET)
+        if OrderType.requires_stop_price(self.order_type):
+            if self.stop_price is None:
+                return None
+
+            stop_decimal = Decimal(str(self.stop_price))
+            if self.side.upper() == 'BUY':
+                # 낮을수록 우선 → 음수 변환
+                return -stop_decimal
+            else:  # SELL
+                # 높을수록 우선
+                return stop_decimal
+
+        return None
+
+    def __repr__(self):
+        return f'<PendingOrder {self.symbol} {self.side} {self.order_type} qty={self.quantity} priority={self.priority}>'
+
+
+class OrderFillEvent(db.Model):
+    """주문 체결 이벤트 로그 테이블
+
+    WebSocket 또는 REST API로 감지된 주문 체결 이벤트를 기록합니다.
+    대기열 시스템의 재정렬 트리거로 사용됩니다.
+    """
+    __tablename__ = 'order_fill_events'
+
+    # 식별자
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+
+    # 주문 정보
+    exchange_order_id = db.Column(db.String(100), nullable=False)  # 거래소 주문 ID
+    symbol = db.Column(db.String(20), nullable=False)
+    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
+    order_type = db.Column(db.String(20), nullable=False)  # MARKET, LIMIT, STOP_LIMIT, STOP_MARKET
+
+    # 체결 정보
+    filled_quantity = db.Column(db.Numeric(20, 8), nullable=False)  # 체결 수량
+    average_price = db.Column(db.Numeric(20, 8), nullable=True)  # 평균 체결 가격
+    status = db.Column(db.String(20), nullable=False)  # FILLED, PARTIALLY_FILLED, CANCELED
+
+    # 이벤트 메타데이터
+    event_time = db.Column(db.DateTime, nullable=False)  # 체결 발생 시각 (거래소 기준)
+    processed = db.Column(db.Boolean, default=False, nullable=False)  # 처리 완료 여부
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    # 관계 설정
+    account = db.relationship('Account', backref='fill_events')
+    strategy_account = db.relationship('StrategyAccount', backref='fill_events')
+
+    # 인덱스
+    __table_args__ = (
+        db.Index('idx_fill_order_id', 'exchange_order_id'),
+        db.Index('idx_fill_processed', 'processed', 'event_time'),
+        db.Index('idx_fill_account_symbol', 'account_id', 'symbol'),
+    )
+
+    def __repr__(self):
+        return f'<OrderFillEvent order={self.exchange_order_id} status={self.status} qty={self.filled_quantity}>'

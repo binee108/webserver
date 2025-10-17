@@ -1,4 +1,4 @@
-
+# @FEAT:event-sse @COMP:service @TYPE:helper
 """Event emission helpers extracted from the legacy trading service."""
 
 from __future__ import annotations
@@ -14,12 +14,14 @@ from app.models import OpenOrder, Strategy, StrategyAccount
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:event-sse @COMP:service @TYPE:helper
 class EventEmitter:
     """Encapsulates trading-related event emission."""
 
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_trading_event(
         self,
         event_type: str,
@@ -46,12 +48,31 @@ class EventEmitter:
                 logger.warning("계좌 정보를 찾을 수 없음: account_id=%s", account_id)
                 return
 
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # 단일 소스 원칙: core.py Line 265에서 제공하는 stop_price 직접 사용
+            # 폴백 로직 제거 (CLAUDE.md 준수)
             stop_price_value = None
-            raw_response = order_result.get('raw_response')
-            if raw_response and hasattr(raw_response, 'stop_price') and raw_response.stop_price is not None:
-                stop_price_value = float(raw_response.stop_price)
-            elif order_result.get('adjusted_stop_price') is not None:
-                stop_price_value = float(order_result.get('adjusted_stop_price'))
+            stop_price = order_result.get('stop_price')
+
+            if stop_price is not None:
+                try:
+                    stop_price_value = float(stop_price)
+                except (ValueError, TypeError) as e:
+                    order_type = order_result.get('order_type', '')
+                    order_id = order_result.get('order_id')
+                    logger.error(
+                        f"❌ stop_price 변환 실패: order_id={order_id}, "
+                        f"value={stop_price}, type={order_type}, error={e}"
+                    )
+                    # STOP 주문인데 변환 실패 시 명시적 에러
+                    if order_type in ['STOP_LIMIT', 'STOP_MARKET']:
+                        raise ValueError(
+                            f"STOP 주문 stop_price 변환 실패: order_id={order_id}, "
+                            f"value={stop_price}"
+                        )
+
+            # 🆕 가격 정보 추출 (OpenOrder 모델의 get_display_price() 로직 사용)
+            price = self._extract_display_price(order_result)
 
             event = OrderEvent(
                 event_type=event_type,
@@ -61,7 +82,7 @@ class EventEmitter:
                 user_id=strategy.user_id,
                 side=side.upper(),
                 quantity=float(quantity),
-                price=float(order_result.get('average_price', 0)),
+                price=price,
                 status='FILLED' if event_type == 'trade_executed' else order_result.get('status', 'UNKNOWN'),
                 timestamp=datetime.utcnow().isoformat(),
                 order_type=order_result.get('order_type', 'MARKET'),
@@ -74,16 +95,142 @@ class EventEmitter:
             )
             event_service.emit_order_event(event)
             logger.debug(
-                "📡 이벤트 발송 완료: %s - %s %s %s",
+                "📡 이벤트 발송 완료: %s - %s %s %s (price=%s)",
                 event_type,
                 symbol,
                 side,
                 quantity,
+                price,
             )
+
+        except ValueError as exc:
+            # 가격 정보 누락 시 명시적 에러 처리
+            logger.error(
+                "❌ SSE 이벤트 발송 실패 - 가격 정보 누락\n"
+                "order_id=%s, type=%s, status=%s\n"
+                "에러: %s",
+                order_result.get('order_id'),
+                order_result.get('order_type'),
+                order_result.get('status'),
+                str(exc),
+            )
+            # Telegram 알림 (관리자 즉시 인지)
+            try:
+                from app.services.telegram_service import send_admin_alert
+                send_admin_alert(
+                    f"🚨 SSE 가격 데이터 누락\n"
+                    f"주문 ID: {order_result.get('order_id')}\n"
+                    f"타입: {order_result.get('order_type')}\n"
+                    f"에러: {str(exc)}"
+                )
+            except Exception:
+                pass  # Telegram 서비스 없어도 에러 로그는 남김
+            raise  # 에러 전파 (SSE 이벤트 발송 중단)
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("이벤트 발송 실패: %s", exc)
 
+    def _extract_display_price(self, order_result: Dict[str, object]) -> float:
+        """order_result에서 표시할 가격 추출
+
+        @FEAT:order-tracking @COMP:service @TYPE:core
+
+        Raises:
+            ValueError: 필수 가격 정보가 누락된 경우
+
+        Returns:
+            float: 표시할 가격
+        """
+        from decimal import Decimal, InvalidOperation
+
+        order_id = order_result.get('order_id')
+        order_type = order_result.get('order_type', 'UNKNOWN')
+        status = order_result.get('status', 'UNKNOWN')
+
+        # MARKET 미체결은 가격 미정 (정상 케이스)
+        if order_type == 'MARKET' and status in ['OPEN', 'NEW']:
+            return 0.0
+
+        # 1. 체결 가격 우선 (체결된 주문)
+        average_price = order_result.get('average_price')
+        if average_price is not None and average_price > 0:
+            try:
+                avg_decimal = Decimal(str(average_price))
+                if avg_decimal > 0:
+                    return float(avg_decimal)
+            except (ValueError, InvalidOperation, TypeError) as e:
+                raise ValueError(
+                    f"Invalid average_price format: {average_price}, "
+                    f"order_id={order_id}, error: {e}"
+                )
+
+        # 2. 미체결 주문: 타입별 필수 가격 정보
+        if order_type in ['LIMIT', 'STOP_LIMIT']:
+            price = order_result.get('price')
+            adjusted_price = order_result.get('adjusted_price')
+
+            # 명시적 우선순위: adjusted_price → price
+            if adjusted_price is not None and adjusted_price > 0:
+                try:
+                    price_decimal = Decimal(str(adjusted_price))
+                    if price_decimal > 0:
+                        return float(price_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid adjusted_price format: {adjusted_price}, "
+                        f"order_id={order_id}, error: {e}"
+                    )
+            elif price is not None and price > 0:
+                try:
+                    price_decimal = Decimal(str(price))
+                    if price_decimal > 0:
+                        return float(price_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid price format: {price}, "
+                        f"order_id={order_id}, error: {e}"
+                    )
+            else:
+                raise ValueError(
+                    f"{order_type} 주문(order_id={order_id})에 price가 없습니다. "
+                    f"status={status}, available_fields={list(order_result.keys())}"
+                )
+
+        elif order_type == 'STOP_MARKET':
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # 단일 소스 원칙: core.py Line 265에서 제공하는 stop_price 직접 사용
+            stop_price = order_result.get('stop_price')
+
+            if stop_price is not None and stop_price > 0:
+                try:
+                    stop_decimal = Decimal(str(stop_price))
+                    if stop_decimal > 0:
+                        return float(stop_decimal)
+                except (ValueError, InvalidOperation, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid stop_price format: {stop_price}, "
+                        f"order_id={order_id}, error={e}"
+                    )
+            else:
+                raise ValueError(
+                    f"STOP_MARKET 주문(order_id={order_id})에 stop_price가 없습니다. "
+                    f"status={status}, available_fields={list(order_result.keys())}"
+                )
+
+        # MARKET 체결된 경우인데 average_price가 없으면 에러
+        if order_type == 'MARKET':
+            raise ValueError(
+                f"MARKET 체결 주문(order_id={order_id})에 average_price가 없습니다. "
+                f"status={status}, available_fields={list(order_result.keys())}"
+            )
+
+        # 알 수 없는 주문 타입
+        raise ValueError(
+            f"알 수 없는 주문 타입: {order_type} (order_id={order_id}), "
+            f"available_fields={list(order_result.keys())}"
+        )
+
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:core
     def emit_order_events_smart(
         self,
         strategy: Strategy,
@@ -167,6 +314,7 @@ class EventEmitter:
                 event_quantity,
             )
 
+    # @FEAT:event-sse @FEAT:position-tracking @COMP:service @TYPE:integration
     def emit_position_event(
         self,
         strategy_account: StrategyAccount,
@@ -207,7 +355,7 @@ class EventEmitter:
             exchange_name = None
             if account:
                 account_payload = {
-                    'id': account.id,
+                    'account_id': account.id,  # Standardized field name (consistent with OrderEvent)
                     'name': account.name,
                     'exchange': account.exchange,
                 }
@@ -237,6 +385,7 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("포지션 이벤트 발송 실패: %s", exc)
 
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_order_cancelled_event(
         self,
         order_id: str,
@@ -246,12 +395,29 @@ class EventEmitter:
         """Emit the order cancelled notification."""
         try:
             from app.services.event_service import event_service, OrderEvent
-            from app.models import Account
+            from app.models import Account, OpenOrder
 
             # 계좌 정보 조회
             account = Account.query.get(account_id)
             if not account:
                 logger.warning("계좌를 찾을 수 없어 이벤트 발송 스킵: %s", account_id)
+                return
+
+            # OpenOrder에서 strategy_id 추출 시도
+            open_order = OpenOrder.query.filter_by(exchange_order_id=order_id).first()
+            strategy_id = 0
+
+            if open_order and open_order.strategy_account:
+                strategy_account = open_order.strategy_account
+                if strategy_account.strategy_id:
+                    strategy_id = strategy_account.strategy_id
+                    logger.debug(f"OpenOrder에서 strategy_id 추출: {strategy_id}")
+
+            # strategy_id 검증
+            if strategy_id <= 0:
+                logger.warning(
+                    f"OpenOrder {order_id}에 유효한 strategy_id 없음 - SSE 발송 스킵"
+                )
                 return
 
             # OrderEvent 객체 생성
@@ -261,7 +427,7 @@ class EventEmitter:
                 event_type='order_cancelled',
                 order_id=order_id,
                 symbol=symbol,
-                strategy_id=0,  # 취소 이벤트는 전략 ID 불필요
+                strategy_id=strategy_id,  # OpenOrder에서 추출한 strategy_id 사용
                 user_id=account.user_id,
                 side='',  # 취소 이벤트는 방향 불필요
                 quantity=0.0,
@@ -269,11 +435,86 @@ class EventEmitter:
                 status='CANCELED',
                 timestamp=datetime.utcnow().isoformat(),
                 order_type='',  # 취소 이벤트는 주문 타입 불필요
-                stop_price=None
+                stop_price=None,
+                account={  # Added missing account field
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
             )
 
             event_service.emit_order_event(order_event)
-            logger.info("✅ 주문 취소 이벤트 발송 완료: %s", order_id)
+            logger.info("✅ 주문 취소 이벤트 발송 완료: %s (전략: %s)", order_id, strategy_id)
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("주문 취소 이벤트 발송 실패: %s", exc)
+
+    # @FEAT:event-sse @FEAT:order-queue @COMP:service @TYPE:integration
+    def emit_pending_order_event(
+        self,
+        event_type: str,
+        pending_order,
+        user_id: int,
+    ) -> None:
+        """Emit pending order event via SSE.
+
+        Args:
+            event_type: 'order_created' (대기열 추가) or 'order_cancelled' (대기열 제거)
+            pending_order: PendingOrder 모델 인스턴스
+            user_id: 사용자 ID (전략 소유자)
+        """
+        try:
+            from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
+
+            # 계좌 정보 조회
+            account = Account.query.get(pending_order.account_id)
+            if not account:
+                logger.warning(
+                    "계좌를 찾을 수 없어 PendingOrder 이벤트 발송 스킵: %s",
+                    pending_order.account_id
+                )
+                return
+
+            # strategy_id 추출 (pending_order.strategy_account → strategy_id)
+            strategy_account = pending_order.strategy_account
+            if not strategy_account or not strategy_account.strategy_id:
+                logger.warning(
+                    f"PendingOrder {pending_order.id}에 strategy_account 또는 strategy_id 없음 - SSE 발송 스킵"
+                )
+                return
+
+            strategy_id = strategy_account.strategy_id
+
+            # OrderEvent 생성 (PendingOrder용)
+            order_event = OrderEvent(
+                event_type=event_type,
+                order_id=f'p_{pending_order.id}',  # PendingOrder는 'p_' prefix
+                symbol=pending_order.symbol,
+                strategy_id=strategy_id,  # pending_order.strategy_account.strategy_id 사용
+                user_id=user_id,
+                side=pending_order.side.upper(),
+                quantity=float(pending_order.quantity),
+                price=float(pending_order.price) if pending_order.price else 0.0,
+                status='PENDING_QUEUE',  # PendingOrder 상태
+                timestamp=datetime.utcnow().isoformat(),
+                order_type=pending_order.order_type,
+                stop_price=float(pending_order.stop_price) if pending_order.stop_price else None,
+                account={
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
+            )
+
+            event_service.emit_order_event(order_event)
+            logger.info(
+                "✅ PendingOrder 이벤트 발송 완료: %s - %s (ID: p_%s, 전략: %s)",
+                event_type,
+                pending_order.symbol,
+                pending_order.id,
+                strategy_id
+            )
+
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("PendingOrder 이벤트 발송 실패: %s", exc)

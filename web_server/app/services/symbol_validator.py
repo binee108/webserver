@@ -1,6 +1,8 @@
 """
 Symbol 제한사항 검증 서비스
 
+@FEAT:symbol-validation @COMP:service @TYPE:core
+
 거래소별 Symbol 제한사항(LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL 등)을
 메모리에 캐싱하고 고속으로 검증하는 서비스입니다.
 
@@ -18,22 +20,6 @@ from typing import Dict, Any, Optional, Tuple
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-try:
-    import schedule
-except ImportError:
-    # schedule이 없을 때를 위한 더미 클래스
-    class MockSchedule:
-        def every(self):
-            return self
-        def hour(self):
-            return self
-        def at(self, time):
-            return self
-        def do(self, func):
-            return self
-        def run_pending(self):
-            pass
-    schedule = MockSchedule()
 
 from app.models import Account
 from app.exchanges.models import MarketInfo
@@ -47,6 +33,7 @@ class SymbolValidationError(Exception):
     pass
 
 
+# @FEAT:symbol-validation @COMP:service @TYPE:core
 class SymbolValidator:
     """
     Symbol 제한사항 검증 서비스
@@ -63,65 +50,91 @@ class SymbolValidator:
         self.cache_last_updated: Dict[str, float] = {}
         self.cache_lock = threading.RLock()
         self.is_initialized = False
-        self.background_thread = None
 
         logger.info("✅ Symbol Validator 초기화 완료")
 
-    def start_background_updater(self):
-        """백그라운드 갱신 스케줄러 시작"""
-        if self.background_thread and self.background_thread.is_alive():
-            logger.warning("백그라운드 갱신이 이미 실행 중입니다")
-            return
+    # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:integration
+    def refresh_symbols_with_context(self, app):
+        """Flask app context와 함께 Symbol 정보 갱신 (APScheduler용)"""
+        with app.app_context():
+            self._refresh_all_symbols()
 
-        def background_worker():
-            """백그라운드 워커 스레드"""
-            # 매시 15분에 실행 (정각 회피)
-            schedule.every().hour.at(":15").do(self._refresh_all_symbols)
-
-            logger.info("🔄 백그라운드 Symbol 갱신 스케줄러 시작 (매시 15분)")
-
-            while True:
-                try:
-                    schedule.run_pending()
-                    time.sleep(60)  # 1분마다 스케줄 확인
-                except Exception as e:
-                    logger.error(f"백그라운드 갱신 중 오류: {e}")
-                    time.sleep(300)  # 오류 시 5분 대기
-
-        self.background_thread = threading.Thread(
-            target=background_worker,
-            daemon=True,
-            name="SymbolValidator-Background"
-        )
-        self.background_thread.start()
-
-        logger.info("✅ Symbol Validator 백그라운드 스케줄러 시작됨")
-
+    # @FEAT:symbol-validation @FEAT:exchange-integration @COMP:service @TYPE:core
     def load_initial_symbols(self):
-        """서비스 시작 시 모든 거래소 심볼 정보 필수 로드 (Public API 사용)"""
+        """
+        서비스 시작 시 모든 거래소 심볼 정보 필수 로드 (Public API)
+
+        WHY CryptoExchangeFactory 기반 동적 로딩:
+        - 하드코딩 제거: 새 거래소 추가 시 코드 수정 불필요
+        - 메타데이터 활용: ExchangeMetadata의 supported_markets로 market_type 자동 필터링
+        - 확장성: 모든 거래소를 동일한 방식으로 처리
+
+        변경 내역 (2025-10-13):
+        - 기존: _load_binance_public_symbols() 하드코딩
+        - 현재: crypto_factory.SUPPORTED_EXCHANGES 순회 + metadata 기반 필터링
+        """
         try:
+            from app.exchanges.crypto.factory import crypto_factory
+            from app.exchanges.metadata import ExchangeMetadata
+
             logger.info("🔄 거래소 심볼 정보 로드 시작 (Public API)")
 
             # 로드 전 캐시 상태 확인
             logger.info(f"📊 로드 전 캐시 상태: {len(self.market_info_cache)}개 심볼")
 
-            # Binance public API로 심볼 정보 로드
-            success_count = self._load_binance_public_symbols()
+            success_count = 0
 
-            # 추후 다른 거래소 추가
-            # success_count += self._load_bybit_public_symbols()
-            # success_count += self._load_okx_public_symbols()
+            # ⭐ 기존 CryptoExchangeFactory 활용하여 모든 거래소 순회
+            for exchange_name in crypto_factory.SUPPORTED_EXCHANGES:
+                metadata = ExchangeMetadata.get_metadata(exchange_name)
+                supported_markets = metadata.get('supported_markets', [])
+
+                if not supported_markets:
+                    logger.warning(f"⚠️ {exchange_name}: 지원하는 market_type 없음 (스킵)")
+                    continue
+
+                try:
+                    # Public API 사용 (API 키 불필요)
+                    exchange = crypto_factory.create(exchange_name, '', '', testnet=False)
+
+                    for market_type in supported_markets:
+                        try:
+                            logger.info(f"🔄 {exchange_name.upper()} {market_type.value.upper()} 심볼 정보 로드 중...")
+                            markets = exchange.load_markets_impl(market_type.value, reload=True)
+
+                            with self.cache_lock:
+                                for symbol, market_info in markets.items():
+                                    cache_key = f"{exchange_name.upper()}_{symbol}_{market_type.value.upper()}"
+                                    self.market_info_cache[cache_key] = market_info
+                                    self.cache_last_updated[cache_key] = time.time()
+                                    success_count += 1
+
+                            logger.info(f"✅ {exchange_name.upper()} {market_type.value.upper()} 심볼 로드: {len(markets)}개")
+
+                        except Exception as e:
+                            logger.error(f"❌ {exchange_name.upper()} {market_type.value.upper()} 심볼 로드 실패: {e}")
+
+                except Exception as e:
+                    logger.error(f"❌ {exchange_name} 거래소 인스턴스 생성 실패: {e}")
 
             # 로드 후 캐시 상태 확인
             logger.info(f"📊 로드 후 캐시 상태: {len(self.market_info_cache)}개 심볼")
 
-            # 중요한 심볼 확인 (BTCUSDT FUTURES)
+            # 중요한 심볼 확인 (BTCUSDT FUTURES, BTC/KRW SPOT)
             btc_futures_key = "BINANCE_BTCUSDT_FUTURES"
+            btc_krw_spot_key = "UPBIT_BTC/KRW_SPOT"
+
             if btc_futures_key in self.market_info_cache:
                 market_info = self.market_info_cache[btc_futures_key]
-                logger.info(f"🔍 BTCUSDT FUTURES 정보 확인: min_qty={market_info.min_qty}, step_size={market_info.step_size}, min_notional={market_info.min_notional}")
+                logger.info(f"🔍 BTCUSDT FUTURES 정보 확인: min_qty={market_info.min_qty}, min_notional={market_info.min_notional}")
             else:
                 logger.warning(f"⚠️ BTCUSDT FUTURES 정보를 찾을 수 없음: {btc_futures_key}")
+
+            if btc_krw_spot_key in self.market_info_cache:
+                market_info = self.market_info_cache[btc_krw_spot_key]
+                logger.info(f"🔍 BTC/KRW SPOT 정보 확인: min_qty={market_info.min_qty}, min_notional={market_info.min_notional}")
+            else:
+                logger.warning(f"⚠️ BTC/KRW SPOT 정보를 찾을 수 없음: {btc_krw_spot_key}")
 
             if not self.market_info_cache:
                 error_msg = "심볼 정보를 로드할 수 없습니다 - 거래 불가"
@@ -136,97 +149,70 @@ class SymbolValidator:
             logger.error(f"❌ 거래소 심볼 로드 실패: {e}")
             raise Exception(f"거래소 심볼 정보를 로드할 수 없어 서비스를 시작할 수 없습니다: {e}")
 
-    def _load_binance_public_symbols(self) -> int:
-        """Binance public API로 심볼 정보 로드 (계정 불필요)"""
-        try:
-            from app.exchanges.binance import BinanceExchange
-
-            # API 키 없이 public 엔드포인트 사용
-            exchange = BinanceExchange(
-                api_key='',  # public API는 키 불필요
-                api_secret='',
-                testnet=False
-            )
-
-            loaded_count = 0
-
-            # Spot과 Futures 모두 로드
-            for market_type in ['spot', 'futures']:
-                try:
-                    logger.info(f"🔄 Binance {market_type.upper()} 심볼 정보 로드 중...")
-                    markets = exchange.load_markets(market_type, reload=True)
-
-                    with self.cache_lock:
-                        for symbol, market_info in markets.items():
-                            cache_key = f"BINANCE_{symbol}_{market_type.upper()}"
-                            self.market_info_cache[cache_key] = market_info
-                            self.cache_last_updated[cache_key] = time.time()
-                            loaded_count += 1
-
-                    logger.info(f"✅ Binance {market_type.upper()} 심볼 로드: {len(markets)}개")
-
-                except Exception as e:
-                    logger.error(f"❌ Binance {market_type.upper()} 심볼 로드 실패: {e}")
-
-            return loaded_count
-
-        except Exception as e:
-            logger.error(f"❌ Binance Symbol 로드 실패: {e}")
-            return 0
-
-    def _load_binance_symbols(self, account: Account) -> int:
-        """Binance Symbol 정보 로드"""
-        try:
-            from app.exchanges.binance import BinanceExchange
-
-            exchange = BinanceExchange(
-                api_key=account.api_key,
-                api_secret=account.api_secret,
-                testnet=account.is_testnet
-            )
-
-            loaded_count = 0
-
-            # Spot과 Futures 모두 로드
-            for market_type in ['spot', 'futures']:
-                try:
-                    markets = exchange.load_markets(market_type, reload=True)
-
-                    with self.cache_lock:
-                        for symbol, market_info in markets.items():
-                            cache_key = f"BINANCE_{symbol}_{market_type.upper()}"
-                            self.market_info_cache[cache_key] = market_info
-                            self.cache_last_updated[cache_key] = time.time()
-                            loaded_count += 1
-
-                    logger.info(f"Binance {market_type} Symbol 로드: {len(markets)}개")
-
-                except Exception as e:
-                    logger.error(f"Binance {market_type} Symbol 로드 실패: {e}")
-
-            return loaded_count
-
-        except Exception as e:
-            logger.error(f"Binance Symbol 로드 실패: {e}")
-            return 0
-
-
+    # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:helper
     def _refresh_all_symbols(self):
-        """모든 Symbol 정보 갱신 (백그라운드 작업)"""
+        """
+        모든 Symbol 정보 갱신 (백그라운드 작업)
+
+        WHY 메타데이터 기반 필터링:
+        - 거래소별 지원 market_type 자동 감지
+        - Upbit SPOT 전용, Binance SPOT/FUTURES 모두 지원
+        - "Upbit은 Futures 지원하지 않음" 에러 제거
+
+        변경 내역 (2025-10-13):
+        - 기존: 하드코딩된 market_type 순회
+        - 현재: ExchangeMetadata.supported_markets 기반 필터링
+        """
         try:
+            from app.exchanges.crypto.factory import crypto_factory
+            from app.exchanges.metadata import ExchangeMetadata
+            from app.models import Account
+
             logger.info("🔄 백그라운드 Symbol 정보 갱신 시작")
             refresh_start_time = time.time()
 
-            from app.models import Account
             accounts = Account.query.filter_by(is_active=True).all()
+
+            # 거래소별 계좌 그룹화 (첫 번째 활성 계좌만 사용)
+            exchange_accounts = {}
+            for account in accounts:
+                exchange_name = account.exchange.lower()
+                if exchange_name not in exchange_accounts and exchange_name in crypto_factory.SUPPORTED_EXCHANGES:
+                    exchange_accounts[exchange_name] = account
 
             total_refreshed = 0
 
-            for account in accounts:
-                if account.exchange == 'BINANCE':
-                    refreshed = self._load_binance_symbols(account)
-                    total_refreshed += refreshed
-                # 추후 다른 거래소 추가
+            # ⭐ 기존 CryptoExchangeFactory 활용
+            for exchange_name, account in exchange_accounts.items():
+                metadata = ExchangeMetadata.get_metadata(exchange_name)
+                supported_markets = metadata.get('supported_markets', [])
+
+                try:
+                    exchange = crypto_factory.create(
+                        exchange_name,
+                        account.api_key,
+                        account.api_secret,
+                        account.is_testnet
+                    )
+
+                    for market_type in supported_markets:
+                        try:
+                            markets = exchange.load_markets_impl(market_type.value, reload=True)
+
+                            with self.cache_lock:
+                                for symbol, market_info in markets.items():
+                                    cache_key = f"{exchange_name.upper()}_{symbol}_{market_type.value.upper()}"
+                                    self.market_info_cache[cache_key] = market_info
+                                    self.cache_last_updated[cache_key] = time.time()
+                                    total_refreshed += 1
+
+                            logger.info(f"{exchange_name.upper()} {market_type.value} Symbol 로드: {len(markets)}개")
+
+                        except Exception as e:
+                            logger.error(f"{exchange_name.upper()} {market_type.value} Symbol 로드 실패: {e}")
+
+                except Exception as e:
+                    logger.error(f"{exchange_name} Symbol 갱신 실패: {e}")
 
             refresh_duration = time.time() - refresh_start_time
 
@@ -236,6 +222,7 @@ class SymbolValidator:
         except Exception as e:
             logger.error(f"백그라운드 Symbol 갱신 실패: {e}")
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:helper
     def get_market_info(self, exchange: str, symbol: str, market_type: str) -> Optional[MarketInfo]:
         """메모리에서 MarketInfo 조회 (네트워크 요청 없음)"""
         cache_key = f"{exchange.upper()}_{symbol.upper()}_{market_type.upper()}"
@@ -243,6 +230,7 @@ class SymbolValidator:
         with self.cache_lock:
             return self.market_info_cache.get(cache_key)
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def validate_order_params(self, exchange: str, symbol: str, market_type: str,
                             quantity: Decimal, price: Optional[Decimal] = None) -> Dict[str, Any]:
         """
@@ -321,6 +309,7 @@ class SymbolValidator:
                 'error_type': 'validation_error'
             }
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def _validate_and_adjust_quantity(self, market_info: MarketInfo, quantity: Decimal) -> Dict[str, Any]:
         """수량 검증 및 조정"""
         try:
@@ -373,6 +362,7 @@ class SymbolValidator:
                 'error_type': 'quantity_adjustment_error'
             }
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:validation
     def _validate_and_adjust_price(self, market_info: MarketInfo, price: Optional[Decimal]) -> Dict[str, Any]:
         """가격 검증 및 조정"""
         try:
@@ -423,13 +413,13 @@ class SymbolValidator:
             }
 
 
+    # @FEAT:symbol-validation @COMP:service @TYPE:helper
     def get_cache_stats(self) -> Dict[str, Any]:
         """캐시 통계 조회"""
         with self.cache_lock:
             return {
                 'total_symbols': len(self.market_info_cache),
                 'is_initialized': self.is_initialized,
-                'background_thread_alive': self.background_thread and self.background_thread.is_alive(),
                 'cache_keys': list(self.market_info_cache.keys())[:10]  # 처음 10개만
             }
 

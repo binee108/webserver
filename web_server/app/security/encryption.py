@@ -1,3 +1,4 @@
+# @FEAT:framework @COMP:util @TYPE:helper
 """Helper utilities for encrypting and decrypting sensitive account credentials."""
 
 from __future__ import annotations

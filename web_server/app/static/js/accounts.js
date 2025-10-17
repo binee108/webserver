@@ -1,3 +1,4 @@
+// @FEAT:account-management @COMP:route @TYPE:core
 'use strict';
 
 (function (window, document) {
@@ -342,7 +343,21 @@
         }
     }
 
+    // @FEAT:account-management @COMP:route @TYPE:core
     async function submitAccount(event) {
+        /**
+         * 계좌 추가/수정 폼 제출 핸들러
+         *
+         * Phase 2 수정 (2025-10-13):
+         * - 계좌 수정 시 변경되지 않은 API 키 필드를 요청에서 제외
+         * - 백엔드의 불필요한 캐시 무효화 방지
+         *
+         * Edge Cases:
+         * - 새 계좌 추가: 모든 API 키 필드 필수
+         * - 계좌 수정: 빈 문자열/null인 필드는 요청에 포함하지 않음
+         *
+         * Related Issue: Variable Shadowing 버그 수정 (Phase 1)
+         */
         event.preventDefault();
 
         const form = document.getElementById('accountForm');
@@ -360,14 +375,20 @@
         const payload = {
             name: formData.get('name'),
             exchange: formData.get('exchange'),
-            public_api: formData.get('public_api'),
             is_testnet: formData.get('is_testnet') === 'on',
         };
 
         if (!accountId) {
+            // 새 계좌 추가: 모든 API 키 필수
+            payload.public_api = formData.get('public_api');
             payload.secret_api = apiSecret;
             payload.passphrase = passphrase || '';
         } else {
+            // 계좌 수정: 변경된 필드만 포함 (Phase 2 개선)
+            const publicApi = formData.get('public_api');
+            if (publicApi && publicApi.toString().trim() !== '') {
+                payload.public_api = publicApi;
+            }
             if (apiSecret && apiSecret.toString().trim() !== '') {
                 payload.secret_api = apiSecret;
             }

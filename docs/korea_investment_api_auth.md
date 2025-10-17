@@ -1,243 +1,257 @@
 # 한국투자증권 API - 인증 및 공통
 
-## 1. OAuth2 토큰 발급
+## 개요
 
-### 접근토큰 발급(P)
-- **Endpoint**: `POST /oauth2/tokenP`
-- **용도**: API 사용을 위한 액세스 토큰 발급
+한국투자증권 오픈 API를 사용하기 위해서는 보안 인증 절차를 통해 접근 토큰(Access Token) 또는 접속키(Approval Key)를 발급받아야 합니다. 이 문서에서는 API 호출의 가장 기본이 되는 인증 및 공통 기능에 대해 설명합니다.
 
-#### 요청
+  - **REST API 방식**: `접근토큰`을 발급받아 API를 호출합니다.
+  - **WebSocket API 방식**: `접근토큰` 발급 없이 `접속키`를 발급받아 실시간 통신에 사용합니다.
+
+-----
+
+## 1\. 접근토큰 발급 (OAuth 2.0)
+
+계좌 거래 및 시세 조회를 위한 REST API를 사용하기 위해 OAuth 2.0 기반의 접근토큰을 발급받습니다.
+
+### 기본 정보
+
+| 항목 | 내용 |
+| :--- | :--- |
+| **Method** | `POST` |
+| **URI** | `/oauth2/tokenP` |
+| **API코드** | `[인증-001]` |
+| **Content-Type**| `application/json` |
+| **Domain** | **실전투자**: `https://openapi.koreainvestment.com:9443` <br> **모의투자**: `https://openapivts.koreainvestment.com:29443`|
+
+### 요청 (Request)
+
+#### Header
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `content-type` | String | Y | 30 | `application/json` |
+
+#### Body
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `grant_type` | String | Y | 20 | `client_credentials` (고정값) |
+| `appkey` | String | Y | 256 | 서비스 신청 시 발급받은 App Key |
+| `appsecret` | String | Y | 256 | 서비스 신청 시 발급받은 App Secret |
+
+##### 예시 (Request Body)
+
 ```json
 {
-  "grant_type": "client_credentials",
-  "appkey": "{발급받은_APP_KEY}",
-  "appsecret": "{발급받은_APP_SECRET}"
+    "grant_type": "client_credentials",
+    "appkey": "발급받은 App Key",
+    "appsecret": "발급받은 App Secret"
 }
 ```
 
-#### 응답
+### 응답 (Response)
+
+#### Body
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `access_token` | String | Y | 450 | 접근토큰 값 |
+| `token_type` | String | Y | 20 | `Bearer` (고정값) |
+| `expires_in` | Number | Y | 10 | 접근토큰 유효기간 (초) |
+| `access_token_token_expired` | String | Y | 20 | 접근토큰 만료일시 (YYYY-MM-DD hh:mm:ss) |
+| `msg_cd` | String | Y | 3 | 응답코드 (성공: `O0001`, 실패: `E0002` 등) |
+| `msg1` | String | Y | 100 | 응답메시지 |
+
+##### 예시 (Response Body)
+
 ```json
 {
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "access_token_token_expired": "2024-10-03 12:30:45",
-  "token_type": "Bearer",
-  "expires_in": 86400
+    "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9...",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "access_token_token_expired": "2025-10-05 12:30:00",
+    "msg_cd": "O0001",
+    "msg1": "SUCCESS"
 }
 ```
 
-#### 주요 정보
-- **유효기간**: 24시간
-- **재발급 조건**: 6시간 경과 후 재발급 가능 (6시간 내 요청 시 동일 토큰 반환)
-- **Rate Limit**: 5분당 1회 (2023-10-27 기준)
-- **사용법**: HTTP Header에 `Authorization: Bearer {access_token}` 추가
+**※ 참고 사항**
 
----
+  * 접근토큰의 유효기간은 **24시간**입니다. (1일 1회 발급 원칙)
+  * 갱신 발급 주기는 **6시간**입니다. (6시간 이내 재요청 시 기존 발급 토큰으로 응답)
+  * 발급된 접근토큰은 이후 모든 REST API 요청 시 **Header**의 `authorization` 항목에 `Bearer {ACCESS_TOKEN}` 형식으로 담아 전송해야 합니다.
 
-## 2. HashKey 생성
+-----
 
-### Hashkey 생성
-- **Endpoint**: `POST /uapi/hashkey`
-- **용도**: POST 방식 주문 API 호출 시 보안 검증용 해시값 생성
+## 2\. 접근토큰 폐기
 
-#### 요청 Header
-```
-Authorization: Bearer {access_token}
-appkey: {APP_KEY}
-appsecret: {APP_SECRET}
-```
+발급받은 접근토큰을 강제로 만료시킵니다.
 
-#### 요청 Body
+### 기본 정보
+
+| 항목 | 내용 |
+| :--- | :--- |
+| **Method** | `POST` |
+| **URI** | `/oauth2/revokeP` |
+| **API코드** | `[인증-002]` |
+| **Content-Type**| `application/json` |
+| **Domain** | **실전투자**: `https://openapi.koreainvestment.com:9443` <br> **모의투자**: `https://openapivts.koreainvestment.com:29443`|
+
+### 요청 (Request)
+
+#### Header
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `content-type` | String | Y | 30 | `application/json` |
+
+#### Body
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `appkey` | String | Y | 256 | 서비스 신청 시 발급받은 App Key |
+| `appsecret` | String | Y | 256 | 서비스 신청 시 발급받은 App Secret |
+| `token` | String | Y | 450 | 폐기할 접근토큰 |
+
+##### 예시 (Request Body)
+
 ```json
 {
-  "CANO": "12345678",
-  "ACNT_PRDT_CD": "01",
-  "PDNO": "005930",
-  "ORD_DVSN": "00",
-  "ORD_QTY": "10",
-  "ORD_UNPR": "70000"
-}
-```
-*주문 시 전송할 JSON 데이터를 그대로 전송*
-
-#### 응답
-```json
-{
-  "HASH": "3a8f9c2e1b4d7a5e9c8f2b1d4a7e5c9f8b2e1d4a"
-}
-```
-
-#### 사용법
-- 주문/정정/취소 등 POST 요청 시 Header에 `hashkey: {HASH}` 추가
-- **주의**: GET 요청에는 불필요
-
----
-
-## 3. 웹소켓 접속키
-
-### 실시간(웹소켓) 접속키 발급
-- **Endpoint**: `POST /oauth2/Approval`
-- **용도**: 웹소켓 실시간 시세 연결용 승인키
-
-#### 요청
-```json
-{
-  "grant_type": "client_credentials",
-  "appkey": "{APP_KEY}",
-  "secretkey": "{APP_SECRET}"
+    "appkey": "발급받은 App Key",
+    "appsecret": "발급받은 App Secret",
+    "token": "폐기할 접근토큰 값"
 }
 ```
 
-#### 응답
+### 응답 (Response)
+
+#### Body
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `msg_cd` | String | Y | 3 | 응답코드 |
+| `msg1` | String | Y | 100 | 응답메시지 |
+
+##### 예시 (Response Body)
+
 ```json
 {
-  "approval_key": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6"
+    "msg_cd": "O0013",
+    "msg1": "Token Revoke is Success"
 }
 ```
 
-#### 주요 정보
-- **유효기간**: 60초 (발급 후 60초 내 웹소켓 연결 필요)
-- **사용법**: 웹소켓 연결 시 헤더에 포함
-- **갱신**: 연결 후 주기적 갱신 필요
+-----
 
----
+## 3\. Hashkey 생성
 
-## 4. 공통 요청 구조
+주문, 예약주문 등 중요 데이터의 위변조 방지를 위해 API 요청 시 Hashkey를 생성하여 사용합니다.
 
-### HTTP Header (필수)
-```
-Authorization: Bearer {access_token}
-Content-Type: application/json; charset=utf-8
-appkey: {APP_KEY}
-appsecret: {APP_SECRET}
-tr_id: {거래ID}
-```
+### 생성 규칙
 
-### HTTP Header (POST 요청 시 추가)
-```
-hashkey: {생성된_HASH}
-```
+`SHA256` 알고리즘을 사용하여 요청 메시지의 주요 항목들을 조합한 문자열을 해시화합니다.
 
-### 거래ID(tr_id) 예시
-| API | 매수 tr_id | 매도 tr_id |
-|-----|-----------|-----------|
-| 국내주식 현금주문 | TTTC0802U | TTTC0801U |
-| 국내주식 신용주문 | TTTC0852U | TTTC0851U |
-| 해외주식 주문 (미국) | TTTS1002U | TTTS1001U |
-| 주식현재가 | FHKST01010100 | - |
-| 주식잔고조회 | TTTC8434R | - |
+### 생성 절차
 
-*실전투자와 모의투자는 tr_id가 다름 (실전: T, 모의: V)*
+1.  API 요청 Body의 모든 `Key:Value`를 문자열로 조합합니다.
+2.  이 문자열을 `App Key`, `App Secret`, `요청 URL`과 함께 조합합니다.
+3.  조합된 최종 문자열을 `SHA256`으로 해시하여 `Base64`로 인코딩합니다.
 
----
+### 요청 예시 (국내주식주문)
 
-## 5. 공통 응답 구조
+#### Request Body
 
-### 성공 응답
 ```json
 {
-  "rt_cd": "0",
-  "msg_cd": "MCA00000",
-  "msg1": "정상처리 되었습니다",
-  "output": {
-    // API별 상이한 응답 데이터
-  },
-  "output1": [
-    // API별 배열 데이터 (선택)
-  ],
-  "output2": {
-    // API별 추가 데이터 (선택)
-  }
+    "CANO": "계좌번호 앞 8자리",
+    "ACNT_PRDT_CD": "계좌번호 뒤 2자리",
+    "PDNO": "005930",
+    "ORD_DVSN": "01",
+    "ORD_QTY": "10",
+    "ORD_UNPR": "80000"
 }
 ```
 
-### 실패 응답
+#### Hashkey 생성 절차 (의사 코드)
+
+```
+// 1. 요청 데이터를 문자열로 조합
+request_data = "CANO=계좌번호 앞 8자리|ACNT_PRDT_CD=계좌번호 뒤 2자리|PDNO=005930|ORD_DVSN=01|ORD_QTY=10|ORD_UNPR=80000"
+
+// 2. 최종 문자열 생성
+data_to_hash = APP_KEY + "|" + APP_SECRET + "|" + request_data
+
+// 3. SHA256 해시 및 Base64 인코딩
+hashkey = base64_encode(sha256(data_to_hash))
+```
+
+  * 생성된 Hashkey는 API 요청 시 **Header**의 `hashkey` 항목에 담아 전송합니다.
+
+-----
+
+## 4\. 실시간 접속키 발급 (WebSocket)
+
+시세, 체결 등의 데이터를 실시간으로 수신하기 위한 웹소켓 접속키(approval\_key)를 발급받습니다.
+
+### 기본 정보
+
+| 항목 | 내용 |
+| :--- | :--- |
+| **Method** | `POST` |
+| **URI** | `/oauth2/Approval` |
+| **API코드** | `[실시간-000]` |
+| **Content-Type**| `application/json` |
+| **Domain** | **실전투자**: `https://openapi.koreainvestment.com:9443` <br> **모의투자**: `https://openapivts.koreainvestment.com:29443`|
+
+### 요청 (Request)
+
+#### Header
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `content-type` | String | Y | 30 | `application/json` |
+
+#### Body
+
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `grant_type` | String | Y | 20 | `client_credentials` (고정값) |
+| `appkey` | String | Y | 256 | 서비스 신청 시 발급받은 App Key |
+| `secretkey` | String | Y | 256 | 서비스 신청 시 발급받은 App Secret |
+
+##### 예시 (Request Body)
+
 ```json
 {
-  "rt_cd": "1",
-  "msg_cd": "EGW00123",
-  "msg1": "해당 종목은 거래정지 종목입니다"
+    "grant_type": "client_credentials",
+    "appkey": "발급받은 App Key",
+    "secretkey": "발급받은 App Secret"
 }
 ```
 
-### 응답 코드
-- `rt_cd`: "0" (성공), "1" (실패)
-- `msg_cd`: 상세 에러 코드
-- `msg1`: 사용자 표시 메시지
+### 응답 (Response)
 
----
+#### Body
 
-## 6. 웹소켓 구조
+| 항목 | 타입 | 필수 여부 | 길이 | 설명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `approval_key` | String | Y | 450 | 웹소켓 접속키 |
+| `msg_cd` | String | Y | 3 | 응답코드 |
+| `msg1` | String | Y | 100 | 응답메시지 |
 
-### 연결 정보
-- **URL**: `wss://ops.koreainvestment.com:21000` (실전)
-- **URL**: `wss://ops.koreainvestment.com:31000` (모의)
-- **프로토콜**: WSS (WebSocket Secure)
+##### 예시 (Response Body)
 
-### 구독 요청 메시지
 ```json
 {
-  "header": {
-    "approval_key": "{승인키}",
-    "custtype": "P",
-    "tr_type": "1",
-    "content-type": "utf-8"
-  },
-  "body": {
-    "input": {
-      "tr_id": "H0STCNT0",
-      "tr_key": "005930"
-    }
-  }
+    "approval_key": "4a71...9f-4f72-9b0f-d23...",
+    "msg_cd": "O0001",
+    "msg1": "SUCCESS"
 }
 ```
 
-### tr_type
-- `"1"`: 등록 (구독)
-- `"2"`: 해제 (구독 취소)
+**※ 참고 사항**
 
----
-
-## 7. 크립토 거래소 vs 한국투자증권 비교
-
-| 구분 | 크립토 거래소 | 한국투자증권 |
-|-----|-------------|------------|
-| **인증** | API Key/Secret 직접 사용 | OAuth2 토큰 (24시간) |
-| **보안** | HMAC Signature | HashKey + OAuth2 |
-| **웹소켓 인증** | API Key 직접 전송 | Approval Key (60초) |
-| **토큰 갱신** | 불필요 | 6시간마다 권장 |
-| **거래ID** | 없음 | API별 고유 tr_id |
-| **계좌 구분** | 단일 API Key | CANO + ACNT_PRDT_CD |
-
----
-
-## 8. 구현 시 핵심 사항
-
-### 인증 플로우
-```
-1. OAuth2 토큰 발급 (/oauth2/tokenP)
-   └─> 24시간 유효, 메모리/DB 캐싱
-
-2. [POST 요청 시] HashKey 생성 (/uapi/hashkey)
-   └─> 요청 Body로 해시 생성
-
-3. API 호출
-   └─> Header에 토큰 + hashkey 포함
-
-4. [실시간 필요 시] Approval Key 발급 (/oauth2/Approval)
-   └─> 60초 내 웹소켓 연결
-```
-
-### 토큰 관리 전략
-1. **자동 갱신**: 토큰 만료 6시간 전 재발급
-2. **에러 처리**: 401 에러 시 자동 재발급 후 재시도
-3. **환경 분리**: 실전/모의 토큰 별도 관리
-
-### HashKey 처리
-1. **매 요청 생성**: POST 요청마다 새로 생성
-2. **캐싱 불필요**: 재사용 불가
-3. **에러 처리**: 해시 불일치 시 재생성 후 재시도
-
-### 계좌번호 처리
-- **CANO**: 종합계좌번호 앞 8자리
-- **ACNT_PRDT_CD**: 계좌상품코드 뒤 2자리
-- 예: `12345678-01` → CANO=`12345678`, ACNT_PRDT_CD=`01`
+  * 발급된 `approval_key`는 웹소켓 접속 시 사용되며, 유효기간은 없습니다.
+  * 웹소켓 접속 주소
+      * **실전투자**: `ws://ops.koreainvestment.com:21000`
+      * **모의투자**: `ws://ops.koreainvestment.com:31000`

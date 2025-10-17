@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:crypto-implementation
 """
 Upbit 통합 API 구현 (Spot 전용)
 
@@ -15,12 +16,14 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlencode
 
+import asyncio
 import aiohttp
 import jwt
 import requests
 
-from .base import BaseExchange, ExchangeError, InvalidOrder
-from .models import MarketInfo, Balance, Order, PriceQuote
+from .base import BaseCryptoExchange
+from app.exchanges.base import ExchangeError, InvalidOrder
+from app.exchanges.models import MarketInfo, Balance, Order, PriceQuote
 from app.utils.symbol_utils import to_upbit_format, from_upbit_format, parse_symbol
 
 logger = logging.getLogger(__name__)
@@ -49,23 +52,8 @@ class UpbitEndpoints:
     ORDERS_OPEN = f"/{API_VERSION}/orders/open"  # 미체결 주문 조회
     ORDER_CANCEL = f"/{API_VERSION}/order"  # 주문 취소
 
-# 주문 관련 상수
-class OrderType:
-    MARKET = "market"  # 시장가
-    LIMIT = "limit"    # 지정가
 
-class OrderSide:
-    BID = "bid"   # 매수
-    ASK = "ask"   # 매도
-
-class OrderStatus:
-    WAIT = "wait"        # 미체결
-    WATCH = "watch"      # 예약 주문
-    DONE = "done"        # 전체 체결
-    CANCEL = "cancel"    # 주문 취소
-
-
-class UpbitExchange(BaseExchange):
+class UpbitExchange(BaseCryptoExchange):
     """
     Upbit 거래소 클래스 (Spot 전용)
 
@@ -77,13 +65,12 @@ class UpbitExchange(BaseExchange):
     """
 
     def __init__(self, api_key: str, api_secret: str, testnet: bool = False):
-        super().__init__()
-
         if testnet:
             raise ValueError("Upbit does not support testnet")
 
-        self.api_key = api_key
-        self.api_secret = api_secret
+        # BaseCryptoExchange.__init__이 api_key, secret, testnet 속성을 설정함
+        super().__init__(api_key, api_secret, testnet)
+
         self.base_url = BASE_URL
 
         # 캐시
@@ -267,15 +254,22 @@ class UpbitExchange(BaseExchange):
 
             markets[standard_symbol] = MarketInfo(
                 symbol=standard_symbol,
+                base_asset=coin,
+                quote_asset=currency,
+                status='TRADING',
+                active=True,
                 amount_precision=8,  # Upbit 기본 수량 정밀도
                 price_precision=0,   # KRW는 소수점 없음
+                base_precision=8,
+                quote_precision=0,
                 min_qty=Decimal('0.00000001'),
-                max_qty=None,
+                max_qty=Decimal('9999999999'),
                 step_size=Decimal('0.00000001'),
+                min_price=Decimal('1'),
+                max_price=Decimal('9999999999'),
                 tick_size=Decimal('1'),
                 min_notional=Decimal('5000'),  # Upbit 최소 주문금액
-                market_type='SPOT',
-                raw=market_info
+                market_type='SPOT'
             )
 
         # 캐시 업데이트
@@ -291,23 +285,18 @@ class UpbitExchange(BaseExchange):
         if market_type.lower() != 'spot':
             raise ValueError("Upbit은 Spot 거래만 지원합니다")
 
-        # 심볼을 Upbit 마켓 코드로 변환 (BTCKRW → KRW-BTC)
+        # 심볼을 Upbit 마켓 코드로 변환
         markets = []
         if symbols:
-            for symbol in symbols:
-                # BTCKRW → KRW-BTC
-                base = symbol[:-3]  # BTC
-                quote = symbol[-3:]  # KRW
-                if quote == 'KRW':
-                    markets.append(f"{quote}-{base}")
+            for symbol in symbols:  # symbol = "BTC/KRW" (표준 형식)
+                upbit_market = to_upbit_format(symbol)  # "KRW-BTC"
+                markets.append(upbit_market)
         else:
             # 전체 마켓 조회
             all_markets = self.load_markets_impl(market_type)
-            for symbol in all_markets.keys():
-                base = symbol[:-3]
-                quote = symbol[-3:]
-                if quote == 'KRW':
-                    markets.append(f"{quote}-{base}")
+            for symbol in all_markets.keys():  # symbol = "BTC/KRW"
+                upbit_market = to_upbit_format(symbol)  # "KRW-BTC"
+                markets.append(upbit_market)
 
         if not markets:
             return {}
@@ -321,7 +310,7 @@ class UpbitExchange(BaseExchange):
             logger.error(f"Upbit 가격 조회 실패: error={e}")
             return {}
 
-        timestamp = datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        timestamp = datetime.utcnow()
         quotes: Dict[str, PriceQuote] = {}
 
         for item in response:
@@ -532,6 +521,59 @@ class UpbitExchange(BaseExchange):
             cost=cost
         )
 
+    # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
+    def _to_order_dict(self, order_obj: Order) -> Dict[str, Any]:
+        """
+        Order 객체를 프로젝트 표준 필드명을 가진 dict로 변환.
+
+        **목적**: 거래소 계층에서 필드명 정규화 (단일 소스 원칙)
+        - Order 모델의 'type' (소문자) → 프로젝트 표준 'order_type' (대문자)
+        - Binance와 동일 패턴 적용
+
+        **CLAUDE.md 준수**:
+        - 단일 소스: 거래소 계층에서 한 번만 정규화
+        - 계층 책임: Exchange = 데이터 정규화 / EventEmitter = SSE 발송만
+        - 확장성: 다른 거래소에도 동일 메서드 추가
+
+        Args:
+            order_obj (Order): _parse_order가 반환한 Order 객체
+
+        Returns:
+            Dict[str, Any]: 프로젝트 표준 필드명을 가진 dict
+                - 'type': 원본 필드 유지 (하위 호환성)
+                - 'order_type': 대문자 변환된 필드 추가 (프로젝트 표준)
+
+        Examples:
+            >>> order_obj = Order(type='limit', ...)
+            >>> result = self._to_order_dict(order_obj)
+            >>> result['order_type']
+            'LIMIT'
+            >>> result['type']  # 원본 필드도 유지
+            'limit'
+        """
+        # vars()로 Order 객체의 속성을 dict로 변환
+        order_dict = vars(order_obj).copy()
+
+        # type → order_type 정규화 (None/빈 문자열 안전 처리)
+        if order_dict.get('type'):
+            order_dict['order_type'] = order_dict['type'].upper()
+        else:
+            # 방어 코드: type 필드 누락 시 로그 (실제로는 발생 안 함)
+            logger.error(
+                f"⚠️ Order 객체에 type 필드 누락 - order_id={order_obj.id}"
+            )
+            order_dict['order_type'] = 'UNKNOWN'
+
+        # stop_price 이상 케이스 감지 (Upbit은 스탑 주문 미지원이므로 사실상 불필요)
+        if order_dict.get('stop_price') and order_dict.get('type') != 'stop_limit':
+            logger.warning(
+                f"⚠️ 비STOP 주문에 stop_price 존재 - "
+                f"order_id={order_obj.id}, type={order_dict.get('type')}, "
+                f"stop_price={order_dict.get('stop_price')}"
+            )
+
+        return order_dict
+
     # 비동기 메서드들 (동기 구현을 래핑)
     async def load_markets_async(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
         """마켓 정보 로드 (비동기)"""
@@ -561,56 +603,197 @@ class UpbitExchange(BaseExchange):
         """미체결 주문 조회 (비동기)"""
         return self.fetch_open_orders_impl(symbol, market_type)
 
-    # BaseExchange 필수 메서드 구현 (비동기 버전을 기본으로 사용)
-    async def load_markets(self, market_type: str = 'spot', reload: bool = False):
-        """마켓 정보 로드"""
-        return await self.load_markets_async(market_type, reload)
-
-    async def fetch_balance(self, market_type: str = 'spot'):
-        """잔액 조회"""
-        return await self.fetch_balance_async(market_type)
-
-    async def create_order(self, symbol: str, order_type: str, side: str,
-                          amount: Decimal, price: Optional[Decimal] = None,
-                          market_type: str = 'spot', **params):
-        """주문 생성"""
-        return await self.create_order_async(symbol, order_type, side, amount, price, market_type, **params)
-
-    async def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
-        """주문 취소"""
-        return await self.cancel_order_async(order_id, symbol, market_type)
-
-    async def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
-        """미체결 주문 조회"""
-        return await self.fetch_open_orders_async(symbol, market_type)
-
-    async def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
-        """단일 주문 조회"""
-        return await self.fetch_order_async(symbol, order_id, market_type)
-
-    # 동기 래퍼 메서드들
-    def fetch_balance_sync(self, market_type: str = 'spot') -> Dict[str, Balance]:
-        """잔액 조회 (동기)"""
-        return self.fetch_balance_impl(market_type)
-
-    def create_order_sync(self, symbol: str, order_type: str, side: str,
-                         amount: Decimal, price: Optional[Decimal] = None,
-                         market_type: str = 'spot', **params) -> Order:
-        """주문 생성 (동기)"""
-        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
-
-    def load_markets_sync(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
+    # BaseExchange 필수 메서드 구현 (동기)
+    def load_markets(self, market_type: str = 'spot', reload: bool = False):
         """마켓 정보 로드 (동기)"""
         return self.load_markets_impl(market_type, reload)
 
-    def cancel_order_sync(self, order_id: str, symbol: str = None, market_type: str = 'spot') -> Dict[str, Any]:
+    def fetch_balance(self, market_type: str = 'spot'):
+        """잔액 조회 (동기)"""
+        return self.fetch_balance_impl(market_type)
+
+    def create_order(self, symbol: str, order_type: str, side: str,
+                     amount: Decimal, price: Optional[Decimal] = None,
+                     market_type: str = 'spot', **params):
+        """주문 생성 (동기)"""
+        return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
+
+    def cancel_order(self, order_id: str, symbol: str = None, market_type: str = 'spot'):
         """주문 취소 (동기)"""
         return self.cancel_order_impl(order_id, symbol, market_type)
 
-    def fetch_open_orders_sync(self, symbol: Optional[str] = None, market_type: str = 'spot') -> List[Order]:
+    def fetch_open_orders(self, symbol: Optional[str] = None, market_type: str = 'spot'):
         """미체결 주문 조회 (동기)"""
         return self.fetch_open_orders_impl(symbol, market_type)
 
-    def fetch_order_sync(self, symbol: str = None, order_id: str = None, market_type: str = 'spot') -> Order:
-        """단일 주문 상세 조회 (동기)"""
+    def fetch_order(self, symbol: str = None, order_id: str = None, market_type: str = 'spot'):
+        """단일 주문 조회 (동기)"""
         return self.fetch_order_impl(symbol, order_id, market_type)
+
+    # ===== 배치 주문 기능 =====
+
+    # @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
+    def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """배치 주문 생성 (동기 래퍼)"""
+        # 비동기 구현을 동기 컨텍스트에서 실행
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(self.create_batch_orders_async(orders, market_type))
+
+    # @FEAT:exchange-integration @FEAT:order-queue @COMP:exchange @TYPE:integration
+    async def create_batch_orders_async(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        배치 주문 생성 (순차 폴백 - Rate Limit 준수)
+
+        Note:
+            - 업비트는 배치 API를 지원하지 않으므로 순차 처리
+            - Rate Limit: 초당 8회, 분당 600회
+            - asyncio.Semaphore로 동시 실행 수 제한
+            - 각 주문 사이에 0.125초 딜레이 (1/8초 = 초당 최대 8회)
+
+        Args:
+            orders: 주문 리스트
+                [
+                    {
+                        'symbol': 'BTC/KRW',
+                        'side': 'buy',
+                        'type': 'LIMIT',
+                        'amount': Decimal('0.001'),
+                        'price': Decimal('50000000'),
+                        'params': {...}
+                    },
+                    ...
+                ]
+            market_type: 'spot' (업비트는 Spot만 지원)
+
+        Returns:
+            {
+                'success': True,
+                'results': [
+                    {'order_index': 0, 'success': True, 'order_id': '...', 'order': {...}},
+                    {'order_index': 1, 'success': False, 'error': '...'},
+                    ...
+                ],
+                'summary': {
+                    'total': 5,
+                    'successful': 4,
+                    'failed': 1
+                },
+                'implementation': 'SEQUENTIAL_FALLBACK'
+            }
+
+        Raises:
+            ValueError: market_type이 'spot'이 아닌 경우
+        """
+        # 1. 빈 배치 처리
+        if not orders:
+            return {
+                'success': True,
+                'results': [],
+                'summary': {'total': 0, 'successful': 0, 'failed': 0},
+                'implementation': 'NONE'
+            }
+
+        # 2. Spot 전용 검증
+        if market_type.lower() != 'spot':
+            raise ValueError("Upbit은 Spot 거래만 지원합니다")
+
+        logger.info(f"📦 Upbit 배치 주문 시작: {len(orders)}건 (Rate Limit: 초당 8회)")
+
+        # 3. Rate Limiting 설정
+        # Lock은 한 번에 1개만 통과시켜 완전한 순차 실행 보장
+        _order_lock = asyncio.Lock()
+        start_time = time.time()
+
+        async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
+            """Rate limit 제어와 함께 단일 주문 실행 (완전 순차)"""
+            async with _order_lock:
+                # ⭐ CRITICAL: Rate Limiting - 초당 8회로 제한
+                await asyncio.sleep(0.125)  # 1/8초 = 125ms
+
+                try:
+                    # 주문 실행
+                    order_obj = await self.create_order_async(
+                        symbol=order['symbol'],
+                        order_type=order['type'],
+                        side=order['side'],
+                        amount=order['amount'],
+                        price=order.get('price'),
+                        market_type=market_type,
+                        **order.get('params', {})
+                    )
+
+                    logger.info(f"✅ Upbit 배치 주문 [{idx}] 성공: order_id={order_obj.id}, symbol={order['symbol']}")
+                    return {
+                        'order_index': idx,
+                        'success': True,
+                        'order_id': order_obj.id,
+                        'order': self._to_order_dict(order_obj)  # 필드명 정규화: type → order_type
+                    }
+
+                except Exception as e:
+                    logger.error(f"❌ Upbit 배치 주문 [{idx}] 실패 (symbol={order['symbol']}): {str(e)}")
+                    return {
+                        'order_index': idx,
+                        'success': False,
+                        'error': str(e)
+                    }
+
+        # 4. 병렬 실행 (Semaphore로 동시성 제한)
+        tasks = [execute_with_limit(idx, order) for idx, order in enumerate(orders)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 5. 결과 집계
+        all_results = []
+        successful_count = 0
+        failed_count = 0
+
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                # asyncio.gather가 예외를 반환한 경우 (이론적으로 발생하지 않아야 함)
+                logger.critical(f"🐛 UNEXPECTED: Exception escaped execute_with_limit: {result}")
+                all_results.append({
+                    'order_index': idx,
+                    'success': False,
+                    'error': str(result)
+                })
+                failed_count += 1
+            elif isinstance(result, dict):
+                all_results.append(result)
+                if result.get('success'):
+                    successful_count += 1
+                else:
+                    failed_count += 1
+            else:
+                # 예상치 못한 결과 타입
+                logger.error(f"❌ Upbit 배치 주문 [{idx}] 예상치 못한 결과 타입: {type(result)}")
+                all_results.append({
+                    'order_index': idx,
+                    'success': False,
+                    'error': f"Unexpected result type: {type(result)}"
+                })
+                failed_count += 1
+
+        # 6. 배치 완료 로깅
+        elapsed = time.time() - start_time
+        logger.info(
+            f"📦 Upbit 배치 주문 완료: {successful_count}/{len(orders)} 성공, "
+            f"소요시간: {elapsed:.2f}초 (평균 {elapsed/len(orders):.3f}초/주문), "
+            f"implementation=SEQUENTIAL_FALLBACK"
+        )
+
+        return {
+            'success': True,  # 전체 프로세스 성공 (개별 주문 실패는 results에 포함)
+            'results': all_results,
+            'summary': {
+                'total': len(orders),
+                'successful': successful_count,
+                'failed': failed_count
+            },
+            'implementation': 'SEQUENTIAL_FALLBACK'  # 업비트는 배치 API 미지원
+        }

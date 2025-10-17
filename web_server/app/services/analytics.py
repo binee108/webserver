@@ -1,3 +1,4 @@
+# @FEAT:analytics @COMP:service @TYPE:core @DEPS:position-tracking,order-tracking,strategy-management,capital-management
 """
 통합 분석 서비스
 
@@ -25,11 +26,14 @@ from app.services.security import security_service
 from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
+
+# @FEAT:analytics @FEAT:capital-management @FEAT:position-tracking @COMP:model @TYPE:core
 class AnalyticsError(Exception):
     """분석 관련 오류"""
     pass
 
 
+# @FEAT:analytics @COMP:service @TYPE:core @DEPS:position-tracking,order-tracking,strategy-management,capital-management
 class AnalyticsService:
     """
     통합 분석 서비스
@@ -40,11 +44,13 @@ class AnalyticsService:
     - capital_service.py
     """
 
+    # @FEAT:analytics @FEAT:capital-management @FEAT:position-tracking @COMP:service @TYPE:core
     def __init__(self):
         logger.info("✅ 통합 분석 서비스 초기화 완료")
 
     # === 대시보드 데이터 ===
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_dashboard_summary(self, user_id: int) -> Dict[str, Any]:
         """대시보드 요약 정보 (N+1 쿼리 최적화 버전)"""
         try:
@@ -136,6 +142,7 @@ class AnalyticsService:
             logger.error(f"대시보드 요약 조회 실패: {e}")
             return {'success': False, 'error': str(e)}
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_recent_activities(self, user_id: int, limit: int = 10) -> Dict[str, Any]:
         """최근 활동 내역 (N+1 쿼리 최적화 버전)"""
         try:
@@ -210,6 +217,7 @@ class AnalyticsService:
 
     # === 전략 분석 ===
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_strategy_performance(self, strategy_id: int, period_days: int = 30) -> Dict[str, Any]:
         """전략 성과 분석 (N+1 쿼리 최적화 버전)"""
         try:
@@ -300,6 +308,7 @@ class AnalyticsService:
             logger.error(f"전략 성과 분석 실패: {e}")
             return {'success': False, 'error': str(e)}
 
+    # @FEAT:analytics @FEAT:position-tracking @COMP:service @TYPE:core
     def get_position_analysis(self, strategy_id: int) -> Dict[str, Any]:
         """포지션 분석"""
         try:
@@ -338,6 +347,7 @@ class AnalyticsService:
 
     # === 자본 관리 (Capital Service) ===
 
+    # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
     def get_capital_overview(self, user_id: int) -> Dict[str, Any]:
         """자본 현황 개요 (N+1 쿼리 최적화 버전)"""
         try:
@@ -391,6 +401,7 @@ class AnalyticsService:
             logger.error(f"자본 현황 조회 실패: {e}")
             return {'success': False, 'error': str(e)}
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_pnl_history(self, user_id: int, period_days: int = 30) -> Dict[str, Any]:
         """수익/손실 이력 (N+1 쿼리 최적화 버전)"""
         try:
@@ -467,6 +478,7 @@ class AnalyticsService:
 
     # === 리포트 생성 ===
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def generate_monthly_report(self, user_id: int, year: int, month: int) -> Dict[str, Any]:
         """월간 리포트 생성 (N+1 쿼리 최적화 버전)"""
         try:
@@ -535,6 +547,7 @@ class AnalyticsService:
 
     # === 통계 및 메트릭 ===
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_trading_statistics(self, user_id: int) -> Dict[str, Any]:
         """거래 통계 (N+1 쿼리 최적화 버전)"""
         try:
@@ -587,7 +600,8 @@ class AnalyticsService:
 
 
     # === 대시보드 호환성 메서드 ===
-    
+
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_user_dashboard_stats(self, user_id: int) -> Dict[str, Any]:
         """대시보드 통계 데이터 조회 (dashboard.py 호환성) - N+1 쿼리 최적화 버전"""
         try:
@@ -844,6 +858,7 @@ class AnalyticsService:
 
     # === N+1 쿼리 최적화 헬퍼 메서드 ===
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _bulk_load_strategy_accounts(self, strategy_ids: List[int]) -> List[StrategyAccount]:
         """StrategyAccount 벌크 로딩 + Account 조인"""
         if not strategy_ids:
@@ -856,6 +871,7 @@ class AnalyticsService:
             .all()
         )
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _bulk_load_positions(self, strategy_account_ids: List[int]) -> List[StrategyPosition]:
         """StrategyPosition 벌크 로딩"""
         if not strategy_account_ids:
@@ -867,6 +883,7 @@ class AnalyticsService:
             .all()
         )
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _bulk_load_orders(self, strategy_account_ids: List[int]) -> List[OpenOrder]:
         """OpenOrder 벌크 로딩"""
         if not strategy_account_ids:
@@ -878,6 +895,7 @@ class AnalyticsService:
             .all()
         )
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _bulk_load_trades(
         self,
         strategy_account_ids: List[int],
@@ -899,6 +917,7 @@ class AnalyticsService:
 
         return query.order_by(Trade.timestamp).all()
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _group_by_strategy_account(
         self,
         items: List,
@@ -914,6 +933,7 @@ class AnalyticsService:
 
         return grouped
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _filter_exit_trades(self, trades: List[Trade]) -> List[Trade]:
         """청산(Exit) 거래 필터링 - 없으면 전체 거래 반환"""
         exit_trades = [trade for trade in trades if trade.is_entry is False]
@@ -922,6 +942,7 @@ class AnalyticsService:
         # is_entry 정보가 없다면 실현 손익이 있는 거래 전체를 사용
         return [trade for trade in trades if trade.pnl is not None]
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_trade_statistics(self, trades: List[Trade]) -> Dict[str, Any]:
         """기본 거래 통계 계산"""
         if not trades:
@@ -1014,6 +1035,7 @@ class AnalyticsService:
             'max_consecutive_losses': max_consecutive_losses
         }
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_risk_metrics(self, trades: List[Trade], allocated_capital: Decimal) -> Dict[str, float]:
         """전략 리스크 메트릭 계산"""
         capital_decimal = to_decimal(allocated_capital)
@@ -1032,6 +1054,7 @@ class AnalyticsService:
             'sortino_ratio': self._calculate_sortino_ratio(daily_returns)
         }
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_timeframe_metrics(self, trades: List[Trade], allocated_capital: Decimal, period_days: int = 30) -> Dict[str, Any]:
         """기간 기반 메트릭 계산 (기본 30일)"""
         capital_decimal = to_decimal(allocated_capital)
@@ -1079,6 +1102,7 @@ class AnalyticsService:
         metrics['sharpe_ratio_30d'] = self._calculate_sharpe_ratio(daily_returns)
         return metrics
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_daily_returns(
         self,
         trades: List[Trade],
@@ -1098,6 +1122,7 @@ class AnalyticsService:
 
         return returns
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _build_daily_pnl_map(
         self,
         trades: List[Trade],
@@ -1119,6 +1144,7 @@ class AnalyticsService:
 
         return daily_pnl
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_drawdown(self, trades: List[Trade], allocated_capital: Decimal) -> float:
         """최대 낙폭 계산"""
         capital_decimal = to_decimal(allocated_capital)
@@ -1143,6 +1169,7 @@ class AnalyticsService:
 
         return float((max_drawdown / capital_decimal) * 100) if max_drawdown > 0 else 0.0
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_sharpe_ratio(self, daily_returns: List[float]) -> float:
         """샤프 비율 계산 (252거래일 기준)"""
         if len(daily_returns) < 2:
@@ -1155,6 +1182,7 @@ class AnalyticsService:
             return 0.0
         return (mean(daily_returns) / volatility) * sqrt(252)
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _calculate_sortino_ratio(self, daily_returns: List[float]) -> float:
         """소르티노 비율 계산"""
         if not daily_returns:
@@ -1169,6 +1197,7 @@ class AnalyticsService:
             return 0.0
         return (mean(daily_returns) / downside_deviation) * sqrt(252)
 
+    # @FEAT:analytics @COMP:service @TYPE:helper
     def _build_equity_curve(
         self,
         trades: List[Trade],
@@ -1223,6 +1252,7 @@ class AnalyticsService:
 
         return pnl_values, chart_data
 
+    # @FEAT:analytics @COMP:service @TYPE:core
     def get_user_recent_trades(self, user_id: int, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
         """사용자의 최근 거래 내역 조회 - TradeExecution 테이블 기반 (실제 체결된 거래만)"""
         try:
@@ -1258,7 +1288,7 @@ class AnalyticsService:
             )
 
             results = query.all()
-            
+
             logger.info(f"TradeExecution 테이블에서 {len(results)}개의 체결 거래 조회됨")
 
             trades_data: List[Dict[str, Any]] = []
@@ -1267,14 +1297,14 @@ class AnalyticsService:
                 order_type = 'MARKET'  # 기본값
                 if row.is_maker is not None:
                     order_type = 'LIMIT' if row.is_maker else 'MARKET'
-                
+
                 # side는 소문자로 변환하여 프론트엔드 색상 로직과 호환
                 side_value = (row.side or '').lower()
                 if side_value == 'buy':
                     side_value = 'buy'
                 elif side_value == 'sell':
                     side_value = 'sell'
-                
+
                 trade_data = {
                     'id': row.id,
                     'strategy_name': row.strategy_name or 'Unknown',
@@ -1293,9 +1323,9 @@ class AnalyticsService:
                     'exchange_trade_id': row.exchange_trade_id,
                     'commission_asset': row.commission_asset
                 }
-                
+
                 trades_data.append(trade_data)
-                
+
                 # 디버깅용 로그
                 logger.debug(f"TradeExecution ID {row.id}: symbol={row.symbol}, side={side_value}, "
                            f"price={row.price}, qty={row.quantity}, pnl={row.pnl}, "
@@ -1303,11 +1333,12 @@ class AnalyticsService:
 
             logger.info(f"최근 거래 내역 조회 완료 (TradeExecution 기반) - {len(trades_data)}개 거래 반환")
             return trades_data
-            
+
         except Exception as e:
             logger.error(f"최근 거래 내역 조회 실패 (TradeExecution): {e}")
             raise AnalyticsError(f"최근 거래 내역 조회 실패: {str(e)}")
 
+    # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:helper
     def _extract_market_totals(self, balance_snapshot: Optional[Dict[str, Any]]) -> Dict[str, float]:
         """보유 잔고 스냅샷에서 마켓별 총 잔고를 추출"""
         if not balance_snapshot:
@@ -1348,6 +1379,7 @@ class AnalyticsService:
 
         return market_totals
 
+    # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:helper
     def _get_cached_daily_balance(self, account_id: int) -> Optional[float]:
         """가장 최근 저장된 일일 요약에서 총 잔고를 가져온다"""
         summary = (
@@ -1363,6 +1395,7 @@ class AnalyticsService:
         latest_balance = summary.ending_balance or summary.starting_balance or 0.0
         return float(latest_balance) if latest_balance else None
 
+    # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
     def auto_allocate_capital_for_account(self, account_id: int) -> bool:
         """계좌에 연결된 모든 전략에 마켓 타입별로 자동 자본 할당"""
         try:
@@ -1458,18 +1491,19 @@ class AnalyticsService:
             db.session.commit()
             logger.info(f'계좌 {account.name}의 마켓별 자본 할당 완료 ({success_count}개 마켓)')
             return success_count > 0
-            
+
         except Exception as e:
             db.session.rollback()
             logger.error(f'자동 자본 할당 오류: {str(e)}')
             return False
 
+    # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:helper
     def _allocate_capital_by_market_type(self, account: Account, strategy_accounts: List[StrategyAccount], market_type: str, total_balance: float) -> bool:
         """특정 마켓 타입의 전략들에 자본 할당"""
         try:
             # 해당 마켓 타입의 총 weight 계산
             total_weight = sum(sa.weight for sa in strategy_accounts)
-            
+
             if total_weight <= 0:
                 logger.warning(f'계좌 {account.name} {market_type}의 총 weight가 0 이하: {total_weight}')
                 return False
@@ -1483,14 +1517,14 @@ class AnalyticsService:
             if total_balance_value < 0:
                 logger.warning(f'계좌 {account.name} {market_type} 잔고가 음수입니다: {total_balance_value}')
                 return False
-            
+
             # 각 전략에 비례적으로 자본 할당
             for strategy_account in strategy_accounts:
                 allocated_amount = (total_balance_value * strategy_account.weight) / total_weight
-                
+
                 # 기존 자본 정보가 있는지 확인
                 existing_capital = StrategyCapital.query.filter_by(strategy_account_id=strategy_account.id).first()
-                
+
                 if existing_capital:
                     # 기존 자본 정보 업데이트
                     existing_capital.allocated_capital = allocated_amount
@@ -1505,10 +1539,10 @@ class AnalyticsService:
                     )
                     db.session.add(new_capital)
                     logger.info(f'자본 할당 생성: 전략 {strategy_account.strategy.name} ({market_type}) - ${allocated_amount:.2f}')
-            
+
             logger.info(f'계좌 {account.name} {market_type} 자본 할당 완료 (총 잔고: ${total_balance_value:.2f}, 총 weight: {total_weight})')
             return True
-            
+
         except Exception as e:
             logger.error(f'{market_type} 자본 할당 오류: {str(e)}')
             return False

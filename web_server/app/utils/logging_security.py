@@ -1,3 +1,4 @@
+# @FEAT:framework @COMP:util @TYPE:helper
 """
 로깅 보안 유틸리티
 민감정보 자동 탐지 및 마스킹

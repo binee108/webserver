@@ -1,3 +1,4 @@
+# @FEAT:order-tracking @COMP:service @TYPE:core @DEPS:exchange-integration,event-sse
 """
 주문 추적 서비스 (완전 구현)
 WebSocket 연결 관리 및 실시간 주문 추적
@@ -18,33 +19,36 @@ from app.constants import OrderStatus
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:order-tracking @COMP:service @TYPE:core
 class OrderTrackingService:
     """핵심 주문 추적 서비스"""
-    
+
     def __init__(self):
         self.active_sessions: Dict[str, OrderTrackingSession] = {}
         self._load_active_sessions()
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _load_active_sessions(self):
         """활성 세션 로드"""
         try:
             sessions = OrderTrackingSession.query.filter(
                 OrderTrackingSession.status.in_(['connecting', 'connected'])
             ).all()
-            
+
             for session in sessions:
                 self.active_sessions[session.session_id] = session
-            
+
             logger.info(f"Loaded {len(self.active_sessions)} active tracking sessions")
         except Exception as e:
             logger.error(f"Error loading active sessions: {e}")
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     def create_session(self, user_id: int, connection_type: str = 'websocket',
                       exchange: str = None, account_id: int = None) -> OrderTrackingSession:
         """새 추적 세션 생성"""
         try:
             session_id = str(uuid.uuid4())
-            
+
             session = OrderTrackingSession(
                 user_id=user_id,
                 session_id=session_id,
@@ -54,12 +58,12 @@ class OrderTrackingService:
                 status='connecting',
                 started_at=datetime.utcnow()
             )
-            
+
             db.session.add(session)
             db.session.commit()
-            
+
             self.active_sessions[session_id] = session
-            
+
             TrackingLog.log(
                 log_type='session_created',
                 message=f'Tracking session created: {session_id}',
@@ -67,27 +71,28 @@ class OrderTrackingService:
                 user_id=user_id,
                 account_id=account_id
             )
-            
+
             return session
-            
+
         except Exception as e:
             logger.error(f"Error creating tracking session: {e}")
             db.session.rollback()
             raise
-    
-    def update_session_status(self, session_id: str, status: str, 
+
+    # @FEAT:order-tracking @COMP:service @TYPE:core
+    def update_session_status(self, session_id: str, status: str,
                             error_message: str = None) -> bool:
         """세션 상태 업데이트"""
         try:
             session = OrderTrackingSession.query.filter_by(
                 session_id=session_id
             ).first()
-            
+
             if not session:
                 return False
-            
+
             session.status = status
-            
+
             if status == 'connected':
                 session.last_ping = datetime.utcnow()
             elif status in ['disconnected', 'error']:
@@ -96,9 +101,9 @@ class OrderTrackingService:
                     session.error_message = error_message
                 # 활성 세션에서 제거
                 self.active_sessions.pop(session_id, None)
-            
+
             db.session.commit()
-            
+
             TrackingLog.log(
                 log_type='session_status_update',
                 message=f'Session {session_id} status changed to {status}',
@@ -106,56 +111,59 @@ class OrderTrackingService:
                 user_id=session.user_id,
                 severity='info' if status == 'connected' else 'warning'
             )
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating session status: {e}")
             db.session.rollback()
             return False
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def ping_session(self, session_id: str) -> bool:
         """세션 핑 업데이트"""
         try:
             session = self.active_sessions.get(session_id)
             if not session:
                 return False
-            
+
             session.last_ping = datetime.utcnow()
             db.session.commit()
             return True
-            
+
         except Exception as e:
             logger.error(f"Error pinging session: {e}")
             db.session.rollback()
             return False
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def cleanup_stale_sessions(self, timeout_minutes: int = 5):
         """오래된 세션 정리"""
         try:
             cutoff_time = datetime.utcnow() - timedelta(minutes=timeout_minutes)
-            
+
             stale_sessions = OrderTrackingSession.query.filter(
                 OrderTrackingSession.status.in_(['connecting', 'connected']),
                 OrderTrackingSession.last_ping < cutoff_time
             ).all()
-            
+
             for session in stale_sessions:
                 session.status = 'disconnected'
                 session.ended_at = datetime.utcnow()
                 session.error_message = 'Session timed out'
-                
+
                 self.active_sessions.pop(session.session_id, None)
-            
+
             if stale_sessions:
                 db.session.commit()
                 logger.info(f"Cleaned up {len(stale_sessions)} stale sessions")
-            
+
         except Exception as e:
             logger.error(f"Error cleaning up stale sessions: {e}")
             db.session.rollback()
-    
-    def track_order_update(self, order_data: Dict[str, Any], 
+
+    # @FEAT:order-tracking @COMP:service @TYPE:core
+    def track_order_update(self, order_data: Dict[str, Any],
                           session_id: str = None) -> bool:
         """주문 업데이트 추적"""
         try:
@@ -163,7 +171,7 @@ class OrderTrackingService:
             order = OpenOrder.query.filter_by(
                 exchange_order_id=order_data.get('exchange_order_id')
             ).first()
-            
+
             if order:
                 # 기존 주문 업데이트
                 order.status = order_data.get('status', order.status)
@@ -172,7 +180,7 @@ class OrderTrackingService:
             else:
                 # 새 주문 생성 (필요한 경우)
                 logger.warning(f"Order not found: {order_data.get('exchange_order_id')}")
-            
+
             # 추적 로그 생성
             TrackingLog.log(
                 log_type='order_update',
@@ -182,21 +190,22 @@ class OrderTrackingService:
                 symbol=order_data.get('symbol'),
                 details=order_data
             )
-            
+
             db.session.commit()
             return True
-            
+
         except Exception as e:
             logger.error(f"Error tracking order update: {e}")
             db.session.rollback()
             return False
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:integration @DEPS:trade-record
     def track_trade_execution(self, trade_data: Dict[str, Any],
                             strategy_account_id: int) -> Optional[TradeExecution]:
         """거래 체결 추적 - TradeRecordService와 통합"""
         try:
             from app.services.trade_record import trade_record_service
-            
+
             # TradeRecordService를 통해 체결 기록
             execution_data = {
                 'strategy_account_id': strategy_account_id,
@@ -214,9 +223,9 @@ class OrderTrackingService:
                 'market_type': trade_data.get('market_type', 'SPOT'),
                 'meta_data': trade_data.get('meta_data', {})
             }
-            
+
             execution = trade_record_service.record_execution(execution_data)
-            
+
             if execution:
                 # 추적 로그 생성
                 TrackingLog.log(
@@ -229,35 +238,36 @@ class OrderTrackingService:
                     symbol=trade_data.get('symbol'),
                     details=trade_data
                 )
-            
+
             return execution
-            
+
         except Exception as e:
             logger.error(f"Error tracking trade execution: {e}")
             return None
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:core @DEPS:exchange-integration,position-tracking
     def sync_open_orders(self, account_id: int) -> Dict[str, Any]:
         """계좌의 미체결 주문 완전 동기화 - 개선된 버전"""
         try:
             from app.services.exchange import exchange_service
             from app.services.trade_record import trade_record_service
             from sqlalchemy.exc import IntegrityError
-            
+
             # 1. 계좌 조회
             account = Account.query.get(account_id)
             if not account:
                 return {'success': False, 'error': 'Account not found'}
-            
+
             # 2. 모든 활성 전략 계좌 조회 (Phase 1 수정)
             strategy_accounts = StrategyAccount.query.filter_by(
                 account_id=account_id,
                 is_active=True
             ).all()
-            
+
             if not strategy_accounts:
                 logger.warning(f"No active strategy accounts for account {account_id}")
                 return {'success': False, 'error': 'No active strategy accounts found'}
-            
+
             # 각 전략 계좌별로 마켓 타입 매핑
             strategy_market_map = {}
             for sa in strategy_accounts:
@@ -266,13 +276,13 @@ class OrderTrackingService:
                     if market_type not in strategy_market_map:
                         strategy_market_map[market_type] = []
                     strategy_market_map[market_type].append(sa)
-            
+
             # 기본 마켓 타입 설정 (전략이 없는 계좌용)
             if not strategy_market_map:
                 strategy_market_map['spot'] = strategy_accounts
-            
+
             logger.info(f"Syncing orders for account {account.name} (ID: {account_id}) with {len(strategy_accounts)} strategy accounts")
-            
+
             # 결과 집계 변수
             total_synced = 0
             total_created = 0
@@ -281,63 +291,63 @@ class OrderTrackingService:
             total_filled = 0
             all_errors = []
             market_results = {}
-            
+
             # 3. 각 마켓 타입별로 주문 동기화
             for market_type, market_strategy_accounts in strategy_market_map.items():
                 try:
                     logger.info(f"Processing {market_type} market with {len(market_strategy_accounts)} strategy accounts")
-                    
+
                     # 거래소에서 미체결 주문 조회
                     result = exchange_service.get_open_orders(account, market_type=market_type)
-                    
+
                     if not result.get('success'):
                         error_msg = result.get('error', 'Unknown error')
                         logger.error(f"Failed to fetch {market_type} orders: {error_msg}")
                         all_errors.append(f"{market_type}: {error_msg}")
                         continue
-                    
+
                     exchange_orders = result.get('orders', [])
                     logger.info(f"Fetched {len(exchange_orders)} orders from {market_type} market")
-                    
+
                     # Phase 3: 체결 내역 조회 추가
                     recent_trades = []
                     if hasattr(exchange_service, 'get_recent_trades'):
                         trades_result = exchange_service.get_recent_trades(
-                            account, 
+                            account,
                             market_type=market_type,
                             limit=100
                         )
                         if trades_result.get('success'):
                             recent_trades = trades_result.get('trades', [])
                             logger.info(f"Fetched {len(recent_trades)} recent trades for fill detection")
-                    
+
                     # 이 마켓의 모든 전략 계좌에서 DB 주문 조회
                     strategy_account_ids = [sa.id for sa in market_strategy_accounts]
                     db_orders = OpenOrder.query.filter(
                         OpenOrder.strategy_account_id.in_(strategy_account_ids),
                         OpenOrder.status.in_(OrderStatus.get_open_statuses())
                     ).all()
-                    
+
                     db_order_map = {order.exchange_order_id: order for order in db_orders}
                     logger.info(f"Found {len(db_orders)} open orders in DB for {market_type}")
-                    
+
                     # 거래소 주문을 전략 계좌와 매칭
                     processed_order_ids = set()
-                    
+
                     for raw_order in exchange_orders:
                         exchange_order = self._order_to_dict(raw_order)
-                        
+
                         try:
                             order_id = str(exchange_order.get('orderId', exchange_order.get('id', '')))
                             if not order_id:
                                 logger.warning(f"Order without ID skipped: {exchange_order}")
                                 continue
-                            
+
                             # 중복 처리 방지
                             if order_id in processed_order_ids:
                                 continue
                             processed_order_ids.add(order_id)
-                            
+
                             symbol = exchange_order.get('symbol', '')
                             side = exchange_order.get('side', '').upper()
                             status = OrderStatus.from_exchange(
@@ -350,10 +360,10 @@ class OrderTrackingService:
                             quantity = float(exchange_order.get('origQty', exchange_order.get('quantity', 0)))
                             filled_quantity = float(exchange_order.get('executedQty', exchange_order.get('filledQty', 0)))
                             timestamp = exchange_order.get('timestamp')
-                            
+
                             # 기존 DB 주문 확인
                             db_order = db_order_map.get(order_id)
-                            
+
                             if db_order:
                                 # 기존 주문 업데이트
                                 old_status = db_order.status
@@ -361,7 +371,7 @@ class OrderTrackingService:
                                 db_order.filled_quantity = filled_quantity
                                 db_order.updated_at = datetime.utcnow()
                                 total_updated += 1
-                                
+
                                 # 새로 체결된 주문 체크
                                 if status == OrderStatus.FILLED and old_status != OrderStatus.FILLED:
                                     total_filled += 1
@@ -372,7 +382,7 @@ class OrderTrackingService:
                                         order_id, symbol, side, price,
                                         filled_quantity, market_type
                                     )
-                                
+
                                 logger.debug(f"Updated order {order_id}: {old_status} -> {status}")
                             else:
                                 # 새 주문 생성 - 적절한 전략 계좌 찾기
@@ -381,16 +391,16 @@ class OrderTrackingService:
                                     symbol,
                                     timestamp
                                 )
-                                
+
                                 if not strategy_account:
                                     logger.warning(f"No suitable strategy account for order {order_id} ({symbol})")
                                     continue
-                                
+
                                 # Phase 2: UPSERT 패턴으로 중복 방지
                                 existing = OpenOrder.query.filter_by(
                                     exchange_order_id=order_id
                                 ).first()
-                                
+
                                 if existing:
                                     # 이미 존재하는 주문 업데이트
                                     existing.status = status
@@ -418,14 +428,14 @@ class OrderTrackingService:
                                     db.session.add(new_order)
                                     total_created += 1
                                     logger.debug(f"Created order {order_id}: {symbol} {side} {quantity}@{price}")
-                            
+
                             total_synced += 1
-                            
+
                         except IntegrityError as e:
                             # Phase 2: Unique constraint 충돌 처리
                             db.session.rollback()
                             logger.warning(f"Integrity error for order {order_id}: {e}")
-                            
+
                             # 기존 주문 조회 후 업데이트
                             existing = OpenOrder.query.filter_by(
                                 exchange_order_id=order_id
@@ -436,15 +446,15 @@ class OrderTrackingService:
                                 existing.updated_at = datetime.utcnow()
                                 db.session.add(existing)
                                 total_updated += 1
-                            
+
                         except Exception as e:
                             error_msg = f"Error processing order {order_id}: {e}"
                             logger.error(error_msg)
                             all_errors.append(error_msg)
-                    
+
                     # Phase 4: 거래소에 없는 DB 주문 처리 (개선된 상태 추정)
                     exchange_order_ids = processed_order_ids
-                    
+
                     for db_order in db_orders:
                         if db_order.exchange_order_id not in exchange_order_ids:
                             # 체결 내역에서 확인
@@ -452,7 +462,7 @@ class OrderTrackingService:
                                 db_order.exchange_order_id,
                                 recent_trades
                             )
-                            
+
                             if was_filled:
                                 # 체결됨으로 확인
                                 db_order.status = OrderStatus.FILLED
@@ -470,11 +480,11 @@ class OrderTrackingService:
                             else:
                                 # 취소됨
                                 db_order.status = OrderStatus.CANCELLED
-                            
+
                             db_order.updated_at = datetime.utcnow()
                             total_closed += 1
                             logger.debug(f"Closed order {db_order.exchange_order_id}: {db_order.status}")
-                    
+
                     # 이 마켓의 결과 저장
                     market_results[market_type] = {
                         'synced': total_synced,
@@ -483,13 +493,13 @@ class OrderTrackingService:
                         'closed': total_closed,
                         'filled': total_filled
                     }
-                    
+
                 except Exception as e:
                     error_msg = f"Error processing {market_type} market: {str(e)}"
                     logger.error(error_msg, exc_info=True)
                     all_errors.append(error_msg)
                     db.session.rollback()
-            
+
             # DB 커밋
             try:
                 db.session.commit()
@@ -499,7 +509,7 @@ class OrderTrackingService:
                 db.session.rollback()
                 logger.error(f"Failed to commit sync changes: {e}")
                 return {'success': False, 'error': f'Database commit failed: {str(e)}'}
-            
+
             # 추적 로그 생성
             TrackingLog.log(
                 log_type='sync_complete',
@@ -518,7 +528,7 @@ class OrderTrackingService:
                     'market_results': market_results
                 }
             )
-            
+
             # 완료된 주문 정리 (FILLED/CANCELLED 상태)
             try:
                 # 해당 계정의 완료된 주문들 조회
@@ -526,7 +536,7 @@ class OrderTrackingService:
                     OpenOrder.strategy_account_id.in_([sa.id for sa in strategy_accounts]),
                     OpenOrder.status.in_(OrderStatus.get_closed_statuses())
                 ).all()
-                
+
                 deleted_count = 0
                 for order in closed_orders:
                     try:
@@ -535,15 +545,15 @@ class OrderTrackingService:
                         deleted_count += 1
                     except Exception as e:
                         logger.warning(f"Failed to delete closed order {order.exchange_order_id}: {e}")
-                
+
                 if deleted_count > 0:
                     db.session.commit()
                     logger.info(f"✅ {deleted_count}개의 완료된 주문이 정리되었습니다")
-                    
+
             except Exception as e:
                 logger.error(f"Error cleaning up closed orders: {e}")
                 # 정리 실패는 전체 동작에 영향을 주지 않음
-            
+
             return {
                 'success': True,
                 'synced_count': total_synced,
@@ -555,12 +565,13 @@ class OrderTrackingService:
                 'market_results': market_results,
                 'errors': all_errors if all_errors else None
             }
-            
+
         except Exception as e:
             logger.error(f"Critical error in sync_open_orders: {e}", exc_info=True)
             db.session.rollback()
             return {'success': False, 'error': str(e)}
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _find_best_strategy_account(self, strategy_accounts: List[StrategyAccount],
                                    symbol: str, timestamp: Optional[datetime]) -> Optional[StrategyAccount]:
         """주문에 가장 적합한 전략 계좌 찾기"""
@@ -570,10 +581,11 @@ class OrderTrackingService:
                 # 전략이 이 심볼을 거래하는지 확인 (추가 로직 필요)
                 # 일단 첫 번째 활성 계좌 반환
                 return sa
-        
+
         # 활성 계좌가 없으면 첫 번째 반환
         return strategy_accounts[0] if strategy_accounts else None
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _check_if_order_filled(self, order_id: str, recent_trades: List[Dict]) -> bool:
         """최근 거래 내역에서 주문 체결 여부 확인"""
         for trade in recent_trades:
@@ -581,7 +593,8 @@ class OrderTrackingService:
             if trade_order_id == order_id:
                 return True
         return False
-    
+
+    # @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:integration
     def _record_trade_execution(self, strategy_account_id: int, order_id: str,
                                symbol: str, side: str, price: float,
                                quantity: float, market_type: str):
@@ -628,7 +641,8 @@ class OrderTrackingService:
 
         except Exception as e:
             logger.error(f"Failed to process trade execution via unified routine: {e}", exc_info=True)
-    
+
+    # @FEAT:order-tracking @FEAT:position-tracking @COMP:service @TYPE:integration
     def _record_trade_from_history(self, db_order: OpenOrder, recent_trades: List[Dict]):
         """거래 내역에서 체결 정보 추출하여 통합 루틴으로 처리"""
         from app.services.trading import trading_service
@@ -707,12 +721,13 @@ class OrderTrackingService:
                 exc_info=True
             )
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _order_to_dict(self, order):
         """Convert Order object or dict to dict format"""
         # If it's already a dict, return it
         if isinstance(order, dict):
             return order
-        
+
         # If it's an Order object, convert to dict
         if hasattr(order, '__dict__'):
             return {
@@ -727,14 +742,15 @@ class OrderTrackingService:
                 'executedQty': str(getattr(order, 'filled', 0)),
                 'timestamp': getattr(order, 'timestamp', None)
             }
-        
+
         return order
 
+    # @FEAT:order-tracking @COMP:service @TYPE:core
     def detect_filled_orders(self, account_id: int) -> Dict[str, Any]:
         """체결된 주문 감지 및 처리"""
         try:
             from app.services.trade_record import trade_record_service
-            
+
             # 부분 체결 상태 주문 조회
             partial_orders = OpenOrder.query.join(
                 StrategyAccount
@@ -742,9 +758,9 @@ class OrderTrackingService:
                 StrategyAccount.account_id == account_id,
                 OpenOrder.status == OrderStatus.PARTIALLY_FILLED
             ).all()
-            
+
             filled_orders = []
-            
+
             for order in partial_orders:
                 # 체결 내역 확인 및 기록
                 if order.filled_quantity > 0:
@@ -758,7 +774,7 @@ class OrderTrackingService:
                         'quantity': order.filled_quantity,
                         'market_type': order.market_type
                     }
-                    
+
                     execution = trade_record_service.record_execution(trade_data)
                     if execution:
                         filled_orders.append({
@@ -766,32 +782,33 @@ class OrderTrackingService:
                             'symbol': order.symbol,
                             'filled_quantity': order.filled_quantity
                         })
-            
+
             return {
                 'success': True,
                 'filled_orders': filled_orders,
                 'total_detected': len(filled_orders)
             }
-            
+
         except Exception as e:
             logger.error(f"Error detecting filled orders: {e}")
             return {'success': False, 'error': str(e)}
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def get_session_stats(self) -> Dict[str, Any]:
         """세션 통계 조회"""
         try:
             total_sessions = OrderTrackingSession.query.count()
             active_sessions = len(self.active_sessions)
-            
+
             # 최근 24시간 세션 통계
             day_ago = datetime.utcnow() - timedelta(days=1)
             recent_sessions = OrderTrackingSession.query.filter(
                 OrderTrackingSession.started_at > day_ago
             ).all()
-            
+
             successful_sessions = sum(1 for s in recent_sessions if s.status == 'disconnected' and not s.error_message)
             error_sessions = sum(1 for s in recent_sessions if s.status == 'error' or s.error_message)
-            
+
             return {
                 'total_sessions': total_sessions,
                 'active_sessions': active_sessions,
@@ -801,11 +818,12 @@ class OrderTrackingService:
                 'sessions_by_exchange': self._get_sessions_by_exchange(),
                 'avg_session_duration': self._get_avg_session_duration()
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting session stats: {e}")
             return {}
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _get_sessions_by_exchange(self) -> Dict[str, int]:
         """거래소별 세션 통계"""
         result = {}
@@ -813,7 +831,8 @@ class OrderTrackingService:
             if session.exchange:
                 result[session.exchange] = result.get(session.exchange, 0) + 1
         return result
-    
+
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
     def _get_avg_session_duration(self) -> float:
         """평균 세션 지속 시간 (분)"""
         try:
@@ -821,17 +840,17 @@ class OrderTrackingService:
                 OrderTrackingSession.ended_at.isnot(None),
                 OrderTrackingSession.started_at.isnot(None)
             ).limit(100).all()  # 최근 100개만 계산
-            
+
             if not completed_sessions:
                 return 0.0
-            
+
             durations = []
             for session in completed_sessions:
                 duration = (session.ended_at - session.started_at).total_seconds() / 60
                 durations.append(duration)
-            
+
             return sum(durations) / len(durations) if durations else 0.0
-            
+
         except Exception as e:
             logger.error(f"Error calculating avg session duration: {e}")
             return 0.0

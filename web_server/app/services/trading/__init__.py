@@ -19,6 +19,8 @@ from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
+from .exchange_limit_tracker import ExchangeLimitTracker
+from .order_queue_manager import OrderQueueManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +40,10 @@ class PositionError(Exception):
 class TradingService:
     """Facade that exposes trading behaviours composed from specialized managers."""
 
-    def __init__(self) -> None:
+    def __init__(self, app=None) -> None:
         self.session = db.session
         self._SessionLocal = None
+        self.app = app
 
         self.record_manager = RecordManager(service=self)
         self.quantity_calculator = QuantityCalculator(service=self)
@@ -48,8 +51,83 @@ class TradingService:
         self.order_manager = OrderManager(service=self)
         self.core = TradingCore(service=self)
         self.event_emitter = EventEmitter(service=self)
+        self.exchange_limit_tracker = ExchangeLimitTracker  # classmethod만 있는 유틸리티 클래스
+        self.order_queue_manager = OrderQueueManager(service=self)
 
-        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성)")
+        # WebSocket 관리자 (앱 초기화 시 설정됨)
+        self.websocket_manager = None
+
+        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성 + 대기열 관리)")
+
+    def init_websocket_manager(self, app):
+        """WebSocket 관리자 초기화
+
+        Args:
+            app: Flask 앱 인스턴스
+        """
+        from app.services.websocket_manager import WebSocketManager
+
+        self.app = app
+        self.websocket_manager = WebSocketManager(app)
+        self.websocket_manager.start()
+
+        logger.info("✅ WebSocket 관리자 초기화 완료")
+
+    def subscribe_symbol(self, account_id: int, symbol: str):
+        """심볼 구독 추가 (주문 생성 시 호출)
+
+        Args:
+            account_id: 계정 ID
+            symbol: 거래 심볼
+        """
+        if self.websocket_manager:
+            logger.debug(f"📊 심볼 구독 추가 요청 - 계정: {account_id}, 심볼: {symbol}")
+            future = self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.subscribe_symbol(account_id, symbol)
+            )
+
+            # 결과 확인 (비블로킹)
+            if future:
+                try:
+                    future.result(timeout=0.1)
+                except TimeoutError:
+                    pass  # 타임아웃은 정상 (비동기 실행 중)
+                except Exception as e:
+                    logger.error(f"❌ 심볼 구독 실패 - 계정: {account_id}, 심볼: {symbol}, 오류: {e}")
+
+    def unsubscribe_symbol(self, account_id: int, symbol: str):
+        """심볼 구독 제거 (주문 삭제 시 호출)
+
+        Args:
+            account_id: 계정 ID
+            symbol: 거래 심볼
+        """
+        if self.websocket_manager:
+            logger.debug(f"📊 심볼 구독 제거 요청 - 계정: {account_id}, 심볼: {symbol}")
+            future = self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.unsubscribe_symbol(account_id, symbol)
+            )
+
+            # 결과 확인 (비블로킹)
+            if future:
+                try:
+                    future.result(timeout=0.1)
+                except TimeoutError:
+                    pass  # 타임아웃은 정상 (비동기 실행 중)
+                except Exception as e:
+                    logger.error(f"❌ 심볼 구독 제거 실패 - 계정: {account_id}, 심볼: {symbol}, 오류: {e}")
+
+    def start_websocket_for_account(self, account_id: int):
+        """계정의 WebSocket 연결 시작
+
+        Args:
+            account_id: 계정 ID
+        """
+        if self.websocket_manager:
+            self.websocket_manager._schedule_coroutine(
+                self.websocket_manager.connect_account(account_id)
+            )
+            logger.info(f"✅ WebSocket 연결 시작 - 계정: {account_id}")
 
     @property
     def SessionLocal(self):
@@ -65,7 +143,8 @@ class TradingService:
                       stop_price: Optional[Decimal] = None,
                       strategy_account_override: Optional[StrategyAccount] = None,
                       schedule_refresh: bool = True,
-                      timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                      timing_context: Optional[Dict[str, float]] = None,
+                      from_pending_queue: bool = False) -> Dict[str, Any]:
         return self.core.execute_trade(
             strategy=strategy,
             symbol=symbol,
@@ -77,6 +156,7 @@ class TradingService:
             strategy_account_override=strategy_account_override,
             schedule_refresh=schedule_refresh,
             timing_context=timing_context,
+            from_pending_queue=from_pending_queue,
         )
 
     def _execute_exchange_order(self, account: Account, symbol: str, side: str,
@@ -138,13 +218,18 @@ class TradingService:
 
     def cancel_all_orders(self, strategy_id: int, symbol: Optional[str] = None,
                           account_id: Optional[int] = None,
+                          side: Optional[str] = None,
                           timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        return self.order_manager.cancel_all_orders(strategy_id, symbol, account_id, timing_context)
+        return self.order_manager.cancel_all_orders(strategy_id, symbol, account_id, side, timing_context)
 
     def cancel_all_orders_by_user(self, user_id: int, strategy_id: int,
                                   account_id: Optional[int] = None,
-                                  symbol: Optional[str] = None) -> Dict[str, Any]:
-        return self.order_manager.cancel_all_orders_by_user(user_id, strategy_id, account_id, symbol)
+                                  symbol: Optional[str] = None,
+                                  side: Optional[str] = None,
+                                  timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        return self.order_manager.cancel_all_orders_by_user(
+            user_id, strategy_id, account_id, symbol, side, timing_context
+        )
 
     def get_user_open_orders(self, user_id: int, strategy_id: Optional[int] = None,
                              symbol: Optional[str] = None) -> Dict[str, Any]:

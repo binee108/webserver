@@ -1,5 +1,10 @@
 
-"""Trade record management extracted from the legacy trading service."""
+"""
+Trade record management extracted from the legacy trading service.
+
+@FEAT:trade-execution @COMP:service @TYPE:core
+@DEPS:order-tracking,performance-tracking,capital-management
+"""
 
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ from app.services.utils import calculate_is_entry, decimal_to_float, to_decimal
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:trade-execution @COMP:service @TYPE:core
 class RecordManager:
     """Encapsulates trade and execution record persistence logic."""
 
@@ -34,6 +40,7 @@ class RecordManager:
     # ------------------------------------------------------------------
     # Trade record helpers
     # ------------------------------------------------------------------
+    # @FEAT:trade-execution @FEAT:limit-order @COMP:service @TYPE:core
     def create_trade_record(
         self,
         strategy: Strategy,
@@ -46,7 +53,15 @@ class RecordManager:
         order_type: str,
         order_price: Optional[Decimal] = None,
     ) -> Dict[str, Any]:
-        """Create or update a ``Trade`` record for the given execution."""
+        """
+        Create or update a ``Trade`` record for the given execution.
+
+        Phase 3 Enhancement: Idempotency 강화
+        - Application-level: 최종 중복 체크
+        - DB-level: UNIQUE 제약조건 (IntegrityError 처리)
+        """
+        from sqlalchemy.exc import IntegrityError
+
         try:
             strategy_account = StrategyAccount.query.filter_by(
                 strategy_id=strategy.id
@@ -58,6 +73,7 @@ class RecordManager:
                 )
                 return {'success': False, 'error': 'strategy_account not found'}
 
+            # ✅ Application-level 최종 중복 체크
             existing_trade = Trade.query.filter_by(
                 strategy_account_id=strategy_account.id,
                 exchange_order_id=str(order_id)
@@ -117,49 +133,80 @@ class RecordManager:
                         'quantity_delta': quantity_delta,
                     }
 
-                logger.debug("Trade 기록 변경 없음: order_id=%s", order_id)
+                logger.debug("Trade 기록 변경 없음: order_id=%s (중복 방지: Application-level)", order_id)
                 return {
                     'success': True,
                     'trade_id': existing_trade.id,
-                    'status': 'unchanged',
+                    'status': 'duplicate_prevented',
                     'quantity_delta': Decimal('0'),
                 }
 
-            trade = Trade(
-                strategy_account_id=strategy_account.id,
-                symbol=symbol,
-                side=side_upper,
-                quantity=quantity_float,
-                price=price_float,
-                exchange_order_id=str(order_id),
-                order_type=order_type,
-                is_entry=self._calculate_is_entry_for_trade(
-                    strategy.id, symbol, side
-                ),
-                timestamp=datetime.utcnow(),
-            )
+            try:
+                # Trade 생성 로직
+                trade = Trade(
+                    strategy_account_id=strategy_account.id,
+                    symbol=symbol,
+                    side=side_upper,
+                    quantity=quantity_float,  # Total filled quantity (not delta)
+                    price=price_float,
+                    exchange_order_id=str(order_id),
+                    order_type=order_type,
+                    is_entry=self._calculate_is_entry_for_trade(
+                        strategy.id, symbol, side
+                    ),
+                    timestamp=datetime.utcnow(),
+                )
 
-            if order_price_float is not None:
-                trade.order_price = order_price_float
+                if order_price_float is not None:
+                    trade.order_price = order_price_float
 
-            db.session.add(trade)
-            db.session.commit()
+                db.session.add(trade)
+                db.session.commit()
 
-            logger.info(
-                "Trade 기록 생성: %s %s %s @ %s",
-                symbol,
-                side_upper,
-                quantity,
-                price,
-            )
+                logger.info(
+                    "Trade 기록 생성: %s %s %s @ %s",
+                    symbol,
+                    side_upper,
+                    quantity,
+                    price,
+                )
 
-            return {
-                'success': True,
-                'trade_id': trade.id,
-                'status': 'created',
-                'quantity_delta': quantity,
-            }
+                return {
+                    'success': True,
+                    'trade_id': trade.id,
+                    'status': 'created',
+                    'quantity_delta': quantity,
+                }
 
+            except IntegrityError as e:
+                # ✅ DB-level 중복 방지 (Race Condition 대응)
+                if 'unique_order_per_account' in str(e).lower() or 'duplicate' in str(e).lower():
+                    db.session.rollback()
+                    logger.info(
+                        f"✅ 중복 Trade 방지 (DB-level): order_id={order_id}, "
+                        f"error={str(e)}"
+                    )
+
+                    # 이미 생성된 레코드 조회
+                    existing = Trade.query.filter_by(
+                        strategy_account_id=strategy_account.id,
+                        exchange_order_id=str(order_id)
+                    ).first()
+
+                    return {
+                        'success': True,
+                        'trade_id': existing.id if existing else None,
+                        'quantity_delta': Decimal('0'),
+                        'status': 'duplicate_prevented_db'
+                    }
+                else:
+                    # 다른 IntegrityError는 재발생
+                    raise
+
+        except IntegrityError:
+            # 위에서 처리되지 않은 IntegrityError
+            db.session.rollback()
+            raise
         except Exception as exc:  # pragma: no cover - defensive logging
             db.session.rollback()
             logger.error("Trade 기록 생성/업데이트 실패: %s", exc)
@@ -168,6 +215,8 @@ class RecordManager:
                 'error': str(exc),
             }
 
+    # @FEAT:trade-execution @COMP:service @TYPE:core
+    # @DEPS:performance-tracking,capital-management
     def create_trade_execution_record(
         self,
         strategy_account: StrategyAccount,
@@ -178,7 +227,13 @@ class RecordManager:
         trade_id: Optional[int] = None,
         realized_pnl: Optional[Decimal] = None,
     ) -> Dict[str, Any]:
-        """Create or update a ``TradeExecution`` entry."""
+        """
+        Create or update a ``TradeExecution`` entry.
+
+        Automatically triggers:
+        - Performance update hook (Phase 3.2)
+        - Capital PnL reflection hook (Priority 6)
+        """
         try:
             order_id = order_result.get('order_id')
             if not order_id:
@@ -328,6 +383,7 @@ class RecordManager:
     # ------------------------------------------------------------------
     # Trade queries
     # ------------------------------------------------------------------
+    # @FEAT:trade-execution @COMP:service @TYPE:core
     def get_trade_history(
         self,
         strategy_id: int,
@@ -366,6 +422,7 @@ class RecordManager:
             logger.error("거래 내역 조회 실패: %s", exc)
             return []
 
+    # @FEAT:trade-execution @COMP:service @TYPE:core
     def get_trading_stats(self, strategy_id: int) -> Dict[str, Any]:
         """Return aggregate trading statistics for a strategy."""
         try:
@@ -418,6 +475,7 @@ class RecordManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    # @FEAT:trade-execution @COMP:service @TYPE:helper
     def _get_last_trade_time(self, strategy_id: int) -> Optional[datetime]:
         try:
             strategy_account_ids = self._get_strategy_account_ids(strategy_id)
@@ -436,16 +494,19 @@ class RecordManager:
         except Exception:  # pragma: no cover - defensive logging
             return None
 
+    # @FEAT:trade-execution @COMP:service @TYPE:helper
     def _get_strategy_account_ids(self, strategy_id: int) -> List[int]:
         accounts = StrategyAccount.query.filter_by(strategy_id=strategy_id).all()
         return [account.id for account in accounts]
 
+    # @FEAT:trade-execution @COMP:service @TYPE:helper
     def _calculate_is_entry_for_trade(
         self,
         strategy_id: int,
         symbol: str,
         side: str,
     ) -> bool:
+        """Determine if trade is entry or exit based on current position."""
         try:
             strategy_account_ids = self._get_strategy_account_ids(strategy_id)
             if not strategy_account_ids:
@@ -472,11 +533,13 @@ class RecordManager:
             logger.error("진입/청산 판단 예상치 못한 오류: %s, 기본값(진입) 반환", exc)
             return True
 
+    # @FEAT:trade-execution @FEAT:performance-tracking @COMP:service @TYPE:integration
     def _trigger_performance_update(self, strategy_id: int) -> None:
         """
         Phase 3.2: 거래 기록 후 실시간 성과 업데이트 Hook
 
         거래 실행 기록이 생성/업데이트될 때 자동으로 당일 성과를 재계산합니다.
+        비침습적: 실패해도 거래 기록에 영향 없음.
         """
         try:
             from app.services.performance_tracking import performance_tracking_service
@@ -505,11 +568,13 @@ class RecordManager:
                 exc
             )
 
+    # @FEAT:trade-execution @FEAT:capital-management @COMP:service @TYPE:integration
     def _trigger_capital_pnl_reflection(self, strategy_account_id: int) -> None:
         """
         Priority 6: 실현 손익 자본 반영 Hook
 
         거래 체결 시 실현 손익이 있으면 자동으로 전략 자본에 반영합니다 (복리 효과).
+        비침습적: 실패해도 거래 기록에 영향 없음.
         """
         try:
             from app.services.capital_service import capital_allocation_service

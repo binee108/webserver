@@ -1,12 +1,17 @@
 """
 거래소 API 공통 데이터 모델
+
+@FEAT:framework @FEAT:exchange-integration @COMP:model @TYPE:boilerplate
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Sequence
+from typing import Dict, List, Optional, Any, Sequence, TYPE_CHECKING
 from decimal import Decimal
 from datetime import datetime
 import logging
+
+if TYPE_CHECKING:
+    from app.exchanges.precision_providers import PrecisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -44,38 +49,45 @@ class MarketInfo:
     quote_asset: str
     status: str
     active: bool
-    
+
     # Precision 정보
     price_precision: int
     amount_precision: int
     base_precision: int
     quote_precision: int
-    
+
     # Limits (내부 사용)
     min_qty: Decimal
     max_qty: Decimal
     step_size: Decimal
-    
+
     min_price: Decimal
     max_price: Decimal
     tick_size: Decimal
-    
+
     min_notional: Decimal
-    
+
     # Market type
     market_type: str = "SPOT"  # SPOT, FUTURES
-    
+
+    # ✅ NEW FIELD (Phase 1 - REQUIRED, Clean Architecture)
+    # @FEAT:precision-system @COMP:model @TYPE:core
+    precision_provider: 'PrecisionProvider' = None  # Phase 1 default, Phase 2+ will set this
+
+    # Note: tick_size, step_size는 참조용으로 유지 (직접 사용 안 함)
+    # 실제 가격/수량 정밀도는 precision_provider.get_tick_size(), get_step_size() 사용
+
     # CCXT 호환성 속성들
     @property
     def min_quantity(self) -> Decimal:
         """CCXT 호환성: limits.amount.min"""
         return self.min_qty
-    
+
     @property
     def max_quantity(self) -> Decimal:
         """CCXT 호환성: limits.amount.max"""
         return self.max_qty
-    
+
     @property
     def limits(self) -> Dict[str, Dict[str, Any]]:
         """CCXT 호환성: limits 구조"""
@@ -93,7 +105,7 @@ class MarketInfo:
                 'max': None
             }
         }
-    
+
     @property
     def precision(self) -> Dict[str, int]:
         """CCXT 호환성: precision 구조"""
@@ -103,69 +115,69 @@ class MarketInfo:
             'base': self.base_precision,
             'quote': self.quote_precision
         }
-    
+
     @classmethod
     def from_binance_spot(cls, data: Dict[str, Any]) -> 'MarketInfo':
         """Binance Spot API 데이터에서 생성"""
         filters = {f['filterType']: f for f in data.get('filters', [])}
-        
+
         lot_size = filters.get('LOT_SIZE', {})
         price_filter = filters.get('PRICE_FILTER', {})
         notional = filters.get('NOTIONAL', {}) or filters.get('MIN_NOTIONAL', {})
-        
+
         return cls(
             symbol=data['symbol'],
             base_asset=data['baseAsset'],
             quote_asset=data['quoteAsset'],
             status=data['status'],
             active=data['status'] == 'TRADING',
-            
+
             price_precision=data.get('quotePrecision', 8),
             amount_precision=data.get('baseAssetPrecision', 8),
             base_precision=data.get('baseAssetPrecision', 8),
             quote_precision=data.get('quotePrecision', 8),
-            
+
             min_qty=Decimal(lot_size.get('minQty', '0')),
             max_qty=Decimal(lot_size.get('maxQty', '0')),
             step_size=Decimal(lot_size.get('stepSize', '0')),
-            
+
             min_price=Decimal(price_filter.get('minPrice', '0')),
             max_price=Decimal(price_filter.get('maxPrice', '0')),
             tick_size=Decimal(price_filter.get('tickSize', '0')),
-            
+
             min_notional=Decimal(notional.get('minNotional', '0')),
             market_type="SPOT"
         )
-    
+
     @classmethod
     def from_binance_futures(cls, data: Dict[str, Any]) -> 'MarketInfo':
         """Binance Futures API 데이터에서 생성"""
         filters = {f['filterType']: f for f in data.get('filters', [])}
-        
+
         lot_size = filters.get('LOT_SIZE', {})
         price_filter = filters.get('PRICE_FILTER', {})
         notional = filters.get('MIN_NOTIONAL', {})
-        
+
         return cls(
             symbol=data['symbol'],
             base_asset=data['baseAsset'],
             quote_asset=data['quoteAsset'],
             status=data['status'],
             active=data['status'] == 'TRADING',
-            
+
             price_precision=data.get('pricePrecision', 8),
             amount_precision=data.get('quantityPrecision', 8),
             base_precision=data.get('baseAssetPrecision', 8),
             quote_precision=data.get('quotePrecision', 8),
-            
+
             min_qty=Decimal(lot_size.get('minQty', '0')),
             max_qty=Decimal(lot_size.get('maxQty', '0')),
             step_size=Decimal(lot_size.get('stepSize', '0')),
-            
+
             min_price=Decimal(price_filter.get('minPrice', '0')),
             max_price=Decimal(price_filter.get('maxPrice', '0')),
             tick_size=Decimal(price_filter.get('tickSize', '0')),
-            
+
             min_notional=Decimal(notional.get('notional', '0')),
             market_type="FUTURES"
         )
@@ -178,7 +190,7 @@ class Balance:
     free: Decimal
     locked: Decimal
     total: Decimal = None
-    
+
     def __post_init__(self):
         """total이 없으면 free + locked로 계산"""
         if self.total is None:
@@ -220,7 +232,7 @@ class Order:
     cost: Optional[Decimal] = None
     fee: Optional[Decimal] = None
     last_trade_timestamp: Optional[datetime] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """CCXT 호환 딕셔너리로 변환"""
         return {

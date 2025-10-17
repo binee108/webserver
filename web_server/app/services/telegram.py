@@ -1,3 +1,4 @@
+# @FEAT:telegram-notification @COMP:service @TYPE:core
 """
 통합 텔레그램 서비스
 
@@ -17,6 +18,7 @@ from app.utils.logging_security import get_secure_logger
 logger = get_secure_logger(__name__)
 
 
+# @FEAT:telegram-notification @COMP:service @TYPE:core
 class TelegramService:
     """
     통합 텔레그램 서비스
@@ -25,6 +27,7 @@ class TelegramService:
     - telegram_service.py (완전 통합)
     """
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:config
     def __init__(self):
         # DB 설정 우선, 환경변수는 폴백
         self.bot_token = None
@@ -33,6 +36,7 @@ class TelegramService:
         self._initialize_global_settings()
         logger.info("✅ 통합 텔레그램 서비스 초기화 완료")
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:config
     def _initialize_global_settings(self):
         """전역 설정 초기화 - DB 우선, 환경변수 폴백"""
         try:
@@ -79,6 +83,7 @@ class TelegramService:
 
     # === 설정 관리 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def get_global_settings(self) -> dict:
         """전역 텔레그램 설정 조회"""
         try:
@@ -91,6 +96,7 @@ class TelegramService:
             logger.error(f"전역 설정 조회 실패: {str(e)}")
             return {'bot_token': None, 'chat_id': None}
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def update_global_settings(self, bot_token: str = None, chat_id: str = None) -> bool:
         """전역 텔레그램 설정 업데이트"""
         try:
@@ -127,6 +133,7 @@ class TelegramService:
 
     # === 연결 테스트 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:validation
     def test_global_settings(self) -> Dict[str, Any]:
         """저장된 전역 텔레그램 설정 테스트"""
         if not self.bot_token or not self.chat_id:
@@ -148,6 +155,7 @@ class TelegramService:
                 'message': '전역 텔레그램 메시지 전송 실패'
             }
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:validation
     def test_with_params(self, bot_token: str, chat_id: str) -> Dict[str, Any]:
         """주어진 파라미터로 텔레그램 연결 테스트"""
         if not bot_token or not chat_id:
@@ -198,6 +206,7 @@ class TelegramService:
 
     # === 사용자별 봇 관리 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def get_user_bot(self, user_telegram_bot_token: str) -> Optional[Bot]:
         """사용자별 봇 인스턴스 생성"""
         if not user_telegram_bot_token or user_telegram_bot_token.strip() == "":
@@ -209,6 +218,7 @@ class TelegramService:
             logger.error(f"사용자 봇 생성 실패: {str(e)}")
             return None
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def get_effective_bot_and_chat(self, user_telegram_bot_token: str = None,
                                   user_telegram_id: str = None) -> tuple[Optional[Bot], Optional[str]]:
         """사용자별 또는 전역 봇과 채팅 ID 반환 (우선순위: 사용자 > 전역)"""
@@ -241,6 +251,7 @@ class TelegramService:
 
     # === 메시지 전송 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def is_enabled(self) -> bool:
         """전역 텔레그램 알림이 활성화되어 있는지 확인"""
         is_active = (self.bot is not None and
@@ -254,6 +265,7 @@ class TelegramService:
 
         return is_active
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     async def send_message_async(self, message: str, parse_mode: str = 'HTML') -> bool:
         """비동기 메시지 전송"""
         if not self.is_enabled():
@@ -276,6 +288,7 @@ class TelegramService:
             logger.error(f"텔레그램 메시지 전송 중 예상치 못한 오류: {str(e)}")
             return False
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_message(self, message: str, parse_mode: str = 'HTML') -> bool:
         """동기 메시지 전송 (새 이벤트 루프 생성)"""
         if not self.is_enabled():
@@ -292,6 +305,7 @@ class TelegramService:
             logger.error(f"동기 메시지 전송 실패: {str(e)}")
             return False
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_message_to_user(self, user_telegram_id: str, message: str,
                             parse_mode: str = 'HTML', user_telegram_bot_token: str = None) -> bool:
         """특정 사용자에게 메시지 전송 (사용자별 봇 토큰 지원)"""
@@ -322,6 +336,7 @@ class TelegramService:
             logger.error(f"사용자별 메시지 전송 실패: {str(e)}")
             return False
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     async def _send_message_to_user_async(self, user_telegram_id: str, message: str,
                                          parse_mode: str = 'HTML', bot: Bot = None) -> bool:
         """특정 사용자에게 비동기 메시지 전송"""
@@ -351,6 +366,7 @@ class TelegramService:
 
     # === 알림 메시지들 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_order_adjustment_notification(self, user_id: int, adjustment_info: Dict[str, Any]) -> bool:
         """주문 수량 자동 조정 알림 전송"""
         try:
@@ -411,6 +427,7 @@ class TelegramService:
             logger.error(f"주문 조정 알림 전송 실패: {str(e)}")
             return False
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_error_alert(self, error_type: str, error_message: str,
                         context: Optional[Dict[str, Any]] = None) -> bool:
         """오류 알림 전송"""
@@ -437,6 +454,7 @@ class TelegramService:
 
         return self.send_message(message)
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_webhook_error(self, webhook_data: dict, error_message: str) -> bool:
         """웹훅 처리 오류 알림 전송"""
         if not self.is_enabled():
@@ -454,6 +472,7 @@ class TelegramService:
 
         return self.send_message(message)
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_exchange_error(self, account_id: int, exchange: str, error_message: str) -> bool:
         """거래소 연결 오류 알림 전송"""
         if not self.is_enabled():
@@ -471,6 +490,7 @@ class TelegramService:
 
         return self.send_message(message)
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_trading_error(self, strategy_name: str, symbol: str, error_message: str) -> bool:
         """거래 실행 오류 알림"""
         context = {
@@ -480,6 +500,7 @@ class TelegramService:
 
         return self.send_error_alert("거래 실행 오류", error_message, context)
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_system_status(self, status: str, details: Optional[str] = None) -> bool:
         """시스템 상태 알림"""
         if not self.is_enabled():
@@ -515,6 +536,83 @@ class TelegramService:
 
         return self.send_message(message)
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:core @DEPS:order-queue
+    def send_order_failure_alert(
+        self,
+        strategy: 'Strategy',
+        account: 'Account',
+        symbol: str,
+        error_type: str,
+        error_message: str
+    ) -> bool:
+        """
+        복구 불가능한 주문 실패 시 텔레그램 알림 발송
+
+        Args:
+            strategy: 전략 객체
+            account: 계정 객체
+            symbol: 심볼
+            error_type: 실패 유형
+            error_message: 에러 메시지
+
+        Returns:
+            bool: 알림 발송 성공 여부
+        """
+        # 에러 유형 한글 변환
+        error_type_kr = {
+            'insufficient_balance': '잔고 부족',
+            'invalid_symbol': '잘못된 심볼',
+            'limit_exceeded': '제한 초과',
+            'rate_limit': '요청 제한 초과',
+            'network_error': '네트워크 오류',
+            'unknown': '알 수 없는 오류'
+        }.get(error_type, error_type)
+
+        message = f"""
+⚠️ <b>주문 실패 알림 (복구 불가능)</b>
+
+<b>전략:</b> {strategy.name}
+<b>계정:</b> {account.name}
+<b>심볼:</b> {symbol}
+<b>실패 유형:</b> {error_type_kr}
+
+<b>오류 상세:</b>
+{error_message}
+
+<b>조치 필요:</b>
+• 잔고 부족: 계정 잔고 확인 필요
+• 잘못된 심볼: 웹훅 설정 확인
+• 제한 초과: 주문 수량 조정 필요
+        """.strip()
+
+        try:
+            # 사용자별 텔레그램 설정 확인
+            from app.models import User
+            user = User.query.get(strategy.user_id)
+            if not user:
+                logger.warning(f"사용자를 찾을 수 없습니다: {strategy.user_id}")
+                return False
+
+            # 사용자별 봇으로 메시지 전송
+            if user.telegram_bot_token and user.telegram_id:
+                result = self.send_message_to_user(
+                    user_telegram_id=user.telegram_id,
+                    message=message,
+                    parse_mode='HTML',
+                    user_telegram_bot_token=user.telegram_bot_token
+                )
+            else:
+                # 전역 봇으로 메시지 전송
+                result = self.send_message(message, parse_mode='HTML')
+
+            if result:
+                logger.info(f"📱 주문 실패 알림 발송 완료 - user_id: {strategy.user_id}")
+            return result
+        except Exception as e:
+            logger.error(f"텔레그램 알림 발송 실패: {e}")
+            return False
+
+    # @FEAT:telegram-notification @COMP:service @TYPE:core
     def send_daily_summary(self, summary_data: Dict[str, Any]) -> bool:
         """일일 트레이딩 요약 보고서 전송"""
         if not self.is_enabled():
@@ -595,6 +693,7 @@ class TelegramService:
 
     # === 사용자별 기능 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:validation
     def test_user_connection(self, user_telegram_id: str, user_telegram_bot_token: str = None) -> Dict[str, Any]:
         """특정 사용자의 텔레그램 연결 테스트 (사용자별 봇 토큰 지원)"""
         # 사용자별 설정 완전 검증 - 둘 다 필요
@@ -632,6 +731,7 @@ class TelegramService:
                 'message': '텔레그램 메시지 전송 실패'
             }
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def send_user_notification(self, user_telegram_id: str, title: str, message: str,
                               context: Optional[Dict[str, Any]] = None,
                               user_telegram_bot_token: str = None) -> bool:
@@ -658,6 +758,7 @@ class TelegramService:
 
     # === 유틸리티 ===
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:validation
     def test_connection(self) -> Dict[str, Any]:
         """텔레그램 연결 테스트"""
         if not self.is_enabled():
@@ -679,6 +780,7 @@ class TelegramService:
                 'message': '텔레그램 메시지 전송 실패'
             }
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def get_stats(self) -> Dict[str, Any]:
         """서비스 통계"""
         return {
@@ -688,6 +790,7 @@ class TelegramService:
             'bot_initialized': self.bot is not None
         }
 
+    # @FEAT:telegram-notification @COMP:service @TYPE:helper
     def is_available(self) -> bool:
         """서비스 사용 가능 여부"""
         return True  # 텔레그램 서비스는 항상 사용 가능 (설정이 없어도 동작)

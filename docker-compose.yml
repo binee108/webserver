@@ -31,6 +31,8 @@ services:
       - FLASK_APP=app:create_app
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - BACKGROUND_LOG_LEVEL=${BACKGROUND_LOG_LEVEL:-WARNING}
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,12 +43,12 @@ services:
     restart: unless-stopped
     networks:
       - trading-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 40s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   nginx:
     image: nginx:alpine

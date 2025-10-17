@@ -1,3 +1,4 @@
+# @FEAT:exchange-integration @COMP:exchange @TYPE:config
 """
 크립토 거래소 팩토리 (메타데이터 기반)
 
@@ -9,12 +10,13 @@ from typing import List, Optional
 
 from .binance import BinanceExchange
 from .upbit import UpbitExchange
-from .metadata import ExchangeMetadata, ExchangeRegion, MarketType
+from .bithumb import BithumbExchange
+from app.exchanges.metadata import ExchangeMetadata, ExchangeRegion, MarketType
 
 logger = logging.getLogger(__name__)
 
 
-class ExchangeFactory:
+class CryptoExchangeFactory:
     """
     크립토 거래소 팩토리 (플러그인 구조)
 
@@ -28,6 +30,7 @@ class ExchangeFactory:
     _EXCHANGE_CLASSES = {
         'binance': BinanceExchange,
         'upbit': UpbitExchange,
+        'bithumb': BithumbExchange,
         # 향후 추가 예시:
         # 'bybit': BybitExchange,
     }
@@ -36,7 +39,7 @@ class ExchangeFactory:
     SUPPORTED_EXCHANGES = list(_EXCHANGE_CLASSES.keys())
 
     @classmethod
-    def create_exchange(cls, exchange_name: str, api_key: str, secret: str,
+    def create(cls, exchange_name: str, api_key: str, secret: str,
                        testnet: bool = False, **kwargs):
         """
         크립토 거래소 인스턴스 생성
@@ -96,12 +99,17 @@ class ExchangeFactory:
     @classmethod
     def create_binance(cls, api_key: str, secret: str, testnet: bool = False) -> BinanceExchange:
         """Binance 인스턴스 생성 (편의 메서드)"""
-        return cls.create_exchange('binance', api_key, secret, testnet)
+        return cls.create('binance', api_key, secret, testnet)
 
     @classmethod
     def create_upbit(cls, api_key: str, secret: str) -> UpbitExchange:
         """Upbit 인스턴스 생성 (편의 메서드)"""
-        return cls.create_exchange('upbit', api_key, secret, testnet=False)
+        return cls.create('upbit', api_key, secret, testnet=False)
+
+    @classmethod
+    def create_bithumb(cls, api_key: str, secret: str) -> 'BithumbExchange':
+        """Bithumb 인스턴스 생성 (편의 메서드)"""
+        return cls.create('bithumb', api_key, secret, testnet=False)
 
     @classmethod
     def is_supported(cls, exchange_name: str) -> bool:
@@ -114,22 +122,27 @@ class ExchangeFactory:
         return cls.SUPPORTED_EXCHANGES.copy()
 
 
-# 전역 팩토리 인스턴스
-exchange_factory = ExchangeFactory()
+# 전역 팩토리 (클래스 - 모든 메서드가 @classmethod)
+crypto_factory = CryptoExchangeFactory
 
 
 # 편의 함수들
 def create_exchange(exchange_name: str = 'binance', api_key: str = '', secret: str = '',
                    testnet: bool = False) -> BinanceExchange:
     """거래소 인스턴스 생성 (편의 함수)"""
-    return exchange_factory.create_exchange(exchange_name, api_key, secret, testnet)
+    return crypto_factory.create(exchange_name, api_key, secret, testnet)
 
 
 def create_binance(api_key: str, secret: str, testnet: bool = False) -> BinanceExchange:
     """Binance 인스턴스 생성 (편의 함수)"""
-    return exchange_factory.create_binance(api_key, secret, testnet)
+    return crypto_factory.create_binance(api_key, secret, testnet)
 
 
 def create_upbit(api_key: str, secret: str) -> UpbitExchange:
     """Upbit 인스턴스 생성 (편의 함수)"""
-    return exchange_factory.create_upbit(api_key, secret)
+    return crypto_factory.create_upbit(api_key, secret)
+
+
+def create_bithumb(api_key: str, secret: str) -> 'BithumbExchange':
+    """Bithumb 인스턴스 생성 (편의 함수)"""
+    return crypto_factory.create_bithumb(api_key, secret)

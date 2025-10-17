@@ -1,3 +1,9 @@
+# @FEAT:strategy-management @COMP:route @TYPE:core
+"""
+전략 관리 API 라우트
+
+전략 CRUD, 계좌 연결, 공개 전략 구독, 성과 조회 등을 제공하는 REST API 엔드포인트
+"""
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 from app import db
@@ -6,21 +12,22 @@ from app.services.analytics import analytics_service as capital_service
 from app.services.strategy_service import strategy_service, StrategyError
 from app.constants import MarketType
 from app.utils.response_formatter import (
-    create_success_response, 
-    create_error_response, 
-    ErrorCode, 
+    create_success_response,
+    create_error_response,
+    ErrorCode,
     exception_to_error_response
 )
 
 bp = Blueprint('strategies', __name__, url_prefix='/api')
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies', methods=['GET'])
 @login_required
 def get_strategies():
     """사용자의 전략 목록 조회"""
     try:
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
-        
+
         return create_success_response(
             data={'strategies': strategies_data},
             message='전략 목록을 성공적으로 조회했습니다.'
@@ -36,6 +43,7 @@ def get_strategies():
         current_app.logger.error(f'전략 목록 조회 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/accessibles', methods=['GET'])
 @login_required
 def get_accessible_strategies():
@@ -56,6 +64,7 @@ def get_accessible_strategies():
         current_app.logger.error(f'접근 가능한 전략 목록 조회 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/public', methods=['GET'])
 @login_required
 def list_public_strategies():
@@ -80,6 +89,7 @@ def list_public_strategies():
         current_app.logger.error(f'공개 전략 목록 조회 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/public/<int:strategy_id>', methods=['GET'])
 @login_required
 def get_public_strategy(strategy_id):
@@ -107,6 +117,7 @@ def get_public_strategy(strategy_id):
         current_app.logger.error(f'공개 전략 상세 조회 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/subscribe', methods=['POST'])
 @login_required
 def subscribe_strategy(strategy_id):
@@ -131,6 +142,7 @@ def subscribe_strategy(strategy_id):
         current_app.logger.error(f'공개 전략 구독 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/subscribe/<int:account_id>', methods=['DELETE'])
 @login_required
 def unsubscribe_strategy(strategy_id, account_id):
@@ -158,22 +170,23 @@ def unsubscribe_strategy(strategy_id, account_id):
         current_app.logger.error(f'공개 전략 구독 해제 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies', methods=['POST'])
 @login_required
 def create_strategy():
     """새 전략 생성"""
     try:
         data = request.get_json()
-        
+
         result = strategy_service.create_strategy(current_user.id, data)
-        
+
         current_app.logger.info(f'새 전략 생성: {result["name"]} ({result["group_name"]}) - {result["market_type"]}')
-        
+
         return create_success_response(
             data={'strategy_id': result['strategy_id']},
             message='전략이 성공적으로 생성되었습니다.'
         )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_VALIDATION_ERROR,
@@ -184,6 +197,7 @@ def create_strategy():
         current_app.logger.error(f'전략 생성 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route("/strategies/<int:strategy_id>", methods=["PUT"])
 @login_required
 def update_strategy(strategy_id):
@@ -210,6 +224,13 @@ def update_strategy(strategy_id):
             strategy.description = data["description"]
 
         if "is_active" in data:
+            # Phase 3: 비활성화 시 SSE 클라이언트 정리
+            if strategy.is_active and not data["is_active"]:  # 활성 -> 비활성으로 변경
+                from app.services.event_service import event_service
+                cleaned_count = event_service.cleanup_strategy_clients(strategy_id)
+                current_app.logger.info(
+                    f"전략 {strategy_id} 비활성화 - SSE 클라이언트 {cleaned_count}개 정리됨"
+                )
             strategy.is_active = data["is_active"]
 
         # market_type 수정 (검증 포함)
@@ -243,12 +264,27 @@ def update_strategy(strategy_id):
             new_public = bool(data["is_public"])
             # 공개 -> 비공개로 바뀌는 경우, 소유자 외 구독 연결 비활성화
             if strategy.is_public and not new_public:
+                # Phase 4: SSE 강제 종료 (비활성화되는 구독자들)
+                from app.services.event_service import event_service
                 deactivated = 0
+                total_sse_cleaned = 0
+
                 for sa in strategy.strategy_accounts:
                     if sa.account.user_id != current_user.id and sa.is_active:
                         sa.is_active = False
                         deactivated += 1
-                current_app.logger.info(f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화")
+
+                        # 구독자의 SSE 연결 종료
+                        cleaned = event_service.disconnect_client(
+                            sa.account.user_id,
+                            strategy_id,
+                            reason='permission_revoked'
+                        )
+                        total_sse_cleaned += cleaned
+
+                current_app.logger.info(
+                    f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화, SSE {total_sse_cleaned}개 종료"
+                )
             strategy.is_public = new_public
 
         # 계좌 연결 정보 업데이트
@@ -296,22 +332,23 @@ def update_strategy(strategy_id):
 
         # 변경사항 커밋
         db.session.commit()
-        
+
         # 영향받은 계좌들에 대해 자본 재할당
         for account_id in affected_accounts:
             capital_service.auto_allocate_capital_for_account(account_id)
-        
+
         current_app.logger.info(f"전략 정보 수정: {strategy.name} ({strategy.group_name})")
-        
+
         return create_success_response(
             message="전략 정보가 성공적으로 수정되었습니다."
         )
-        
+
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"전략 수정 오류: {str(e)}")
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/toggle', methods=['POST'])
 @login_required
 def toggle_strategy(strategy_id):
@@ -323,19 +360,27 @@ def toggle_strategy(strategy_id):
                 error_code=ErrorCode.STRATEGY_NOT_FOUND,
                 message='전략을 찾을 수 없습니다.'
             )
-        
+
+        # Phase 3: 비활성화 전 SSE 클라이언트 정리
+        if strategy.is_active:  # 활성 -> 비활성으로 변경 시
+            from app.services.event_service import event_service
+            cleaned_count = event_service.cleanup_strategy_clients(strategy_id)
+            current_app.logger.info(
+                f"전략 {strategy_id} 비활성화 - SSE 클라이언트 {cleaned_count}개 정리됨"
+            )
+
         # 상태 토글
         update_data = {'is_active': not strategy.is_active}
         result = strategy_service.update_strategy(strategy_id, current_user.id, update_data)
-        
+
         status = '활성화' if result['is_active'] else '비활성화'
         current_app.logger.info(f'전략 {status}: {result["name"]}')
-        
+
         return create_success_response(
             data={'is_active': result['is_active']},
             message=f'전략이 {status}되었습니다.'
         )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
@@ -346,13 +391,14 @@ def toggle_strategy(strategy_id):
         current_app.logger.error(f'전략 상태 변경 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>', methods=['DELETE'])
 @login_required
 def delete_strategy(strategy_id):
     """전략 삭제"""
     try:
         success = strategy_service.delete_strategy(strategy_id, current_user.id)
-        
+
         if success:
             current_app.logger.info(f'전략 삭제 완료: ID {strategy_id}')
             return create_success_response(
@@ -363,7 +409,7 @@ def delete_strategy(strategy_id):
                 error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
                 message='전략 삭제에 실패했습니다.'
             )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
@@ -374,6 +420,7 @@ def delete_strategy(strategy_id):
         current_app.logger.error(f'전략 삭제 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>', methods=['GET'])
 @login_required
 def get_strategy(strategy_id):
@@ -382,18 +429,18 @@ def get_strategy(strategy_id):
         # 단일 전략 조회를 위해 기존 get_strategies_by_user 사용 후 필터링
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
         strategy_data = next((s for s in strategies_data if s['id'] == strategy_id), None)
-        
+
         if not strategy_data:
             return create_error_response(
                 error_code=ErrorCode.STRATEGY_NOT_FOUND,
                 message='전략을 찾을 수 없습니다.'
             )
-        
+
         return create_success_response(
             data={'strategy': strategy_data},
             message='전략 정보를 성공적으로 조회했습니다.'
         )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
@@ -405,6 +452,7 @@ def get_strategy(strategy_id):
         return exception_to_error_response(e)
 
 # 전략별 계좌 연결 관리 API
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/accounts', methods=['GET'])
 @login_required
 def get_strategy_accounts(strategy_id):
@@ -416,7 +464,7 @@ def get_strategy_accounts(strategy_id):
                 error_code=ErrorCode.STRATEGY_NOT_FOUND,
                 message='전략을 찾을 수 없습니다.'
             )
-        
+
         accounts_data = []
         for sa in strategy.strategy_accounts:
             account_info = {
@@ -428,7 +476,7 @@ def get_strategy_accounts(strategy_id):
                 'max_symbols': sa.max_symbols,
                 'is_active': sa.account.is_active
             }
-            
+
             # 할당된 자본 정보
             if sa.strategy_capital:
                 account_info['allocated_capital'] = sa.strategy_capital.allocated_capital
@@ -436,36 +484,37 @@ def get_strategy_accounts(strategy_id):
             else:
                 account_info['allocated_capital'] = 0
                 account_info['current_pnl'] = 0
-            
+
             accounts_data.append(account_info)
-        
+
         return create_success_response(
             data={'accounts': accounts_data},
             message='전략 계좌 목록을 성공적으로 조회했습니다.'
         )
-        
+
     except Exception as e:
         current_app.logger.error(f'전략 계좌 목록 조회 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/accounts', methods=['POST'])
 @login_required
 def connect_account_to_strategy(strategy_id):
     """전략에 계좌 연결"""
     try:
         data = request.get_json()
-        
+
         result = strategy_service.connect_account_to_strategy(strategy_id, current_user.id, data)
-        
+
         # 자본 배분 완료 후 업데이트된 전략 정보 조회
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
         updated_strategy = next((s for s in strategies_data if s['id'] == strategy_id), None)
-        
+
         return create_success_response(
             data={'connection': result, 'updated_strategy': updated_strategy},
             message='계좌가 성공적으로 연결되었습니다.'
         )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
@@ -476,6 +525,7 @@ def connect_account_to_strategy(strategy_id):
         current_app.logger.error(f'계좌 연결 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/accounts/<int:account_id>', methods=['DELETE'])
 @login_required
 def disconnect_strategy_account(strategy_id, account_id):
@@ -487,26 +537,26 @@ def disconnect_strategy_account(strategy_id, account_id):
                 error_code=ErrorCode.STRATEGY_NOT_FOUND,
                 message='전략을 찾을 수 없습니다.'
             )
-        
+
         # 연결 확인
         strategy_account = StrategyAccount.query.filter_by(
             strategy_id=strategy_id,
             account_id=account_id
         ).first()
-        
+
         if not strategy_account:
             return create_error_response(
                 error_code=ErrorCode.RESOURCE_NOT_FOUND,
                 message='연결된 계좌를 찾을 수 없습니다.'
             )
-        
+
         # 계좌 소유권 확인
         if strategy_account.account.user_id != current_user.id:
             return create_error_response(
                 error_code=ErrorCode.ACCESS_DENIED,
                 message='권한이 없습니다.'
             )
-        
+
         # 활성 포지션이 있는지 확인
         if hasattr(strategy_account, 'strategy_positions') and strategy_account.strategy_positions:
             active_positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
@@ -515,31 +565,47 @@ def disconnect_strategy_account(strategy_id, account_id):
                     error_code=ErrorCode.BUSINESS_VALIDATION_ERROR,
                     message='활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.'
                 )
-        
+
+        # Phase 4: 계좌 소유자의 SSE 연결 강제 종료
+        affected_user_id = strategy_account.account.user_id
         account_name = strategy_account.account.name
-        account_id = strategy_account.account_id
+        account_id_value = strategy_account.account_id
+
+        # 삭제 전 SSE 클라이언트 정리
+        from app.services.event_service import event_service
+        cleaned = event_service.disconnect_client(
+            affected_user_id,
+            strategy_id,
+            reason='permission_revoked'
+        )
+        if cleaned > 0:
+            current_app.logger.info(
+                f"StrategyAccount 삭제 - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+            )
+
         db.session.delete(strategy_account)
         db.session.commit()
-        
+
         # 해당 계좌의 남은 전략들에 대해 자본 재할당
-        capital_service.auto_allocate_capital_for_account(account_id)
-        
+        capital_service.auto_allocate_capital_for_account(account_id_value)
+
         # 자본 배분 완료 후 업데이트된 전략 정보 조회
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
         updated_strategy = next((s for s in strategies_data if s['id'] == strategy_id), None)
-        
+
         current_app.logger.info(f'계좌 연결 해제: 전략 {strategy.name} - 계좌 {account_name}')
-        
+
         return create_success_response(
             data={'updated_strategy': updated_strategy},
             message='계좌 연결이 성공적으로 해제되었습니다.'
         )
-        
+
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f'계좌 연결 해제 오류: {str(e)}')
         return exception_to_error_response(e)
 
+# @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/accounts/<int:account_id>', methods=['PUT'])
 @login_required
 def update_strategy_account(strategy_id, account_id):
@@ -547,18 +613,18 @@ def update_strategy_account(strategy_id, account_id):
     try:
         data = request.get_json()
         data['account_id'] = account_id  # URL에서 account_id 가져와서 설정
-        
+
         result = strategy_service.update_strategy_account(strategy_id, current_user.id, data)
-        
+
         # 자본 배분 완료 후 업데이트된 전략 정보 조회
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
         updated_strategy = next((s for s in strategies_data if s['id'] == strategy_id), None)
-        
+
         return create_success_response(
             data={'connection': result, 'updated_strategy': updated_strategy},
             message='계좌 설정이 성공적으로 업데이트되었습니다.'
         )
-        
+
     except StrategyError as e:
         return create_error_response(
             error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
@@ -574,6 +640,7 @@ def update_strategy_account(strategy_id, account_id):
 # Phase 3.3: 전략 성과 조회 API 엔드포인트
 # ============================================================
 
+# @FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/performance/roi', methods=['GET'])
 @login_required
 def get_strategy_roi(strategy_id):
@@ -632,6 +699,7 @@ def get_strategy_roi(strategy_id):
         return exception_to_error_response(e)
 
 
+# @FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/performance/summary', methods=['GET'])
 @login_required
 def get_strategy_performance_summary(strategy_id):
@@ -693,6 +761,7 @@ def get_strategy_performance_summary(strategy_id):
         return exception_to_error_response(e)
 
 
+# @FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/performance/daily', methods=['GET'])
 @login_required
 def get_strategy_daily_performance(strategy_id):

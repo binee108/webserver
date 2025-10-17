@@ -932,17 +932,27 @@ function initializeAllRealtimeSystems() {
         }
     }
     
-    // 2. Initialize SSE Manager with skip auth check
+    // 2. Initialize SSE Manager with skip auth check and strategy_id
+    const strategyId = getStrategyIdFromUrl();
+    if (!strategyId) {
+        log.error('전략 ID를 찾을 수 없습니다. SSE 연결을 초기화할 수 없습니다.');
+        updateRealtimeIndicator(false);
+        return;
+    }
+
     const sseManager = window.initializeSSE ? window.initializeSSE({
-        skipAuthCheck: true  // positions 페이지는 이미 인증이 필요하므로 auth check 생략
+        skipAuthCheck: true,  // positions 페이지는 이미 인증이 필요하므로 auth check 생략
+        strategyId: strategyId  // NEW: strategy_id 전달 (Phase 2 백엔드 필수 파라미터)
     }) : null;
-    
+
     if (!sseManager) {
         log.error('Failed to initialize SSE Manager');
         updateRealtimeIndicator(false);
         return;
     }
-    
+
+    log.info(`✅ SSE Manager initialized with strategy_id=${strategyId}`);
+
     // 3. Add SSE connection event listeners
     if (window.RealtimeCore && window.RealtimeCore.eventBus) {
         const eventBus = window.RealtimeCore.eventBus;
@@ -967,8 +977,18 @@ function initializeAllRealtimeSystems() {
             updateRealtimeIndicator(false);
             updateConnectionStatusDisplay();
         });
+
+        // SSE 강제 종료 이벤트
+        eventBus.on('sse-force-disconnect', (data) => {
+            log.error('🚫 SSE 강제 종료:', data);
+            updateRealtimeIndicator(false);
+            updateConnectionStatusDisplay();
+
+            // 이미 SSEManager의 handleForceDisconnect()에서 처리하므로
+            // 여기서는 UI 상태만 업데이트
+        });
     }
-    
+
     // 4. Initialize Position Price Manager (WebSocket prices)
     const priceManager = window.initializePositionPrices ? 
         window.initializePositionPrices(positionsData) : null;

@@ -1,3 +1,10 @@
+# @FEAT:webhook-order @COMP:route @TYPE:core
+"""
+트레이딩뷰 웹훅 수신 엔드포인트
+
+이 모듈은 외부 웹훅 요청을 받아 검증하고 처리하는 Flask 라우트를 제공합니다.
+"""
+
 import json
 import time
 from datetime import datetime
@@ -13,10 +20,15 @@ from app.utils.response_formatter import (
 
 bp = Blueprint('webhook', __name__, url_prefix='/api')
 
+# @FEAT:webhook-order @COMP:route @TYPE:core
 @bp.route('/webhook', methods=['POST'])
 @csrf.exempt  # 웹훅은 외부에서 오므로 CSRF 보호 제외
 def webhook():
-    """트레이딩뷰 웹훅 수신 엔드포인트"""
+    """
+    트레이딩뷰 웹훅 수신 엔드포인트
+
+    외부 시스템에서 전송된 주문 신호를 받아 검증하고 처리합니다.
+    """
     # 웹훅 수신 시점 기록 (표준화된 명명 규칙)
     webhook_received_at = time.time()
 
@@ -27,7 +39,7 @@ def webhook():
                 error_code=ErrorCode.INVALID_FORMAT,
                 message="Content-Type must be application/json"
             )
-        
+
         # JSON 파싱 오류를 명시적으로 처리
         try:
             data = request.get_json()
@@ -47,18 +59,18 @@ def webhook():
                 message="JSON parsing error",
                 details=str(e)
             )
-        
+
         if not data:
             return create_error_response(
                 error_code=ErrorCode.MISSING_REQUIRED_FIELD,
                 message="No JSON data provided"
             )
-        
+
         current_app.logger.info(f'🔔 웹훅 수신: {json.dumps(data, ensure_ascii=False)}')
 
         # 웹훅 서비스를 통해 웹훅 처리 (표준화된 타이밍 전달)
         result = webhook_service.process_webhook(data, webhook_received_at)
-        
+
         # 🆕 처리 결과 상세 로깅
         action = result.get('action', 'unknown')
         strategy = result.get('strategy', 'unknown')
@@ -73,16 +85,16 @@ def webhook():
             successful_count = summary.get('successful_trades', 0)
             failed_count = summary.get('failed_trades', 0)
             total_accounts = summary.get('total_accounts', 0)
-            
+
             if successful_count > 0:
                 current_app.logger.info(f'✅ 웹훅 처리 성공: 전략 {strategy}, {successful_count}/{total_accounts} 계좌에서 거래 성공')
             else:
                 current_app.logger.error(f'❌ 웹훅 처리 실패: 전략 {strategy}, {total_accounts}개 계좌 중 성공한 거래 없음')
         else:
             current_app.logger.info(f'✅ 웹훅 처리 완료: {action} - {strategy}')
-        
+
         current_app.logger.debug(f'웹훅 처리 상세 결과: {result}')
-        
+
         # 웹훅 처리 완료 시점 기록
         webhook_completed_at = time.time()
 
@@ -93,7 +105,7 @@ def webhook():
             performance_metrics = {
                 'total_processing_time_ms': round((webhook_completed_at - webhook_received_at) * 1000, 2)
             }
-        
+
         # 간소화된 응답 구조 생성
         response_data = {
             'success': True,
@@ -117,7 +129,7 @@ def webhook():
             data=response_data,
             message="웹훅 처리 성공"
         )
-        
+
     except WebhookError as e:
         webhook_error_at = time.time()
         processing_time = round((webhook_error_at - webhook_received_at) * 1000, 2)
@@ -136,7 +148,7 @@ def webhook():
             message=f"웹훅 처리 오류 (처리 시간: {processing_time}ms)",
             details=str(e)
         )
-        
+
     except Exception as e:
         webhook_error_at = time.time()
         processing_time = round((webhook_error_at - webhook_received_at) * 1000, 2)
@@ -158,4 +170,4 @@ def webhook():
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
             message=f"내부 서버 오류 (처리 시간: {processing_time}ms)",
             details=str(e)
-        ) 
+        )

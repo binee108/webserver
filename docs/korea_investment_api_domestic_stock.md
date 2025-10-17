@@ -4,20 +4,23 @@
 
 ### 1.1 주식주문(현금)
 - **Endpoint**: `POST /uapi/domestic-stock/v1/trading/order-cash`
-- **tr_id**: `TTTC0802U` (매수), `TTTC0801U` (매도)
+- **tr_id**:
+  - **실전투자**: `TTTC0012U` (매수), `TTTC0011U` (매도)
+  - **모의투자**: `VTTC0012U` (매수), `VTTC0011U` (매도)
+- **요청 헤더**: `hashkey` 필수 (주문계좌 API 보안정책)
 
 #### 요청
 ```json
 {
   "CANO": "12345678",           // 종합계좌번호 앞 8자리
   "ACNT_PRDT_CD": "01",         // 계좌상품코드 뒤 2자리
-  "PDNO": "005930",             // 종목코드 (6자리)
+  "PDNO": "005930",             // 종목코드 (6자리, ETN은 7자리)
   "ORD_DVSN": "00",             // 주문구분: 00=지정가, 01=시장가
   "ORD_QTY": "10",              // 주문수량
   "ORD_UNPR": "70000",          // 주문단가 (시장가는 "0")
-  "EXCG_ID_DVSN_CD": "",        // 거래소구분코드 (공란)
-  "SLL_TYPE": "01",             // 매도유형: 01=보통, 02=유통융자상환
-  "CNDT_PRIC": ""               // 조건가격 (공란)
+  "EXCG_ID_DVSN_CD": "KRX",     // 거래소ID구분코드 (KRX)
+  "SLL_TYPE": "01",             // 매도유형: 01=일반매도, 02=임의매매, 05=대차매도
+  "CNDT_PRIC": ""               // 조건가격 (스탑지정가 주문 시 사용)
 }
 ```
 
@@ -27,7 +30,7 @@
   "rt_cd": "0",
   "msg_cd": "MCA00000",
   "msg1": "주문이 완료되었습니다",
-  "output": {
+  "output1": {
     "KRX_FWDG_ORD_ORGNO": "91252",      // 주문조직번호
     "ODNO": "0000117057",                // 주문번호
     "ORD_TMD": "121520"                  // 주문시각
@@ -49,20 +52,25 @@
 
 ### 1.2 주식주문(정정취소)
 - **Endpoint**: `POST /uapi/domestic-stock/v1/trading/order-rvsecncl`
-- **tr_id**: `TTTC0803U` (정정), `TTTC0804U` (취소)
+- **tr_id**:
+  - **실전투자**: `TTTC0013U` (정정/취소 통합)
+  - **모의투자**: `VTTC0013U` (정정/취소 통합)
+- **요청 헤더**: `hashkey` 필수 (주문계좌 API 보안정책)
 
 #### 요청
 ```json
 {
   "CANO": "12345678",
   "ACNT_PRDT_CD": "01",
-  "KRX_FWDG_ORD_ORGNO": "91252",   // 원주문 조직번호
+  "KRX_FWDG_ORD_ORGNO": "91252",   // 한국거래소전송주문조직번호
   "ORGN_ODNO": "0000117057",       // 원주문번호
-  "ORD_DVSN": "00",                // 정정 시 새 주문구분
-  "RVSE_CNCL_DVSN_CD": "01",       // 01=정정, 02=취소
-  "ORD_QTY": "5",                  // 정정 시 새 수량 (취소는 "0")
-  "ORD_UNPR": "71000",             // 정정 시 새 가격 (취소는 "0")
-  "QTY_ALL_ORD_YN": "Y"            // 전량취소: Y, 일부취소: N
+  "ORD_DVSN": "00",                // 주문구분 (정정 시 새 주문구분)
+  "RVSE_CNCL_DVSN_CD": "01",       // 정정취소구분코드: 01=정정, 02=취소
+  "ORD_QTY": "5",                  // 주문수량 (정정 시 새 수량, 취소는 "0")
+  "ORD_UNPR": "71000",             // 주문단가 (정정 시 새 가격, 취소는 "0")
+  "QTY_ALL_ORD_YN": "Y",           // 잔량전부주문여부: Y=전량, N=일부
+  "EXCG_ID_DVSN_CD": "KRX",        // 거래소ID구분코드 (KRX, NXT, SOR)
+  "CNDT_PRIC": ""                  // 조건가격 (선택)
 }
 ```
 
@@ -72,7 +80,7 @@
   "rt_cd": "0",
   "msg_cd": "MCA00000",
   "msg1": "정정(취소)가 완료되었습니다",
-  "output": {
+  "output1": {
     "KRX_FWDG_ORD_ORGNO": "91252",
     "ODNO": "0000117058",
     "ORD_TMD": "121535"
@@ -86,7 +94,11 @@
 
 ### 2.1 주식일별주문체결조회
 - **Endpoint**: `GET /uapi/domestic-stock/v1/trading/inquire-daily-ccld`
-- **tr_id**: `TTTC8001R` (실전), `VTTC8001R` (모의)
+- **tr_id**:
+  - **실전투자 (3개월 이내)**: `TTTC0081R`
+  - **실전투자 (3개월 이전)**: `CTSC9215R`
+  - **모의투자 (3개월 이내)**: `VTTC0081R`
+  - **모의투자 (3개월 이전)**: `VTSC9215R`
 
 #### 요청 (Query String)
 ```
@@ -97,11 +109,11 @@ INQR_END_DT=20241002       // 조회종료일자
 SLL_BUY_DVSN_CD=00         // 00=전체, 01=매도, 02=매수
 INQR_DVSN=00               // 00=역순, 01=정순
 PDNO=                      // 종목코드 (전체 조회 시 공란)
-CCLD_DVSN=00               // 00=전체, 01=체결, 02=미체결
+CCLD_NCCS_DVSN=00          // 00=전체, 01=체결, 02=미체결
 ORD_GNO_BRNO=              // 주문채번지점번호
 ODNO=                      // 주문번호
 INQR_DVSN_3=00             // 00=전체, 01=현금, 02=융자
-INQR_DVSN_1=               // 공란
+INQR_DVSN_1=               // 공란 (빈 값 허용)
 CTX_AREA_FK100=            // 연속조회검색조건 (최초 공란)
 CTX_AREA_NK100=            // 연속조회키 (최초 공란)
 ```
@@ -127,7 +139,7 @@ CTX_AREA_NK100=            // 연속조회키 (최초 공란)
       "ord_unpr": "70000",            // 주문단가
       "ord_tmd": "121520",            // 주문시각
       "tot_ccld_qty": "10",           // 총체결수량
-      "avg_prvs": "69950",            // 평균가
+      "avg_pric": "69950",            // 평균가
       "cncl_yn": "N",                 // 취소여부
       "tot_ccld_amt": "699500",       // 총체결금액
       "loan_dt": "",                  // 대출일자
@@ -165,7 +177,7 @@ CTX_AREA_NK100=            // 연속조회키 (최초 공란)
 CANO=12345678
 ACNT_PRDT_CD=01
 INQR_DVSN_1=0              // 0=조회순서
-INQR_DVSN_2=0              // 0=전체
+INQR_DVSN_2=00             // 00=전체
 CTX_AREA_FK100=
 CTX_AREA_NK100=
 ```
@@ -212,7 +224,7 @@ INQR_DVSN=01               // 조회구분: 01=대출일별, 02=종목별
 UNPR_DVSN=01               // 단가구분: 01=기본
 FUND_STTL_ICLD_YN=N        // 펀드결제분포함여부
 FNCG_AMT_AUTO_RDPT_YN=N    // 융자금액자동상환여부
-PRCS_DVSN=00               // 처리구분: 00=전일매매포함, 01=전일매매미포함
+PROC_DVSN=00               // 처리구분: 00=전일매매포함, 01=전일매매미포함
 CTX_AREA_FK100=
 CTX_AREA_NK100=
 ```
@@ -228,7 +240,7 @@ CTX_AREA_NK100=
       "trad_dvsn_name": "",          // 매매구분명
       "bfdy_buy_qty": "0",           // 전일매수수량
       "bfdy_sll_qty": "0",           // 전일매도수량
-      "thdt_buyqty": "10",           // 금일매수수량
+      "thdt_buy_qty": "10",          // 금일매수수량
       "thdt_sll_qty": "0",           // 금일매도수량
       "hldg_qty": "10",              // 보유수량
       "ord_psbl_qty": "10",          // 주문가능수량
@@ -303,7 +315,7 @@ OVRS_ICLD_YN=N             // 해외포함여부
 ```json
 {
   "rt_cd": "0",
-  "output": {
+  "output1": {
     "ord_psbl_cash": "4298402",      // 주문가능현금
     "ord_psbl_sbst": "0",            // 주문가능대용
     "ruse_psbl_amt": "0",            // 재사용가능금액
@@ -315,7 +327,8 @@ OVRS_ICLD_YN=N             // 해외포함여부
     "max_buy_qty": "61",             // 최대매수수량
     "cma_evlu_amt": "0",             // CMA평가금액
     "ovrs_re_use_amt_wcrc": "0",     // 해외재사용금액원화
-    "ord_psbl_frcr_amt": "0.00"      // 주문가능외화금액
+    "ord_psbl_frcr_amt": "0.00",     // 주문가능외화금액
+    "marg_ratio": "100"              // 증거금율
   }
 }
 ```
@@ -326,11 +339,11 @@ OVRS_ICLD_YN=N             // 해외포함여부
 - **Endpoint**: `GET /uapi/domestic-stock/v1/trading/inquire-deposit`
 - **tr_id**: `TTTC3014R`
 
-#### 요청
+#### 요청 (Query String)
 ```
 CANO=12345678
 ACNT_PRDT_CD=01
-INQR_DVSN_1=00             // 조회구분
+INQR_DVSN_1_CD=00          // 조회구분코드
 INQR_DVSN_2=00
 ```
 
@@ -422,7 +435,7 @@ FID_INPUT_ISCD=005930      // 종목코드
 - **Endpoint**: `GET /uapi/domestic-stock/v1/quotations/inquire-asking-price`
 - **tr_id**: `FHKST01010200`
 
-#### 요청
+#### 요청 (Query String)
 ```
 FID_COND_MRKT_DIV_CODE=J
 FID_INPUT_ISCD=005930
@@ -433,7 +446,7 @@ FID_INPUT_ISCD=005930
 {
   "rt_cd": "0",
   "output1": {
-    "aspr_acpt_hour": "135530",      // 호가접수시각
+    "askp_acpt_hour": "135530",      // 호가접수시각
     "askp1": "70200",                // 매도호가1
     "askp2": "70300",                // 매도호가2
     "askp3": "70400",
@@ -509,12 +522,12 @@ FID_INPUT_ISCD=005930
 - **Endpoint**: `GET /uapi/domestic-stock/v1/quotations/inquire-daily-price`
 - **tr_id**: `FHKST01010400`
 
-#### 요청
+#### 요청 (Query String)
 ```
 FID_COND_MRKT_DIV_CODE=J
 FID_INPUT_ISCD=005930
 FID_PERIOD_DIV_CODE=D      // D=일, W=주, M=월
-FID_ORG_ADJ_PRC=0          // 0=수정주가, 1=원주가
+FID_ORG_ADJ_PRC_CODE=0     // 0=수정주가, 1=원주가
 ```
 
 #### 응답
@@ -551,7 +564,7 @@ FID_ORG_ADJ_PRC=0          // 0=수정주가, 1=원주가
 - **Endpoint**: `GET /uapi/domestic-stock/v1/quotations/inquire-basic-info`
 - **tr_id**: `FHKST01010900`
 
-#### 요청
+#### 요청 (Query String)
 ```
 FID_COND_MRKT_DIV_CODE=J
 FID_INPUT_ISCD=005930
@@ -568,8 +581,7 @@ FID_INPUT_ISCD=005930
     "prdt_name120": "삼성전자",
     "prdt_abrv_name": "삼성전자",     // 상품약어명
     "prdt_eng_name": "SamsungElec",  // 상품영문명
-    "prdt_eng_name120": "Samsung Electronics Co., Ltd.",
-    "std_pdno": "KR7005930003",      // 표준상품번호
+    "stnd_pdno": "KR7005930003",     // 표준상품번호
     "shtn_pdno": "A005930",          // 단축상품번호
     "prdt_sale_stat_cd": "00",       // 상품판매상태코드
     "prdt_risk_grad_cd": "00",       // 상품위험등급코드
@@ -596,7 +608,7 @@ FID_INPUT_ISCD=005930
 | PDNO | symbol | 종목코드 |
 | ODNO | order_id | 주문번호 |
 | hldg_qty | quantity | 보유수량 |
-| pchs_avg_pric | avg_price | 평균단가 |
+| pchs_avg_pric / avg_pric | avg_price | 평균단가 |
 | evlu_pfls_amt | unrealized_pnl | 평가손익 |
 
 ### 주문구분 매핑
