@@ -280,6 +280,40 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 
 ---
 
+### 12. open-orders-sorting
+**설명**: 포지션 페이지 열린 주문 테이블의 다단계 정렬 기능
+**태그**: `@FEAT:open-orders-sorting`
+**상태**: 🚧 Phase 1 Complete (Phase 2-3 Planned)
+**주요 파일**:
+- `app/static/js/positions/realtime-openorders.js` - 정렬 로직 (@COMP:service @TYPE:core)
+**의존성**: SSE 실시간 업데이트 시스템
+**상세 문서**: `docs/features/open_orders_sorting.md`
+
+**검색**:
+```bash
+# 모든 정렬 관련 코드
+grep -r "@FEAT:open-orders-sorting" --include="*.js"
+
+# 핵심 로직만
+grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
+```
+
+**구현 단계**:
+- ✅ **Phase 1**: 기본 정렬 로직 (2025-10-17)
+  - 5단계 우선순위: 심볼 → 상태 → 주문 타입 → 주문 방향 → 가격
+  - `sortOrders()`, `compareByColumn()`, priority 헬퍼 메서드 구현
+  - 성능: 100개 주문 < 10ms
+- 🚧 **Phase 2**: 컬럼 클릭 정렬 UI (Planned)
+- 🚧 **Phase 3**: 실시간 SSE 업데이트 통합 (Planned)
+
+**주요 메서드**:
+- `sortOrders(orders, sortConfig)` - 핵심 정렬 로직 (Line 463)
+- `compareByColumn(a, b, column, direction)` - 컬럼별 비교 (Line 496)
+- `getStatusPriority(order)` - 상태 우선순위 (Line 540)
+- `getOrderTypePriority(orderType)` - 주문 타입 우선순위 (Line 553)
+
+---
+
 ## Tag Index
 
 ### By Component Type

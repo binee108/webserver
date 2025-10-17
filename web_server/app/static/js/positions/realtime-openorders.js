@@ -1,7 +1,23 @@
 /**
- * Real-time Open Orders Manager
+ * @fileoverview Real-time Open Orders Manager
+ *
  * 열린 주문 관련 실시간 업데이트를 처리하는 모듈
  * SSE를 통한 주문 이벤트 처리 및 DOM 업데이트
+ *
+ * @FEAT:open-orders-sorting (Phase 1 Implemented)
+ * Implements client-side sorting for the "Open Orders" table with:
+ * - 5-level default sort priority (symbol → status → order_type → side → price)
+ * - Column-click sorting (Phase 2 - Planned)
+ * - Real-time SSE update integration (Phase 3 - Planned)
+ *
+ * Sort Priority:
+ * 1. Symbol (desc) - Alphabetical order, descending
+ * 2. Status (desc) - NEW > PENDING_QUEUE (대기열)
+ * 3. Order Type (desc) - STOP_MARKET(3) > STOP_LIMIT(2) > LIMIT(1)
+ * 4. Side (desc) - SELL > BUY
+ * 5. Price (desc) - Highest price first
+ *
+ * @see .plan/open_orders_sorting_plan.md
  */
 
 class RealtimeOpenOrdersManager {
@@ -12,13 +28,26 @@ class RealtimeOpenOrdersManager {
         this.format = window.RealtimeCore ? window.RealtimeCore.format : null;
         this.eventBus = window.RealtimeCore ? window.RealtimeCore.eventBus : null;
         this.api = window.RealtimeCore ? window.RealtimeCore.api : null;
-        
+
         // SSE Manager reference
         this.sseManager = null;
-        
+
         // State
         this.openOrders = new Map(); // orderId -> orderData
         this.isInitialized = false;
+
+        // Sorting state (@FEAT:open-orders-sorting @COMP:service @TYPE:core)
+        this.sortConfig = {
+            column: null,        // 현재 정렬 컬럼 ('symbol', 'status', 'order_type', 'side', 'price')
+            direction: 'asc'     // 정렬 방향 ('asc', 'desc')
+        };
+        this.defaultSortOrder = [
+            { column: 'symbol', direction: 'desc' },
+            { column: 'status', direction: 'desc' },      // new > queued (대기열)
+            { column: 'order_type', direction: 'desc' },   // stop_market > stop_limit > limit
+            { column: 'side', direction: 'desc' },         // sell > buy
+            { column: 'price', direction: 'desc' }
+        ];
     }
     
     /**
@@ -404,31 +433,175 @@ class RealtimeOpenOrdersManager {
     }
     
     /**
+     * Sort orders by multiple criteria
+     *
+     * @description
+     * Applies 5-level default sort priority:
+     * 1. Symbol (desc) - Alphabetical order
+     * 2. Status (desc) - NEW > PENDING_QUEUE
+     * 3. Order Type (desc) - STOP_MARKET > STOP_LIMIT > LIMIT
+     * 4. Side (desc) - SELL > BUY
+     * 5. Price (desc) - Highest first
+     *
+     * User-selected sort column (if provided) takes precedence over default priority.
+     *
+     * @example
+     * // Default sorting (no user selection):
+     * const sorted = this.sortOrders(orders);
+     *
+     * @example
+     * // User clicked "price" column (ascending):
+     * const sorted = this.sortOrders(orders, { column: 'price', direction: 'asc' });
+     *
+     * @param {Array<Object>} orders - Array of order objects to sort
+     * @param {Object|null} sortConfig - Optional sort configuration
+     * @param {string} sortConfig.column - Column name ('symbol'|'status'|'order_type'|'side'|'price')
+     * @param {string} sortConfig.direction - Sort direction ('asc'|'desc')
+     * @returns {Array<Object>} Sorted orders (new array, does not mutate original)
+     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     */
+    sortOrders(orders, sortConfig = null) {
+        const ordersCopy = [...orders];  // 원본 배열 보호
+        const config = sortConfig || this.sortConfig;
+        const defaultOrder = this.defaultSortOrder;
+
+        return ordersCopy.sort((a, b) => {
+            // 1순위: 사용자 선택 정렬 (있을 경우)
+            if (config.column) {
+                const result = this.compareByColumn(a, b, config.column, config.direction);
+                if (result !== 0) return result;
+            }
+
+            // 2순위: 기본 정렬 우선순위 (5단계)
+            for (const { column, direction } of defaultOrder) {
+                // 사용자가 이미 선택한 컬럼은 스킵
+                if (config.column === column) continue;
+
+                const result = this.compareByColumn(a, b, column, direction);
+                if (result !== 0) return result;
+            }
+
+            return 0;
+        });
+    }
+
+    /**
+     * Compare two orders by specified column
+     * @param {Object} a - First order
+     * @param {Object} b - Second order
+     * @param {String} column - Column name to compare
+     * @param {String} direction - Sort direction ('asc' or 'desc')
+     * @returns {Number} Comparison result (-1, 0, 1)
+     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     */
+    compareByColumn(a, b, column, direction) {
+        let aVal, bVal;
+
+        switch (column) {
+            case 'symbol':
+                aVal = a.symbol || '';
+                bVal = b.symbol || '';
+                break;
+            case 'status':
+                // new > queued (PENDING_QUEUE)
+                aVal = this.getStatusPriority(a);
+                bVal = this.getStatusPriority(b);
+                break;
+            case 'order_type':
+                aVal = this.getOrderTypePriority(a.order_type);
+                bVal = this.getOrderTypePriority(b.order_type);
+                break;
+            case 'side':
+                // sell > buy (desc)
+                aVal = (a.side || '').toUpperCase() === 'SELL' ? 1 : 0;
+                bVal = (b.side || '').toUpperCase() === 'SELL' ? 1 : 0;
+                break;
+            case 'price':
+                aVal = parseFloat(a.price || 0);
+                bVal = parseFloat(b.price || 0);
+                break;
+            default:
+                return 0;
+        }
+
+        // 비교 로직
+        let result = 0;
+        if (aVal > bVal) result = 1;
+        else if (aVal < bVal) result = -1;
+
+        return direction === 'desc' ? -result : result;
+    }
+
+    /**
+     * Get status priority for sorting
+     * @param {Object} order - Order object
+     * @returns {Number} Priority value (higher = earlier in sort)
+     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     */
+    getStatusPriority(order) {
+        const isPending = order.source === 'pending_order' ||
+                         order.status === 'PENDING_QUEUE' ||
+                         (order.order_id && order.order_id.startsWith('p_'));
+        return isPending ? 0 : 1;  // new(1) > queued(0)
+    }
+
+    /**
+     * Get order type priority for sorting
+     * @param {String} orderType - Order type string
+     * @returns {Number} Priority value (higher = earlier in sort)
+     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     */
+    getOrderTypePriority(orderType) {
+        const priorities = {
+            'STOP_MARKET': 3,
+            'STOP_LIMIT': 2,
+            'LIMIT': 1,
+            'MARKET': 0  // (열린 주문에는 없어야 함)
+        };
+        return priorities[orderType?.toUpperCase()] || 0;
+    }
+
+    /**
+     * Update sort indicators in table headers
+     * NOTE: Implementation deferred to Phase 2 (column click UI)
+     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     */
+    updateSortIndicators() {
+        // Phase 2에서 구현 - 현재는 빈 구현
+    }
+
+    /**
      * Render all open orders
      */
     renderOpenOrders(orders) {
         const container = document.getElementById('open-orders-content');
         if (!container) return;
-        
+
         if (!orders || orders.length === 0) {
             this.showEmptyOrdersState();
             return;
         }
-        
+
         // Create table structure
         this.createOrderTable(container);
         const tbody = container.querySelector('tbody');
-        
+
         // Clear existing orders
         this.openOrders.clear();
-        
-        // Add each order
-        orders.forEach(order => {
+
+        // 정렬 적용 (sortOrders 내부에서 복제 처리)
+        const sortedOrders = this.sortOrders(orders);
+
+        // Add each order (정렬된 순서대로)
+        sortedOrders.forEach(order => {
             // 통일된 명명: order_id만 사용 (이미 백엔드에서 매핑됨)
             this.openOrders.set(order.order_id, order);
             const orderRow = this.createOrderRow(order);
             tbody.appendChild(orderRow);
         });
+
+        // 정렬 UI 업데이트
+        this.updateSortIndicators();
     }
     
     /**
