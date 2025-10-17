@@ -427,14 +427,21 @@ class OrderQueueManager:
                     -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
                     x['created_at']
                 ))
+
+                # STOP 주문 정렬 로직:
+                # - STOP_BUY: 낮은 stop_price 우선 (121000 → 125000)
+                #   → sort_price = -stop_price 저장 (-121000, -125000)
+                #   → -(sort_price) ASC 정렬 = 121000, 125000 (낮은 값 먼저)
+                # - STOP_SELL: 높은 stop_price 우선 (130000 → 125000)
+                #   → sort_price = stop_price 저장 (130000, 125000)
+                #   → -(sort_price) ASC 정렬 = -130000, -125000 (높은 절댓값 먼저 = 130000 우선)
+                # - LIMIT 주문: priority → price → created_at (Lines 420-429)
                 stop_buy_orders.sort(key=lambda x: (
-                    x['priority'],
-                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),  # DESC: -121000 먼저
                     x['created_at']
                 ))
                 stop_sell_orders.sort(key=lambda x: (
-                    x['priority'],
-                    -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
+                    -(x['sort_price'] if x['sort_price'] else Decimal('inf')),  # DESC: 130000 먼저
                     x['created_at']
                 ))
 
@@ -459,6 +466,14 @@ class OrderQueueManager:
                     f"STOP(buy:{len(selected_stop_buy)}/{len(stop_buy_orders)}, "
                     f"sell:{len(selected_stop_sell)}/{len(stop_sell_orders)})"
                 )
+
+                # STOP 그룹 정렬 기준 검증 (DEBUG)
+                if selected_stop_buy or selected_stop_sell:
+                    logger.debug(
+                        f"🔍 STOP 정렬 - "
+                        f"BUY top5 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_buy[:5]]}, "
+                        f"SELL top5 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_sell[:5]]}"
+                    )
 
                 # 통합 (Step 5에서 사용)
                 selected_orders = (selected_limit_buy + selected_limit_sell +

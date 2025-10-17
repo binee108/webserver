@@ -29,23 +29,44 @@
 
 ## 우선순위 정렬 규칙
 
-**v2.2 업데이트 (2025-10-15)**: Side별 분리 정렬 구현
+**v3.0 업데이트 (2025-10-17)**: 타입 그룹별 독립 정렬 구현
 
-주문은 **Buy와 Sell이 독립적으로** 다음 순서로 정렬됩니다:
+### 타입 그룹별 독립 할당
 
-1. **priority** (낮을수록 높음, default: 999999)
-2. **sort_price** (DESC 정렬, 부호 변환으로 side별 정확한 우선순위 보장)
-   - BUY LIMIT: `sort_price = +price` → 높은 가격 우선
-   - SELL LIMIT: `sort_price = -price` → 낮은 가격 우선 (높은 음수값)
-   - BUY STOP: `sort_price = -stop_price`
-   - SELL STOP: `sort_price = +stop_price`
-3. **created_at** (먼저 생성된 것 우선)
+심볼당 최대 20개 주문 = **LIMIT 그룹 10개 + STOP 그룹 10개**
 
-**주요 개선**:
-- **독립 할당**: Buy와 Sell이 각각 독립적인 할당량 보유
-- **용량 증가**: BINANCE FUTURES 기준 20개 → 40개 (Buy 20 + Sell 20)
-- **정확한 우선순위**: 각 side 내에서만 비교하여 우선순위 왜곡 방지
-- **STOP 할당 제한 (v2.3)**: 25% cap으로 LIMIT 주문 공간 보장 (BINANCE FUTURES: STOP 10→5개/side)
+#### LIMIT 그룹
+- **포함 타입**: LIMIT, LIMIT_MAKER
+- **정렬 기준**: `priority` → `price` → `created_at`
+- **할당**: BUY 5개 + SELL 5개 = 총 10개
+
+#### STOP 그룹 ⭐
+- **포함 타입**: STOP, STOP_LIMIT, STOP_MARKET
+- **정렬 기준**: `stop_price` → `created_at` (**priority 무시**)
+  - **중요**: STOP_MARKET(priority=3)과 STOP_LIMIT(priority=4)을 **하나의 그룹으로 통합 정렬**
+  - **STOP_BUY**: 낮은 stop_price 우선 (121000 → 125000)
+  - **STOP_SELL**: 높은 stop_price 우선 (130000 → 125000)
+- **할당**: BUY 5개 + SELL 5개 = 총 10개
+
+#### 정렬 예시
+
+**STOP_BUY 주문 (6개 입력)**:
+| order_type | stop_price | priority | 선택 결과 |
+|-----------|-----------|---------|----------|
+| STOP_MARKET | 120000 | 3 | ✅ OpenOrder (1위) |
+| STOP_MARKET | 121000 | 3 | ✅ OpenOrder (2위) |
+| STOP_LIMIT | 122000 | 4 | ✅ OpenOrder (3위) |
+| STOP_LIMIT | 123000 | 4 | ✅ OpenOrder (4위) |
+| STOP_MARKET | 124000 | 3 | ✅ OpenOrder (5위) |
+| STOP_LIMIT | 125000 | 4 | ❌ PendingOrder (6위) |
+
+→ **priority 값(3 vs 4)과 무관하게 stop_price만으로 정렬**
+
+**주요 개선 (v3.0)**:
+- **타입 그룹별 독립**: LIMIT과 STOP이 각각 독립적인 할당량 보유
+- **용량 보장**: LIMIT 10개 + STOP 10개 = 총 20개 (LIMIT 공간 보호)
+- **STOP 통합 정렬**: STOP_MARKET과 STOP_LIMIT을 priority 무시하고 통합 정렬
+- **명확한 우선순위**: 각 타입 그룹 내에서만 비교하여 우선순위 왜곡 방지
 
 ## 주요 컴포넌트
 
@@ -350,16 +371,16 @@ grep -r "_rebalance_locks" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-16*
-*Version: 2.3.0 (25% STOP 할당 제한 적용)*
+*Last Updated: 2025-10-17*
+*Version: 3.0.0 (타입 그룹별 독립 정렬)*
 
-**v2.2 주요 변경사항**:
-- Buy/Sell 주문 독립 정렬 및 할당
-- ExchangeLimits에 side별 제한 필드 추가 (BREAKING CHANGE)
-- `_select_top_orders()` 헬퍼 함수 추가 (DRY 원칙)
-- 용량 2배 증가: BINANCE FUTURES 기준 20개 → 40개
-- 성능 개선: 재정렬 <100ms (효율적 O(N log N) 정렬)
-- Known Issues 섹션 추가: sort_price 부호 반전 로직 문서화
+**v3.0 주요 변경사항 (2025-10-17)**:
+- **타입 그룹별 독립 정렬**: LIMIT과 STOP이 각각 독립적인 할당량 보유
+  - LIMIT 그룹: BUY 5개 + SELL 5개 = 10개
+  - STOP 그룹: BUY 5개 + SELL 5개 = 10개
+- **STOP 통합 정렬**: STOP_MARKET(priority=3)과 STOP_LIMIT(priority=4)을 **priority 무시하고 stop_price로 통합 정렬**
+- **4-way 재정렬 로직**: LIMIT_BUY, LIMIT_SELL, STOP_BUY, STOP_SELL 독립 버킷
+- 목적: LIMIT 공간 보호, STOP 주문 간 명확한 우선순위
 
 **v2.3 주요 변경사항 (2025-10-16)**:
 - 25% STOP 할당 제한 적용: STOP 주문이 전체 주문의 25%를 초과하지 않도록 제한
@@ -368,3 +389,11 @@ grep -r "_rebalance_locks" --include="*.py"
 - BINANCE FUTURES: max_stop_orders_per_side 10 → 5로 변경
 - BINANCE SPOT: max_stop_orders_per_side 5 → 1로 변경
 - 목적: LIMIT 주문이 충분한 대기열 공간 확보, STOP 주문 독점 방지
+
+**v2.2 주요 변경사항**:
+- Buy/Sell 주문 독립 정렬 및 할당
+- ExchangeLimits에 side별 제한 필드 추가 (BREAKING CHANGE)
+- `_select_top_orders()` 헬퍼 함수 추가 (DRY 원칙)
+- 용량 2배 증가: BINANCE FUTURES 기준 20개 → 40개
+- 성능 개선: 재정렬 <100ms (효율적 O(N log N) 정렬)
+- Known Issues 섹션 추가: sort_price 부호 반전 로직 문서화
