@@ -1,7 +1,13 @@
+# ============================================================
+# Python 관련 파일
+# ============================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 
 # C extensions
 *.so
@@ -28,8 +34,6 @@ share/python-wheels/
 PIPFILE.lock
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
@@ -55,18 +59,38 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
+# ============================================================
+# 로그 및 데이터베이스
+# ============================================================
+
+# Application logs
+logs/
 *.log
+*.log.*
+*.log.gz
+*.log.zip
+
+# Django/Flask specific
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Flask stuff:
+# Flask stuff
 instance/*
 !instance/.gitkeep
 .webassets-cache
 
-# Scrapy stuff:
+# SQLite database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# ============================================================
+# 프레임워크 및 도구
+# ============================================================
+
+# Scrapy
 .scrapy
 
 # Sphinx documentation
@@ -82,27 +106,71 @@ target/
 profile_default/
 ipython_config.py
 
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
+# Celery
 celerybeat-schedule
 celerybeat.pid
 
-# SageMath parsed files
+# SageMath
 *.sage.py
 
-# Environments
+# mkdocs
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# ============================================================
+# IDE 및 에디터
+# ============================================================
+
+# VSCode
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+
+# Vim
+*.swp
+*.swo
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# OS 관련 파일
+# ============================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ============================================================
+# 가상 환경
+# ============================================================
+
+# Python virtual environments
 .env
 .venv
 env/
@@ -111,71 +179,61 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
+# pyenv
+.python-version
+
+# pipenv
+#Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Spyder
 .spyderproject
 .spyproject
 
-# Rope project settings
+# Rope
 .ropeproject
 
-# mkdocs documentation
-/site
+# ============================================================
+# 빌드 및 배포
+# ============================================================
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+# Build artifacts
+build/
+dist/
+*.egg-info/
 
-# Pyre type checker
-.pyre/
+# Node modules
+node_modules/
 
-# Project specific
-logs/
-*.log
-
-# SQLite database files
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# ============================================================
+# 임시 및 백업 파일
+# ============================================================
 
 # Temporary files
 *.tmp
 *.temp
+*.bak
+*.orig
+*.rej
 *~
 
-# Node modules (if any)
-node_modules/
-
-# Migration files backup
+# Migration backups
 migrations/versions/*.py.bak
 
-# claude
+# ============================================================
+# 프로젝트 특화 파일
+# ============================================================
+
+# Claude AI tools
 CLAUDE.md
 .claude/
 
-# .cursor
+# Cursor AI
 .cursor/
 
-# .env
-.env
-
-# SSL certificates
+# SSL certificates (보안 중요)
 certs/
 *.pem
 *.crt
@@ -194,6 +252,6 @@ markettype_*.py
 # Git worktrees
 .worktree/
 
-# Implementation plans (temporary working documents)
+# Implementation plans
 .plan/
 
