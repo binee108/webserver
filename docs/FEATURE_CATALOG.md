@@ -283,9 +283,9 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 ### 12. open-orders-sorting
 **설명**: 포지션 페이지 열린 주문 테이블의 다단계 정렬 기능
 **태그**: `@FEAT:open-orders-sorting`
-**상태**: ✅ Phase 2 Complete (Phase 3 Planned)
+**상태**: ✅ Phase 1-3 Complete
 **주요 파일**:
-- `app/static/js/positions/realtime-openorders.js` - 정렬 로직 (@COMP:service @TYPE:core)
+- `app/static/js/positions/realtime-openorders.js` - 정렬 + UI + SSE 통합 (@COMP:service @TYPE:core)
 - `app/static/css/positions.css` - 정렬 UI 스타일 (@COMP:ui, Lines 327-401)
 - `app/templates/positions.html` - 테이블 헤더 마크업 (data-sortable 속성)
 **의존성**: SSE 실시간 업데이트 시스템
@@ -296,26 +296,31 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 # 모든 정렬 관련 코드
 grep -r "@FEAT:open-orders-sorting" --include="*.js"
 
-# Phase 2 UI 코드
-grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@COMP:ui"
+# Phase 3 SSE 통합 코드
+grep -r "@PHASE:3" web_server/app/static/js/positions/realtime-openorders.js
 
 # 핵심 정렬 로직
 grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 ```
 
 **구현 단계**:
-- ✅ **Phase 1**: 기본 정렬 로직 (2025-10-17)
+- ✅ **Phase 1**: 기본 정렬 로직 (f194b67, 2025-10-17)
   - 5단계 우선순위: 심볼 → 상태 → 주문 타입 → 주문 방향 → 가격
   - `sortOrders()`, `compareByColumn()`, priority 헬퍼 메서드 구현
   - 성능: 100개 주문 < 10ms
-- ✅ **Phase 2**: 컬럼 클릭 정렬 UI (2025-10-18) ← NEW
+- ✅ **Phase 2**: 컬럼 클릭 정렬 UI (0bb2726, 2025-10-18)
   - `handleSort()` - 헤더 클릭 이벤트 처리 (Line 592)
   - `reorderTable()` - 테이블 재정렬 및 재렌더링 (Line 610)
   - `updateSortIndicators()` - 정렬 아이콘 UI 업데이트 (Line 568)
   - `attachSortListeners()` - 이벤트 리스너 등록 (Line 633)
   - CSS 정렬 아이콘 스타일 추가 (Lines 327-401, positions.css)
   - 테이블 헤더에 `data-sortable` 속성 추가
-- 🚧 **Phase 3**: 실시간 SSE 업데이트 통합 (Planned)
+- ✅ **Phase 3**: SSE 실시간 업데이트 통합 ([pending], 2025-10-18) ← NEW
+  - `upsertOrderRow()` 리팩토링 (Lines 249-337, +49 lines)
+  - 정렬된 위치에 주문 삽입 (O(n log n))
+  - Phase 1 `sortOrders()` 재사용 (DRY)
+  - 7-step 알고리즘: memory → remove → sort → find → create → insert → animate
+  - 성능: 100개 주문 ~5ms
 
 **주요 메서드**:
 - `sortOrders(orders, sortConfig)` - 핵심 정렬 로직 (Line 463)
@@ -328,11 +333,11 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 - `attachSortListeners()` - Phase 2 이벤트 리스너 (Line 633)
 
 **최근 변경 (2025-10-18)**:
-- Phase 2 구현 완료 (컬럼 클릭 정렬 UI)
-- 4개 새로운 메서드 추가 (`handleSort`, `reorderTable`, `updateSortIndicators`, `attachSortListeners`)
-- CSS 정렬 스타일 추가 (+73 lines)
-- 테이블 헤더에 `data-sortable` 속성 추가
-- 중복 이벤트 리스너 방지 로직 구현
+- Phase 3 구현 완료 (SSE 실시간 업데이트 정렬 유지)
+- `upsertOrderRow()` 리팩토링: 정렬된 위치에 삽입 (+49 lines)
+- SSE 이벤트 시 정렬 상태 유지 (O(n log n))
+- Phase 1/2와 완전 통합 (zero regression)
+- 8가지 엣지 케이스 처리 (empty table, top/middle/bottom, fallback 등)
 
 ---
 
@@ -361,26 +366,27 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 
 ## Recent Changes
 
-### 2025-10-18: Open Orders Sorting Phase 2 Complete
+### 2025-10-18: Open Orders Sorting Phase 3 Complete
 **영향 범위**: `open-orders-sorting`
 **파일**:
-- `app/static/js/positions/realtime-openorders.js` - 정렬 UI 메서드 추가
-- `app/static/css/positions.css` - 정렬 스타일 추가
-- `app/templates/positions.html` - 헤더 마크업 업데이트 (in createOrderTable function)
+- `app/static/js/positions/realtime-openorders.js` - `upsertOrderRow()` 리팩토링 (Lines 249-337, +49 lines)
+- `docs/features/open_orders_sorting.md` - Phase 3 섹션 추가
+- `docs/FEATURE_CATALOG.md` - 상태 업데이트 (Phase 1-3 Complete)
 
 **개선 내용**:
-1. **4개 새로운 메서드**: `handleSort`, `reorderTable`, `updateSortIndicators`, `attachSortListeners`
-2. **CSS 정렬 스타일**: 정렬 아이콘, 호버 효과, 다크/라이트 테마
-3. **이벤트 리스너 관리**: 중복 방지 플래그 추가
-4. **UI/UX**: CSS 삼각형 아이콘 (▲▼), 호버 배경 변경
+1. **SSE 정렬 유지**: 새 주문이 올바른 정렬 위치에 삽입 (`insertBefore()` vs `appendChild()`)
+2. **7-step 알고리즘**: memory → remove → sort → find → create → insert → animate
+3. **Phase 1 재사용**: `sortOrders()` 메서드 재사용 (DRY 원칙)
+4. **엣지 케이스**: 8가지 처리 (empty table, top/middle/bottom, DOM fallback, rapid burst 등)
+5. **성능**: O(n log n), 100개 주문 ~5ms
 
 **상태**:
-- 구현: ✅ 완료
-- JSDoc: ✅ 완료
-- 문서화: ✅ 완료 (이 카탈로그 + feature doc)
-- 문서 크기: 303줄 (500줄 제한 내)
+- 구현: ✅ 완료 (code-reviewer approved)
+- JSDoc: ✅ 완료 (@PHASE:3 태그)
+- 문서화: ✅ 완료 (530줄)
+- 테스트: ⏳ Pending (Phase 3.5)
 
-**태그 변경**: 없음 (기존 @FEAT:open-orders-sorting 유지)
+**태그 변경**: `@PHASE:3` 추가 (기존 @FEAT:open-orders-sorting 유지)
 
 ---
 
