@@ -20,6 +20,10 @@
  * @see .plan/open_orders_sorting_plan.md
  */
 
+// Phase 1: Toast UI Improvement - Configuration constants
+const MAX_TOASTS = 10;  // Maximum number of visible toasts
+const TOAST_FADE_DURATION_MS = 300;  // Must match .toast.fade-out transition in CSS
+
 class RealtimeOpenOrdersManager {
     constructor() {
         // Get utilities from RealtimeCore
@@ -925,11 +929,40 @@ class RealtimeOpenOrdersManager {
             ? `${eventTypeText} (대기열): ${data.symbol} ${side} ${quantity}`
             : `${eventTypeText}: ${data.symbol} ${side} ${quantity}`;
 
+        // Phase 1: FIFO removal before showing new toast
+        this._removeFIFOToast();
+
         if (window.showToast) {
             window.showToast(message, toastType, 2000);
         }
     }
-    
+
+    /**
+     * Remove oldest toast using FIFO (First-In-First-Out) with fade-out animation
+     * Phase 1: Toast UI Improvement - Extracted to avoid code duplication (DRY)
+     *
+     * @private
+     */
+    _removeFIFOToast() {
+        const toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            this.logger.warn('Toast container not found - FIFO removal skipped');
+            return;
+        }
+
+        if (toastContainer.children.length >= MAX_TOASTS) {
+            const oldestToast = toastContainer.firstChild;
+            if (oldestToast && oldestToast.parentNode) {
+                oldestToast.classList.add('fade-out');
+                setTimeout(() => {
+                    if (oldestToast && oldestToast.parentNode) {
+                        oldestToast.remove();
+                    }
+                }, TOAST_FADE_DURATION_MS);
+            }
+        }
+    }
+
     /**
      * Handle cancel order button click
      */
@@ -1040,7 +1073,48 @@ class RealtimeOpenOrdersManager {
         this.showEmptyOrdersState();
         this.updateOpenOrdersCount(0);
     }
-    
+
+    /**
+     * Create batch toast message from order summaries
+     * Phase 1: Toast UI Improvement - Batch order aggregation for Phase 3 integration
+     *
+     * @param {Array} summaries - Array of {order_type, created, cancelled}
+     * @example
+     * createBatchToast([
+     *   {order_type: 'LIMIT', created: 5, cancelled: 3},
+     *   {order_type: 'STOP_LIMIT', created: 2, cancelled: 0}
+     * ]);
+     * // Output: "📦 LIMIT 주문 생성 5건, 취소 3건 | STOP_LIMIT 주문 생성 2건"
+     */
+    createBatchToast(summaries) {
+        if (!summaries || summaries.length === 0) {
+            return;
+        }
+
+        const messages = summaries.map(summary => {
+            const parts = [];
+            if (summary.created > 0) {
+                parts.push(`생성 ${summary.created}건`);
+            }
+            if (summary.cancelled > 0) {
+                parts.push(`취소 ${summary.cancelled}건`);
+            }
+            if (parts.length === 0) {
+                return null;
+            }
+
+            return `${summary.order_type} 주문 ${parts.join(', ')}`;
+        }).filter(msg => msg !== null);
+
+        if (messages.length > 0) {
+            // Phase 1: FIFO removal before showing batch toast
+            this._removeFIFOToast();
+
+            const finalMessage = `📦 ${messages.join(' | ')}`;
+            window.showToast(finalMessage, 'info', 3000);
+        }
+    }
+
     /**
      * Destroy the manager
      */

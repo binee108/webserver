@@ -45,7 +45,29 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 
 ---
 
-### 2. order-queue
+### 2. toast-ui
+**설명**: Toast 알림 시스템 개선 - 최대 10개 제한, FIFO 제거, 배치 집계
+**태그**: `@FEAT:toast-ui`
+**주요 파일**:
+- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 24-25, 946-964, 1089-1116)
+- `web_server/app/static/css/components.css` (Lines 1123, 1218-1223)
+**컴포넌트**:
+- `MAX_TOASTS = 10`, `TOAST_FADE_DURATION_MS = 300` - 설정 상수
+- `_removeFIFOToast()` - FIFO 제거 헬퍼 (DRY)
+- `createBatchToast()` - 배치 메시지 집계
+- `.toast.fade-out` - 300ms 페이드아웃 애니메이션
+**의존성**: Phase 3 (Batch SSE) 준비 완료
+**최근 수정**: 2025-10-18 - Phase 1 완료 (Toast UI Improvement)
+**상세 문서**: `docs/features/phase1_toast_ui.md`
+**검색**:
+```bash
+grep -r "@FEAT:toast-ui" --include="*.js" --include="*.css"
+grep -n "MAX_TOASTS\|TOAST_FADE_DURATION_MS" web_server/app/static/js/positions/realtime-openorders.js
+```
+
+---
+
+### 3. order-queue
 **설명**: 거래소 제한 초과 시 주문 대기열 관리 및 동적 재정렬
 **태그**: `@FEAT:order-queue`
 **주요 파일**:
@@ -493,5 +515,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-18*
-*Recent Changes: Open Orders Sorting Phase 2 complete - column click sorting UI implemented*
+*Recent Changes: Phase 1 (Toast UI Improvement) complete - MAX_TOASTS=10, FIFO removal, batch aggregation*
 
