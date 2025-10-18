@@ -478,13 +478,23 @@ function createOrderTable(container) {
                 <thead>
                     <tr>
                         <th>계좌</th>
-                        <th>심볼</th>
-                        <th>주문타입</th>
-                        <th>주문방향</th>
+                        <th data-sortable="symbol" class="sortable">
+                            심볼 <span class="sort-icon"></span>
+                        </th>
+                        <th data-sortable="order_type" class="sortable">
+                            주문타입 <span class="sort-icon"></span>
+                        </th>
+                        <th data-sortable="side" class="sortable">
+                            주문방향 <span class="sort-icon"></span>
+                        </th>
                         <th>수량</th>
-                        <th>주문가격</th>
+                        <th data-sortable="price" class="sortable">
+                            주문가격 <span class="sort-icon"></span>
+                        </th>
                         <th>Stop 가격</th>
-                        <th>상태</th>
+                        <th data-sortable="status" class="sortable">
+                            상태 <span class="sort-icon"></span>
+                        </th>
                         <th>액션</th>
                     </tr>
                 </thead>

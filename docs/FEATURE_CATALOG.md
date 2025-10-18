@@ -283,9 +283,11 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 ### 12. open-orders-sorting
 **설명**: 포지션 페이지 열린 주문 테이블의 다단계 정렬 기능
 **태그**: `@FEAT:open-orders-sorting`
-**상태**: 🚧 Phase 1 Complete (Phase 2-3 Planned)
+**상태**: ✅ Phase 2 Complete (Phase 3 Planned)
 **주요 파일**:
 - `app/static/js/positions/realtime-openorders.js` - 정렬 로직 (@COMP:service @TYPE:core)
+- `app/static/css/positions.css` - 정렬 UI 스타일 (@COMP:ui, Lines 327-401)
+- `app/templates/positions.html` - 테이블 헤더 마크업 (data-sortable 속성)
 **의존성**: SSE 실시간 업데이트 시스템
 **상세 문서**: `docs/features/open_orders_sorting.md`
 
@@ -294,7 +296,10 @@ grep -r "@FEAT:telegram-notification" --include="*.py"
 # 모든 정렬 관련 코드
 grep -r "@FEAT:open-orders-sorting" --include="*.js"
 
-# 핵심 로직만
+# Phase 2 UI 코드
+grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@COMP:ui"
+
+# 핵심 정렬 로직
 grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 ```
 
@@ -303,7 +308,13 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
   - 5단계 우선순위: 심볼 → 상태 → 주문 타입 → 주문 방향 → 가격
   - `sortOrders()`, `compareByColumn()`, priority 헬퍼 메서드 구현
   - 성능: 100개 주문 < 10ms
-- 🚧 **Phase 2**: 컬럼 클릭 정렬 UI (Planned)
+- ✅ **Phase 2**: 컬럼 클릭 정렬 UI (2025-10-18) ← NEW
+  - `handleSort()` - 헤더 클릭 이벤트 처리 (Line 592)
+  - `reorderTable()` - 테이블 재정렬 및 재렌더링 (Line 610)
+  - `updateSortIndicators()` - 정렬 아이콘 UI 업데이트 (Line 568)
+  - `attachSortListeners()` - 이벤트 리스너 등록 (Line 633)
+  - CSS 정렬 아이콘 스타일 추가 (Lines 327-401, positions.css)
+  - 테이블 헤더에 `data-sortable` 속성 추가
 - 🚧 **Phase 3**: 실시간 SSE 업데이트 통합 (Planned)
 
 **주요 메서드**:
@@ -311,6 +322,17 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 - `compareByColumn(a, b, column, direction)` - 컬럼별 비교 (Line 496)
 - `getStatusPriority(order)` - 상태 우선순위 (Line 540)
 - `getOrderTypePriority(orderType)` - 주문 타입 우선순위 (Line 553)
+- `handleSort(column)` - Phase 2 헤더 클릭 처리 (Line 592)
+- `reorderTable()` - Phase 2 테이블 재정렬 (Line 610)
+- `updateSortIndicators()` - Phase 2 아이콘 업데이트 (Line 568)
+- `attachSortListeners()` - Phase 2 이벤트 리스너 (Line 633)
+
+**최근 변경 (2025-10-18)**:
+- Phase 2 구현 완료 (컬럼 클릭 정렬 UI)
+- 4개 새로운 메서드 추가 (`handleSort`, `reorderTable`, `updateSortIndicators`, `attachSortListeners`)
+- CSS 정렬 스타일 추가 (+73 lines)
+- 테이블 헤더에 `data-sortable` 속성 추가
+- 중복 이벤트 리스너 방지 로직 구현
 
 ---
 
@@ -325,6 +347,7 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 - **util**: symbol_utils.py
 - **job**: order_queue_manager.py, order_manager.py
 - **config**: constants.py (ExchangeLimits)
+- **ui**: CSS 스타일, 프론트엔드 UI 컴포넌트
 
 ### By Logic Type
 - **core**: 핵심 비즈니스 로직
@@ -332,10 +355,34 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 - **integration**: 외부 시스템 통합
 - **validation**: 입력 검증
 - **config**: 설정 및 초기화
+- **interaction**: 사용자 상호작용 이벤트 핸들러
 
 ---
 
 ## Recent Changes
+
+### 2025-10-18: Open Orders Sorting Phase 2 Complete
+**영향 범위**: `open-orders-sorting`
+**파일**:
+- `app/static/js/positions/realtime-openorders.js` - 정렬 UI 메서드 추가
+- `app/static/css/positions.css` - 정렬 스타일 추가
+- `app/templates/positions.html` - 헤더 마크업 업데이트 (in createOrderTable function)
+
+**개선 내용**:
+1. **4개 새로운 메서드**: `handleSort`, `reorderTable`, `updateSortIndicators`, `attachSortListeners`
+2. **CSS 정렬 스타일**: 정렬 아이콘, 호버 효과, 다크/라이트 테마
+3. **이벤트 리스너 관리**: 중복 방지 플래그 추가
+4. **UI/UX**: CSS 삼각형 아이콘 (▲▼), 호버 배경 변경
+
+**상태**:
+- 구현: ✅ 완료
+- JSDoc: ✅ 완료
+- 문서화: ✅ 완료 (이 카탈로그 + feature doc)
+- 문서 크기: 303줄 (500줄 제한 내)
+
+**태그 변경**: 없음 (기존 @FEAT:open-orders-sorting 유지)
+
+---
 
 ### 2025-10-16: Order Queue v2.2 Documentation Complete
 **영향 범위**: `order-queue`
@@ -439,5 +486,6 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 
 ---
 
-*Last Updated: 2025-10-16*
-*Recent Changes: Order queue v2.2 documentation complete (Known Issues added)*
+*Last Updated: 2025-10-18*
+*Recent Changes: Open Orders Sorting Phase 2 complete - column click sorting UI implemented*
+

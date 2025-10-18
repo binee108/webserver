@@ -4,10 +4,10 @@
  * 열린 주문 관련 실시간 업데이트를 처리하는 모듈
  * SSE를 통한 주문 이벤트 처리 및 DOM 업데이트
  *
- * @FEAT:open-orders-sorting (Phase 1 Implemented)
+ * @FEAT:open-orders-sorting (Phase 1-2 Implemented)
  * Implements client-side sorting for the "Open Orders" table with:
  * - 5-level default sort priority (symbol → status → order_type → side → price)
- * - Column-click sorting (Phase 2 - Planned)
+ * - Column-click sorting (Phase 2 - Implemented 2025-10-18)
  * - Real-time SSE update integration (Phase 3 - Planned)
  *
  * Sort Priority:
@@ -563,11 +563,104 @@ class RealtimeOpenOrdersManager {
 
     /**
      * Update sort indicators in table headers
-     * NOTE: Implementation deferred to Phase 2 (column click UI)
-     * @FEAT:open-orders-sorting @COMP:service @TYPE:core
+     *
+     * @description
+     * Updates CSS classes on .sort-icon elements to reflect current sort state.
+     * Shows ▲ (ascending) or ▼ (descending) arrow on the active column,
+     * and hides icons on inactive columns.
+     *
+     * @FEAT:open-orders-sorting @COMP:ui @TYPE:core
      */
     updateSortIndicators() {
-        // Phase 2에서 구현 - 현재는 빈 구현
+        const sortableHeaders = document.querySelectorAll('#openOrdersTable th[data-sortable]');
+
+        sortableHeaders.forEach(header => {
+            const column = header.getAttribute('data-sortable');
+            const icon = header.querySelector('.sort-icon');
+            if (!icon) return;
+
+            if (column === this.sortConfig.column) {
+                // 현재 정렬 중인 컬럼
+                icon.classList.add('active');
+                icon.classList.toggle('desc', this.sortConfig.direction === 'desc');
+            } else {
+                // 비활성 컬럼
+                icon.classList.remove('active', 'desc');
+            }
+        });
+    }
+
+    /**
+     * Handle column header click for sorting
+     * @FEAT:open-orders-sorting @COMP:ui @TYPE:interaction
+     * @param {string} column - Column name to sort by
+     */
+    handleSort(column) {
+        if (this.sortConfig.column === column) {
+            // 같은 컬럼 클릭 → 정렬 방향 토글
+            this.sortConfig.direction = this.sortConfig.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            // 다른 컬럼 클릭 → 새 컬럼으로 정렬 (기본 desc)
+            this.sortConfig.column = column;
+            this.sortConfig.direction = 'desc';
+        }
+
+        // 테이블 재정렬
+        this.reorderTable();
+    }
+
+    /**
+     * Re-sort and re-render the order table
+     *
+     * @description
+     * Applies current sort configuration to all orders in memory,
+     * then re-renders the table body (tbody) while preserving the header.
+     * Automatically updates sort indicators after rendering.
+     *
+     * @FEAT:open-orders-sorting @COMP:ui @TYPE:core
+     */
+    reorderTable() {
+        // 현재 주문들을 정렬
+        const currentOrders = Array.from(this.openOrders.values());
+        const sortedOrders = this.sortOrders(currentOrders);
+
+        // tbody만 업데이트 (헤더 유지)
+        const tbody = document.querySelector('#openOrdersTable tbody');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+        sortedOrders.forEach(order => {
+            const orderRow = this.createOrderRow(order);
+            tbody.appendChild(orderRow);
+        });
+
+        // 정렬 아이콘 업데이트
+        this.updateSortIndicators();
+    }
+
+    /**
+     * Attach click event listeners to sortable column headers
+     *
+     * @description
+     * Registers click event handlers on all table headers with data-sortable attribute.
+     * Includes idempotency guard to prevent duplicate listener registration.
+     * Sets cursor style to 'pointer' for visual feedback.
+     *
+     * @FEAT:open-orders-sorting @COMP:ui @TYPE:interaction
+     */
+    attachSortListeners() {
+        if (this._listenersAttached) return;  // 중복 방지
+        this._listenersAttached = true;
+
+        const sortableHeaders = document.querySelectorAll('#openOrdersTable th[data-sortable]');
+
+        sortableHeaders.forEach(header => {
+            header.style.cursor = 'pointer';
+            header.addEventListener('click', () => {
+                const column = header.getAttribute('data-sortable');
+                this.handleSort(column);
+            });
+        });
     }
 
     /**
@@ -602,6 +695,9 @@ class RealtimeOpenOrdersManager {
 
         // 정렬 UI 업데이트
         this.updateSortIndicators();
+
+        // 컬럼 클릭 이벤트 리스너 등록 (테이블 생성 후)
+        this.attachSortListeners();
     }
     
     /**
@@ -610,10 +706,11 @@ class RealtimeOpenOrdersManager {
     ensureOrderTableExists() {
         const container = document.getElementById('open-orders-content');
         if (!container) return;
-        
+
         let orderTable = container.querySelector('#openOrdersTable');
         if (!orderTable) {
             this.createOrderTable(container);
+            this.attachSortListeners();
         }
     }
     
@@ -627,13 +724,23 @@ class RealtimeOpenOrdersManager {
                     <thead>
                         <tr>
                             <th>계좌</th>
-                            <th>심볼</th>
-                            <th>주문타입</th>
-                            <th>주문방향</th>
+                            <th data-sortable="symbol" class="sortable">
+                                심볼 <span class="sort-icon"></span>
+                            </th>
+                            <th data-sortable="order_type" class="sortable">
+                                주문타입 <span class="sort-icon"></span>
+                            </th>
+                            <th data-sortable="side" class="sortable">
+                                주문방향 <span class="sort-icon"></span>
+                            </th>
                             <th>수량</th>
-                            <th>주문가격</th>
+                            <th data-sortable="price" class="sortable">
+                                주문가격 <span class="sort-icon"></span>
+                            </th>
                             <th>Stop 가격</th>
-                            <th>상태</th>
+                            <th data-sortable="status" class="sortable">
+                                상태 <span class="sort-icon"></span>
+                            </th>
                             <th>액션</th>
                         </tr>
                     </thead>

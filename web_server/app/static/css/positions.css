@@ -323,3 +323,78 @@
 .order-row-pending:hover {
   animation: none;
 }
+
+/* ========================================
+   Sortable Table Headers (Phase 2)
+   ======================================== */
+
+/* 정렬 가능한 헤더 */
+#openOrdersTable th.sortable {
+  user-select: none;
+  position: relative;
+  padding-right: 1.5rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+#openOrdersTable th.sortable:hover {
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+/* 정렬 아이콘 컨테이너 */
+#openOrdersTable .sort-icon {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.3;
+  transition: opacity 0.2s;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+}
+
+#openOrdersTable .sort-icon.active {
+  opacity: 1;
+}
+
+/* CSS Triangle 아이콘 (오름차순 ▲) */
+#openOrdersTable .sort-icon::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 6px solid #9ca3af;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+#openOrdersTable .sort-icon.active::after {
+  border-bottom-color: #8b5cf6;
+}
+
+/* 내림차순 아이콘 (▼) */
+#openOrdersTable .sort-icon.desc::after {
+  border-bottom: none;
+  border-top: 6px solid #8b5cf6;
+}
+
+/* Dark theme adjustments */
+[data-theme="dark"] #openOrdersTable th.sortable:hover {
+  background-color: rgba(139, 92, 246, 0.15);
+}
+
+[data-theme="dark"] #openOrdersTable .sort-icon::after {
+  border-bottom-color: #9ca3af;  /* 개선: WCAG AA 기준 충족 */
+}
+
+[data-theme="dark"] #openOrdersTable .sort-icon.active::after {
+  border-bottom-color: #a78bfa;
+}
+
+[data-theme="dark"] #openOrdersTable .sort-icon.desc::after {
+  border-top-color: #a78bfa;
+}
