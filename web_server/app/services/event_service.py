@@ -53,6 +53,18 @@ class OrderEvent:
     # 계좌 정보 (중첩 구조)
     account: Dict[str, Any] = None
 
+# @FEAT:event-sse @COMP:model @TYPE:core
+@dataclass
+class OrderBatchEvent:
+    """Batch order update event for SSE
+
+    Phase 2: Backend Batch SSE - Aggregate multiple order actions
+    """
+    summaries: List[Dict[str, Any]]  # [{order_type, created, cancelled}, ...]
+    strategy_id: int
+    user_id: int
+    timestamp: str
+
 # @FEAT:event-sse @COMP:service @TYPE:core
 class EventService:
     """실시간 이벤트 서비스 클래스"""
@@ -146,6 +158,40 @@ class EventService:
 
         except Exception as e:
             logger.error(f"주문 이벤트 발송 실패: {str(e)}")
+
+    # @FEAT:event-sse @COMP:service @TYPE:core
+    def emit_order_batch_event(self, batch_event: OrderBatchEvent):
+        """Emit batch order update SSE event
+
+        Phase 2: Backend Batch SSE - Send aggregated order events
+
+        Args:
+            batch_event: OrderBatchEvent with summaries and metadata
+
+        Example:
+            summaries = [
+                {'order_type': 'LIMIT', 'created': 5, 'cancelled': 3},
+                {'order_type': 'STOP_LIMIT', 'created': 2, 'cancelled': 0}
+            ]
+        """
+        if not batch_event.strategy_id or batch_event.strategy_id == 0:
+            logger.warning('Invalid strategy_id - batch SSE blocked')
+            return
+
+        if not batch_event.summaries:
+            logger.debug('Empty summaries - batch SSE skipped')
+            return
+
+        event_data = {
+            'type': 'order_batch_update',
+            'data': {
+                'summaries': batch_event.summaries,
+                'timestamp': batch_event.timestamp
+            }
+        }
+
+        self._emit_to_user(batch_event.user_id, batch_event.strategy_id, event_data)
+        logger.info(f'📦 Batch SSE sent - {len(batch_event.summaries)} summaries')
 
     # @FEAT:event-sse @COMP:service @TYPE:helper
     def _emit_to_user(self, user_id: int, strategy_id: int, event_data: Dict[str, Any]):

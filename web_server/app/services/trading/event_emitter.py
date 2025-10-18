@@ -518,3 +518,70 @@ class EventEmitter:
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("PendingOrder 이벤트 발송 실패: %s", exc)
+
+    # @FEAT:event-sse @FEAT:webhook-order @COMP:service @TYPE:core
+    def emit_order_batch_update(self, user_id: int, strategy_id: int, batch_results: List[Dict[str, Any]]):
+        """Aggregate batch order results and emit single SSE event
+
+        Phase 2: Backend Batch SSE - Aggregate by order_type and event_type
+
+        Args:
+            user_id: User ID for SSE routing
+            strategy_id: Strategy ID for validation
+            batch_results: List of order results with metadata
+                Example: [
+                    {'success': True, 'order_type': 'LIMIT', 'event_type': 'order_created'},
+                    {'success': True, 'order_type': 'LIMIT', 'event_type': 'order_cancelled'},
+                    ...
+                ]
+
+        Aggregation Logic:
+            - Group by order_type
+            - Count 'order_created' → created
+            - Count 'order_cancelled' → cancelled
+            - Filter out empty (created=0, cancelled=0)
+        """
+        from collections import defaultdict
+        from datetime import datetime
+
+        # Aggregate by order_type
+        aggregation = defaultdict(lambda: {'created': 0, 'cancelled': 0})
+
+        for result in batch_results:
+            if not result.get('success'):
+                continue
+
+            order_type = result.get('order_type')
+            event_type = result.get('event_type')
+
+            if not order_type or not event_type:
+                continue
+
+            if event_type == 'order_created':
+                aggregation[order_type]['created'] += 1
+            elif event_type == 'order_cancelled':
+                aggregation[order_type]['cancelled'] += 1
+
+        # Convert to summaries list (filter out empty)
+        summaries = [
+            {
+                'order_type': ot,
+                'created': counts['created'],
+                'cancelled': counts['cancelled']
+            }
+            for ot, counts in aggregation.items()
+            if counts['created'] > 0 or counts['cancelled'] > 0
+        ]
+
+        if summaries:
+            from app.services.event_service import event_service, OrderBatchEvent
+            batch_event = OrderBatchEvent(
+                summaries=summaries,
+                strategy_id=strategy_id,
+                user_id=user_id,
+                timestamp=datetime.utcnow().isoformat() + 'Z'
+            )
+            event_service.emit_order_batch_event(batch_event)
+            logger.debug(f'Batch aggregation: {len(summaries)} order types')
+        else:
+            logger.debug('No successful orders - batch SSE skipped')

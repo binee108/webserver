@@ -1158,10 +1158,18 @@ class TradingCore:
                     }
                 }
 
+                # Phase 2: Calculate total cancelled orders for batch SSE
+                total_cancelled = sum(
+                    r.get('cancelled_orders', 0) for r in successful_cancels
+                )
+
                 results.append({
                     'order_index': original_idx,
                     'success': result.get('success', False),
-                    'result': result
+                    'result': result,
+                    'order_type': 'CANCEL_ALL_ORDER',
+                    'event_type': 'order_cancelled',
+                    'cancelled_count': total_cancelled
                 })
             except Exception as e:
                 logger.error(f"배치 주문 {original_idx} (CANCEL_ALL_ORDER) 처리 실패: {e}")
@@ -1238,6 +1246,14 @@ class TradingCore:
         failed = [r for r in results if not r.get('success', False)]
 
         logger.info(f"배치 거래 신호 처리 완료 - 성공: {len(successful)}, 실패: {len(failed)}")
+
+        # Phase 2: Emit batch SSE event after all orders processed
+        if len(successful) > 0:
+            self.service.event_emitter.emit_order_batch_update(
+                user_id=strategy.user_id,
+                strategy_id=strategy.id,
+                batch_results=results
+            )
 
         # 표준 응답 포맷
         return {
@@ -1405,7 +1421,8 @@ class TradingCore:
                         order_data
                     )
 
-                    results.append({
+                    # Phase 2: Track event metadata for batch SSE aggregation
+                    result_entry = {
                         'order_index': original_idx,
                         'success': True,
                         'result': {
@@ -1415,8 +1432,11 @@ class TradingCore:
                             'order_id': result_item.get('order_id'),
                             'account_id': account.id,
                             'account_name': account.name
-                        }
-                    })
+                        },
+                        'order_type': exchange_order['type'],
+                        'event_type': 'order_created'
+                    }
+                    results.append(result_entry)
                 else:
                     # 실패 처리
                     logger.warning(

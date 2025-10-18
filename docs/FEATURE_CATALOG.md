@@ -58,7 +58,7 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 - `.toast.fade-out` - 300ms 페이드아웃 애니메이션
 **의존성**: Phase 3 (Batch SSE) 준비 완료
 **최근 수정**: 2025-10-18 - Phase 1 완료 (Toast UI Improvement)
-**상세 문서**: `docs/features/phase1_toast_ui.md`
+**상세 문서**: `docs/features/toast-ui.md`
 **검색**:
 ```bash
 grep -r "@FEAT:toast-ui" --include="*.js" --include="*.css"
@@ -240,16 +240,26 @@ grep -r "@FEAT:price-cache" --include="*.py"
 ---
 
 ### 8. event-sse
-**설명**: Server-Sent Events 기반 실시간 이벤트 발송
+**설명**: Server-Sent Events 기반 실시간 이벤트 발송 (개별 + 배치 이벤트 지원)
 **태그**: `@FEAT:event-sse`
 **주요 파일**:
-- `services/event_service.py` - SSE 이벤트 관리
-- `services/trading/event_emitter.py` - 이벤트 발행
+- `services/event_service.py` - SSE 이벤트 관리 (Lines 56-66 OrderBatchEvent, Lines 162-194 emit_order_batch_event)
+- `services/trading/event_emitter.py` - 이벤트 발행 (Lines 522-587 emit_order_batch_update)
+- `services/trading/core.py` - 배치 SSE 통합 (Lines 1250-1256, 1408-1422)
+**컴포넌트**:
+- **OrderEvent**: 개별 주문 이벤트 (기존)
+- **OrderBatchEvent**: 배치 주문 이벤트 (Phase 2 신규)
+- **emit_order_batch_update()**: 집계 로직 (defaultdict, O(n))
+**Phase 2 기능** (2025-10-18):
+- 배치 주문 집계 (order_type별 created/cancelled)
+- 90% SSE 감소 (10개 → 1개 배치 이벤트)
+- Frontend createBatchToast() 연동
 **의존성**: None
-**상세 문서**: `docs/features/event-sse.md`
+**상세 문서**: `docs/features/event-sse.md`, `docs/features/backend-batch-sse.md`
 **검색**:
 ```bash
 grep -r "@FEAT:event-sse" --include="*.py"
+grep -n "OrderBatchEvent\|emit_order_batch" web_server/app/services/
 ```
 
 ---
@@ -515,5 +525,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-18*
-*Recent Changes: Phase 1 (Toast UI Improvement) complete - MAX_TOASTS=10, FIFO removal, batch aggregation*
+*Recent Changes: Phase 2 (Backend Batch SSE) complete - OrderBatchEvent, 배치 집계 로직, 90% SSE 감소*
 
