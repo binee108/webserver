@@ -101,12 +101,18 @@ class RealtimeOpenOrdersManager {
      */
     registerEventHandlers() {
         if (!this.sseManager) return;
-        
+
         // Order events
         this.sseManager.on('order_update', (data) => {
             this.handleOrderUpdate(data);
         });
-        
+
+        // @FEAT:batch-sse @PHASE:3 @COMP:integration @TYPE:core
+        // Batch order update event listener - Phase 3 integration
+        this.sseManager.on('order_batch_update', (data) => {
+            this.handleBatchOrderUpdate(data);
+        });
+
         // Listen to event bus events
         if (this.eventBus) {
             this.eventBus.on('sse:order_update', (data) => {
@@ -209,7 +215,42 @@ class RealtimeOpenOrdersManager {
             this.logger.error('Failed to handle order update:', error);
         }
     }
-    
+
+    /**
+     * Handle batch order update from SSE
+     * @FEAT:batch-sse @PHASE:3 @COMP:integration @TYPE:core
+     *
+     * @description
+     * Phase 3: Integrates Phase 1 createBatchToast() with Phase 2 backend SSE event
+     * - Receives order_batch_update SSE events with aggregated order summaries
+     * - Validates event data with null-safe checks
+     * - Delegates toast rendering to Phase 1 createBatchToast()
+     *
+     * @param {Object} data - Event data from SSE
+     * @param {Array} data.summaries - Array of {order_type, created, cancelled}
+     * @param {string} data.timestamp - ISO 8601 timestamp
+     *
+     * @example
+     * // SSE event from Phase 2 backend:
+     * // {summaries: [{order_type: 'LIMIT', created: 5, cancelled: 0}, ...]}
+     */
+    handleBatchOrderUpdate(data) {
+        // Null-safe validation
+        if (!data || !data.summaries || data.summaries.length === 0) {
+            this.logger.debug('Empty batch update, skipping');
+            return;
+        }
+
+        try {
+            this.logger.info(`📦 Batch order update: ${data.summaries.length} order types`);
+
+            // Phase 1 integration: Delegate to createBatchToast for rendering
+            this.createBatchToast(data.summaries);
+        } catch (error) {
+            this.logger.error('Failed to handle batch order update:', error);
+        }
+    }
+
     /**
      * Upsert (insert or update) an order
      */

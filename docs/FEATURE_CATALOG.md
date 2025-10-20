@@ -239,27 +239,33 @@ grep -r "@FEAT:price-cache" --include="*.py"
 
 ---
 
-### 8. event-sse
-**설명**: Server-Sent Events 기반 실시간 이벤트 발송 (개별 + 배치 이벤트 지원)
-**태그**: `@FEAT:event-sse`
+### 8. event-sse / batch-sse
+**설명**: Server-Sent Events 기반 실시간 이벤트 발송 (개별 + 배치 이벤트 End-to-End 지원)
+**태그**: `@FEAT:event-sse`, `@FEAT:batch-sse`
 **주요 파일**:
-- `services/event_service.py` - SSE 이벤트 관리 (Lines 56-66 OrderBatchEvent, Lines 162-194 emit_order_batch_event)
-- `services/trading/event_emitter.py` - 이벤트 발행 (Lines 522-587 emit_order_batch_update)
-- `services/trading/core.py` - 배치 SSE 통합 (Lines 1250-1256, 1408-1422)
+- **Backend (Phase 2)**:
+  - `services/event_service.py` - SSE 이벤트 관리 (Lines 56-66 OrderBatchEvent, Lines 162-194 emit_order_batch_event)
+  - `services/trading/event_emitter.py` - 이벤트 발행 (Lines 522-587 emit_order_batch_update)
+  - `services/trading/core.py` - 배치 SSE 통합 (Lines 1250-1256, 1408-1422)
+- **Frontend (Phase 3)**:
+  - `static/js/positions/realtime-openorders.js` - SSE 수신 및 Toast 연동 (Lines 110-114 리스너, Lines 219-252 handleBatchOrderUpdate)
 **컴포넌트**:
 - **OrderEvent**: 개별 주문 이벤트 (기존)
-- **OrderBatchEvent**: 배치 주문 이벤트 (Phase 2 신규)
-- **emit_order_batch_update()**: 집계 로직 (defaultdict, O(n))
-**Phase 2 기능** (2025-10-18):
-- 배치 주문 집계 (order_type별 created/cancelled)
-- 90% SSE 감소 (10개 → 1개 배치 이벤트)
-- Frontend createBatchToast() 연동
+- **OrderBatchEvent**: 배치 주문 이벤트 (Phase 2)
+- **emit_order_batch_update()**: Backend 집계 로직 (defaultdict, O(n))
+- **handleBatchOrderUpdate()**: Frontend 수신 핸들러 (Phase 3)
+- **createBatchToast()**: Toast UI 렌더링 (Phase 1)
+**3-Phase 통합** (2025-10-20):
+- **Phase 1**: Toast UI 개선 (createBatchToast, MAX_TOASTS=10, FIFO)
+- **Phase 2**: Backend 배치 SSE (order_type별 집계, 90% SSE 감소)
+- **Phase 3**: Frontend 통합 (SSE 리스너, End-to-End 완성)
+**효과**: 배치 주문 시 SSE 10개 → 1개, Toast 10개 → 1개 (90% 감소)
 **의존성**: None
-**상세 문서**: `docs/features/event-sse.md`, `docs/features/backend-batch-sse.md`
+**상세 문서**: `docs/features/toast-ui.md`, `docs/features/backend-batch-sse.md`, `docs/features/frontend-batch-sse.md`
 **검색**:
 ```bash
-grep -r "@FEAT:event-sse" --include="*.py"
-grep -n "OrderBatchEvent\|emit_order_batch" web_server/app/services/
+grep -r "@FEAT:event-sse\|@FEAT:batch-sse" --include="*.py" --include="*.js"
+grep -n "OrderBatchEvent\|emit_order_batch\|handleBatchOrderUpdate" web_server/app/
 ```
 
 ---
