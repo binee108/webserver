@@ -190,7 +190,11 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 
 ### 5. capital-management
 **설명**: 자본 배분, 관리, 자동 재할당 스케줄러 (하루 7회 고정 시각), 수동 UI 트리거
-**태그**: `@FEAT:capital-management`, `@FEAT:capital-allocation`
+
+**태그 구분**:
+- `@FEAT:capital-management` - 비즈니스 로직 (service, route, model, util, UI)
+- `@FEAT:capital-allocation` - 스케줄러 작업 (job 컴포넌트 전용)
+
 **주요 파일**:
 - `services/capital_service.py` - 자본 배분 비즈니스 로직 (@FEAT:capital-management @COMP:service @TYPE:core)
 - `services/trading/quantity_calculator.py` - 주문 수량 계산 (@FEAT:capital-management @COMP:service @TYPE:core)
@@ -204,9 +208,20 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 **최근 수정**: 2025-10-21 - Phase 2.4 수동 UI 문서화 완료
 **검색**:
 ```bash
+# 모든 capital 관련 코드 (비즈니스 로직 + 스케줄러)
 grep -r "@FEAT:capital-management\|@FEAT:capital-allocation" --include="*.py"
+
+# 비즈니스 로직만
+grep -r "@FEAT:capital-management" --include="*.py" | grep "@COMP:service\|@COMP:route"
+
+# 스케줄러 작업만
+grep -r "@FEAT:capital-allocation" --include="*.py" | grep "@COMP:job"
+
+# 스케줄러 구현 위치
 grep -n "auto_rebalance_all_accounts_with_context" web_server/app/__init__.py
-grep "auto_rebalance_accounts" /web_server/logs/app.log  # 로그 확인
+
+# 로그 확인
+grep "auto_rebalance_accounts" /web_server/logs/app.log
 ```
 
 ---

@@ -92,24 +92,15 @@ allocated_capital = (total_capital × strategy_weight) / total_weight
 **반환값**:
 ```python
 {
-    'account_id': 1,
-    'account_name': 'Main Account',
-    'total_capital': 10000.0,
-    'allocations': [
-        {
-            'strategy_account_id': 5,
-            'strategy_name': 'test1',
-            'weight': 0.6,
-            'old_capital': 5000.0,
-            'allocated_capital': 6000.0,
-            'change': 1000.0
-        }
-    ],
-    'source': 'db',  # or 'live', 'live_fallback'
-    'total_weight': 1.0,
-    'timestamp': '2025-10-12T10:30:00.123456'
+    'account_id': int,
+    'allocations': [{'strategy_name': str, 'allocated_capital': float, 'change': float, ...}],
+    'source': 'db' | 'live' | 'live_fallback',  # 잔고 출처
+    'total_capital': float,
+    'timestamp': str  # ISO 8601 format
 }
 ```
+
+**참고**: 전체 필드 정의는 `services/capital_service.py:recalculate_strategy_capital()` 코드 참조
 
 #### `should_rebalance(account_id, min_interval_hours=1)`
 **역할**: 자동 리밸런싱 조건 판단
@@ -167,14 +158,14 @@ quantity = (allocated_capital × qty_per% ÷ price) × leverage
 
 ### 로그 확인
 ```bash
-# 스케줄러 시작/종료
+# 스케줄러 Job 등록 확인 (영문 Job Name)
 grep "Auto Rebalance" /web_server/logs/app.log
 
-# 실행 결과
-grep "자동 리밸런싱" /web_server/logs/app.log
+# 실행 결과 확인 (한글 로그 메시지)
+grep "자동 리밸런싱 작업" /web_server/logs/app.log
 
-# 조건 미충족 (포지션 존재)
-grep "포지션 존재|시간 미경과" /web_server/logs/app.log
+# 조건 미충족 (포지션 존재 또는 시간 미경과)
+grep "리밸런싱 건너뜀" /web_server/logs/app.log
 ```
 
 ### 수동 실행

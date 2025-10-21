@@ -11,7 +11,7 @@
 - **미실현 손익 계산** (307초 ≈ 5분): 포지션 미실현 손익 계산 (소수 주기)
 - **일일 성과 계산** (매일 00:00:13): 전략별 일일 성과 집계
 - **일일 요약 전송** (매일 21:03): 텔레그램 일일 리포트
-- **자동 리밸런싱** (매시 :17분): 계좌별 자본 자동 재배분
+- **자동 리밸런싱** (하루 7회): 계좌별 자본 자동 재배분 (01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37)
 - **증권 토큰 갱신** (6시간): 증권사 OAuth 토큰 자동 갱신
 - **WebSocket 모니터링** (1분): WebSocket 연결 상태 확인 및 재연결
 
@@ -186,20 +186,30 @@ trading_service.calculate_unrealized_pnl() 호출
 ```
 
 ### 7. 자동 리밸런싱 (Auto Rebalance Accounts)
-**파일**: `app/__init__.py` (L411-485, `auto_rebalance_all_accounts_with_context`)
-**태그**: `@FEAT:capital-management @FEAT:background-scheduler @COMP:service @TYPE:core`
+**파일**: `app/__init__.py` (L636-654, 7개 개별 job 등록)
+**태그**: `@FEAT:capital-allocation @FEAT:background-scheduler @COMP:job @TYPE:core`
 
-**실행 주기**: 매시 17분 (cron)
-**Job ID**: `auto_rebalance_accounts`
-**역할**: 계좌별 자본 자동 재배분 (실시간 잔고 기반)
+**실행 주기**: 하루 7회 고정 시각 (cron, 소수 시각 분산 전략)
+**실행 시각**: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37
+**Job ID**: `auto_rebalance_accounts_01_17`, `auto_rebalance_accounts_04_52`, ... (7개)
+**역할**: 계좌별 자본 자동 재배분 (포지션 청산 완료 + 최소 1시간 경과 시)
+
+**실행 조건** (2가지 모두 충족 필요):
+1. **포지션 청산 완료**: `has_open_positions() == False`
+2. **최소 1시간 경과**: 마지막 재할당 이후 최소 1시간 경과
 
 **실행 흐름**:
 ```
 모든 활성 계좌 조회
   → capital_allocation_service.should_rebalance() 조건 확인
   → 조건 충족 시 capital_allocation_service.recalculate_strategy_capital()
-  → 전략별 자본 할당 비율 재계산
+  → 조건 미충족 시 로그만 기록하고 스킵
 ```
+
+**구현 배경**:
+- **APScheduler cron 곱집합 문제**: `hour='1,4,8,...', minute='17,52,...'` 형태는 7×7=49회 실행
+- **해결**: 각 시각을 개별 job으로 등록 (7개 독립 job)
+- **트래픽 분산**: 소수 시각 사용으로 정시 트래픽 회피
 
 ### 8. 증권 토큰 갱신 (Securities Token Refresh)
 **파일**: `app/jobs/securities_token_refresh.py`
@@ -415,12 +425,19 @@ python run.py restart
 | `symbol_validator_refresh` | 매시 15분 | cron | `symbol_validator.refresh_symbols_with_context` | 심볼 검증기 갱신 |
 | `send_daily_summary` | 매일 21:03 | cron | `send_daily_summary_with_context` | 일일 요약 전송 |
 | `calculate_daily_performance` | 매일 00:00:13 | cron | `calculate_daily_performance_with_context` | 일일 성과 계산 |
-| `auto_rebalance_accounts` | 매시 17분 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 |
+| `auto_rebalance_accounts_01_17` | 매일 01:17 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (1/7) |
+| `auto_rebalance_accounts_04_52` | 매일 04:52 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (2/7) |
+| `auto_rebalance_accounts_08_37` | 매일 08:37 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (3/7) |
+| `auto_rebalance_accounts_12_22` | 매일 12:22 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (4/7) |
+| `auto_rebalance_accounts_16_07` | 매일 16:07 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (5/7) |
+| `auto_rebalance_accounts_19_52` | 매일 19:52 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (6/7) |
+| `auto_rebalance_accounts_23_37` | 매일 23:37 | cron | `auto_rebalance_all_accounts_with_context` | 자동 리밸런싱 (7/7) |
 
-**총 11개 백그라운드 작업 등록**
+**총 17개 백그라운드 작업 등록** (자동 리밸런싱 7개 개별 job)
 
 ---
 
-*Last Updated: 2025-10-12*
-*Version: 2.0 (전체 작업 검증 완료)*
-*Lines: ~400 (11개 작업 상세 문서화)*
+*Last Updated: 2025-10-21*
+*Version: 2.1 (자본 재할당 Phase 1 반영)*
+*Changes: 자동 리밸런싱 하루 7회 고정 시각 스케줄 업데이트 (매시 17분 → 7개 개별 job)*
+*Lines: ~440 (17개 작업 상세 문서화)*
