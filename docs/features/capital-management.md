@@ -268,6 +268,47 @@ curl -k -X POST https://222.98.151.163/api/capital/auto-rebalance-all
 
 ---
 
+## 6. 수동 재할당 UI (프론트엔드)
+
+### 위치
+- **페이지**: `/accounts` (계좌 관리 페이지)
+- **버튼 위치**: 우측 상단, "잔고 새로고침" 버튼 좌측
+- **버튼명**: "자본 재할당"
+
+### 사용 방법
+1. `/accounts` 페이지 접속
+2. "자본 재할당" 버튼 클릭
+3. Toast 알림으로 결과 확인 (1~2초)
+
+### 응답 메시지
+
+| 상황 | Toast 메시지 | 타입 | 의미 |
+|------|-------------|------|------|
+| 활성 계좌 없음 | "활성 계좌가 없습니다." | INFO | 계좌 없음 (설정 확인 필요) |
+| 재할당 성공 | "자본 재할당 완료: X개 계좌 처리됨 (Y개 건너뜀)" | SUCCESS | 성공, Y개는 조건 미충족 |
+| 조건 불만족 | "자본 재할당: 모든 계좌가 재할당 조건을 만족하지 않습니다." | INFO | 포지션 보유 중 또는 시간 미경과 |
+| 네트워크 오류 | "자본 재할당 중 오류가 발생했습니다" | ERROR | 서버 또는 네트워크 오류 |
+
+### 재할당 조건
+재할당이 실행되려면 **다음 두 조건을 모두 충족**해야 합니다:
+
+1. **포지션 청산 완료**: 모든 포지션 청산 완료 (`has_open_positions() == False`)
+2. **최소 1시간 경과**: 마지막 재할당 이후 최소 1시간 경과
+
+조건 미충족 계좌는 자동 건너뜀 (로그에만 기록).
+
+### 주의사항
+- 포지션 보유 중에는 재할당 불가 (조건 미충족 메시지 표시)
+- 최소 1시간 간격 필수 (빈번한 재할당 방지, API 부하 감소)
+- 일반 사용자는 자동 스케줄러(하루 7회)에 의존 권장
+
+### 구현 코드
+**파일**: `app/static/js/accounts.js`
+**함수**: `triggerCapitalReallocation()` (라인 301-341)
+**태그**: `@FEAT:capital-management @COMP:route @TYPE:core`
+
+---
+
 ## 8. 유지보수 가이드
 
 ### 주의사항
@@ -378,5 +419,5 @@ grep -r "@FEAT:capital-management" --include="*.py" | grep "@COMP:model"
 ---
 
 *Last Updated: 2025-10-21*
-*Version: 2.1.0 - Auto Rebalancing Scheduler Documentation*
-*Changes: Added scheduler specification (7 daily runs, prime times), cron multiplicity issue & solution, log checking guide*
+*Version: 2.2.0 - Frontend Manual Reallocation UI*
+*Changes: Added Section 6 (Manual UI), 4-state toast messaging, condition documentation*

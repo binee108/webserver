@@ -298,6 +298,48 @@
         }
     }
 
+    // @FEAT:capital-management @COMP:route @TYPE:core
+    async function triggerCapitalReallocation(event) {
+        /**
+         * Phase 2.2: 자본 재할당 수동 트리거
+         *
+         * API: POST /api/capital/auto-rebalance-all
+         * 응답: {success, data: {total_accounts, rebalanced, skipped, results}}
+         */
+        const button = event?.currentTarget || event?.target?.closest('button');
+        const originalContent = button?.innerHTML;
+
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<div class="loading-spinner"></div>재할당 중...';
+        }
+
+        try {
+            const data = await apiRequest('/api/capital/auto-rebalance-all', { method: 'POST' });
+            const payload = extractPayload(data);
+
+            const totalAccounts = payload.total_accounts || 0;
+            const rebalanced = payload.rebalanced || 0;
+            const skipped = payload.skipped || 0;
+
+            if (totalAccounts === 0) {
+                showToast('활성 계좌가 없습니다.', 'info');
+            } else if (rebalanced > 0) {
+                showToast(`자본 재할당 완료: ${rebalanced}개 계좌 처리됨 (${skipped}개 건너뜀)`, 'success');
+            } else {
+                showToast(`자본 재할당: 모든 계좌가 재할당 조건을 만족하지 않습니다.`, 'info');
+            }
+        } catch (error) {
+            console.error('자본 재할당 오류:', error);
+            showToast(error.message || '자본 재할당 중 오류가 발생했습니다', 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalContent;
+            }
+        }
+    }
+
     async function refreshAllBalances(event) {
         const button = event?.currentTarget || event?.target?.closest('button');
         const originalContent = button?.innerHTML;
@@ -452,4 +494,5 @@
     window.testConnection = testConnection;
     window.submitAccount = submitAccount;
     window.refreshAllBalances = refreshAllBalances;
+    window.triggerCapitalReallocation = triggerCapitalReallocation;
 })(window, document);

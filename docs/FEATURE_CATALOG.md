@@ -189,17 +189,19 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 ---
 
 ### 5. capital-management
-**설명**: 자본 배분, 관리, 자동 재할당 스케줄러 (하루 7회 고정 시각)
+**설명**: 자본 배분, 관리, 자동 재할당 스케줄러 (하루 7회 고정 시각), 수동 UI 트리거
 **태그**: `@FEAT:capital-management`, `@FEAT:capital-allocation`
 **주요 파일**:
 - `services/capital_service.py` - 자본 배분 비즈니스 로직 (@FEAT:capital-management @COMP:service @TYPE:core)
 - `services/trading/quantity_calculator.py` - 주문 수량 계산 (@FEAT:capital-management @COMP:service @TYPE:core)
 - `routes/capital.py` - 자본 API (@FEAT:capital-management @COMP:route @TYPE:core)
 - `app/__init__.py` (Lines 636-654) - 자동 재할당 스케줄러 7개 job (@FEAT:capital-allocation @COMP:job @TYPE:core)
+- `templates/accounts.html` (Lines 140-145) - 수동 재할당 버튼 UI
+- `app/static/js/accounts.js` (Lines 301-341, 497) - 수동 재할당 핸들러 (@FEAT:capital-management @COMP:route @TYPE:core)
 **스케줄러 시각**: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37 (포지션 청산 완료 + 최소 1시간 경과 시 실행)
 **의존성**: `position-tracking`, `strategy-management`
 **상세 문서**: `docs/features/capital-management.md`
-**최근 수정**: 2025-10-21 - Phase 1.4 스케줄러 문서화 완료
+**최근 수정**: 2025-10-21 - Phase 2.4 수동 UI 문서화 완료
 **검색**:
 ```bash
 grep -r "@FEAT:capital-management\|@FEAT:capital-allocation" --include="*.py"
@@ -537,5 +539,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-21*
-*Recent Changes: Phase 1.4 (Auto Rebalancing Scheduler) documented - capital-allocation job, 7 daily runs, cron issue solution*
+*Recent Changes: Phase 2.4 (Manual Reallocation UI) - Frontend button, toast messaging, condition documentation*
 
