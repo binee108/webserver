@@ -216,14 +216,14 @@
                                 <!-- Phase 4.2: Native Currency Symbol -->
                                 <td class="text-sm font-medium text-primary" id="account-spot-balance-{{ account.id }}">
                                     {% if account.latest_spot_balance is not none %}
-                                        {% if Exchange.is_domestic(account.exchange) %}₩{% else %}${% endif %}{{ '%.2f'|format(account.latest_spot_balance) }}
+                                        {{ currency_symbol(Exchange, account.exchange) }}{{ '%.2f'|format(account.latest_spot_balance) }}
                                     {% else %}
                                         ---
                                     {% endif %}
                                 </td>
                                 <td class="text-sm font-medium text-primary" id="account-futures-balance-{{ account.id }}">
                                     {% if account.latest_futures_balance is not none %}
-                                        {% if Exchange.is_domestic(account.exchange) %}₩{% else %}${% endif %}{{ '%.2f'|format(account.latest_futures_balance) }}
+                                        {{ currency_symbol(Exchange, account.exchange) }}{{ '%.2f'|format(account.latest_futures_balance) }}
                                     {% else %}
                                         ---
                                     {% endif %}

@@ -1,0 +1,7 @@
+{# @FEAT:account-management @FEAT:strategy-management @COMP:macro @TYPE:helper #}
+{# Phase 4.3: Currency symbol macro for exchange type-based display #}
+{# Sync with: web_server/app/constants.py:Exchange.DOMESTIC_EXCHANGES (Line 249) #}
+
+{% macro currency_symbol(Exchange, exchange) %}
+    {%- if Exchange.is_domestic(exchange) -%}₩{%- else -%}${%- endif -%}
+{% endmacro %}

@@ -107,13 +107,13 @@ def strategies():
     try:
         # 내 전략만 서버 렌더, 구독/공개 전략은 클라이언트에서 API 호출로 로드
         strategies_data = strategy_service.get_strategies_by_user(current_user.id)
-        return render_template('strategies.html', strategies=strategies_data, MarketType=MarketType)
+        return render_template('strategies.html', strategies=strategies_data, MarketType=MarketType, Exchange=Exchange)
     except StrategyError as e:
         # 오류 발생 시 빈 목록으로 처리
-        return render_template('strategies.html', strategies=[], MarketType=MarketType)
+        return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
     except Exception as e:
         # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
-        return render_template('strategies.html', strategies=[], MarketType=MarketType)
+        return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
 
 # @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/positions')

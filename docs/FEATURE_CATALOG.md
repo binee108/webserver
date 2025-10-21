@@ -584,6 +584,58 @@ Phase 4.3 (Strategies 페이지) 완료 후 3+ 사용처 발생 시 Jinja2 매�
 
 ---
 
+### 10.3 통화 기호 Jinja2 매크로 (Phase 4.3)
+
+**파일**: `web_server/app/templates/macros/currency.html`
+**태그**: `@FEAT:account-management`, `@FEAT:strategy-management`, `@COMP:macro`
+
+#### 개요
+거래소 타입 기반 통화 기호(₩/$)를 동적으로 표시하는 Jinja2 매크로입니다.
+국내 거래소(UPBIT, BITHUMB)는 원화(₩), 해외 거래소는 달러($)를 표시합니다.
+
+#### 사용처
+- Accounts 페이지: 2곳 (현물/선물 잔고)
+- Strategies 페이지: 2곳 (전략 요약, 계좌 목록)
+
+#### 검색 명령
+```bash
+grep -r "@FEAT:strategy-management" --include="*.html" | grep "macros"
+grep -r "currency_symbol" --include="*.html"
+```
+
+#### 핵심 로직
+```jinja
+{% from 'macros/currency.html' import currency_symbol %}
+{{ currency_symbol(account.exchange) }}  {# ₩ or $ #}
+```
+
+#### 의존성
+- Phase 3: `Exchange.is_domestic()` (constants.py:315-350)
+- Exchange enum: `DOMESTIC_EXCHANGES = [UPBIT, BITHUMB]` (constants.py:249)
+
+#### JavaScript 동기화
+```javascript
+// strategies.html: SSE 동적 업데이트용 헬퍼 함수
+// Sync with: constants.py:DOMESTIC_EXCHANGES (Line 249)
+const domesticExchanges = ['UPBIT', 'BITHUMB'];
+```
+
+#### 표시 예시
+- **UPBIT 전략**: 총 할당 자본 ₩15,100,000
+- **BINANCE 전략**: 총 할당 자본 $10,000
+
+#### 제한사항
+- 혼합 거래소 전략 (UPBIT + BINANCE)은 첫 번째 계좌 기준으로 통화 기호 표시
+- WARNING 주석으로 제한사항 명시 (strategies.html Line 158)
+
+#### Phase 4.2 리팩토링
+Accounts 페이지 (Phase 4.2)의 inline 조건문을 매크로 사용으로 리팩토링:
+- 변경 전: `{% if Exchange.is_domestic(...) %}₩{% else %}${% endif %}`
+- 변경 후: `{{ currency_symbol(account.exchange) }}`
+- 효과: -2 duplication points
+
+---
+
 ### 10.1. dashboard-total-capital
 **설명**: Dashboard 총 자본 USDT 통합 표시 (Phase 4.4)
 

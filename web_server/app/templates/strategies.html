@@ -155,7 +155,9 @@
                             <!-- 주요 지표 -->
                             <div class="summary-main-metrics">
                                 <div class="main-metric">
-                                    <p class="amount tabular-nums">${{ "%.2f"|format(strategy.total_allocated_capital) }}</p>
+                                    <!-- Phase 4.3: WARNING - Mixed exchange strategies not supported (first account only) -->
+                                    {% set first_account = strategy.connected_accounts[0] if strategy.connected_accounts else None %}
+                                    <p class="amount tabular-nums">{{ currency_symbol(Exchange, first_account.exchange if first_account else 'BINANCE') }}{{ "%.2f"|format(strategy.total_allocated_capital) }}</p>
                                     <p class="amount-label">총 할당 자본</p>
                                 </div>
                                 <div class="metric-grid">
@@ -234,7 +236,7 @@
                                             <p>가중치: {{ account.weight }} | {% if account.max_symbols %}최대: {{ account.max_symbols }}개{% else %}최대: -{% endif %} | 레버리지: {{ account.leverage }}x</p>
                                         </div>
                                         <div class="strategy-account-amount">
-                                            <p class="amount tabular-nums">${{ "%.2f"|format(account.allocated_capital) }}</p>
+                                            <p class="amount tabular-nums">{{ currency_symbol(Exchange, account.exchange) }}{{ "%.2f"|format(account.allocated_capital) }}</p>
                                             <p class="currency">USDT{% if account.exchange == 'upbit' %} 환산{% endif %}</p>
                                         </div>
                                     </div>
@@ -420,6 +422,17 @@
 // Toast 알림 기능은 전역 toast.js를 사용합니다 (base.html에서 로드됨)
 // showToast(message, type, duration) 함수는 전역으로 사용 가능합니다
 
+// Phase 4.3: Exchange type helper functions
+// Sync with: web_server/app/constants.py:Exchange.DOMESTIC_EXCHANGES (Line 249)
+function isExchangeDomestic(exchange) {
+    const domesticExchanges = ['UPBIT', 'BITHUMB'];
+    return domesticExchanges.includes(exchange?.toUpperCase());
+}
+
+function getCurrencySymbol(exchange) {
+    return isExchangeDomestic(exchange) ? '₩' : '$';
+}
+
 // CSRF 토큰
 function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
@@ -542,6 +555,8 @@ function renderSubscribedStrategy(s) {
     // 총 자본 합계 (있다면)
     const totalAllocated = accounts.reduce((sum, a) => sum + (a.allocated_capital || 0), 0);
     const positionCount = s.position_count || 0;
+    const firstAccount = accounts[0];
+    const currencySymbol = getCurrencySymbol(firstAccount?.exchange || 'BINANCE');
 
     return `
     <div class="strategy-card-new" id="strategy-card-${s.id}">
@@ -577,7 +592,7 @@ function renderSubscribedStrategy(s) {
           <div class="summary-header"><h4>전략 요약</h4></div>
           <div class="summary-main-metrics">
             <div class="main-metric">
-              <p class="amount tabular-nums">$${totalAllocated.toFixed(2)}</p>
+              <p class="amount tabular-nums">${currencySymbol}${totalAllocated.toFixed(2)}</p>
               <p class="amount-label">총 할당 자본</p>
             </div>
             <div class="metric-grid">
@@ -622,7 +637,7 @@ function renderSubscribedStrategy(s) {
                   <p>가중치: ${a.weight} | ${a.max_symbols ? `최대: ${a.max_symbols}개` : '최대: -'} | 레버리지: ${a.leverage}x</p>
                 </div>
                 <div class="strategy-account-amount">
-                  <p class="amount tabular-nums">$${(a.allocated_capital || 0).toFixed(2)}</p>
+                  <p class="amount tabular-nums">${getCurrencySymbol(a.exchange)}${(a.allocated_capital || 0).toFixed(2)}</p>
                   <p class="currency">USDT</p>
                 </div>
                 <div class="flex items-center space-x-2">
@@ -1483,7 +1498,7 @@ function updateStrategyCard(strategy) {
                             <p>가중치: ${account.weight} | ${account.max_symbols ? `최대: ${account.max_symbols}개` : '최대: -'} | 레버리지: ${account.leverage}x</p>
                         </div>
                         <div class="strategy-account-amount">
-                            <p class="amount tabular-nums">$${allocated.toFixed(2)}</p>
+                            <p class="amount tabular-nums">${getCurrencySymbol(account.exchange)}${allocated.toFixed(2)}</p>
                             <p class="currency">USDT${account.exchange === 'upbit' ? ' 환산' : ''}</p>
                         </div>
                     </div>
@@ -1507,7 +1522,9 @@ function updateStrategyCard(strategy) {
         
         if (summaryAmount) {
             const totalAllocated = Number(strategy.total_allocated_capital ?? 0);
-            summaryAmount.textContent = `$${totalAllocated.toFixed(2)}`;
+            const firstAccount = strategy.connected_accounts?.[0];
+            const currencySymbol = getCurrencySymbol(firstAccount?.exchange || 'BINANCE');
+            summaryAmount.textContent = `${currencySymbol}${totalAllocated.toFixed(2)}`;
         }
         if (accountCount) {
             accountCount.textContent = `${strategy.connected_accounts.length}개`;
