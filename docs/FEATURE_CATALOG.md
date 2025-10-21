@@ -305,6 +305,37 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 grep -r "create_batch_orders" --include="*.py" | grep -E "upbit|bithumb"
 ```
 
+#### 국내 거래소 식별 (Phase 2.2)
+**설명**: KRW 기준 국내 거래소 여부 확인 (환율 변환 대상 식별)
+
+**주요 파일**:
+- `constants.py` (Lines 248-350) - Exchange 클래스
+  - `DOMESTIC_EXCHANGES` - 국내 거래소 목록 [UPBIT, BITHUMB] (Line 249)
+  - `is_domestic(exchange: str) -> bool` - 국내 거래소 여부 확인 (Line 315-350)
+
+**사용 예시**:
+```python
+from app.constants import Exchange
+
+# 국내 거래소 확인
+if Exchange.is_domestic('UPBIT'):
+    # KRW → USDT 환율 변환 필요
+    pass
+```
+
+**검색**:
+```bash
+# 국내 거래소 판별 코드
+grep -n "is_domestic\|DOMESTIC_EXCHANGES" --include="*.py" web_server/app/
+
+# 국내 거래소별 용도 추적
+grep -r "is_domestic" --include="*.py" web_server/app/ | head -20
+```
+
+**관련 기능**:
+- Phase 1: `price_cache.get_usdt_krw_rate()` - USDT/KRW 환율 조회
+- Phase 3: `SecurityService.get_accounts_by_user()` - KRW 잔고 USDT 변환
+
 ---
 
 ### 7. price-cache

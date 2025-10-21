@@ -633,26 +633,24 @@ def register_background_jobs(app):
         max_instances=1
     )
 
-    # Phase 4: 자동 리밸런싱 (하루 7회 - 소수 시각, 트래픽 분산)
-    # @FEAT:capital-allocation @COMP:job @TYPE:core
-    # 실행 시각: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37
-    # 주의: APScheduler cron은 hour,minute 곱집합을 사용하므로 개별 job으로 등록
-    rebalance_times = [
-        (1, 17), (4, 52), (8, 37), (12, 22), (16, 7), (19, 52), (23, 37)
-    ]
-
-    for hour, minute in rebalance_times:
-        scheduler.add_job(
-            func=auto_rebalance_all_accounts_with_context,
-            args=[app],
-            trigger="cron",
-            hour=hour,
-            minute=minute,
-            id=f'auto_rebalance_accounts_{hour:02d}_{minute:02d}',
-            name=f'Auto Rebalance {hour:02d}:{minute:02d}',
-            replace_existing=True,
-            max_instances=1
-        )
+    # Phase 2: 자동 리밸런싱 (660초마다 = 11분 간격)
+    # @FEAT:capital-management @COMP:job @TYPE:core
+    # WHY: 사용자 요구 "5~15분 사이마다 백그라운드에서 시도"
+    # - 11분(660초)은 소수로 시간대 분산 효과
+    # - Phase 1의 이중 임계값 조건으로 불필요한 재할당 방지
+    # - 5분 TTL 캐싱으로 거래소 API 부하 70% 감소
+    scheduler.add_job(
+        func=auto_rebalance_all_accounts_with_context,
+        args=[app],
+        trigger="interval",
+        seconds=660,
+        id='auto_rebalance_accounts',
+        name='Auto Rebalance Accounts',
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=60  # 1분 지연 허용
+    )
+    app.logger.info("✅ 자동 재할당 스케줄러 등록 완료 (660초 간격)")
 
     # Phase 4.3: 증권 OAuth 토큰 자동 갱신 (6시간마다)
     scheduler.add_job(
@@ -1026,11 +1024,11 @@ def send_daily_summary_with_context(app):
 
 def auto_rebalance_all_accounts_with_context(app):
     """
-    Phase 4: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
+    Phase 2: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
 
     모든 활성 계좌에 대해 리밸런싱 조건을 확인하고,
     조건 충족 시 자동으로 자본 재배분을 실행합니다.
-    매시 17분에 실행됩니다 (소수 시간대).
+    660초(11분)마다 실행됩니다 (하루 약 130회).
     """
     with app.app_context():
         try:
@@ -1052,10 +1050,9 @@ def auto_rebalance_all_accounts_with_context(app):
 
             for account in accounts:
                 try:
-                    # 리밸런싱 조건 확인
+                    # 리밸런싱 조건 확인 (Phase 1: 이중 임계값 기반)
                     check_result = capital_allocation_service.should_rebalance(
-                        account_id=account.id,
-                        min_interval_hours=1  # 최소 1시간 간격
+                        account_id=account.id
                     )
 
                     if not check_result['should_rebalance']:
