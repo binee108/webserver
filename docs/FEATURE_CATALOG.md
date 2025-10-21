@@ -106,6 +106,10 @@ grep -n "showToast" --include="*.js" web_server/app/static/js/
 - **재정렬 경로**: PendingOrder → OpenOrder 전환 시 개별 SSE 발송 (배치 SSE 아님)
 **의존성**: event_emitter.py (emit_pending_order_event)
 **최근 수정**:
+- 2025-10-21 - Phase 2.2: PendingOrder 삭제 SSE 발송 완성 (최대 재시도 초과 시)
+  - 경로 1 (재정렬 성공): PendingOrder → OpenOrder 전환 시 삭제 + SSE 발송
+  - 경로 2 (최대 재시도 초과): 재시도 한계 도달 시 삭제 + SSE 발송
+  - 경로 3 (사용자 취소): CANCEL_ALL_ORDER 시 삭제 + SSE 발송
 - 2025-10-21 - Phase 2.1: PendingOrder 삭제 시 Order List SSE 발송 구현 (재정렬 성공 시)
 - 2025-10-21 - Phase 1: PendingOrder 생성 시 Order List SSE 발송 구현
 **검색**:
@@ -346,6 +350,59 @@ grep -r "is_domestic" --include="*.py" web_server/app/ | head -20
 
 ---
 
+### 국내 거래소 KRW → USDT 변환 (Phase 3)
+
+**파일**: `web_server/app/services/security.py`
+**태그**: `@FEAT:account-management`, `@FEAT:exchange-integration`
+
+#### 개요
+국내 거래소(UPBIT, BITHUMB)의 KRW 잔고를 USDT로 변환하여 API 응답에 포함합니다.
+환율 조회 실패 시 Graceful Degradation 패턴을 적용하여 원화 잔고를 그대로 표시합니다.
+
+#### 핵심 구현
+- **메서드**: `SecurityService.get_accounts_by_user(user_id)` (Lines 231-354)
+- **환율 소스**: `price_cache.get_usdt_krw_rate()` (30초 캐시)
+- **에러 처리**:
+  - 환율 조회 실패 → KRW 표시 + `conversion_error="환율 조회 실패"`
+  - 환율 ≤ 0 → KRW 표시 + `conversion_error="환율 데이터 이상"`
+- **방어 코드**: division by zero 방지 (`usdt_krw_rate > 0`)
+
+#### 응답 필드
+```python
+{
+    "latest_balance": 121239.17,        # USDT 변환 값 (국내) 또는 원본 (해외)
+    "currency_converted": true,         # 변환 여부
+    "original_balance_krw": 183071153,  # 국내만, 원본 KRW
+    "usdt_krw_rate": 1510.0,            # 국내만, 적용된 환율
+    "conversion_error": null            # 에러 시 메시지
+}
+```
+
+#### 검색 명령
+```bash
+# 핵심 변환 로직
+grep -r "@FEAT:account-management" --include="*.py" web_server/app/services/security.py
+
+# 환율 조회 라인
+grep -n "get_usdt_krw_rate" web_server/app/services/security.py
+
+# 국내 거래소 여부 확인
+grep -n "is_domestic" web_server/app/services/security.py
+```
+
+#### 의존성
+- **Phase 1**: `price_cache.get_usdt_krw_rate()` (USDT/KRW 환율 캐시)
+- **Phase 2**: `Exchange.is_domestic()` (국내 거래소 식별)
+- **Infrastructure**: `ExchangeRateUnavailableError` 예외 처리
+
+#### 테스트 시나리오
+- UPBIT: ₩183,071,153 → $121,239.17 (rate: 1510.0) ✅
+- BINANCE: $5,778.04 (unchanged) ✅
+- 환율 조회 실패: KRW 표시 + `conversion_error` ✅
+- 환율 ≤ 0: KRW 표시 + `conversion_error="환율 데이터 이상"` ✅
+
+---
+
 ### 7. price-cache
 **설명**: 심볼별 가격 캐싱 및 주기적 업데이트 (USDT/KRW 환율 조회 포함)
 **태그**: `@FEAT:price-cache`
@@ -564,6 +621,25 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 
 ---
 
+### 2025-10-21: Capital Management Phase 5 Complete
+**영향 범위**: `capital-management`
+**파일**:
+- `app/templates/strategies.html` (Lines 58-78, 1628-1698) - 자본 재할당 UI 이동
+- `app/templates/accounts.html` (Line 140-145 삭제) - 버튼 제거
+- `app/static/js/accounts.js` (Lines 301-341 삭제) - 함수 제거
+- `docs/features/capital-management.md` - Phase 5 이력 추가
+
+**개선 내용**:
+1. **UI 위치 변경**: 자본 재할당 버튼을 accounts → strategies 페이지로 이동
+2. **논리적 배치**: 전략별 자본 배분 기능이므로 전략 관리 페이지에 배치
+3. **버튼 텍스트 개선**: "자본 재할당" → "전략 자본 재할당" (명확성)
+4. **Force UI 추가**: 체크박스로 강제 실행 모드 선택 (Phase 4 force 파라미터 활용)
+5. **코드 정리**: accounts 관련 코드 제거 (중복 제거, 관심사 분리)
+
+**태그**: `@FEAT:capital-management @COMP:ui @TYPE:core`
+
+---
+
 ### 2025-10-21: Capital Management Phase 2 Complete
 **영향 범위**: `capital-management`
 **파일**:
@@ -711,5 +787,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-21*
-*Recent Changes: Capital Management Phase 4 - force 파라미터 추가 및 감사 로깅*
+*Recent Changes: Phase 3 - 국내 거래소 KRW → USDT 변환 with Graceful Degradation*
 

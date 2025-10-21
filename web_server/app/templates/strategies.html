@@ -55,6 +55,28 @@
         <button id="tab-discover" class="btn btn-secondary btn-sm" onclick="switchTab('discover')">공개 전략 탐색</button>
     </div>
 
+    <!-- 전략 자본 재할당 액션 바 -->
+    <div class="flex items-center justify-between mb-4 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="flex items-center space-x-3">
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox"
+                       id="forceReallocation"
+                       class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                <span class="text-sm text-gray-700 dark:text-gray-300">
+                    강제 실행 (조건 무시)
+                    <span class="text-xs text-gray-500 ml-1">(⚠️ 포지션 존재 시 주의)</span>
+                </span>
+            </label>
+        </div>
+        <button onclick="triggerCapitalReallocation(event)"
+                class="btn btn-secondary flex items-center">
+            <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+            </svg>
+            전략 자본 재할당
+        </button>
+    </div>
+
     <!-- 전략 목록 섹션: 내 전략 (서버 렌더 기본) -->
     <section id="section-my">
         <h2 class="text-2xl font-semibold strategy-title mb-6">내 전략</h2>
@@ -1602,5 +1624,77 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// @FEAT:capital-management @COMP:ui @TYPE:core
+/**
+ * 전략 자본 재할당 트리거
+ * Phase 5: accounts → strategies 페이지로 이동
+ * Phase 4 force 파라미터 지원
+ */
+async function triggerCapitalReallocation(event) {
+    event.preventDefault();
+
+    const button = event.target.closest('button');
+    const forceCheckbox = document.getElementById('forceReallocation');
+    const force = forceCheckbox ? forceCheckbox.checked : false;
+
+    // 버튼 비활성화 및 로딩 상태
+    button.disabled = true;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<svg class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 재할당 중...';
+
+    try {
+        const response = await fetch('/api/capital/auto-rebalance-all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({ force: force })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || '재할당 실패');
+        }
+
+        if (data.success) {
+            const { total_accounts, rebalanced, skipped, forced } = data.data;
+
+            if (total_accounts === 0) {
+                showToast('활성 계좌가 없습니다', 'warning');
+            } else if (rebalanced > 0) {
+                const forceMsg = forced ? ' (강제 실행)' : '';
+                showToast(
+                    `${rebalanced}개 계좌 재할당 완료${forceMsg} (총 ${total_accounts}개 중 ${skipped}개 건너뜀)`,
+                    'success'
+                );
+
+                // 필요 시 전략 목록 새로고침
+                // location.reload();
+            } else {
+                showToast(
+                    `모든 계좌가 조건을 만족하지 않습니다 (${skipped}개 건너뜀)`,
+                    'info'
+                );
+            }
+        } else {
+            throw new Error(data.error || '알 수 없는 오류');
+        }
+    } catch (error) {
+        console.error('자본 재할당 오류:', error);
+        showToast(`재할당 실패: ${error.message}`, 'error');
+    } finally {
+        // 버튼 복원
+        button.disabled = false;
+        button.innerHTML = originalText;
+
+        // force 체크박스 해제
+        if (forceCheckbox) {
+            forceCheckbox.checked = false;
+        }
+    }
+}
 </script>
 {% endblock %} 

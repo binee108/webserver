@@ -87,7 +87,7 @@ def should_rebalance(account_id):
 
 ## 수동 재할당 UI
 
-**경로**: /accounts 페이지 → 재할당 버튼
+**경로**: /strategies 페이지 → 전략 자본 재할당 버튼
 
 ### 기본 동작 (force=false)
 
@@ -179,6 +179,18 @@ def should_rebalance(account_id):
 ---
 
 ## 버전 이력
+
+### Phase 5 (2025-10-21)
+- **UI 위치 변경**: accounts → strategies 페이지로 이동
+- **논리적 배치**: 전략별 자본 배분 맥락에 맞는 위치
+- **force 파라미터 UI**: 체크박스로 강제 실행 모드 선택 가능
+- **버튼 텍스트 개선**: "자본 재할당" → "전략 자본 재할당" (명확성)
+- **파일 변경**:
+  - accounts.html: -6 lines (버튼 삭제)
+  - accounts.js: -43 lines (함수 삭제, export 제거)
+  - strategies.html: +74 lines (액션 바 10 + 함수 64)
+  - capital-management.md: +14 lines
+- **태그**: `@FEAT:capital-management @COMP:ui @TYPE:core`
 
 ### Phase 4 (2025-10-21)
 - **강제 실행 모드 추가**: `force=true` 파라미터로 조건 우회 가능
