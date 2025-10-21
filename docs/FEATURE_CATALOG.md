@@ -700,6 +700,34 @@ grep -n "Exchange.is_domestic" web_server/app/services/analytics.py
 - 환율 조회는 요청당 1회만 수행 (30초 캐싱으로 API 부하 최소화)
 - Graceful Degradation: 환율 실패 시 Fallback 1400 사용
 
+#### Phase 4.4 Phase 2: Frontend 표시 검증 (완료)
+
+**파일**: `web_server/app/templates/dashboard.html`, `web_server/app/static/css/dashboard.css`
+
+**변경 내용**:
+- 총 자본 카드 제목에 USDT 기준 안내 툴팁(ℹ️) 추가
+- 툴팁 텍스트: "모든 자본은 USDT 기준으로 통합 표시됩니다"
+- subtitle 명확화: "전체 할당 자본 (USDT 기준)"
+
+**구현 방식**:
+- **HTML**: Native HTML `title` 속성 사용 (브라우저 네이티브 툴팁)
+- **CSS**: `.tooltip-icon` 클래스로 hover opacity 효과 (text-muted opacity-50 → opacity-1)
+- **선택 이유**: TailwindCSS 기본 클래스 재사용으로 최소 CSS 추가 (5줄 CSS 추가)
+
+**접근성**:
+- 현재: 네이티브 툴팁 (모든 브라우저 지원, 스크린 리더 기본 지원)
+- 향후 개선: aria-label, role="tooltip" 추가 고려 (선택적, Phase 5+)
+
+**검색 명령**:
+```bash
+grep -n "tooltip-icon\|Phase 4.4 Phase 2" web_server/app/templates/dashboard.html
+grep -n "tooltip-icon\|Phase 4.4 Phase 2" web_server/app/static/css/dashboard.css
+```
+
+#### 변경 이력
+- 2025-10-21 Phase 4.4 Phase 2: Frontend 툴팁 추가 (dashboard.html Line 44, dashboard.css Lines 4-14)
+- 2025-10-21 Phase 4.4 Phase 1: Backend 환율 서비스 구현 (analytics.py:_convert_to_usdt)
+
 ---
 
 ### 11. telegram-notification

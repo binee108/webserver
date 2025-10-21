@@ -1,2 +1,14 @@
 /* Dashboard page scoped tweaks */
 .page-dashboard .chart-card { height: 300px; }
+
+/* Phase 4.4 Phase 2: Dashboard USDT 기준 표시 안내 툴팁 */
+/* 목적: 총 자본이 USDT로 통합 표시됨을 UI상 명확히 표시하기 위해 ℹ️ 아이콘에 hover 효과 추가 */
+.tooltip-icon {
+    cursor: help;
+    transition: opacity 0.2s ease;
+    /* TailwindCSS text-muted 클래스는 기본적으로 opacity-50을 적용하여, hover 시 !important로 opacity:1 설정 */
+}
+
+.tooltip-icon:hover {
+    opacity: 1 !important; /* !important: TailwindCSS text-muted의 기본 opacity-50을 override하여 사용자에게 더 명확히 보임 */
+}

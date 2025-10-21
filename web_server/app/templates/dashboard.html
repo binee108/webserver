@@ -41,13 +41,17 @@
 
     <!-- 통계 개요 -->
     <div class="stats-grid">
-        <!-- 총 자본 -->
+        <!-- Phase 4.4 Phase 2: USDT 기준 표시 안내 툴팁 -->
         <div class="stats-card">
             <div class="stats-content">
                 <div class="stats-info">
-                    <h3>총 자본 (Total Capital)</h3>
+                    <div class="flex items-center gap-2">
+                        <h3>총 자본 (Total Capital)</h3>
+                        <!-- 네이티브 브라우저 툴팁: KRW 거래소도 USDT로 통합 표시됨을 사용자에게 안내 -->
+                        <span class="tooltip-icon text-muted text-sm" title="모든 자본은 USDT 기준으로 통합 표시됩니다">ℹ️</span>
+                    </div>
                     <p id="total-capital" class="stats-value text-primary">$0.00</p>
-                    <p class="stats-subtitle">전체 할당 자본</p>
+                    <p class="stats-subtitle">전체 할당 자본 (USDT 기준)</p>
                 </div>
                 <div class="stats-icon bg-blue-100 text-blue-600">
                     <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
