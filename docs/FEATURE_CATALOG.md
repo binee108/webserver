@@ -17,6 +17,26 @@
 
 ---
 
+## Recent Updates
+
+### 2025-10-21: Capital Management Phase 5.1 Complete
+**영향 범위**: `capital-management`
+**파일**:
+- `app/templates/strategies.html` (Lines 58-65, 1615+) - UI 개선 및 force=true 고정
+
+**개선 내용**:
+1. **UI 단순화**: 체크박스 제거, purple gradient 버튼으로 교체
+2. **동작 변경**: force=true 고정 (항상 활성 포지션 무시)
+3. **안전장치 추가**: 2단계 확인 모달 (명확한 경고 메시지)
+4. **디자인 개선**: 통계 카드 패턴 재사용 (purple gradient, shadow effects)
+5. **코드 최소화**: -9줄 (HTML -13, JavaScript +4)
+
+**테마 일관성**: 통계 카드의 gradient/shadow 패턴 재사용으로 세련된 UI 구현
+
+**태그**: `@FEAT:capital-management @COMP:ui @TYPE:core`
+
+---
+
 ## Active Features
 
 ### 1. webhook-order

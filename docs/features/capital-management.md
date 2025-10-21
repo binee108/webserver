@@ -192,6 +192,21 @@ def should_rebalance(account_id):
   - capital-management.md: +14 lines
 - **태그**: `@FEAT:capital-management @COMP:ui @TYPE:core`
 
+### Phase 5.1 (2025-10-21)
+- **UI 개선**: 체크박스 제거, purple gradient 버튼으로 단순화
+- **동작 변경**: force=true 고정 (항상 활성 포지션 무시)
+- **안전장치**: 2단계 확인 모달 추가
+  - "⚠️ 주의: 다음 작업이 즉시 실행됩니다..."
+  - "이 작업은 되돌릴 수 없습니다. 계속하시겠습니까?"
+- **디자인 개선**:
+  - Purple gradient (from-purple-500 to-purple-600)
+  - Shadow effects (shadow-lg, hover:shadow-xl)
+  - 순환 아이콘 (fas fa-sync-alt)
+- **코드 최소화**: -9줄 (HTML -13, JavaScript +4)
+- **파일 변경**:
+  - strategies.html: Lines 58-65 (HTML), Lines 1615+ (JavaScript)
+- **태그**: `@FEAT:capital-management @COMP:ui @TYPE:core`
+
 ### Phase 4 (2025-10-21)
 - **강제 실행 모드 추가**: `force=true` 파라미터로 조건 우회 가능
 - **보안 감사 추적**: 강제 실행 시 user_id, IP 주소 WARNING 로그 기록
