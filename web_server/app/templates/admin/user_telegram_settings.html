@@ -204,35 +204,8 @@
 <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
 
 <script>
-// Toast 함수들
-function showToast(message, type = 'info') {
-    const toastContainer = document.getElementById('toast-container') || createToastContainer();
-    
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    
-    toast.innerHTML = `
-        <div class="toast-content">
-            <span>${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="toast-close">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                </svg>
-            </button>
-        </div>
-    `;
-    
-    toastContainer.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
-}
-
-function createToastContainer() {
-    const container = document.createElement('div');
-    container.id = 'toast-container';
-    container.className = 'fixed top-4 right-4 z-50 space-y-2';
-    document.body.appendChild(container);
-    return container;
-}
+// Toast 알림 기능은 전역 toast.js를 사용합니다 (base.html에서 로드됨)
+// showToast(message, type, duration) 함수는 전역으로 사용 가능합니다
 
 // CSRF 토큰
 function getCSRFToken() {
