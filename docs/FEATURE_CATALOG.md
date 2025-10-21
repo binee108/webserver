@@ -19,6 +19,26 @@
 
 ## Recent Updates
 
+### 2025-10-21: CANCEL_ALL_ORDER Type Mismatch Fix
+**영향 범위**: `webhook-order`
+**파일**: `app/services/trading/core.py` (Line 1222)
+
+**수정 내용**: CANCEL_ALL_ORDER 실행 시 발생하는 `TypeError` 해결
+- **변경 전**: `sum(r.get('cancelled_orders', 0) for r in successful_cancels)`
+- **변경 후**: `sum(len(r.get('cancelled_orders', [])) for r in successful_cancels)`
+- **원인**: OrderManager가 List[Dict] 반환하나, 이전 코드는 int 가정
+- **효과**: 배치 SSE 집계 시 TypeError 완전 제거, 안정성 개선
+
+**태그**: `@FEAT:webhook-order @COMP:service @TYPE:core`
+
+**검색**:
+```bash
+# 수정된 집계 로직 확인
+grep -B 1 -A 3 "total_cancelled = sum" web_server/app/services/trading/core.py
+```
+
+---
+
 ### 2025-10-21: Capital Management Phase 5.1 Complete
 **영향 범위**: `capital-management`
 **파일**:
