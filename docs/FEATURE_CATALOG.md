@@ -92,19 +92,27 @@ grep -n "showToast" --include="*.js" web_server/app/static/js/
 **설명**: PendingOrder 생성/삭제 시 Order List SSE 발송 (열린 주문 테이블 실시간 업데이트)
 **태그**: `@FEAT:pending-order-sse`
 **주요 파일**:
-- `services/trading/order_queue_manager.py` - enqueue() 메서드 (Lines 105-166)
-  - Lines 108-119: user_id 사전 추출 (@TYPE:helper)
-  - Lines 149-166: Order List SSE 발송 (@TYPE:core @DEPS:event-emitter)
+- `services/trading/order_queue_manager.py` - PendingOrder 생성/삭제 SSE 발송
+  - Lines 105-166: enqueue() 메서드 - 생성 시 SSE (event_type='order_created')
+    - Lines 108-119: user_id 사전 추출 (@TYPE:helper)
+    - Lines 149-166: Order List SSE 발송 (@TYPE:core @DEPS:event-emitter)
+  - Lines 776-870: _execute_pending_order() 메서드 - 삭제 시 SSE (event_type='order_cancelled')
+    - Lines 822-829: user_id 사전 추출, strategy Null 체크 (@TYPE:helper)
+    - Lines 831-846: Order List SSE 발송, try-except 비치명적 처리 (@TYPE:core @DEPS:event-emitter)
 **컴포넌트**:
 - **Order List SSE**: 열린 주문 테이블 실시간 업데이트용 개별 SSE 이벤트
 - **Toast SSE 구분**: Toast 알림은 웹훅 응답 시 Batch SSE로 통합 (core.py 참조)
-- **Transaction Safety**: SSE 발송은 DB 커밋 완료 후에만 실행
+- **Transaction Safety**: SSE 발송은 DB 커밋 **전**에 실행 (객체 접근 보장)
+- **재정렬 경로**: PendingOrder → OpenOrder 전환 시 개별 SSE 발송 (배치 SSE 아님)
 **의존성**: event_emitter.py (emit_pending_order_event)
-**최근 수정**: 2025-10-21 - Phase 1: PendingOrder 생성 시 Order List SSE 발송 구현
+**최근 수정**:
+- 2025-10-21 - Phase 2.1: PendingOrder 삭제 시 Order List SSE 발송 구현 (재정렬 성공 시)
+- 2025-10-21 - Phase 1: PendingOrder 생성 시 Order List SSE 발송 구현
 **검색**:
 ```bash
 grep -r "@FEAT:pending-order-sse" --include="*.py"
 grep -n "emit_pending_order_event" web_server/app/services/trading/order_queue_manager.py
+grep -n "_execute_pending_order" web_server/app/services/trading/order_queue_manager.py
 ```
 
 ---
@@ -264,7 +272,7 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 
 **의존성**: `position-tracking`, `strategy-management`, `account-service`
 **상세 문서**: `docs/features/capital-management.md`
-**최근 수정**: 2025-10-21 - Phase 2 스케줄 개선 (7회 cron → 660초 interval, 130회/일)
+**최근 수정**: 2025-10-21 - Phase 4 강제 실행 모드 추가 (force 파라미터, 감사 로깅)
 **검색**:
 ```bash
 # 모든 capital 관련 코드 (비즈니스 로직 + 스케줄러)
@@ -540,6 +548,22 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 
 ## Recent Changes
 
+### 2025-10-21: Capital Management Phase 4 Complete
+**영향 범위**: `capital-management`
+**파일**:
+- `app/routes/capital.py` (Lines 212-334) - trigger_auto_rebalance() 함수
+- `docs/features/capital-management.md` - 수동 재할당 UI 섹션 확장
+
+**개선 내용**:
+1. **Force 파라미터 추가**: `force=true` 시 should_rebalance() 조건 완전 우회
+2. **보안 감사 추적**: 강제 실행 시 user_id, IP 주소 WARNING 레벨 로그
+3. **포지션 리스크 경고**: 포지션 존재 중 강제 재할당 시 WARNING 로그
+4. **응답 구조**: 모든 경로에 `forced` 플래그 포함으로 일관성 확보
+
+**태그**: `@FEAT:capital-management @COMP:route @TYPE:core`
+
+---
+
 ### 2025-10-21: Capital Management Phase 2 Complete
 **영향 범위**: `capital-management`
 **파일**:
@@ -687,5 +711,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-21*
-*Recent Changes: USDT/KRW exchange rate documentation (price-cache Phase 1.4) + toast-system DEBUG logging*
+*Recent Changes: Capital Management Phase 4 - force 파라미터 추가 및 감사 로깅*
 

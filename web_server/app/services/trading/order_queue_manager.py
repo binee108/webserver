@@ -774,16 +774,37 @@ class OrderQueueManager:
 
     # @FEAT:order-queue @COMP:service @TYPE:integration
     def _execute_pending_order(self, pending_order: PendingOrder) -> Dict[str, Any]:
-        """대기열 주문 → 거래소 실행 (재정렬 시 호출)
+        """대기열 주문 → 거래소 실행 및 Order List SSE 발송 (재정렬 시 호출)
 
-        PendingOrder를 거래소에 제출합니다. 성공 시 OpenOrder로 전환되며,
-        PendingOrder SSE 발송은 하지 않습니다 (거래소 이벤트는 별도 처리).
+        PendingOrder를 거래소에 제출합니다. 성공 시 OpenOrder로 전환되고,
+        Order List SSE를 발송하여 열린 주문 테이블을 실시간 업데이트합니다.
+
+        **SSE 발송 정책** (재정렬 성공 시):
+        - Event Type: 'order_cancelled' (대기열 → 거래소 전환)
+        - 조건: strategy 정보가 있고, event_emitter가 사용 가능할 때
+        - 타이밍: db.session.delete() **전**에 발송 (객체 접근 보장)
+        - 실패 처리: SSE 발송 실패는 비치명적 (경고 로그 후 삭제 계속)
 
         Args:
             pending_order: 실행할 PendingOrder
 
         Returns:
-            dict: {'success': bool, 'order_id': str (성공 시), 'error': str (실패 시)}
+            dict: 재정렬 결과
+
+            성공 시:
+                {
+                    'success': True,
+                    'pending_id': int - 삭제된 PendingOrder ID (추적용),
+                    'order_id': str - 생성된 거래소 주문 ID,
+                    'deleted': True - PendingOrder 삭제 여부
+                }
+
+            실패 시:
+                {
+                    'success': False,
+                    'error': str - 오류 메시지,
+                    'retry_count': int - 현재 재시도 횟수 (최대 3회)
+                }
         """
         try:
             # TradingCore를 통해 거래소에 주문 실행
@@ -812,15 +833,41 @@ class OrderQueueManager:
             )
 
             if result.get('success'):
-                # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
-                # 성공 시 대기열에서 제거 (커밋은 상위에서)
-                db.session.delete(pending_order)
-
+                # 재정렬 성공 - 거래소 주문 생성됨
                 logger.info(
-                    f"✅ 대기열→거래소 실행 완료 - "
-                    f"pending_id: {pending_order.id}, "
-                    f"order_id: {result.get('order_id')}"
+                    f"✅ 재정렬 성공: PendingOrder {pending_order.id}번 → OpenOrder {result.get('order_id')}"
                 )
+
+                # 📡 Order List SSE 발송 (삭제 전, Toast SSE는 웹훅 응답 시 Batch 통합)
+                # @FEAT:pending-order-sse @COMP:service @TYPE:core @DEPS:event-emitter
+                user_id_for_sse = None
+                if pending_order.strategy_account and pending_order.strategy_account.strategy:
+                    user_id_for_sse = pending_order.strategy_account.strategy.user_id
+                else:
+                    logger.warning(
+                        f"⚠️ PendingOrder 삭제 SSE 발송 스킵: strategy 정보 없음 "
+                        f"(pending_order_id={pending_order.id})"
+                    )
+
+                if self.service and hasattr(self.service, 'event_emitter') and user_id_for_sse:
+                    try:
+                        self.service.event_emitter.emit_pending_order_event(
+                            event_type='order_cancelled',
+                            pending_order=pending_order,
+                            user_id=user_id_for_sse
+                        )
+                        logger.debug(
+                            f"📡 [SSE] PendingOrder 삭제 (재정렬 성공) → Order List 업데이트: "
+                            f"ID={pending_order.id}, user_id={user_id_for_sse}, symbol={pending_order.symbol}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                            f"ID={pending_order.id}, error={e}"
+                        )
+
+                # DB에서 제거 (커밋은 상위에서)
+                db.session.delete(pending_order)
 
                 return {
                     'success': True,
