@@ -179,6 +179,7 @@ class RealtimeOpenOrdersManager {
     
     /**
      * Handle order update from SSE
+     * Note: Toasts are only shown by Batch SSE (CLAUDE.md SSE 정책)
      */
     handleOrderUpdate(data) {
         try {
@@ -235,11 +236,6 @@ class RealtimeOpenOrdersManager {
 
             // Update order count
             this.updateOpenOrdersCount();
-
-            // Order List SSE는 토스트 스킵 (CLAUDE.md SSE 정책)
-            if (data.source !== 'pending_order') {
-                this.showOrderNotification(eventType, data);
-            }
 
         } catch (error) {
             this.logger.error('Failed to handle order update:', error);
@@ -964,6 +960,8 @@ class RealtimeOpenOrdersManager {
     
     /**
      * Show order notification
+     * Note: NOT used for Order List SSE (use Batch SSE instead)
+     * Used for: WebSocket exchange events, manual triggers
      */
     showOrderNotification(eventType, data) {
         const eventTypeMap = {
