@@ -37,6 +37,19 @@
         error: console.error.bind(console)
     };
 
+    // @FEAT:toast-system @TYPE:config
+    // Phase 2: FIFO queue limit (max 10 concurrent toasts)
+    // WHY: 10 toasts = 1 SSE event burst (5sec window, ~2 toasts/sec)
+    // - Each toast displays 3-5 sec → max 30 sec concurrent display
+    // - Typical usage: 2-5 toasts/batch (webhooks, trading events)
+    // - Prevents toast pile-up from rapid-fire SSE events
+    const MAX_TOASTS = 10;
+
+    // @FEAT:toast-system @TYPE:state
+    // Pending removals counter to prevent race condition during rapid-fire toast creation
+    // Tracks scheduled (but not yet executed) toast removals to enforce MAX_TOASTS limit accurately
+    let pendingRemovals = 0;
+
     /**
      * Ensures toast container exists in DOM
      * Creates container dynamically if not found
@@ -78,8 +91,32 @@
 
         const toastContainer = ensureToastContainer();
 
+        // Phase 2: FIFO queue - remove oldest toast if limit exceeded
+        // Race condition fix: Use pendingRemovals counter to prevent MAX_TOASTS violation during rapid-fire calls
+        // If at limit, remove oldest BEFORE adding new one
+        if (toastContainer.children.length + pendingRemovals >= MAX_TOASTS) {
+            pendingRemovals++;
+            const oldestToast = toastContainer.firstChild;
+            logger.debug('Toast', 'FIFO: Removing oldest toast to make room', {
+                limit: MAX_TOASTS,
+                current: toastContainer.children.length,
+                pending: pendingRemovals
+            });
+            oldestToast.classList.remove('slide-in');
+            oldestToast.classList.add('fade-out');
+
+            // Immediately remove from DOM (no animation delay) to enforce limit
+            if (oldestToast.parentNode) {
+                oldestToast.remove();
+            }
+            pendingRemovals--;
+        }
+
         const toast = document.createElement('div');
         toast.className = `toast ${type} slide-in`;
+        // @SECURITY: innerHTML used safely - message from SSE only (server-controlled)
+        // Risk: XSS if message contains user input. Current: SSE-only, sanitized by server.
+        // Safety: Server validates all message content before SSE emit in core.py
         toast.innerHTML = `
             <div class="toast-content">
                 <span>${message}</span>

@@ -1113,14 +1113,18 @@
 }
 
 /* ===== TOAST NOTIFICATIONS ===== */
+/* @FEAT:toast-system @COMP:ui @TYPE:layout */
 #toast-container {
     position: fixed;
     top: 1rem;
     right: 1rem;
     z-index: 60;
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;  /* Phase 1: Adjusted for better spacing with MAX_TOASTS=10 */
+    flex-direction: column-reverse;  /* Vertical Stack: New toasts appear at top (newest first) */
+    /* WHY column-reverse: Newest toast appears at top visually, but DOM appends bottom.
+       This matches user expectation (newest = most visible). CSS handles rendering order.
+       Browser support: Chrome 29+, Firefox 20+, Safari 9+, Edge 12+ (100% coverage). */
+    gap: 0.5rem;  /* Spacing between toasts - optimized for 10-toast max queue */
     max-width: 400px;
     pointer-events: none;
 }
@@ -1215,7 +1219,7 @@
     opacity: 1;
 }
 
-/* Phase 1: Toast UI Improvement - Fade-out animation for FIFO removal */
+/* @FEAT:toast-system @TYPE:animation FIFO Queue: Fade-out animation for oldest toast removal */
 .toast.fade-out {
     opacity: 0;
     transform: translateX(100%);

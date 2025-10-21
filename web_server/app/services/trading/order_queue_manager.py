@@ -779,7 +779,7 @@ class OrderQueueManager:
         PendingOrder를 거래소에 제출합니다. 성공 시 OpenOrder로 전환되고,
         Order List SSE를 발송하여 열린 주문 테이블을 실시간 업데이트합니다.
 
-        **SSE 발송 정책** (재정렬 성공 시):
+        **SSE 발송 정책** (재정렬 성공 또는 최대 재시도 초과 시):
         - Event Type: 'order_cancelled' (대기열 → 거래소 전환)
         - 조건: strategy 정보가 있고, event_emitter가 사용 가능할 때
         - 타이밍: db.session.delete() **전**에 발송 (객체 접근 보장)
@@ -803,7 +803,7 @@ class OrderQueueManager:
                 {
                     'success': False,
                     'error': str - 오류 메시지,
-                    'retry_count': int - 현재 재시도 횟수 (최대 3회)
+                    'retry_count': int - 현재 재시도 횟수 (최대 5회)
                 }
         """
         try:
@@ -899,8 +899,35 @@ class OrderQueueManager:
                     except Exception as e:
                         logger.error(f"텔레그램 알림 발송 실패: {e}")
 
-                    # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
-                    # 최대 재시도 초과 시 대기열에서 제거
+                    # 📡 Order List SSE 발송 (최대 재시도 초과 → 삭제 전)
+                    # @FEAT:pending-order-sse @COMP:service @TYPE:core @DEPS:event-emitter
+                    user_id_for_sse = None
+                    if pending_order.strategy_account and pending_order.strategy_account.strategy:
+                        user_id_for_sse = pending_order.strategy_account.strategy.user_id
+                    else:
+                        logger.warning(
+                            f"⚠️ PendingOrder 삭제 SSE 발송 스킵: strategy 정보 없음 "
+                            f"(pending_order_id={pending_order.id})"
+                        )
+
+                    if self.service and hasattr(self.service, 'event_emitter') and user_id_for_sse:
+                        try:
+                            self.service.event_emitter.emit_pending_order_event(
+                                event_type='order_cancelled',
+                                pending_order=pending_order,
+                                user_id=user_id_for_sse
+                            )
+                            logger.debug(
+                                f"📡 [SSE] PendingOrder 삭제 (최대 재시도 초과) → Order List 업데이트: "
+                                f"ID={pending_order.id}, user_id={user_id_for_sse}, symbol={pending_order.symbol}"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                                f"ID={pending_order.id}, error={e}"
+                            )
+
+                    # PendingOrder 삭제 (최대 재시도 초과)
                     db.session.delete(pending_order)
 
                     return {
