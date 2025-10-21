@@ -14,6 +14,7 @@ from collections import defaultdict
 
 from app.constants import Exchange, MarketType
 from app.services.exchange import exchange_service
+from app.exchanges.exceptions import ExchangeRateUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,46 @@ class PriceCache:
                     return price
 
             return None
+
+    # @FEAT:price-cache @COMP:service @TYPE:core @DEPS:exchange-api
+    def get_usdt_krw_rate(self, fallback_to_api: bool = True) -> Decimal:
+        """
+        UPBIT USDT/KRW 환율 조회 (30초 캐싱)
+
+        국내 거래소(KRW) 잔고를 USDT 단위로 변환하기 위한 환율 조회.
+        API 실패 시 ExchangeRateUnavailableError 예외 발생 (금전적 손실 방지).
+
+        Args:
+            fallback_to_api: 캐시 미스 시 API 호출 여부 (기본: True)
+
+        Returns:
+            Decimal: USDT/KRW 환율 (예: 1510.0)
+
+        Raises:
+            ExchangeRateUnavailableError: API 조회 실패 시 - 신뢰할 수 없는 환율
+
+        Behavior:
+            1. 캐시에서 USDT/KRW 가격 조회 (30초 TTL)
+            2. 캐시 미스 시 UPBIT API 호출
+            3. API 실패 시 예외 발생 (거래 중단)
+            4. fallback_to_api=False 시 API 호출 없이 캐시만 확인
+
+        Example:
+            >>> rate = price_cache.get_usdt_krw_rate()
+            >>> usdt_balance = krw_balance / rate  # 실제 시장 환율로 변환
+        """
+        rate = self.get_price('USDT/KRW', Exchange.UPBIT, MarketType.SPOT, fallback_to_api)
+
+        if not rate or rate <= 0:
+            error_msg = (
+                "USDT/KRW 환율 조회 실패 - UPBIT API 장애로 신뢰할 수 있는 환율을 얻을 수 없습니다. "
+                "금전적 손실 방지를 위해 거래를 중단합니다."
+            )
+            logger.error(f"❌ {error_msg}")
+            raise ExchangeRateUnavailableError(error_msg)
+
+        logger.debug(f"✅ USDT/KRW 환율 조회 성공: {rate} KRW")
+        return rate
 
     # @FEAT:price-cache @COMP:service @TYPE:core
     def set_price(self, symbol: str, price: Decimal,

@@ -325,7 +325,7 @@ class UpbitExchange(BaseCryptoExchange):
 
             quote_currency = parts[0]  # KRW
             base_currency = parts[1]   # BTC
-            symbol = f"{base_currency}{quote_currency}"  # BTCKRW
+            symbol = f"{base_currency}/{quote_currency}"  # BTC/KRW
 
             trade_price = item.get('trade_price')
             if trade_price is None:

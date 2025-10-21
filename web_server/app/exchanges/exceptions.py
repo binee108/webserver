@@ -38,3 +38,8 @@ class InvalidOrder(ExchangeError):
 class OrderNotFound(ExchangeError):
     """주문을 찾을 수 없음"""
     pass
+
+
+class ExchangeRateUnavailableError(ExchangeError):
+    """환율 조회 실패 - API 장애로 신뢰할 수 있는 환율을 얻을 수 없음"""
+    pass

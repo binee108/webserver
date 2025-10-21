@@ -88,7 +88,28 @@ grep -n "showToast" --include="*.js" web_server/app/static/js/
 
 ---
 
-### 3. order-queue
+### 3. pending-order-sse
+**설명**: PendingOrder 생성/삭제 시 Order List SSE 발송 (열린 주문 테이블 실시간 업데이트)
+**태그**: `@FEAT:pending-order-sse`
+**주요 파일**:
+- `services/trading/order_queue_manager.py` - enqueue() 메서드 (Lines 105-166)
+  - Lines 108-119: user_id 사전 추출 (@TYPE:helper)
+  - Lines 149-166: Order List SSE 발송 (@TYPE:core @DEPS:event-emitter)
+**컴포넌트**:
+- **Order List SSE**: 열린 주문 테이블 실시간 업데이트용 개별 SSE 이벤트
+- **Toast SSE 구분**: Toast 알림은 웹훅 응답 시 Batch SSE로 통합 (core.py 참조)
+- **Transaction Safety**: SSE 발송은 DB 커밋 완료 후에만 실행
+**의존성**: event_emitter.py (emit_pending_order_event)
+**최근 수정**: 2025-10-21 - Phase 1: PendingOrder 생성 시 Order List SSE 발송 구현
+**검색**:
+```bash
+grep -r "@FEAT:pending-order-sse" --include="*.py"
+grep -n "emit_pending_order_event" web_server/app/services/trading/order_queue_manager.py
+```
+
+---
+
+### 3.1. order-queue
 **설명**: 거래소 제한 초과 시 주문 대기열 관리 및 동적 재정렬
 **태그**: `@FEAT:order-queue`
 **주요 파일**:
@@ -287,15 +308,38 @@ grep -r "create_batch_orders" --include="*.py" | grep -E "upbit|bithumb"
 ---
 
 ### 7. price-cache
-**설명**: 심볼별 가격 캐싱 및 주기적 업데이트
+**설명**: 심볼별 가격 캐싱 및 주기적 업데이트 (USDT/KRW 환율 조회 포함)
 **태그**: `@FEAT:price-cache`
 **주요 파일**:
-- `services/price_cache.py` - 가격 캐시
-**의존성**: `exchange-integration`
+- `services/price_cache.py` - 가격 캐시 핵심
+  - `get_price()` - 심볼별 가격 조회 (30초 캐싱)
+  - `get_usdt_krw_rate()` - USDT/KRW 환율 조회 (30초 캐싱)
+**주요 기능**:
+- UPBIT USDT/KRW SPOT 가격 조회
+- 30초 캐싱 (기존 PriceCache 인프라 활용)
+- API 실패 시 설정 파일 기반 fallback (DEFAULT_USDT_KRW = 1400)
+**사용 예시**:
+```python
+from app.services.price_cache import price_cache
+
+# USDT/KRW 환율 조회
+rate = price_cache.get_usdt_krw_rate()
+usdt_balance = krw_balance / rate
+
+# 심볼 가격 조회
+btc_price = price_cache.get_price('BTC/USDT', Exchange.BINANCE)
+```
+**설정**:
+- `config.DEFAULT_USDT_KRW`: Fallback 환율 (기본값 1400, 2025-10-21 기준)
+**의존성**: `exchange-integration` (UPBIT API)
 **상세 문서**: `docs/features/price-cache.md`
 **검색**:
 ```bash
+# 전체 price-cache 코드
 grep -r "@FEAT:price-cache" --include="*.py"
+
+# USDT/KRW 환율 조회만
+grep -n "get_usdt_krw_rate" --include="*.py" web_server/app/services/
 ```
 
 ---
@@ -612,5 +656,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-21*
-*Recent Changes: toast-system DEBUG logging (7 log points) - Full lifecycle tracking for debugging toast issues*
+*Recent Changes: USDT/KRW exchange rate documentation (price-cache Phase 1.4) + toast-system DEBUG logging*
 
