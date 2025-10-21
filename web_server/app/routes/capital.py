@@ -214,14 +214,27 @@ def get_rebalance_status(account_id):
 @csrf.exempt
 def trigger_auto_rebalance():
     """
-    Phase 5: 모든 계좌 자동 리밸런싱 수동 트리거
+    Phase 4: 모든 계좌 자동 리밸런싱 수동 트리거
 
     리밸런싱 조건을 확인하고, 조건 충족 시에만 재배분 실행
+
+    Request Body (optional):
+        force (bool): True 시 조건 우회하고 강제 실행 (기본값: False)
 
     Returns:
         JSON: 리밸런싱 결과
     """
     try:
+        # force 파라미터 추출
+        data = request.get_json() or {}
+        force = bool(data.get('force', False))
+
+        if force:
+            logger.warning(
+                f"💪 강제 재할당 모드 활성화 - 사용자: {current_user.id}, "
+                f"IP: {request.remote_addr}"
+            )
+
         # 사용자의 모든 활성 계좌 조회
         accounts = Account.query.filter_by(
             user_id=current_user.id,
@@ -232,6 +245,7 @@ def trigger_auto_rebalance():
             return jsonify({
                 'success': True,
                 'data': {
+                    'forced': force,
                     'total_accounts': 0,
                     'rebalanced': 0,
                     'skipped': 0,
@@ -245,23 +259,34 @@ def trigger_auto_rebalance():
 
         for account in accounts:
             try:
-                # 리밸런싱 조건 확인
-                check_result = capital_allocation_service.should_rebalance(
-                    account_id=account.id,
-                    min_interval_hours=1  # 최소 1시간 간격
-                )
+                # force=True 시 조건 우회
+                if not force:
+                    # 리밸런싱 조건 확인 (Phase 1: 이중 임계값 기반)
+                    check_result = capital_allocation_service.should_rebalance(
+                        account_id=account.id
+                    )
 
-                if not check_result['should_rebalance']:
-                    results.append({
-                        'account_id': account.id,
-                        'account_name': account.name,
-                        'rebalanced': False,
-                        'reason': check_result['reason']
-                    })
-                    skipped_count += 1
-                    continue
+                    if not check_result['should_rebalance']:
+                        results.append({
+                            'account_id': account.id,
+                            'account_name': account.name,
+                            'rebalanced': False,
+                            'forced': False,
+                            'reason': check_result['reason']
+                        })
+                        skipped_count += 1
+                        continue
+                else:
+                    logger.debug(f"⚡ 조건 검증 건너뜀 (강제 실행) - 계좌 ID: {account.id}")
 
-                # 리밸런싱 실행
+                    # 포지션 존재 시 경고
+                    if capital_allocation_service.has_open_positions(account.id):
+                        logger.warning(
+                            f"⚠️ 포지션 존재 중 강제 재할당 - 계좌 ID: {account.id}, "
+                            f"사용자: {current_user.id}"
+                        )
+
+                # 리밸런싱 실행 (force=True 또는 조건 충족 시)
                 rebalance_result = capital_allocation_service.recalculate_strategy_capital(
                     account_id=account.id,
                     use_live_balance=True
@@ -271,6 +296,7 @@ def trigger_auto_rebalance():
                     'account_id': account.id,
                     'account_name': account.name,
                     'rebalanced': True,
+                    'forced': force,
                     'total_capital': rebalance_result.get('total_capital'),
                     'allocations_count': len(rebalance_result.get('allocations', []))
                 })
@@ -282,6 +308,7 @@ def trigger_auto_rebalance():
                     'account_id': account.id,
                     'account_name': account.name,
                     'rebalanced': False,
+                    'forced': force,
                     'error': str(e)
                 })
                 skipped_count += 1
@@ -289,6 +316,7 @@ def trigger_auto_rebalance():
         return jsonify({
             'success': True,
             'data': {
+                'forced': force,
                 'total_accounts': len(accounts),
                 'rebalanced': rebalanced_count,
                 'skipped': skipped_count,
@@ -300,5 +328,6 @@ def trigger_auto_rebalance():
         logger.error(f"자동 리밸런싱 트리거 실패: {e}")
         return jsonify({
             'success': False,
+            'forced': locals().get('force', False),
             'error': f'서버 오류: {str(e)}'
         }), 500

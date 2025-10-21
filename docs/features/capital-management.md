@@ -89,6 +89,8 @@ def should_rebalance(account_id):
 
 **경로**: /accounts 페이지 → 재할당 버튼
 
+### 기본 동작 (force=false)
+
 **재할당 조건**:
 - 조건 1: 계좌의 모든 전략 포지션 = 0
 - 조건 2: 잔고 변화 감지 (10 USDT 이상 AND 0.1% 이상)
@@ -97,6 +99,57 @@ def should_rebalance(account_id):
 - "포지션 존재" (조건 1 미충족)
 - "변화량 부족" (조건 2 절대값 미달)
 - "임계값 미달" (조건 2 비율 미달)
+
+### 강제 실행 모드 (force=true) - Phase 4
+
+**API 엔드포인트**: `POST /api/capital/auto-rebalance-all`
+
+**요청 예시**:
+```json
+{
+  "force": true
+}
+```
+
+**동작**:
+- should_rebalance() 조건 **완전 우회**
+- 포지션 존재 시에도 재할당 실행
+- 잔고 변화 없어도 재할당 실행
+
+**사용 시나리오**:
+- 긴급 자본 재배치 필요 시
+- 수동 개입으로 조건 무시 필요 시
+- 테스트/디버깅 목적
+
+**⚠️ 주의사항**:
+- 포지션 존재 시 강제 재할당 리스크:
+  - 진행 중인 포지션의 자본 배분이 왜곡될 수 있음
+  - 전략별 손익 계산이 부정확해질 수 있음
+- WARNING 레벨 로그 자동 기록 (user_id, IP 주소)
+- 권장: 긴급 상황에서만 사용 (예: 계좌 자금 긴급 이동 필요 시)
+
+**응답 예시**:
+```json
+{
+  "success": true,
+  "data": {
+    "forced": true,
+    "total_accounts": 3,
+    "rebalanced": 3,
+    "skipped": 0,
+    "results": [
+      {
+        "account_id": 1,
+        "account_name": "snlbinee",
+        "rebalanced": true,
+        "forced": true,
+        "total_capital": 10000.0,
+        "allocations_count": 2
+      }
+    ]
+  }
+}
+```
 
 ---
 
@@ -109,7 +162,31 @@ def should_rebalance(account_id):
 
 ---
 
+## Known Limitations (Phase 4)
+
+**권한 제한 미구현**:
+- 현재 모든 로그인 사용자가 `force=true` 파라미터 사용 가능
+- `@login_required` 데코레이터만 적용 (admin 체크 없음)
+
+**향후 계획**:
+- Admin 권한 체크 추가 예정 (Phase 5 고려)
+- RBAC(Role-Based Access Control) 통합 시 `@admin_required` 적용 검토
+
+**현재 보안 조치**:
+- WARNING 레벨 로그로 모든 force=true 사용 추적
+- user_id, IP 주소 자동 기록으로 감사 추적 가능
+
+---
+
 ## 버전 이력
+
+### Phase 4 (2025-10-21)
+- **강제 실행 모드 추가**: `force=true` 파라미터로 조건 우회 가능
+- **보안 감사 추적**: 강제 실행 시 user_id, IP 주소 WARNING 로그 기록
+- **포지션 리스크 경고**: 포지션 존재 중 강제 재할당 시 WARNING 로그
+- **응답 일관성**: 모든 경로에 `forced` 플래그 포함
+- **파일**: `app/routes/capital.py` (Lines 212-334)
+- **태그**: `@FEAT:capital-management @COMP:route @TYPE:core`
 
 ### Phase 2 (2025-10-21)
 - **자동 재할당 스케줄 개선**: 7개 cron job → 1개 interval job (660초 간격)
