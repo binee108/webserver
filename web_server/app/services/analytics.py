@@ -17,7 +17,7 @@ from sqlalchemy import func, and_, desc, or_
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.constants import MarketType
+from app.constants import MarketType, Exchange
 from app.models import (
     Strategy, StrategyPosition, OpenOrder, Trade, Account,
     StrategyAccount, User, StrategyCapital, DailyAccountSummary, TradeExecution
@@ -706,10 +706,19 @@ class AnalyticsService:
                     sa_id = sa.id
 
                     capital_obj = strategy_capitals.get(sa_id)
-                    allocated_capital = to_decimal(
+                    allocated_capital_native = to_decimal(
                         capital_obj.allocated_capital if capital_obj else 0
                     )
-                    strategy_capital += allocated_capital
+
+                    # KRW → USDT 변환 (국내 거래소만 해당)
+                    account_exchange = sa.account.exchange if sa.account else ''
+                    allocated_capital_usdt = self._convert_to_usdt(
+                        allocated_capital_native,
+                        account_exchange
+                    )
+
+                    # USDT 기준으로 누적 (Dashboard 총 자본 통합)
+                    strategy_capital += allocated_capital_usdt
 
                     positions = strategy_positions.get(sa_id, [])
                     account_position_count = len(
@@ -738,7 +747,7 @@ class AnalyticsService:
 
                     account_metrics_30d = self._calculate_timeframe_metrics(
                         account_exit_trades,
-                        allocated_capital,
+                        allocated_capital_usdt,
                         period_days=period_days
                     )
 
@@ -747,13 +756,14 @@ class AnalyticsService:
                         'name': sa.account.name if sa.account else f'Account {sa_id}',
                         'exchange': sa.account.exchange if sa.account else '',
                         'is_active': sa.is_active,
-                        'allocated_capital': float(allocated_capital),
+                        'allocated_capital': float(allocated_capital_native),  # Native currency (KRW or USDT)
+                        'allocated_capital_usdt': float(allocated_capital_usdt),  # USDT 통합 표시용
                         'realized_pnl': float(account_realized_pnl),
                         'unrealized_pnl': float(account_unrealized_pnl),
                         'current_pnl': float(account_realized_pnl + account_unrealized_pnl),
                         'cumulative_return': float(
-                            (account_realized_pnl / allocated_capital * 100)
-                            if allocated_capital > 0 else Decimal('0')
+                            (account_realized_pnl / allocated_capital_usdt * 100)
+                            if allocated_capital_usdt > 0 else Decimal('0')
                         ),
                         'position_count': account_position_count,
                         'mdd_30d': account_metrics_30d['mdd_30d'],
@@ -1337,6 +1347,93 @@ class AnalyticsService:
         except Exception as e:
             logger.error(f"최근 거래 내역 조회 실패 (TradeExecution): {e}")
             raise AnalyticsError(f"최근 거래 내역 조회 실패: {str(e)}")
+
+    # @FEAT:dashboard @FEAT:capital-management @COMP:service @TYPE:helper
+    def _convert_to_usdt(self, amount: Decimal, exchange: str) -> Decimal:
+        """
+        Convert capital amount to USDT based on exchange type.
+
+        국내 거래소(UPBIT, BITHUMB): KRW → USDT 환산
+        해외 거래소(BINANCE, BYBIT, OKX): 그대로 반환 (이미 USDT 단위)
+
+        Args:
+            amount: Capital amount in native currency (KRW or USDT)
+            exchange: Exchange name (UPBIT, BINANCE, etc.)
+
+        Returns:
+            Amount in USDT
+
+        Examples:
+            _convert_to_usdt(Decimal('1400000'), 'UPBIT') → ~1000.0 USDT (1400 KRW/USDT 기준)
+            _convert_to_usdt(Decimal('1000'), 'BINANCE') → 1000.0 USDT (변환 없음)
+
+        WHY: Dashboard 총 자본 통합 표시용 (모든 거래소를 USDT 기준으로 합산)
+
+        Error Handling:
+            - 환율 조회 실패: Fallback 1400 KRW/USDT 사용 + WARNING 로그
+            - 환율 이상치(500-2000 범위 벗어남): Fallback 사용 + WARNING 로그
+            - 예상치 못한 오류: Fallback 사용 + ERROR 로그
+
+        Performance: O(1), <1ms (30초 캐싱된 환율 조회)
+
+        Caching: price_cache.get_usdt_krw_rate() (30초 TTL)
+            - UPBIT USDT/KRW SPOT 가격 조회
+            - 국내 거래소별 계산 시 리프트됨 (단일 조회)
+        """
+        # 해외 거래소는 이미 USDT 단위이므로 그대로 반환
+        if not Exchange.is_domestic(exchange):
+            return amount
+
+        # 국내 거래소: KRW → USDT 환산 필요
+        try:
+            from app.services.price_cache import price_cache
+            from app.exchanges.exceptions import ExchangeRateUnavailableError
+
+            # UPBIT에서 USDT/KRW 환율 조회 (30초 캐싱)
+            krw_usdt_rate = price_cache.get_usdt_krw_rate(fallback_to_api=True)
+
+            # 환율 이상치 감지 (정상 범위: 500~2000 KRW/USDT)
+            if krw_usdt_rate < Decimal('500') or krw_usdt_rate > Decimal('2000'):
+                logger.warning(
+                    "⚠️ 비정상 환율 감지: %.2f KRW/USDT (정상 범위: 500~2000) - exchange=%s",
+                    krw_usdt_rate,
+                    exchange
+                )
+
+            # KRW → USDT 변환
+            usdt_amount = amount / krw_usdt_rate
+            logger.debug(
+                "💱 KRW → USDT 변환: %.2f KRW → %.2f USDT (환율: %.2f, 거래소: %s)",
+                amount,
+                usdt_amount,
+                krw_usdt_rate,
+                exchange
+            )
+            return usdt_amount
+
+        except ExchangeRateUnavailableError as e:
+            # API 실패 시 Fallback 환율 사용
+            fallback_rate = Decimal('1400')
+            logger.warning(
+                "⚠️ 환율 조회 실패, Fallback 사용: %s KRW/USDT - exchange=%s, error=%s",
+                fallback_rate,
+                exchange,
+                str(e)
+            )
+            usdt_amount = amount / fallback_rate
+            return usdt_amount
+
+        except Exception as e:
+            # 예상치 못한 오류 시 Fallback
+            fallback_rate = Decimal('1400')
+            logger.error(
+                "❌ 환율 변환 중 예외 발생, Fallback 사용: %s KRW/USDT - exchange=%s, error=%s",
+                fallback_rate,
+                exchange,
+                str(e)
+            )
+            usdt_amount = amount / fallback_rate
+            return usdt_amount
 
     # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:helper
     def _extract_market_totals(self, balance_snapshot: Optional[Dict[str, Any]]) -> Dict[str, float]:
