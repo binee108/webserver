@@ -18,10 +18,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 from sqlalchemy.orm import selectinload
 
+# @FEAT:account-management @FEAT:exchange-integration @COMP:service @TYPE:integration
 from app import db
 from app.models import User, Account, UserSession, DailyAccountSummary
-from app.constants import MarketType
+from app.constants import MarketType, Exchange
 from app.services.exchange import exchange_service
+from app.services.price_cache import price_cache
+from app.exchanges.exceptions import ExchangeRateUnavailableError
 from app.security.encryption import encrypt_value, decrypt_value, is_likely_legacy_hash
 
 logger = logging.getLogger(__name__)
@@ -227,7 +230,33 @@ class SecurityService:
 
     # @FEAT:account-management @COMP:service @TYPE:core
     def get_accounts_by_user(self, user_id: int) -> List[Dict[str, Any]]:
-        """사용자 계정 목록 조회 (딕셔너리 형태로 반환)"""
+        """
+        사용자 계정 목록 조회 (국내 거래소 KRW → USDT 변환 포함)
+
+        국내 거래소(UPBIT, BITHUMB)의 KRW 잔고를 USDT로 변환하여 반환합니다.
+        환율은 PriceCache에서 조회하며, 조회 실패 시 원화로 표시됩니다.
+
+        Args:
+            user_id (int): 사용자 ID
+
+        Returns:
+            List[Dict]: 계정 정보 딕셔너리 리스트
+                - latest_balance: float - USDT 변환 값 (국내 거래소) 또는 원본 (해외)
+                - currency_converted: bool - 변환 여부
+                - original_balance_krw: float - 국내 거래소만, 원본 KRW 잔고
+                - usdt_krw_rate: float - 국내 거래소만, 적용된 환율
+                - conversion_error: str - 환율 조회 실패("환율 조회 실패") 또는
+                                          환율 데이터 이상("환율 데이터 이상") 시 설정
+
+        Note:
+            - latest_balance=None인 계좌는 변환 스킵 (currency_converted=False)
+            - 환율 조회 실패 시 국내 계좌는 원화(KRW) 그대로 표시
+            - 환율이 0 이하일 경우 conversion_error="환율 데이터 이상" 설정
+
+        Example:
+            성공 시: ₩183,071,153 → $121,239.17 (rate: 1510.0)
+            실패 시: ₩183,071,153 (currency_converted=False, conversion_error="환율 조회 실패")
+        """
         try:
             logger.info(f"계정 딕셔너리 변환 시작: user_id={user_id}")
 
@@ -236,6 +265,16 @@ class SecurityService:
             if not accounts:
                 logger.info(f"사용자 계정이 없습니다: user_id={user_id}")
                 return []
+
+            # @FEAT:account-management @FEAT:exchange-integration @COMP:service @TYPE:core
+            # ===== 환율 조회 (Graceful Degradation) =====
+            usdt_krw_rate = None
+            try:
+                usdt_krw_rate = price_cache.get_usdt_krw_rate()
+                logger.info(f"✅ USDT/KRW 환율 조회 성공: {usdt_krw_rate}")
+            except ExchangeRateUnavailableError as e:
+                logger.warning(f"⚠️ 환율 조회 실패, 국내 계좌 원화 표시: {e}")
+                # usdt_krw_rate = None 유지 (부분 실패 허용)
 
             result = []
             for account in accounts:
@@ -261,6 +300,40 @@ class SecurityService:
                     else:
                         account_dict['latest_balance'] = None
                         account_dict['latest_balance_date'] = None
+
+                    # @FEAT:account-management @FEAT:exchange-integration @COMP:service @TYPE:core
+                    # ===== 국내 거래소 KRW → USDT 변환 =====
+                    if Exchange.is_domestic(account.exchange):
+                        if usdt_krw_rate is None:
+                            # 환율 조회 실패 → 원화 표시 + 경고
+                            account_dict['currency_converted'] = False
+                            account_dict['conversion_error'] = "환율 조회 실패"
+                            logger.debug(f"⚠️ {account.name}: 원화 표시 (환율 조회 실패)")
+                        elif account_dict['latest_balance'] is not None and usdt_krw_rate > 0:
+                            # 정상 변환: KRW → USDT
+                            original_krw = Decimal(str(account_dict['latest_balance']))
+                            usdt_value = original_krw / usdt_krw_rate
+
+                            # 필드 업데이트
+                            account_dict['latest_balance'] = float(usdt_value)
+                            account_dict['original_balance_krw'] = float(original_krw)
+                            account_dict['usdt_krw_rate'] = float(usdt_krw_rate)
+                            account_dict['currency_converted'] = True
+
+                            logger.debug(
+                                f"💱 {account.name}: ₩{original_krw:,.0f} → ${usdt_value:,.2f} (환율: {usdt_krw_rate})"
+                            )
+                        elif usdt_krw_rate <= 0:
+                            # 환율 데이터 이상 (0 또는 음수)
+                            account_dict['currency_converted'] = False
+                            account_dict['conversion_error'] = "환율 데이터 이상"
+                            logger.warning(f"⚠️ {account.name}: 환율 = {usdt_krw_rate} (비정상)")
+                        else:
+                            # latest_balance가 None인 경우 (잔고 없음)
+                            account_dict['currency_converted'] = False
+                    else:
+                        # 해외 거래소 → 변환 없음
+                        account_dict['currency_converted'] = False
 
                     result.append(account_dict)
                     logger.debug(f"계정 변환 완료: account_id={account.id}, name={account.name}")
