@@ -840,6 +840,34 @@ class PositionManager:
 
             db.session.commit()
 
+            # @FEAT:capital-reallocation @COMP:service @TYPE:integration
+            # 트랜잭션 분리: 포지션 청산 후 자본 재할당 트리거 (plan-reviewer Issue 3 반영)
+            # 분리 이유: Race condition 방지, 에러 격리
+            # 1. 포지션 삭제 커밋 완료 (Line 841) → DB 반영됨
+            # 2. 별도 try-except로 재할당 시도 (Line 846-863)
+            # 3. 재할당 실패 시에도 포지션 삭제는 유지됨 (행-level 원자성 보장)
+            # 목적: 포지션 삭제 성공은 보장하되, 재할당 로직 오류는 격리
+            if position_deleted:
+                try:
+                    from app.services.capital_service import capital_allocation_service
+
+                    account_id = strategy_account.account_id if strategy_account.account else None
+                    if not account_id:
+                        logger.warning(f"포지션 청산 후 재할당 스킵 - 계좌 ID 없음: {symbol}")
+                    else:
+                        check_result = capital_allocation_service.should_rebalance(account_id)
+                        if check_result['should_rebalance']:
+                            logger.info(f"🔄 포지션 청산 트리거 - 계좌 ID: {account_id}, 사유: {check_result['reason']}")
+                            capital_allocation_service.recalculate_strategy_capital(
+                                account_id=account_id,
+                                use_live_balance=True
+                            )
+                        else:
+                            logger.debug(f"재할당 스킵 - {check_result['reason']}")
+                except Exception as e:
+                    logger.error(f"❌ 포지션 청산 후 재할당 실패 - 계좌 ID: {account_id}, 오류: {e}")
+                    # 포지션 삭제는 이미 커밋됨 → 재할당 오류는 독립적으로 처리
+
             if strategy_account.strategy:
                 self.service.event_emitter.emit_position_event(
                     strategy_account=strategy_account,

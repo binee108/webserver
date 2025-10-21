@@ -100,6 +100,10 @@ class Account(db.Model):
     _access_token = db.Column('access_token', db.Text, nullable=True)  # OAuth 토큰 (암호화)
     token_expires_at = db.Column(db.DateTime, nullable=True)
 
+    # 🆕 자본 재할당 관련 필드 (2025-10-21 추가)
+    previous_total_capital = db.Column(db.Float, nullable=True, comment='재할당 시점 총 자산 (USDT)')
+    last_rebalance_at = db.Column(db.DateTime, nullable=True, comment='마지막 재할당 시각 (UTC)')
+
     # 관계 설정
     strategy_accounts = db.relationship('StrategyAccount', backref='account', lazy=True, cascade='all, delete-orphan')
     daily_summaries = db.relationship('DailyAccountSummary', backref='account_ref', lazy=True, cascade='all, delete-orphan')

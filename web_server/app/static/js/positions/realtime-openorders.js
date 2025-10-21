@@ -236,8 +236,10 @@ class RealtimeOpenOrdersManager {
             // Update order count
             this.updateOpenOrdersCount();
 
-            // Show notification
-            this.showOrderNotification(eventType, data);
+            // Order List SSE는 토스트 스킵 (CLAUDE.md SSE 정책)
+            if (data.source !== 'pending_order') {
+                this.showOrderNotification(eventType, data);
+            }
 
         } catch (error) {
             this.logger.error('Failed to handle order update:', error);
