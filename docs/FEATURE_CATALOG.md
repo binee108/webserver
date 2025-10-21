@@ -189,16 +189,22 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 ---
 
 ### 5. capital-management
-**설명**: 자본 배분 및 관리 (analytics 서비스에 통합)
-**태그**: `@FEAT:capital-management`
+**설명**: 자본 배분, 관리, 자동 재할당 스케줄러 (하루 7회 고정 시각)
+**태그**: `@FEAT:capital-management`, `@FEAT:capital-allocation`
 **주요 파일**:
-- `services/analytics.py` - 자본 관리 (통합됨)
-- `routes/capital.py` - 자본 API
+- `services/capital_service.py` - 자본 배분 비즈니스 로직 (@FEAT:capital-management @COMP:service @TYPE:core)
+- `services/trading/quantity_calculator.py` - 주문 수량 계산 (@FEAT:capital-management @COMP:service @TYPE:core)
+- `routes/capital.py` - 자본 API (@FEAT:capital-management @COMP:route @TYPE:core)
+- `app/__init__.py` (Lines 636-654) - 자동 재할당 스케줄러 7개 job (@FEAT:capital-allocation @COMP:job @TYPE:core)
+**스케줄러 시각**: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37 (포지션 청산 완료 + 최소 1시간 경과 시 실행)
 **의존성**: `position-tracking`, `strategy-management`
 **상세 문서**: `docs/features/capital-management.md`
+**최근 수정**: 2025-10-21 - Phase 1.4 스케줄러 문서화 완료
 **검색**:
 ```bash
-grep -r "@FEAT:capital-management" --include="*.py"
+grep -r "@FEAT:capital-management\|@FEAT:capital-allocation" --include="*.py"
+grep -n "auto_rebalance_all_accounts_with_context" web_server/app/__init__.py
+grep "auto_rebalance_accounts" /web_server/logs/app.log  # 로그 확인
 ```
 
 ---
@@ -530,6 +536,6 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 
 ---
 
-*Last Updated: 2025-10-18*
-*Recent Changes: Phase 2 (Backend Batch SSE) complete - OrderBatchEvent, 배치 집계 로직, 90% SSE 감소*
+*Last Updated: 2025-10-21*
+*Recent Changes: Phase 1.4 (Auto Rebalancing Scheduler) documented - capital-allocation job, 7 daily runs, cron issue solution*
 

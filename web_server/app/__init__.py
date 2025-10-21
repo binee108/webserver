@@ -633,17 +633,26 @@ def register_background_jobs(app):
         max_instances=1
     )
 
-    # Phase 4: 자동 리밸런싱 (매시 17분 - 소수 시간대)
-    scheduler.add_job(
-        func=auto_rebalance_all_accounts_with_context,
-        args=[app],
-        trigger="cron",
-        minute=17,
-        id='auto_rebalance_accounts',
-        name='Auto Rebalance Accounts',
-        replace_existing=True,
-        max_instances=1
-    )
+    # Phase 4: 자동 리밸런싱 (하루 7회 - 소수 시각, 트래픽 분산)
+    # @FEAT:capital-allocation @COMP:job @TYPE:core
+    # 실행 시각: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37
+    # 주의: APScheduler cron은 hour,minute 곱집합을 사용하므로 개별 job으로 등록
+    rebalance_times = [
+        (1, 17), (4, 52), (8, 37), (12, 22), (16, 7), (19, 52), (23, 37)
+    ]
+
+    for hour, minute in rebalance_times:
+        scheduler.add_job(
+            func=auto_rebalance_all_accounts_with_context,
+            args=[app],
+            trigger="cron",
+            hour=hour,
+            minute=minute,
+            id=f'auto_rebalance_accounts_{hour:02d}_{minute:02d}',
+            name=f'Auto Rebalance {hour:02d}:{minute:02d}',
+            replace_existing=True,
+            max_instances=1
+        )
 
     # Phase 4.3: 증권 OAuth 토큰 자동 갱신 (6시간마다)
     scheduler.add_job(

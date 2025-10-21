@@ -146,7 +146,45 @@ quantity = (allocated_capital × qty_per% ÷ price) × leverage
 
 ---
 
-## 5. 설계 결정 히스토리 (Design Decisions)
+## 5. 자동 재할당 스케줄러 (Auto Rebalancing Scheduler)
+
+### 실행 일정
+**빈도**: 하루 7회 (고정 시각)
+**시각**: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37
+**소수 선택 이유**: 트래픽 분산 (정시 회피)
+
+### 실행 조건
+1. 모든 포지션 청산 완료 (`has_open_positions() == False`)
+2. 마지막 재할당 이후 최소 1시간 경과
+
+조건 미충족 시 로그만 기록하고 재할당 스킵.
+
+### 구현 방식
+- **트리거**: APScheduler `cron` 트리거
+- **주의**: APScheduler cron은 hour/minute 곱집합 사용 → 개별 job 등록 (7개)
+- **Job ID**: `auto_rebalance_accounts_{hour:02d}_{minute:02d}` (예: `auto_rebalance_accounts_01_17`)
+- **코드 위치**: `/web_server/app/__init__.py` Line 636-654
+
+### 로그 확인
+```bash
+# 스케줄러 시작/종료
+grep "Auto Rebalance" /web_server/logs/app.log
+
+# 실행 결과
+grep "자동 리밸런싱" /web_server/logs/app.log
+
+# 조건 미충족 (포지션 존재)
+grep "포지션 존재|시간 미경과" /web_server/logs/app.log
+```
+
+### 수동 실행
+```bash
+curl -k -X POST https://222.98.151.163/api/capital/auto-rebalance-all
+```
+
+---
+
+## 6. 설계 결정 히스토리 (Design Decisions)
 
 ### 가중치 기반 상대 비율 시스템
 **결정**: 가중치 합이 1.0일 필요 없음 (상대적 비율로 계산)
@@ -171,16 +209,25 @@ quantity = (allocated_capital × qty_per% ÷ price) × leverage
 - 안정성: API 장애 시에도 DB 폴백 가능
 - 유연성: 중요한 재배분 시 `use_live=true` 옵션 사용
 
-### 자동 리밸런싱 조건부 실행
+### 자동 재할당 스케줄러 조건부 실행
 **결정**: 포지션 청산 완료 + 최소 시간 경과 시에만 실행
 
 **이유**:
 - 안전성: 포지션 보유 중 자본 변경 방지
-- 효율성: 과도한 리밸런싱 방지 (최소 간격 1시간)
+- 효율성: 과도한 재할당 방지 (최소 간격 1시간)
+
+### APScheduler Cron 곱집합 문제와 해결법
+**문제**: `trigger="cron", hour=1, minute=17` 형태는 실제로 hour=1이고 minute가 0~59인 **모든 시각**을 의미 (곱집합)
+
+**해결**: 각 실행 시각마다 개별 job 등록
+```python
+for (hour, minute) in [(1, 17), (4, 52), ...]:
+    scheduler.add_job(..., hour=hour, minute=minute, id=f"auto_rebalance_{hour}_{minute}")
+```
 
 ---
 
-## 6. API 엔드포인트
+## 7. API 엔드포인트
 
 ### 1. 특정 계좌 자본 재배분
 **Endpoint**: `POST /api/capital/reallocate/<int:account_id>`
@@ -221,7 +268,7 @@ curl -k -X POST https://222.98.151.163/api/capital/auto-rebalance-all
 
 ---
 
-## 7. 유지보수 가이드
+## 8. 유지보수 가이드
 
 ### 주의사항
 
@@ -301,7 +348,7 @@ grep "수량 계산:" web_server/logs/app.log
 
 ---
 
-## 8. Grep 검색용 태그
+## 9. Grep 검색용 태그
 
 ```bash
 # 모든 capital-management 코드 찾기
@@ -330,6 +377,6 @@ grep -r "@FEAT:capital-management" --include="*.py" | grep "@COMP:model"
 
 ---
 
-*Last Updated: 2025-10-12*
-*Version: 2.0.1 - Documentation accuracy improvements*
-*Changes: Fixed StrategyCapital model fields, updated API endpoint formats, added missing return value fields*
+*Last Updated: 2025-10-21*
+*Version: 2.1.0 - Auto Rebalancing Scheduler Documentation*
+*Changes: Added scheduler specification (7 daily runs, prime times), cron multiplicity issue & solution, log checking guide*
