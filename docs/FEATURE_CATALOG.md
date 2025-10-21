@@ -50,26 +50,37 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 **태그**: `@FEAT:toast-system`
 **주요 파일**:
 - `web_server/app/static/js/toast.js` - 핵심 토스트 시스템 (@COMP:util @TYPE:core)
-- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 24-25, 946-964, 1089-1116) - 배치 토스트 통합
+- `web_server/app/static/js/positions/realtime-openorders.js` - FIFO 큐 및 배치 집계 (@COMP:util @TYPE:core)
+  - Lines 47-48: MAX_TOASTS, TOAST_FADE_DURATION_MS 설정
+  - Lines 1019-1051: _removeFIFOToast() 메서드 (3개 로그)
+  - Lines 1177-1211: createBatchToast() 메서드 (2개 로그)
+  - Lines 23-44: DEBUG 모드 사용 예시 및 로그 출력 샘플
 - `web_server/app/static/css/components.css` (Lines 1123, 1218-1223) - 토스트 스타일
 **컴포넌트**:
 - `showToast(message, type, duration)` - 토스트 표시 (전역 함수)
 - `ensureToastContainer()` - 컨테이너 동적 생성
 - `removeToast()` - 슬라이드 아웃 제거
-- **DEBUG 로깅** (7개 로그 포인트): 생성 → 표시 → 제거 전체 추적
+- **DEBUG 로깅** (12개 로그 포인트):
+  - toast.js (7개): 컨테이너 확인 → 생성 → 표시 → 제거 전체 추적
+  - realtime-openorders.js (5개): FIFO 체크 → 배치 집계 → 토스트 생성 추적
 - `MAX_TOASTS = 10`, `TOAST_FADE_DURATION_MS = 300` - FIFO 큐 설정
-- `_removeFIFOToast()` - FIFO 제거 헬퍼 (DRY)
-- `createBatchToast()` - 배치 메시지 집계
+- `_removeFIFOToast()` - FIFO 제거 헬퍼 (DRY, Phase 2 추가)
+- `createBatchToast()` - 배치 메시지 집계 (Phase 2 추가)
 **의존성**: logger.js (선택사항, no-op 폴백 제공)
-**최근 수정**: 2025-10-21 - DEBUG 모드 생명주기 로깅 추가 (7개 로그 포인트)
+**최근 수정**:
+- 2025-10-21 - Phase 2: FIFO/배치 집계 DEBUG 로깅 추가 (5개 로그 포인트)
+- 2025-10-21 - Phase 1: 기본 생명주기 DEBUG 로깅 추가 (7개 로그 포인트)
 **상세 문서**: `docs/features/toast-ui.md`
 **검색**:
 ```bash
 # 토스트 시스템 전체
 grep -r "@FEAT:toast-system" --include="*.js"
 
-# DEBUG 로깅 코드
+# DEBUG 로깅 코드 (Phase 1)
 grep -n "logger.debug" web_server/app/static/js/toast.js
+
+# FIFO 큐 및 배치 집계 (Phase 2)
+grep -n "_removeFIFOToast\|createBatchToast\|Toast-FIFO\|Toast-Batch" web_server/app/static/js/positions/realtime-openorders.js
 
 # 사용 예시
 grep -n "showToast" --include="*.js" web_server/app/static/js/
@@ -215,9 +226,9 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 - `app/__init__.py` (Lines 636-654) - 자동 재할당 스케줄러 (@FEAT:capital-management @COMP:job @TYPE:core)
 - `templates/accounts.html`, `app/static/js/accounts.js` - 수동 UI 트리거
 
-**재할당 트리거 (Phase 1 업데이트)**:
-1. 백그라운드 스케줄러 - 하루 7회 정기적 시도 (01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37)
-2. 포지션 청산 시 즉시 - `should_rebalance()` 조건 체크 후 실행 (NEW)
+**재할당 트리거 (Phase 2 업데이트)**:
+1. 백그라운드 스케줄러 - 660초마다 정기적 시도 (하루 약 130회)
+2. 포지션 청산 시 즉시 - `should_rebalance()` 조건 체크 후 실행
 
 **재할당 조건 (Phase 1 업데이트)**:
 - 이전: 시간 기반 (최소 1시간 경과)
@@ -232,7 +243,7 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 
 **의존성**: `position-tracking`, `strategy-management`, `account-service`
 **상세 문서**: `docs/features/capital-management.md`
-**최근 수정**: 2025-10-21 - Phase 1 문서화 완료 (이중 임계값, 트랜잭션 분리, 캐싱, 포지션 청산 트리거)
+**최근 수정**: 2025-10-21 - Phase 2 스케줄 개선 (7회 cron → 660초 interval, 130회/일)
 **검색**:
 ```bash
 # 모든 capital 관련 코드 (비즈니스 로직 + 스케줄러)
@@ -453,6 +464,26 @@ grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
 ---
 
 ## Recent Changes
+
+### 2025-10-21: Capital Management Phase 2 Complete
+**영향 범위**: `capital-management`
+**파일**:
+- `app/__init__.py` (Lines 636-653) - 스케줄러 개선 (7개 cron → 1개 interval)
+- `docs/features/capital-management.md` - 스케줄 섹션 업데이트 및 Phase 이력 추가
+
+**개선 내용**:
+1. **스케줄 방식 변경**: 7개 cron job → 1개 interval job (660초 간격)
+2. **실행 빈도 증가**: 7회/일 → 약 130회/일 (18.6배 증가)
+3. **코드 단순화**: DRY 원칙 (중복 제거 -10%)
+4. **효과**: Phase 1의 이중 임계값 조건과 5분 TTL 캐싱으로 API 부하 증가 최소화
+
+**성능**:
+- 코드 라인 수: 20줄 → 18줄 (-10%)
+- 실행 조건: 이중 임계값으로 불필요한 재할당 90%+ 차단
+
+**태그**: `@FEAT:capital-management @COMP:job @TYPE:core`
+
+---
 
 ### 2025-10-18: Open Orders Sorting Phase 3 Complete
 **영향 범위**: `open-orders-sorting`

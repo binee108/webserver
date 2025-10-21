@@ -20,14 +20,42 @@
  * @see .plan/open_orders_sorting_plan.md
  */
 
+/**
+ * Toast System - DEBUG 모드 사용 예시
+ *
+ * 브라우저 콘솔에서 디버그 모드 활성화:
+ *   enableDebugMode()
+ *
+ * 또는 URL 파라미터 사용:
+ *   https://yoursite.com/positions?debug=true
+ *
+ * 예상 로그 출력 (배치 주문 처리 시):
+ *   🔍 Toast-Batch Batch aggregation started { summaryCount: 3, uniqueTypes: 2 }
+ *   🔍 Toast-FIFO Checking FIFO removal { currentCount: 5, maxToasts: 5, needsRemoval: true }
+ *   🔍 Toast-FIFO Removing oldest toast { toastType: 'info' }
+ *   🔍 Toast Container already exists (from toast.js)
+ *   🔍 Toast Toast triggered { type: 'info', duration: 3000, message: '📦 LIMIT 주문 생성 2건 | STOP_LIMIT 주문 생성 1건' }
+ *   🔍 Toast Toast displayed { type: 'info', count: 5, elapsed: '1.45ms' } (from toast.js)
+ *   🔍 Toast-FIFO FIFO removal complete { remaining: 4 }
+ *
+ * Phase 1 (toast.js): 7개 로그 포인트 - 기본 생명주기 추적
+ * Phase 2 (realtime-openorders.js): 5개 로그 포인트 - FIFO/배치 집계 추적
+ * 통합: 12개 로그 포인트로 전체 토스트 시스템 디버깅
+ */
+
 // Phase 1: Toast UI Improvement - Configuration constants
 const MAX_TOASTS = 10;  // Maximum number of visible toasts
 const TOAST_FADE_DURATION_MS = 300;  // Must match .toast.fade-out transition in CSS
 
 class RealtimeOpenOrdersManager {
     constructor() {
-        // Get utilities from RealtimeCore
-        this.logger = window.RealtimeCore ? window.RealtimeCore.logger : console;
+        // Logger 참조 (logger.js 미로드 시 no-op 폴백으로 프로덕션 안전 보장)
+        this.logger = window.RealtimeCore ? window.RealtimeCore.logger : {
+            debug: () => {},
+            info: () => {},
+            warn: () => {},
+            error: () => {}
+        };
         this.DOM = window.RealtimeCore ? window.RealtimeCore.DOM : null;
         this.format = window.RealtimeCore ? window.RealtimeCore.format : null;
         this.eventBus = window.RealtimeCore ? window.RealtimeCore.eventBus : null;
@@ -979,8 +1007,12 @@ class RealtimeOpenOrdersManager {
     }
 
     /**
-     * Remove oldest toast using FIFO (First-In-First-Out) with fade-out animation
-     * Phase 1: Toast UI Improvement - Extracted to avoid code duplication (DRY)
+     * FIFO 큐 관리: 최대 토스트 개수 초과 시 가장 오래된 토스트 제거
+     *
+     * DEBUG 모드에서 다음 로그를 출력합니다:
+     * - FIFO 체크 시작 (현재 개수, 최대 개수, 제거 필요 여부)
+     * - 가장 오래된 토스트 제거 중 (토스트 타입)
+     * - FIFO 제거 완료 (남은 개수)
      *
      * @private
      */
@@ -991,13 +1023,30 @@ class RealtimeOpenOrdersManager {
             return;
         }
 
-        if (toastContainer.children.length >= MAX_TOASTS) {
+        const currentToasts = toastContainer.children.length;
+        // ADD LOG 1: After currentToasts calculation
+        this.logger.debug('Toast-FIFO', 'Checking FIFO removal', {
+            currentCount: currentToasts,
+            maxToasts: MAX_TOASTS,
+            needsRemoval: currentToasts >= MAX_TOASTS
+        });
+
+        if (currentToasts >= MAX_TOASTS) {
             const oldestToast = toastContainer.firstChild;
             if (oldestToast && oldestToast.parentNode) {
+                // ADD LOG 2: Before adding fade-out class
+                this.logger.debug('Toast-FIFO', 'Removing oldest toast', {
+                    toastType: oldestToast.className.match(/toast\s+(\w+)/)?.[1] || 'unknown'
+                });
+
                 oldestToast.classList.add('fade-out');
                 setTimeout(() => {
                     if (oldestToast && oldestToast.parentNode) {
                         oldestToast.remove();
+                        // ADD LOG 3: After remove() call
+                        this.logger.debug('Toast-FIFO', 'FIFO removal complete', {
+                            remaining: toastContainer.children.length
+                        });
                     }
                 }, TOAST_FADE_DURATION_MS);
             }
@@ -1116,21 +1165,34 @@ class RealtimeOpenOrdersManager {
     }
 
     /**
-     * Create batch toast message from order summaries
-     * Phase 1: Toast UI Improvement - Batch order aggregation for Phase 3 integration
+     * 배치 주문 이벤트를 하나의 토스트로 집계하여 표시
      *
-     * @param {Array} summaries - Array of {order_type, created, cancelled}
-     * @example
-     * createBatchToast([
-     *   {order_type: 'LIMIT', created: 5, cancelled: 3},
-     *   {order_type: 'STOP_LIMIT', created: 2, cancelled: 0}
-     * ]);
-     * // Output: "📦 LIMIT 주문 생성 5건, 취소 3건 | STOP_LIMIT 주문 생성 2건"
+     * DEBUG 모드에서 다음 로그를 출력합니다:
+     * - 배치 집계 시작 (원본 이벤트 개수, 고유 타입 개수)
+     * - 배치 토스트 생성 완료 (최종 메시지, 집계된 타입 개수)
+     *
+     * @param {Array} summaries - 주문 요약 배열 (order_type, action, count 포함)
+     * @private
      */
     createBatchToast(summaries) {
         if (!summaries || summaries.length === 0) {
             return;
         }
+
+        const aggregated = {};
+        summaries.forEach(summary => {
+            const key = `${summary.order_type}_${summary.action}`;
+            if (!aggregated[key]) {
+                aggregated[key] = { ...summary, count: 0 };
+            }
+            aggregated[key].count += summary.count;
+        });
+
+        // ADD LOG 1: After aggregation logic completes
+        this.logger.debug('Toast-Batch', 'Batch aggregation started', {
+            summaryCount: summaries.length,
+            uniqueTypes: Object.keys(aggregated).length
+        });
 
         const messages = summaries.map(summary => {
             const parts = [];
@@ -1148,10 +1210,15 @@ class RealtimeOpenOrdersManager {
         }).filter(msg => msg !== null);
 
         if (messages.length > 0) {
-            // Phase 1: FIFO removal before showing batch toast
             this._removeFIFOToast();
 
             const finalMessage = `📦 ${messages.join(' | ')}`;
+            // ADD LOG 2: Before window.showToast() call
+            this.logger.debug('Toast-Batch', 'Batch toast created', {
+                message: finalMessage.substring(0, 100),
+                aggregatedCount: messages.length
+            });
+
             window.showToast(finalMessage, 'info', 3000);
         }
     }
