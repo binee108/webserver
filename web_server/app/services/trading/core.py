@@ -768,6 +768,9 @@ class TradingCore:
                 type_group = group_name
                 break
 
+        # 📡 배치 PendingOrder SSE 발송 대상 수집
+        pending_orders_to_emit_sse = []
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
             for strategy, account, sa in filtered_accounts:
@@ -836,6 +839,13 @@ class TradingCore:
                             'account_id': account.id,
                             'account_name': account.name
                         })
+
+                        # SSE 발송 대상 수집 (배치 커밋 후 발송)
+                        pending_orders_to_emit_sse.append({
+                            'pending_order_id': enqueue_result.get('pending_order_id'),
+                            'strategy_account': sa,
+                            'symbol': symbol
+                        })
                     else:
                         logger.error(
                             f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
@@ -884,6 +894,52 @@ class TradingCore:
 
         # 배치 커밋 (대기열 추가 + 거래소 주문)
         db.session.commit()
+
+        # 📡 배치 커밋 후 PendingOrder SSE 일괄 발송
+        if pending_orders_to_emit_sse and self.service.event_emitter:
+            logger.debug(f"📡 [SSE] 배치 PendingOrder SSE 발송 시작: {len(pending_orders_to_emit_sse)}개")
+
+            for pending_info in pending_orders_to_emit_sse:
+                try:
+                    # DB에서 커밋된 PendingOrder 조회 (ID가 할당됨)
+                    from app.models import PendingOrder
+                    pending_order = PendingOrder.query.get(pending_info['pending_order_id'])
+                    if not pending_order:
+                        logger.warning(
+                            f"⚠️ PendingOrder SSE 발송 스킵: DB에서 찾을 수 없음 "
+                            f"(ID: {pending_info['pending_order_id']})"
+                        )
+                        continue
+
+                    # user_id 추출
+                    strategy_account = pending_info['strategy_account']
+                    if not strategy_account.strategy:
+                        logger.warning(
+                            f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
+                            f"(ID: {pending_order.id})"
+                        )
+                        continue
+
+                    user_id = strategy_account.strategy.user_id
+
+                    # SSE 발송
+                    self.service.event_emitter.emit_pending_order_event(
+                        event_type='order_created',
+                        pending_order=pending_order,
+                        user_id=user_id
+                    )
+
+                    logger.debug(
+                        f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
+                        f"ID={pending_order.id}, user_id={user_id}, symbol={pending_info['symbol']}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                        f"ID={pending_info.get('pending_order_id')}, error={e}"
+                    )
+
+            logger.debug(f"✅ [SSE] 배치 PendingOrder SSE 발송 완료: {len(pending_orders_to_emit_sse)}개")
 
         return results
 

@@ -319,7 +319,7 @@ from app.constants import Exchange
 
 # 국내 거래소 확인
 if Exchange.is_domestic('UPBIT'):
-    # KRW → USDT 환율 변환 필요
+    # KRW 잔고 → USDT 변환 필요
     pass
 ```
 

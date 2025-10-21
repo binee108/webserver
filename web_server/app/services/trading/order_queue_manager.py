@@ -71,25 +71,52 @@ class OrderQueueManager:
         reason: str = 'QUEUE_LIMIT',
         commit: bool = True  # ✅ v2: 트랜잭션 제어 (조건 2)
     ) -> Dict[str, Any]:
-        """대기열에 주문 추가 (내부 PendingOrder, SSE 미발송)
+        """대기열에 주문 추가 (Order List SSE 발송, Toast SSE는 Batch 통합)
 
-        PendingOrder는 거래소 주문 제한 초과 시 내부 대기열 상태로만 유지됩니다.
-        사용자 알림은 웹훅 응답 시 order_type별 집계 Batch SSE로 발송됩니다 (Phase 2).
+        PendingOrder 생성 시 Order List SSE를 발송하여 열린 주문 테이블을 실시간 업데이트합니다.
+        Toast 알림은 웹훅 응답 시 order_type별 집계 Batch SSE로 발송됩니다.
+
+        **Transaction Safety**:
+        - SSE는 DB 커밋 완료 후에만 발송됩니다 (commit=True 시).
+        - commit=False 사용 시 호출자가 명시적으로 커밋하고 SSE 발송을 별도 처리해야 합니다.
+
+        **SSE Emission**:
+        - Event Type: 'order_created'
+        - Condition: strategy 정보가 있고, event_emitter가 사용 가능할 때만 발송
+        - Failure: SSE 발송 실패는 비치명적 (경고 로그, 주문 생성은 계속)
 
         Args:
             strategy_account_id: 전략 계정 ID
             symbol: 거래 심볼
-            side: 주문 방향 (BUY/SELL)
+            side: 주문 방향 (buy/sell)
             order_type: 주문 타입 (LIMIT/STOP_LIMIT/STOP_MARKET)
             quantity: 주문 수량
             price: LIMIT 가격 (선택적)
             stop_price: STOP 트리거 가격 (선택적)
             market_type: 마켓 타입 (SPOT/FUTURES)
             reason: 대기열 진입 사유
-            commit: 즉시 커밋 여부 (기본값: True)
+            commit: 즉시 DB 커밋 여부 (기본값: True, DB 커밋 + SSE 발송)
 
         Returns:
-            dict: {'success': bool, 'pending_order_id': int, 'priority': int, 'sort_price': Decimal, 'message': str}
+            dict: 작업 결과
+
+            성공 시:
+                {
+                    'success': True,
+                    'pending_order_id': int - 생성된 PendingOrder ID,
+                    'priority': int - 주문 우선순위 (낮을수록 먼저 실행),
+                    'sort_price': float - 정렬용 가격,
+                    'message': str - 성공 메시지
+                }
+
+            실패 시:
+                {
+                    'success': False,
+                    'error': str - 오류 메시지
+                }
+
+        Raises:
+            None (모든 오류는 dict 반환값으로 처리)
         """
         try:
             # StrategyAccount 조회
@@ -101,6 +128,20 @@ class OrderQueueManager:
                 }
 
             account = strategy_account.account
+
+            # @FEAT:pending-order-sse @COMP:service @TYPE:helper
+            # 📡 SSE 발송용 user_id 사전 추출
+            # - 커밋 전 추출: SQLAlchemy 세션 만료 방지
+            # - None 체크: strategy 관계 누락 시 SSE 스킵 (주문 생성은 계속)
+            user_id_for_sse = None
+            if strategy_account.strategy:
+                user_id_for_sse = strategy_account.strategy.user_id
+                logger.debug(f"✅ user_id 추출 성공: {user_id_for_sse}")
+            else:
+                logger.warning(
+                    f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
+                    f"(strategy_account_id: {strategy_account_id})"
+                )
 
             # 우선순위 계산
             priority = OrderType.get_priority(order_type)
@@ -125,11 +166,50 @@ class OrderQueueManager:
             )
 
             db.session.add(pending_order)
-            # ✅ v2: 호출자가 commit 제어
+
+            # commit=False일 때도 ID 할당 (배치 SSE 발송용)
+            # flush()는 ID를 할당하지만 트랜잭션은 열린 상태 유지
+            if not commit:
+                db.session.flush()
+
+            # 트랜잭션 안전성: SSE 발송은 DB 커밋 완료 후 (commit=True 시)
             if commit:
                 db.session.commit()
 
-            # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
+                # @FEAT:pending-order-sse @COMP:service @TYPE:core @DEPS:event-emitter
+                # 📡 Order List SSE 발송 (DB 커밋 완료 후, 실시간 UI 업데이트)
+                # ⚠️ Toast SSE는 웹훅 응답에서 order_type별 집계 Batch로 발송 (core.py)
+                logger.debug(
+                    f"🔍 SSE 발송 조건 확인: "
+                    f"self.service={self.service is not None}, "
+                    f"has_event_emitter={hasattr(self.service, 'event_emitter') if self.service else 'N/A'}, "
+                    f"user_id_for_sse={user_id_for_sse}"
+                )
+
+                if self.service and hasattr(self.service, 'event_emitter') and user_id_for_sse:
+                    logger.debug("✅ SSE 발송 조건 충족 - emit_pending_order_event 호출 시작")
+                    try:
+                        self.service.event_emitter.emit_pending_order_event(
+                            event_type='order_created',
+                            pending_order=pending_order,
+                            user_id=user_id_for_sse
+                        )
+                        logger.debug(
+                            f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
+                            f"ID={pending_order.id}, user_id={user_id_for_sse}, symbol={symbol}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): {e}"
+                        )
+                else:
+                    logger.warning(
+                        f"⚠️ SSE 발송 조건 미충족 - 스킵: "
+                        f"service={self.service is not None}, "
+                        f"event_emitter={hasattr(self.service, 'event_emitter') if self.service else False}, "
+                        f"user_id={user_id_for_sse is not None}"
+                    )
+
             logger.info(
                 f"📥 대기열 추가 완료 - ID: {pending_order.id}, "
                 f"심볼: {symbol}, 타입: {order_type}, "
