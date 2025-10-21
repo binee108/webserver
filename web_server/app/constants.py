@@ -245,6 +245,9 @@ class Exchange:
     CRYPTO_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, BITHUMB]
     SECURITIES_EXCHANGES = [KIS, KIWOOM, LS, EBEST]
 
+    # @FEAT:account-management @FEAT:exchange-integration @COMP:config @TYPE:core
+    DOMESTIC_EXCHANGES = [UPBIT, BITHUMB]  # KRW 기준 국내 거래소 (잔고 USDT 변환 시 사용)
+
     @classmethod
     def is_valid(cls, value):
         """값이 유효한 거래소인지 확인
@@ -306,6 +309,45 @@ class Exchange:
         if not exchange:
             return False
         return exchange.upper() in cls.CRYPTO_EXCHANGES
+
+    # @FEAT:account-management @FEAT:exchange-integration @COMP:config @TYPE:core
+    @classmethod
+    def is_domestic(cls, exchange: str) -> bool:
+        """
+        국내 거래소 여부를 확인합니다.
+
+        KRW 기준으로 거래하는 국내 거래소(UPBIT, BITHUMB)인지 확인합니다.
+        이 메서드는 국내 거래소 KRW 잔고를 USDT로 변환할 때 사용됩니다.
+
+        Args:
+            exchange: 거래소 이름 (대소문자 무관)
+
+        Returns:
+            bool: 국내 거래소이면 True, 해외 거래소이면 False
+
+        Examples:
+            >>> Exchange.is_domestic('UPBIT')
+            True
+            >>> Exchange.is_domestic('upbit')  # 소문자도 처리
+            True
+            >>> Exchange.is_domestic('BITHUMB')
+            True
+            >>> Exchange.is_domestic('BINANCE')
+            False
+            >>> Exchange.is_domestic(None)
+            False
+            >>> Exchange.is_domestic('')
+            False
+
+        Note:
+            국내 거래소 추가 시 DOMESTIC_EXCHANGES 리스트에 추가 필요
+            (예: COINONE 추가 시 DOMESTIC_EXCHANGES = [UPBIT, BITHUMB, COINONE])
+        """
+        if not exchange:
+            return False
+
+        exchange_normalized = cls.normalize(exchange)
+        return exchange_normalized in cls.DOMESTIC_EXCHANGES
 
     @classmethod
     def normalize(cls, value):
