@@ -1,3 +1,4 @@
+<!-- @FEAT:account-management @COMP:template @TYPE:core -->
 {% extends "base.html" %}
 
 {% block title %}계좌 관리 - 트레이딩 자동화 시스템{% endblock %}
@@ -212,16 +213,17 @@
                                         </span>
                                     {% endif %}
                                 </td>
+                                <!-- Phase 4.2: Native Currency Symbol -->
                                 <td class="text-sm font-medium text-primary" id="account-spot-balance-{{ account.id }}">
                                     {% if account.latest_spot_balance is not none %}
-                                        ${{ '%.2f'|format(account.latest_spot_balance) }}
+                                        {% if Exchange.is_domestic(account.exchange) %}₩{% else %}${% endif %}{{ '%.2f'|format(account.latest_spot_balance) }}
                                     {% else %}
                                         ---
                                     {% endif %}
                                 </td>
                                 <td class="text-sm font-medium text-primary" id="account-futures-balance-{{ account.id }}">
                                     {% if account.latest_futures_balance is not none %}
-                                        ${{ '%.2f'|format(account.latest_futures_balance) }}
+                                        {% if Exchange.is_domestic(account.exchange) %}₩{% else %}${% endif %}{{ '%.2f'|format(account.latest_futures_balance) }}
                                     {% else %}
                                         ---
                                     {% endif %}

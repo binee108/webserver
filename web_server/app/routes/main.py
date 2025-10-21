@@ -10,7 +10,8 @@ from flask_login import login_required, current_user
 from app.models import Strategy, Account, Trade, OpenOrder, StrategyAccount, StrategyPosition
 from app.services.strategy_service import strategy_service, StrategyError
 from app import db
-from app.constants import MarketType
+# Phase 4.2: Pass Exchange enum to template for currency symbol conditional
+from app.constants import MarketType, Exchange
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload, selectinload
@@ -71,7 +72,7 @@ def dashboard():
                          pending_orders_count=pending_orders_count,
                          recent_trades=recent_trades)
 
-# @FEAT:api-gateway @COMP:route @TYPE:core
+# @FEAT:account-management @COMP:route @TYPE:core
 @bp.route('/accounts')
 @login_required
 def accounts():
@@ -96,7 +97,7 @@ def accounts():
         account.latest_futures_balance = float(latest_summary.futures_balance) if latest_summary else None
         account.latest_balance_date = latest_summary.date if latest_summary else None
 
-    return render_template('accounts.html', accounts=accounts, MarketType=MarketType)
+    return render_template('accounts.html', accounts=accounts, MarketType=MarketType, Exchange=Exchange)
 
 # @FEAT:api-gateway @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies')

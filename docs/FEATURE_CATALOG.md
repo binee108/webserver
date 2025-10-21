@@ -525,6 +525,45 @@ grep -n "calculate_strategy_roi\|aggregate_daily_performance" web_server/app/ser
 
 ---
 
+### 10.2 Accounts 페이지 Native Currency 표시 (Phase 4.2)
+
+**파일**: `web_server/app/templates/accounts.html`
+**태그**: `@FEAT:account-management`, `@COMP:template`
+
+#### 개요
+Accounts 페이지에서 거래소별 Native Currency 기호를 조건부로 표시합니다.
+국내 거래소(UPBIT)는 원화(₩), 해외 거래소(BINANCE, BYBIT, OKX)는 달러($) 기호를 사용합니다.
+
+#### 검색 명령
+```bash
+grep -r "@FEAT:account-management" --include="*.html" | grep "accounts.html"
+grep -A 5 "Phase 4.2: Native Currency Symbol" web_server/app/templates/accounts.html
+```
+
+#### 핵심 로직
+```jinja
+{# 국내 거래소: ₩, 해외 거래소: $ #}
+{% if Exchange.is_domestic(account.exchange) %}₩{% else %}${% endif %}{{ balance }}
+```
+
+#### 의존성
+- Phase 3: `Exchange.is_domestic()` (constants.py:315-350)
+- Exchange enum: `DOMESTIC_EXCHANGES = [UPBIT, BITHUMB]` (constants.py:249)
+
+#### 표시 예시
+- **UPBIT 계좌**: 현물 ₩183,071,153.00, 선물 ₩5,778.00
+- **BINANCE 계좌**: 현물 $5,778.00, 선물 $1,234.00
+
+#### 향후 확장
+Phase 4.3 (Strategies 페이지) 완료 후 3+ 사용처 발생 시 Jinja2 매크로 추출 고려:
+```jinja
+{% macro currency_symbol(exchange) %}
+  {% if Exchange.is_domestic(exchange) %}₩{% else %}${% endif %}
+{% endmacro %}
+```
+
+---
+
 ### 10.1. dashboard-total-capital
 **설명**: Dashboard 총 자본 USDT 통합 표시 (Phase 4.4)
 
