@@ -397,8 +397,38 @@ class OrderManager:
                 + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
             )
 
-            # PendingOrder 삭제 (SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합)
+            # 📡 Order List SSE 발송 (PendingOrder 삭제 전, Toast SSE는 웹훅 응답 시 Batch 통합)
+            # @FEAT:pending-order-sse @COMP:service @TYPE:core @DEPS:event-emitter
             for pending_order in pending_orders:
+                # user_id 사전 추출 (삭제 전)
+                user_id_for_sse = None
+                if pending_order.strategy_account and pending_order.strategy_account.strategy:
+                    user_id_for_sse = pending_order.strategy_account.strategy.user_id
+                else:
+                    logger.warning(
+                        f"⚠️ PendingOrder 삭제 SSE 발송 스킵: strategy 정보 없음 "
+                        f"(pending_order_id={pending_order.id})"
+                    )
+
+                # Order List SSE 발송
+                if self.service and hasattr(self.service, 'event_emitter') and user_id_for_sse:
+                    try:
+                        self.service.event_emitter.emit_pending_order_event(
+                            event_type='order_cancelled',
+                            pending_order=pending_order,
+                            user_id=user_id_for_sse
+                        )
+                        logger.debug(
+                            f"📡 [SSE] PendingOrder 삭제 (CANCEL_ALL_ORDER) → Order List 업데이트: "
+                            f"ID={pending_order.id}, user_id={user_id_for_sse}, symbol={pending_order.symbol}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                            f"ID={pending_order.id}, error={e}"
+                        )
+
+                # DB에서 삭제
                 db.session.delete(pending_order)
 
             # PendingOrder 삭제 커밋 (OpenOrder 취소 전에 완료)
