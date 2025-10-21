@@ -837,7 +837,9 @@ class TradingCore:
                             'priority': enqueue_result.get('priority'),
                             'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
                             'account_id': account.id,
-                            'account_name': account.name
+                            'account_name': account.name,
+                            'order_type': order_type,        # SSE 집계용 (emit_order_batch_update)
+                            'event_type': 'order_created'    # SSE 집계용 (emit_order_batch_update)
                         })
 
                         # SSE 발송 대상 수집 (배치 커밋 후 발송)
@@ -1215,8 +1217,9 @@ class TradingCore:
                 }
 
                 # Phase 2: Calculate total cancelled orders for batch SSE
+                # @FEAT:webhook-order @COMP:service @TYPE:core
                 total_cancelled = sum(
-                    r.get('cancelled_orders', 0) for r in successful_cancels
+                    len(r.get('cancelled_orders', [])) for r in successful_cancels
                 )
 
                 results.append({
