@@ -44,10 +44,6 @@ class OrderQueueManager:
         """
         self.service = service
 
-        # EventEmitter 추가 (PendingOrder SSE 이벤트 발송용)
-        from app.services.trading.event_emitter import EventEmitter
-        self.event_emitter = EventEmitter(service)
-
         # ✅ v2: 동시성 보호 (조건 4)
         import threading
         self._rebalance_locks = {}  # {(account_id, symbol): Lock}
@@ -75,7 +71,10 @@ class OrderQueueManager:
         reason: str = 'QUEUE_LIMIT',
         commit: bool = True  # ✅ v2: 트랜잭션 제어 (조건 2)
     ) -> Dict[str, Any]:
-        """대기열에 주문 추가
+        """대기열에 주문 추가 (내부 PendingOrder, SSE 미발송)
+
+        PendingOrder는 거래소 주문 제한 초과 시 내부 대기열 상태로만 유지됩니다.
+        사용자 알림은 웹훅 응답 시 order_type별 집계 Batch SSE로 발송됩니다 (Phase 2).
 
         Args:
             strategy_account_id: 전략 계정 ID
@@ -88,17 +87,9 @@ class OrderQueueManager:
             market_type: 마켓 타입 (SPOT/FUTURES)
             reason: 대기열 진입 사유
             commit: 즉시 커밋 여부 (기본값: True)
-                - True: 즉시 db.session.commit() 수행
-                - False: 커밋 지연 (호출자가 트랜잭션 제어)
 
         Returns:
-            dict: {
-                'success': bool,
-                'pending_order_id': int,
-                'priority': int,
-                'sort_price': Decimal,
-                'message': str
-            }
+            dict: {'success': bool, 'pending_order_id': int, 'priority': int, 'sort_price': Decimal, 'message': str}
         """
         try:
             # StrategyAccount 조회
@@ -138,22 +129,7 @@ class OrderQueueManager:
             if commit:
                 db.session.commit()
 
-            # SSE 이벤트 발송 (PendingOrder 생성)
-            try:
-                from app.models import Strategy
-                strategy = Strategy.query.join(StrategyAccount).filter(
-                    StrategyAccount.id == strategy_account_id
-                ).first()
-
-                if strategy:
-                    self.event_emitter.emit_pending_order_event(
-                        event_type='order_created',
-                        pending_order=pending_order,
-                        user_id=strategy.user_id
-                    )
-            except Exception as e:
-                logger.warning(f"PendingOrder 생성 이벤트 발송 실패: {e}")
-
+            # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
             logger.info(
                 f"📥 대기열 추가 완료 - ID: {pending_order.id}, "
                 f"심볼: {symbol}, 타입: {order_type}, "
@@ -718,17 +694,16 @@ class OrderQueueManager:
 
     # @FEAT:order-queue @COMP:service @TYPE:integration
     def _execute_pending_order(self, pending_order: PendingOrder) -> Dict[str, Any]:
-        """대기열 주문 → 거래소 실행
+        """대기열 주문 → 거래소 실행 (재정렬 시 호출)
+
+        PendingOrder를 거래소에 제출합니다. 성공 시 OpenOrder로 전환되며,
+        PendingOrder SSE 발송은 하지 않습니다 (거래소 이벤트는 별도 처리).
 
         Args:
             pending_order: 실행할 PendingOrder
 
         Returns:
-            dict: {
-                'success': bool,
-                'order_id': str (성공 시),
-                'error': str (실패 시)
-            }
+            dict: {'success': bool, 'order_id': str (성공 시), 'error': str (실패 시)}
         """
         try:
             # TradingCore를 통해 거래소에 주문 실행
@@ -757,16 +732,7 @@ class OrderQueueManager:
             )
 
             if result.get('success'):
-                # SSE 이벤트 발송 (PendingOrder 삭제 - 거래소 제출 완료)
-                try:
-                    self.event_emitter.emit_pending_order_event(
-                        event_type='order_cancelled',  # 대기열에서 제거됨
-                        pending_order=pending_order,
-                        user_id=strategy.user_id
-                    )
-                except Exception as e:
-                    logger.warning(f"PendingOrder 삭제 이벤트 발송 실패 (성공): {e}")
-
+                # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
                 # 성공 시 대기열에서 제거 (커밋은 상위에서)
                 db.session.delete(pending_order)
 
@@ -806,16 +772,7 @@ class OrderQueueManager:
                     except Exception as e:
                         logger.error(f"텔레그램 알림 발송 실패: {e}")
 
-                    # SSE 이벤트 발송 (PendingOrder 삭제 - 재시도 한계 초과)
-                    try:
-                        self.event_emitter.emit_pending_order_event(
-                            event_type='order_cancelled',
-                            pending_order=pending_order,
-                            user_id=strategy.user_id
-                        )
-                    except Exception as e:
-                        logger.warning(f"PendingOrder 삭제 이벤트 발송 실패 (실패): {e}")
-
+                    # PendingOrder SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합 (Phase 2)
                     # 최대 재시도 초과 시 대기열에서 제거
                     db.session.delete(pending_order)
 

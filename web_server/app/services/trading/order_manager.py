@@ -296,16 +296,10 @@ class OrderManager:
                                   symbol: Optional[str] = None,
                                   side: Optional[str] = None,
                                   timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """사용자 권한 기준의 미체결 주문 일괄 취소 (OpenOrder + PendingOrder)
+        """사용자 권한 기준의 미체결 주문 일괄 취소 (OpenOrder + PendingOrder 삭제, SSE 미발송)
 
-        ⚠️  단일 소스 (Single Source of Truth)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        모든 주문 취소 로직은 이 메서드를 거칩니다. 수정 시 영향받는 기능:
-        1. 포지션 페이지 - 모든 주문 취소 버튼 (positions.py)
-        2. 웹훅 - CANCEL_ALL_ORDER 메시지 처리 (webhook_service.py)
-        3. SSE 실시간 이벤트 발송 (포지션 페이지 UI 업데이트)
-        4. Race Condition 방지 (WebSocket 체결 이벤트 간섭 차단)
-        5. 대기열 시스템 (rebalance_symbol과의 동기화)
+        PendingOrder 삭제 시 SSE 발송하지 않습니다 (내부 상태이므로).
+        웹훅의 CANCEL_ALL_ORDER는 응답 시 Batch SSE로 통합 발송됩니다.
 
         ⚠️  Race Condition 방지: 순서 변경 금지!
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -403,21 +397,8 @@ class OrderManager:
                 + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
             )
 
-            # PendingOrder 삭제 + SSE 이벤트 발송
+            # PendingOrder 삭제 (SSE 발송 제거 - 웹훅 응답 시 Batch SSE로 통합)
             for pending_order in pending_orders:
-                try:
-                    # SSE 이벤트 발송 (삭제 전)
-                    strategy_account = pending_order.strategy_account
-                    if strategy_account and strategy_account.strategy:
-                        self.service.event_emitter.emit_pending_order_event(
-                            event_type='order_cancelled',
-                            pending_order=pending_order,
-                            user_id=user_id
-                        )
-                except Exception as sse_error:
-                    logger.warning(f"PendingOrder SSE 이벤트 발송 실패: {sse_error}")
-
-                # DB에서 삭제
                 db.session.delete(pending_order)
 
             # PendingOrder 삭제 커밋 (OpenOrder 취소 전에 완료)
