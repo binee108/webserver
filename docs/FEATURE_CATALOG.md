@@ -45,24 +45,34 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@TYPE:validation"
 
 ---
 
-### 2. toast-ui
-**설명**: Toast 알림 시스템 개선 - 최대 10개 제한, FIFO 제거, 배치 집계
-**태그**: `@FEAT:toast-ui`
+### 2. toast-system
+**설명**: 토스트 알림 시스템 (FIFO 큐 관리, 자동 제거, DEBUG 모드 생명주기 로깅)
+**태그**: `@FEAT:toast-system`
 **주요 파일**:
-- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 24-25, 946-964, 1089-1116)
-- `web_server/app/static/css/components.css` (Lines 1123, 1218-1223)
+- `web_server/app/static/js/toast.js` - 핵심 토스트 시스템 (@COMP:util @TYPE:core)
+- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 24-25, 946-964, 1089-1116) - 배치 토스트 통합
+- `web_server/app/static/css/components.css` (Lines 1123, 1218-1223) - 토스트 스타일
 **컴포넌트**:
-- `MAX_TOASTS = 10`, `TOAST_FADE_DURATION_MS = 300` - 설정 상수
+- `showToast(message, type, duration)` - 토스트 표시 (전역 함수)
+- `ensureToastContainer()` - 컨테이너 동적 생성
+- `removeToast()` - 슬라이드 아웃 제거
+- **DEBUG 로깅** (7개 로그 포인트): 생성 → 표시 → 제거 전체 추적
+- `MAX_TOASTS = 10`, `TOAST_FADE_DURATION_MS = 300` - FIFO 큐 설정
 - `_removeFIFOToast()` - FIFO 제거 헬퍼 (DRY)
 - `createBatchToast()` - 배치 메시지 집계
-- `.toast.fade-out` - 300ms 페이드아웃 애니메이션
-**의존성**: Phase 3 (Batch SSE) 준비 완료
-**최근 수정**: 2025-10-18 - Phase 1 완료 (Toast UI Improvement)
+**의존성**: logger.js (선택사항, no-op 폴백 제공)
+**최근 수정**: 2025-10-21 - DEBUG 모드 생명주기 로깅 추가 (7개 로그 포인트)
 **상세 문서**: `docs/features/toast-ui.md`
 **검색**:
 ```bash
-grep -r "@FEAT:toast-ui" --include="*.js" --include="*.css"
-grep -n "MAX_TOASTS\|TOAST_FADE_DURATION_MS" web_server/app/static/js/positions/realtime-openorders.js
+# 토스트 시스템 전체
+grep -r "@FEAT:toast-system" --include="*.js"
+
+# DEBUG 로깅 코드
+grep -n "logger.debug" web_server/app/static/js/toast.js
+
+# 사용 예시
+grep -n "showToast" --include="*.js" web_server/app/static/js/
 ```
 
 ---
@@ -189,23 +199,40 @@ grep -r "@FEAT:position-tracking" --include="*.py" | grep "pnl"
 ---
 
 ### 5. capital-management
-**설명**: 자본 배분, 관리, 자동 재할당 스케줄러 (하루 7회 고정 시각), 수동 UI 트리거
+**설명**: 자본 배분, 관리, 자동 재할당 스케줄러, 수동 UI 트리거, 포지션 청산 즉시 재할당
 
 **태그 구분**:
 - `@FEAT:capital-management` - 비즈니스 로직 (service, route, model, util, UI)
-- `@FEAT:capital-allocation` - 스케줄러 작업 (job 컴포넌트 전용)
+- `@FEAT:capital-reallocation` - 재할당 핵심 로직 (Phase 1 추가)
 
 **주요 파일**:
-- `services/capital_service.py` - 자본 배분 비즈니스 로직 (@FEAT:capital-management @COMP:service @TYPE:core)
+- `services/capital_service.py` - 자본 배분 비즈니스 로직, 이중 임계값 체크, 캐싱 (@FEAT:capital-management @COMP:service @TYPE:core)
 - `services/trading/quantity_calculator.py` - 주문 수량 계산 (@FEAT:capital-management @COMP:service @TYPE:core)
+- `services/trading/position_manager.py` (Lines 843-868) - 포지션 청산 후 재할당 트리거 (@FEAT:capital-reallocation @COMP:service @TYPE:integration)
 - `routes/capital.py` - 자본 API (@FEAT:capital-management @COMP:route @TYPE:core)
-- `app/__init__.py` (Lines 636-654) - 자동 재할당 스케줄러 7개 job (@FEAT:capital-allocation @COMP:job @TYPE:core)
-- `templates/accounts.html` (Lines 140-145) - 수동 재할당 버튼 UI
-- `app/static/js/accounts.js` (Lines 301-341, 497) - 수동 재할당 핸들러 (@FEAT:capital-management @COMP:route @TYPE:core)
-**스케줄러 시각**: 01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37 (포지션 청산 완료 + 최소 1시간 경과 시 실행)
-**의존성**: `position-tracking`, `strategy-management`
+- `models.py` (Lines 104-105) - Account 재할당 필드 (@FEAT:capital-management @COMP:model @TYPE:core)
+- `migrations/20251021_add_rebalance_fields_to_account.py` - DB 스키마 (@FEAT:capital-reallocation @COMP:migration @TYPE:core)
+- `app/__init__.py` (Lines 636-654) - 자동 재할당 스케줄러 (@FEAT:capital-management @COMP:job @TYPE:core)
+- `templates/accounts.html`, `app/static/js/accounts.js` - 수동 UI 트리거
+
+**재할당 트리거 (Phase 1 업데이트)**:
+1. 백그라운드 스케줄러 - 하루 7회 정기적 시도 (01:17, 04:52, 08:37, 12:22, 16:07, 19:52, 23:37)
+2. 포지션 청산 시 즉시 - `should_rebalance()` 조건 체크 후 실행 (NEW)
+
+**재할당 조건 (Phase 1 업데이트)**:
+- 이전: 시간 기반 (최소 1시간 경과)
+- 현재: 잔고 변화 기반 (이중 임계값)
+  - 절대값: 최소 10 USDT 변화
+  - 비율: 최소 0.1% 변화
+  - 양쪽 모두 충족 시 재할당
+
+**캐싱 (거래소 API 호출 70% 감소)**:
+- TTL: 5분 (300초)
+- 무효화: 재할당 완료 시 `invalidate_cache(account_id)` 호출
+
+**의존성**: `position-tracking`, `strategy-management`, `account-service`
 **상세 문서**: `docs/features/capital-management.md`
-**최근 수정**: 2025-10-21 - Phase 2.4 수동 UI 문서화 완료
+**최근 수정**: 2025-10-21 - Phase 1 문서화 완료 (이중 임계값, 트랜잭션 분리, 캐싱, 포지션 청산 트리거)
 **검색**:
 ```bash
 # 모든 capital 관련 코드 (비즈니스 로직 + 스케줄러)
@@ -554,5 +581,5 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 ---
 
 *Last Updated: 2025-10-21*
-*Recent Changes: Phase 2.4 (Manual Reallocation UI) - Frontend button, toast messaging, condition documentation*
+*Recent Changes: toast-system DEBUG logging (7 log points) - Full lifecycle tracking for debugging toast issues*
 

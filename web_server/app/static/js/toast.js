@@ -1,21 +1,81 @@
 'use strict';
 
 /**
- * 통합 토스트 알림 시스템
- * 모든 페이지에서 일관된 토스트 메시지 표시
+ * Toast Notification System with Debug Logging
+ *
+ * @FEAT:toast-system @COMP:util @TYPE:core
+ *
+ * Features:
+ * - Toast creation and display with animations
+ * - FIFO queue management (MAX_TOASTS = 10)
+ * - Auto-removal with configurable duration
+ * - DEBUG mode lifecycle logging (7 log points)
+ *
+ * Debug Logging:
+ * - Tracks full toast lifecycle: creation → display → removal
+ * - Logs container management, toast counts, performance metrics
+ * - DEBUG mode only (zero production impact)
+ * - Enable: ?debug=true URL parameter or enableDebugMode() in console
+ *
+ * Log Points:
+ * 1-3: Container management (creation/existence checks)
+ * 4-5: Toast display (trigger, completion with elapsed time)
+ * 6-7: Toast removal (start, completion with remaining count)
+ *
+ * Dependencies:
+ * - logger.js (optional): Structured logging with DEBUG mode
+ * - Fallback: No-op functions if logger.js not loaded
+ *
+ * @see docs/FEATURE_CATALOG.md for complete feature documentation
  */
 (function (window) {
+    // Logger 참조 (logger.js 미로드 시 no-op 폴백으로 프로덕션 안전 보장)
+    const logger = window.logger || {
+        debug: () => {},  // DEBUG 전용 - 조용히 무시
+        info: console.info.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console)
+    };
+
+    /**
+     * Ensures toast container exists in DOM
+     * Creates container dynamically if not found
+     *
+     * @returns {HTMLElement} Toast container element
+     * @debug Logs container creation/existence status
+     */
     function ensureToastContainer() {
         let container = document.getElementById('toast-container');
         if (!container) {
+            logger.debug('Toast', 'Container not found, creating dynamically');
             container = document.createElement('div');
             container.id = 'toast-container';
             document.body.appendChild(container);
+            logger.debug('Toast', 'Container created', { id: container.id });
+        } else {
+            logger.debug('Toast', 'Container already exists');
         }
         return container;
     }
 
+    /**
+     * Displays a toast notification with optional auto-removal
+     *
+     * @param {string} message - Toast message content (truncated to 100 chars in logs)
+     * @param {string} type - Toast type: 'success', 'info', 'warning', 'error'
+     * @param {number} duration - Auto-removal delay in ms (0 = no auto-removal)
+     * @debug Logs toast trigger, display completion, elapsed time, current count
+     */
     function showToast(message, type = 'info', duration = 5000) {
+        const startTime = performance.now();  // 토스트 생성 소요시간 측정용
+        const truncatedMsg = message.length > 100 ? message.substring(0, 100) + '...' : message;  // 로그 가독성
+
+        logger.debug('Toast', 'Toast triggered', {
+            type,
+            duration,
+            message: truncatedMsg
+        });
+
         const toastContainer = ensureToastContainer();
 
         const toast = document.createElement('div');
@@ -32,12 +92,21 @@
         `;
 
         const closeButton = toast.querySelector('.toast-close');
+        /**
+         * Removes toast with slide-out animation
+         * Called by close button click or auto-removal timeout
+         *
+         * @debug Logs removal start and completion with remaining toast count
+         */
         const removeToast = () => {
+            logger.debug('Toast', 'Removing toast', { type });
             toast.classList.remove('slide-in');
             toast.classList.add('slide-out');
             setTimeout(() => {
                 if (toast.parentNode) {
+                    const remainingCount = toastContainer.children.length - 1;  // 제거 후 예상 개수
                     toast.remove();
+                    logger.debug('Toast', 'Toast removed', { type, remaining: remainingCount });
                 }
             }, 300);
         };
@@ -49,9 +118,47 @@
             setTimeout(removeToast, duration);
         }
 
+        const currentCount = toastContainer.children.length;
+        const elapsed = (performance.now() - startTime).toFixed(2);
+
+        logger.debug('Toast', 'Toast displayed', {
+            type,
+            count: currentCount,
+            elapsed: `${elapsed}ms`
+        });
+
         return toast;
     }
 
     // 전역으로 노출
     window.showToast = showToast;
 })(window);
+
+/**
+ * Usage Examples:
+ *
+ * Basic Usage:
+ *   showToast('작업 완료', 'success', 3000);
+ *   showToast('오류 발생', 'error', 5000);
+ *
+ * Debug Mode:
+ *   // URL 파라미터로 활성화
+ *   https://example.com/page?debug=true
+ *
+ *   // 콘솔에서 활성화
+ *   enableDebugMode();
+ *   showToast('Test', 'info', 2000);
+ *   // 예상 로그:
+ *   // 🔍 Toast Toast triggered { type: 'info', duration: 2000, message: 'Test' }
+ *   // 🔍 Toast Toast displayed { type: 'info', count: 1, elapsed: '1.23ms' }
+ *   // ... (2초 후)
+ *   // 🔍 Toast Removing toast { type: 'info' }
+ *   // 🔍 Toast Toast removed { type: 'info', remaining: 0 }
+ *
+ *   // 디버그 모드 비활성화
+ *   disableDebugMode();
+ *
+ * No Logger Fallback:
+ *   // logger.js 미로드 시에도 에러 없이 작동
+ *   // debug 로그만 무시되고 info/warn/error는 console 사용
+ */
