@@ -14,6 +14,7 @@ from app import db
 from app.models import Strategy, Account, StrategyAccount, StrategyCapital
 from app.services.analytics import analytics_service
 from app.constants import MarketType
+from app.exchanges.metadata import ExchangeMetadata, MarketType as ExchangeMarketType
 from flask import current_app
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,34 @@ class StrategyService:
             self._validate_strategy_data({'is_active': data['is_active']})
         if 'is_public' in data:
             self._validate_strategy_data({'is_public': data['is_public']})
+
+    # @FEAT:strategy-management @COMP:validation @TYPE:validation
+    def _validate_market_type_support(self, strategy: Strategy, account: Account) -> None:
+        """전략의 market_type과 계좌 거래소의 지원 여부 검증
+
+        Args:
+            strategy: 검증 대상 전략
+            account: 검증 대상 계좌
+
+        Raises:
+            StrategyError: 거래소가 전략의 market_type을 지원하지 않는 경우
+
+        Notes:
+            - PERPETUAL(무기한 선물)도 FUTURES로 취급 (Bybit 등)
+            - ExchangeMetadata를 단일 소스로 사용
+        """
+        if strategy.market_type == MarketType.FUTURES:
+            exchange_name = account.exchange.lower()
+            supports_futures = (
+                ExchangeMetadata.supports_market_type(exchange_name, ExchangeMarketType.FUTURES) or
+                ExchangeMetadata.supports_market_type(exchange_name, ExchangeMarketType.PERPETUAL)
+            )
+
+            if not supports_futures:
+                raise StrategyError(
+                    f'이 거래소({account.exchange})는 선물(FUTURES) 거래를 지원하지 않습니다.\n'
+                    f'지원 거래소: Binance, Bybit'
+                )
 
     # @FEAT:strategy-management @COMP:service @TYPE:core
     def get_strategies_by_user(self, user_id: int) -> List[Dict[str, Any]]:
@@ -562,6 +591,9 @@ class StrategyService:
                 if existing_connection:
                     raise StrategyError("이미 연결된 계좌입니다.")
 
+                # market_type 지원 여부 검증
+                self._validate_market_type_support(strategy, account)
+
                 strategy_account = StrategyAccount(
                     strategy_id=strategy.id,
                     account_id=account.id,
@@ -619,6 +651,9 @@ class StrategyService:
 
             if existing_connection:
                 raise StrategyError('이미 연결된 계좌입니다.')
+
+            # market_type 지원 여부 검증
+            self._validate_market_type_support(strategy, account)
 
             strategy_account = StrategyAccount(
                 strategy_id=strategy.id,
