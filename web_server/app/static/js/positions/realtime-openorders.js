@@ -1206,20 +1206,30 @@ class RealtimeOpenOrdersManager {
                 return null;
             }
 
-            return `${summary.order_type} 주문 ${parts.join(', ')}`;
+            // Determine toast type based on action
+            const toastType = summary.cancelled > 0 ? 'warning' : 'info';
+
+            return {
+                orderType: summary.order_type,
+                message: `${summary.order_type} 주문 ${parts.join(', ')}`,
+                type: toastType
+            };
         }).filter(msg => msg !== null);
 
         if (messages.length > 0) {
-            this._removeFIFOToast();
+            // Show separate toast for each order type
+            messages.forEach(({ orderType, message, type }) => {
+                this._removeFIFOToast();
 
-            const finalMessage = `📦 ${messages.join(' | ')}`;
-            // ADD LOG 2: Before window.showToast() call
-            this.logger.debug('Toast-Batch', 'Batch toast created', {
-                message: finalMessage.substring(0, 100),
-                aggregatedCount: messages.length
+                // ADD LOG 2: Before window.showToast() call
+                this.logger.debug('Toast-Batch', 'Individual toast created', {
+                    orderType: orderType,
+                    message: message,
+                    toastType: type
+                });
+
+                window.showToast(`📦 ${message}`, type, 3000);
             });
-
-            window.showToast(finalMessage, 'info', 3000);
         }
     }
 

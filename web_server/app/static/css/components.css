@@ -1125,7 +1125,7 @@
        This matches user expectation (newest = most visible). CSS handles rendering order.
        Browser support: Chrome 29+, Firefox 20+, Safari 9+, Edge 12+ (100% coverage). */
     gap: 0.5rem;  /* Spacing between toasts - optimized for 10-toast max queue */
-    max-width: 400px;
+    max-width: 500px;  /* Increased from 400px for batch order messages */
     pointer-events: none;
 }
 
@@ -1140,6 +1140,9 @@
     pointer-events: auto;
     transform: translateX(0);
     opacity: 1;
+    word-wrap: break-word;  /* Wrap long words to prevent overflow */
+    overflow-wrap: break-word;  /* Modern property for word wrapping */
+    line-height: 1.5;  /* Improved readability for multiline messages */
 }
 
 .toast.slide-in {

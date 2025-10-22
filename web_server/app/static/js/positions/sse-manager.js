@@ -201,6 +201,7 @@ class SSEManager {
         const eventTypes = [
             'position_update',
             'order_update',
+            'order_batch_update',  // Batch order SSE (Phase 3)
             'heartbeat',
             'connection',
             'error',

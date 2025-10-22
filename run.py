@@ -693,9 +693,9 @@ class TradingSystemManager:
             return False
         
         try:
-            # 기존 컨테이너 정리
+            # 기존 컨테이너 정리 (orphan 컨테이너 포함)
             self.print_status("기존 컨테이너 정리 중...", "info")
-            self.run_command(self.compose_cmd + ['down'], cwd=self.root_dir)
+            self.run_command(self.compose_cmd + ['down', '--remove-orphans'], cwd=self.root_dir)
             
             # SSL 인증서 생성/확인
             if not self.generate_ssl_certificates():
@@ -804,7 +804,8 @@ class TradingSystemManager:
         """시스템 재시작"""
         self.print_status("시스템 재시작 중...", "info")
         self.stop_system()
-        time.sleep(2)
+        # Docker 컨테이너가 완전히 정리될 때까지 충분히 대기
+        time.sleep(5)
         return self.start_system()
     
     def show_logs(self, follow=False):
