@@ -1,5 +1,10 @@
 
-"""Order management logic extracted from the legacy trading service."""
+"""
+Order management logic extracted from the legacy trading service.
+
+@FEAT:pending-order-cancel @COMP:service @TYPE:core
+Phase X: Step 5 (Documentation) - PendingOrder 취소 기능 문서화
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,12 @@ from app.services.exchange import exchange_service
 from app.constants import OrderType
 
 logger = logging.getLogger(__name__)
+
+# @FEAT:pending-order-cancel @COMP:util @TYPE:config
+# PendingOrder ID 접두사: 대기 주문과 체결 주문을 구분하는 규칙
+# 규칙: 'p_' + PendingOrder.id (예: "p_42")
+# 용도: cancel_order_by_user()에서 order_id 타입 라우팅 (line 175)
+PENDING_ORDER_PREFIX = 'p_'
 
 
 class OrderManager:
@@ -141,49 +152,193 @@ class OrderManager:
             }
 
     def cancel_order_by_user(self, order_id: str, user_id: int) -> Dict[str, Any]:
-        """사용자 권한 기준 주문 취소"""
+        """사용자 권한 기준 주문 취소 (OpenOrder + PendingOrder 통합 처리)
+
+        @FEAT:pending-order-cancel @COMP:service @TYPE:core
+
+        order_id 접두사 기반 라우팅:
+        - 'p_': PendingOrder 삭제 (DB 삭제 + Order List SSE 발송, Toast SSE 미발송)
+        - 기타: OpenOrder 취소 (거래소 API + Order List SSE 발송)
+
+        Args:
+            order_id: 주문 ID ("p_42" or "1234567890")
+            user_id: 사용자 ID (권한 검증용)
+
+        Returns:
+            Dict[str, Any]: {
+                'success': bool,
+                'error': str,  # 실패 시
+                'symbol': str,  # 성공 시
+                'source': str   # 'pending_order' or 'open_order'
+            }
+        """
         try:
             from app.constants import OrderStatus
+            from app.models import PendingOrder
 
-            # 주문 조회 및 사용자 권한 확인
-            open_order = (
-                OpenOrder.query
-                .join(StrategyAccount)
-                .join(Account)
-                .options(
-                    joinedload(OpenOrder.strategy_account)
-                    .joinedload(StrategyAccount.account)
-                )
-                .filter(
-                    OpenOrder.exchange_order_id == order_id,
-                    Account.user_id == user_id,
-                    Account.is_active == True,
-                    OpenOrder.status.in_(OrderStatus.get_open_statuses())
-                )
-                .first()
-            )
+            # ============================================================
+            # Phase 1: order_id 접두사 기반 라우팅
+            # ============================================================
+            if order_id.startswith(PENDING_ORDER_PREFIX):
+                # PendingOrder 취소 경로
+                logger.info(f"📋 PendingOrder 취소 요청: order_id={order_id}, user_id={user_id}")
 
-            if not open_order:
+                # ID 추출 (p_42 → 42)
+                try:
+                    pending_id = int(order_id[len(PENDING_ORDER_PREFIX):])
+                except (ValueError, IndexError):
+                    return {
+                        'success': False,
+                        'error': '잘못된 PendingOrder ID 형식입니다.',
+                        'error_type': 'invalid_id'
+                    }
+
+                # PendingOrder 조회 및 권한 검증
+                pending_order = (
+                    PendingOrder.query
+                    .join(StrategyAccount)
+                    .join(Account)
+                    .options(
+                        joinedload(PendingOrder.strategy_account)
+                        .joinedload(StrategyAccount.account),
+                        joinedload(PendingOrder.strategy_account)
+                        .joinedload(StrategyAccount.strategy)
+                    )
+                    .filter(
+                        PendingOrder.id == pending_id,
+                        Account.user_id == user_id,
+                        Account.is_active == True
+                    )
+                    .first()
+                )
+
+                if not pending_order:
+                    # 폴백: 거래소에서 받은 주문 ID가 'p_'로 시작하는 경우 대비
+                    # (미테스트 엣지 케이스) 자세히: CLAUDE.md 계획서 Risk Assessment Line 328
+                    logger.debug(f"PendingOrder 없음 → OpenOrder 폴백 시도: {order_id}")
+
+                    open_order = (
+                        OpenOrder.query
+                        .join(StrategyAccount)
+                        .join(Account)
+                        .options(
+                            joinedload(OpenOrder.strategy_account)
+                            .joinedload(StrategyAccount.account)
+                        )
+                        .filter(
+                            OpenOrder.exchange_order_id == order_id,
+                            Account.user_id == user_id,
+                            Account.is_active == True,
+                            OpenOrder.status.in_(OrderStatus.get_open_statuses())
+                        )
+                        .first()
+                    )
+
+                    if open_order:
+                        # OpenOrder로 처리 (기존 로직 재사용)
+                        logger.debug(f"OpenOrder 폴백 성공: {order_id}")
+                        result = self.service.cancel_order(
+                            order_id=order_id,
+                            symbol=open_order.symbol,
+                            account_id=open_order.strategy_account.account.id
+                        )
+
+                        if result['success']:
+                            result['symbol'] = open_order.symbol
+                            result['source'] = 'open_order'
+
+                        return result
+
+                    # 진짜 없는 경우에만 에러 반환
+                    return {
+                        'success': False,
+                        'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
+                        'error_type': 'permission_error'
+                    }
+
+                # PendingOrder 정보 추출 (삭제 전)
+                symbol = pending_order.symbol
+                strategy_id = (
+                    pending_order.strategy_account.strategy.id
+                    if pending_order.strategy_account and pending_order.strategy_account.strategy
+                    else None
+                )
+
+                # 📡 Order List SSE 발송 (삭제 전, Toast SSE는 미발송)
+                # @FEAT:pending-order-sse @COMP:service @TYPE:core
+                if self.service and hasattr(self.service, 'event_emitter') and strategy_id:
+                    try:
+                        self.service.event_emitter.emit_pending_order_event(
+                            event_type='order_cancelled',
+                            pending_order=pending_order,
+                            user_id=user_id
+                        )
+                        logger.debug(
+                            f"📡 [SSE] PendingOrder 취소 → Order List 업데이트: "
+                            f"ID={pending_id}, user_id={user_id}, symbol={symbol}"
+                        )
+                    except Exception as sse_error:
+                        logger.warning(
+                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                            f"ID={pending_id}, error={sse_error}"
+                        )
+
+                # DB에서 삭제
+                db.session.delete(pending_order)
+                db.session.commit()
+
+                logger.info(f"✅ PendingOrder 취소 완료: ID={pending_id}, symbol={symbol}")
+
                 return {
-                    'success': False,
-                    'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
-                    'error_type': 'permission_error'
+                    'success': True,
+                    'symbol': symbol,
+                    'source': 'pending_order'
                 }
 
-            # 기존 cancel_order 메서드를 재사용
-            result = self.service.cancel_order(
-                order_id=order_id,
-                symbol=open_order.symbol,
-                account_id=open_order.strategy_account.account.id
-            )
+            else:
+                # OpenOrder 취소 경로 (기존 로직 유지)
+                logger.info(f"📋 OpenOrder 취소 요청: order_id={order_id}, user_id={user_id}")
 
-            if result['success']:
-                result['symbol'] = open_order.symbol
+                open_order = (
+                    OpenOrder.query
+                    .join(StrategyAccount)
+                    .join(Account)
+                    .options(
+                        joinedload(OpenOrder.strategy_account)
+                        .joinedload(StrategyAccount.account)
+                    )
+                    .filter(
+                        OpenOrder.exchange_order_id == order_id,
+                        Account.user_id == user_id,
+                        Account.is_active == True,
+                        OpenOrder.status.in_(OrderStatus.get_open_statuses())
+                    )
+                    .first()
+                )
 
-            return result
+                if not open_order:
+                    return {
+                        'success': False,
+                        'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
+                        'error_type': 'permission_error'
+                    }
+
+                # 기존 cancel_order 메서드 재사용
+                result = self.service.cancel_order(
+                    order_id=order_id,
+                    symbol=open_order.symbol,
+                    account_id=open_order.strategy_account.account.id
+                )
+
+                if result['success']:
+                    result['symbol'] = open_order.symbol
+                    result['source'] = 'open_order'
+
+                return result
 
         except Exception as e:
-            logger.error(f"사용자 주문 취소 실패: {e}")
+            db.session.rollback()
+            logger.error(f"주문 취소 실패: order_id={order_id}, user_id={user_id}, error={e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -810,6 +965,19 @@ class OrderManager:
 
         실행 주기: 29초마다
         """
+        # @FEAT:order-tracking @COMP:validation @TYPE:core
+        # Phase 3 Critical Fix: @ISSUE #3 - Flask App Context 검증 (APScheduler 스레드에서 실행되므로 context 필수)
+        from flask import has_app_context
+        if not has_app_context():
+            logger.error(
+                "❌ Flask app context 없음: update_open_orders_status는 "
+                "update_open_orders_with_context()를 통해 호출해야 합니다."
+            )
+            raise RuntimeError(
+                "update_open_orders_status requires Flask app context. "
+                "Call update_open_orders_with_context() instead."
+            )
+
         from app.constants import OrderStatus
         from datetime import datetime
 
@@ -920,6 +1088,21 @@ class OrderManager:
                                 )
                                 total_failed += 1
 
+                        # @FEAT:order-tracking @COMP:job @TYPE:core
+                        # Phase 3 Critical Fix: @ISSUE #1-A - 폴백 처리 결과 커밋 (개별 쿼리 실패 시에도 상태 변경 반영)
+                        try:
+                            db.session.commit()
+                            logger.info(
+                                f"✅ 폴백 처리 완료: account={account.name}, "
+                                f"처리={len(db_orders)}"
+                            )
+                        except Exception as commit_error:
+                            db.session.rollback()
+                            logger.error(
+                                f"❌ 폴백 커밋 실패: account={account.name}, "
+                                f"error={commit_error}"
+                            )
+
                         continue  # 다음 계좌로
 
                     # Step 3-4: 거래소 응답을 맵으로 변환 (빠른 조회)
@@ -985,7 +1168,9 @@ class OrderManager:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
 
-                                # ✅ Phase 2: 체결 처리 추가 (FILLED/PARTIALLY_FILLED)
+                                # @FEAT:order-tracking @COMP:job @TYPE:core
+                                # Phase 2: 체결 처리 추가 (FILLED/PARTIALLY_FILLED)
+                                fill_processed_successfully = True
                                 if status in ['FILLED', 'PARTIALLY_FILLED']:
                                     fill_summary = self._process_scheduler_fill(
                                         locked_order, exchange_order, account
@@ -997,6 +1182,19 @@ class OrderManager:
                                             f"order_id={locked_order.exchange_order_id}, "
                                             f"Trade ID: {fill_summary.get('trade_id')}"
                                         )
+                                    else:
+                                        # Phase 3 Critical Fix: @ISSUE #2 - 체결 처리 실패 시 주문 유지 (거래소 상태 신뢰, DB 저장 실패 시 29초 후 재시도)
+                                        fill_processed_successfully = False
+                                        logger.error(
+                                            f"❌ 체결 처리 실패로 주문 유지: "
+                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"재시도 예정 (29초 후)"
+                                        )
+                                        # 플래그 해제하여 다음 주기에 재시도 가능하도록
+                                        locked_order.is_processing = False
+                                        locked_order.processing_started_at = None
+                                        total_failed += 1
+                                        continue  # 주문 삭제 건너뛰기
 
                                 # OpenOrder 업데이트/삭제 처리
                                 if status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
@@ -1196,6 +1394,25 @@ class OrderManager:
 
         except Exception as e:
             db.session.rollback()
+
+            # @FEAT:order-tracking @COMP:job @TYPE:validation
+            # Phase 3 Critical Fix: @ISSUE #1-B - 예외 발생 시 플래그 해제 (DeadlockDetected 등 예외 시 잠금 복구)
+            try:
+                # locked_order가 존재하고 잠금 상태인 경우만 해제
+                if locked_order and locked_order.is_processing:
+                    locked_order.is_processing = False
+                    locked_order.processing_started_at = None
+                    db.session.commit()
+                    logger.debug(
+                        f"🔓 플래그 해제 완료 (예외 복구): "
+                        f"order_id={locked_order.exchange_order_id}"
+                    )
+            except Exception as flag_error:
+                db.session.rollback()
+                logger.warning(
+                    f"⚠️ 플래그 해제 실패: {flag_error}"
+                )
+
             logger.error(f"❌ 개별 주문 처리 실패: {e}")
             return 'failed'
 
