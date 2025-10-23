@@ -404,10 +404,11 @@ python run.py restart
 
 ---
 
-## 로그 조회 기능
+## 로그 조회 기능 (UI + API)
 
 ### 개요
-Admin 페이지에서 백그라운드 작업별 로그를 실시간으로 조회할 수 있습니다.
+Admin 페이지(system.html)에서 백그라운드 작업별 로그를 실시간으로 조회할 수 있는 Expandable Row 패턴의 UI입니다.
+작업 행 클릭 시 로그 패널이 펼쳐지며, 레벨/검색/Limit 필터를 제공합니다.
 
 ### API 엔드포인트
 **경로**: `GET /admin/system/background-jobs/<job_id>/logs`
@@ -438,26 +439,69 @@ Admin 페이지에서 백그라운드 작업별 로그를 실시간으로 조회
 }
 ```
 
-### 보안 고려사항
+### UI 컴포넌트
+
+#### Expandable Row 패턴
+- **작업 행 클릭**: 로그 패널 토글 (자동 로드)
+- **활성 상태 추적**: `currentOpenLogRow` 변수로 동시에 1개만 열림
+- **로딩 상태**: 스핀 애니메이션 표시
+
+#### 필터 컨트롤
+- **레벨 필터**: 전체, DEBUG(🔍), INFO(ℹ️), WARNING(⚠️), ERROR(🔴)
+- **텍스트 검색**: 로그 메시지 검색 (500ms 디바운스)
+- **Limit 선택**: 50, 100, 200, 500줄
+- **새로고침 버튼**: 수동 갱신
+
+#### 로그 표시
+```
+[2025-10-23 14:08:29] 🔴 ERROR 주문 실행 실패  queue_rebalancer.py:123
+```
+- 타임스탬프 (회색)
+- 레벨 + 아이콘 (색상 배지)
+- 메시지 (텍스트 색상)
+- 파일명:라인 (회색)
+
+#### 접근성 기능
+- **색맹 지원**: 레벨별 아이콘 (🔴, ⚠️, ℹ️, 🔍) + 색상 이중 인코딩
+- **키보드 네비게이션**: Tab 키로 작업 선택, Enter로 로그 패널 토글
+- **화면 낭독**: 모든 컨트롤에 명확한 텍스트 라벨
+
+### 구현 파일
+
+**백엔드**:
+- **파일**: `app/routes/admin.py` (Lines 1372-1577)
+- **태그**: `@FEAT:background-job-logs @COMP:route @TYPE:core`
+- **기능**:
+  1. Job ID 화이트리스트 검증
+  2. 로그 파일 접근 권한 검증
+  3. Non-greedy 정규식으로 정확한 로그 파싱
+  4. 레벨/검색 필터링
+  5. Fallback 로직 (파싱 실패 시 원본 라인 반환)
+
+**프론트엔드**:
+- **파일**: `app/templates/admin/system.html` (Lines 813-1051)
+- **태그**: `@FEAT:background-job-logs @COMP:ui @TYPE:core`
+- **함수** (JSDoc 완비):
+  1. `toggleJobLogs(jobId)` - 로그 패널 토글 + 자동 로드
+  2. `loadJobLogs(jobId, level, search, limit)` - API 호출
+  3. `renderLogs(jobId, logs, total, filtered)` - 로그 렌더링
+  4. `refreshJobLogs(jobId)` - 수동 새로고침
+  5. `escapeHtml(text)` - XSS 방어 (HTML 이스케이프)
+
+### 보안
+
 - **인증**: 관리자 권한 검증 필수
 - **Path Traversal 방어**: 절대 경로 검증, APScheduler job 목록 화이트리스트 사용
 - **액세스 제한**: 허용된 로그 디렉토리 내만 접근 가능
+- **XSS 방어**: `escapeHtml()` 모든 출력에 적용 (DOM textContent 사용)
 
 ### 성능 최적화
+
 - **Tail 방식**: 최근 200KB만 읽기 (전체 파일 읽기 방지)
 - **Limit 제한**: 최대 500줄로 응답 크기 제한
 - **Non-greedy 정규식**: 빠른 로그 파싱
-
-### 구현 파일
-**파일**: `app/routes/admin.py` (Lines 1372-1577)
-**태그**: `@FEAT:background-job-logs @COMP:route @TYPE:core`
-
-**기능**:
-1. Job ID 화이트리스트 검증
-2. 로그 파일 접근 권한 검증
-3. Non-greedy 정규식으로 정확한 로그 파싱
-4. 레벨/검색 필터링
-5. Fallback 로직 (파싱 실패 시 원본 라인 반환)
+- **디바운스**: 검색 입력 500ms 지연 (API 호출 최소화)
+- **이벤트 위임**: change/input 이벤트로 일괄 처리
 
 ---
 

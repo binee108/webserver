@@ -178,7 +178,12 @@
                     </thead>
                     <tbody>
                         {% for job in jobs %}
-                        <tr>
+                        <!-- 작업 행 (클릭 가능) @FEAT:background-scheduler @COMP:ui -->
+                        <tr onclick="toggleJobLogs('{{ job.id }}')"
+                            class="cursor-pointer hover:bg-secondary transition-colors"
+                            role="button"
+                            tabindex="0"
+                            onkeypress="if(event.key==='Enter') toggleJobLogs('{{ job.id }}')">
                             <td>
                                 <div class="flex items-center">
                                     <div class="flex-shrink-0 h-10 w-10">
@@ -211,6 +216,79 @@
                             </td>
                             <td class="text-sm text-muted">
                                 <code class="bg-secondary px-2 py-1 rounded text-xs">{{ job.func_name }}</code>
+                            </td>
+                        </tr>
+
+                        <!-- 로그 패널 행 (초기에는 숨김) -->
+                        <tr id="logs-row-{{ job.id }}" class="hidden">
+                            <td colspan="4" class="p-0">
+                                <div class="bg-secondary border-t border-color">
+                                    <!-- 로그 패널 컴포넌트 -->
+                                    <div class="p-6 space-y-4">
+                                        <!-- 패널 헤더 -->
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center">
+                                                <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                                                </svg>
+                                                <h3 class="text-lg font-semibold text-primary">로그 조회: {{ job.id }}</h3>
+                                            </div>
+                                            <button onclick="event.stopPropagation(); toggleJobLogs('{{ job.id }}')"
+                                                    class="text-muted hover:text-primary"
+                                                    aria-label="로그 패널 닫기">
+                                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+
+                                        <!-- 필터 컨트롤 -->
+                                        <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+                                            <select id="log-level-{{ job.id }}"
+                                                    class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                    aria-label="로그 레벨 필터">
+                                                <option value="ALL">전체</option>
+                                                <option value="DEBUG">🔍 DEBUG</option>
+                                                <option value="INFO">ℹ️ INFO</option>
+                                                <option value="WARNING">⚠️ WARNING</option>
+                                                <option value="ERROR">🔴 ERROR</option>
+                                            </select>
+
+                                            <input type="text"
+                                                   id="log-search-{{ job.id }}"
+                                                   placeholder="검색..."
+                                                   class="form-input flex-1 text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                   aria-label="로그 검색">
+
+                                            <select id="log-limit-{{ job.id }}"
+                                                    class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                    aria-label="로그 표시 줄 수">
+                                                <option value="50">50줄</option>
+                                                <option value="100" selected>100줄</option>
+                                                <option value="200">200줄</option>
+                                                <option value="500">500줄</option>
+                                            </select>
+
+                                            <button onclick="refreshJobLogs('{{ job.id }}')"
+                                                    class="btn btn-outline btn-sm"
+                                                    aria-label="로그 새로고침">
+                                                <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                                                </svg>
+                                                새로고침
+                                            </button>
+                                        </div>
+
+                                        <!-- 로그 리스트 컨테이너 -->
+                                        <div id="log-container-{{ job.id }}"
+                                             class="bg-primary rounded-lg p-4 font-mono text-sm max-h-96 overflow-y-auto border border-color"
+                                             role="log"
+                                             aria-label="작업 로그">
+                                            <!-- 로그 동적 삽입 -->
+                                            <div class="text-center text-muted py-4">작업을 클릭하여 로그를 조회하세요.</div>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -728,6 +806,235 @@ function toggleTokenVisibility() {
 // 페이지 로드 시 전역 텔레그램 설정 로드
 document.addEventListener('DOMContentLoaded', function() {
     loadGlobalTelegramSettings();
+});
+
+// ============================================================================
+// 백그라운드 작업 로그 조회 UI
+// @FEAT:background-job-logs @COMP:ui @TYPE:core
+// ============================================================================
+
+// 현재 열린 로그 패널 추적
+let currentOpenLogRow = null;
+
+// 검색 디바운스 타이머 저장
+let searchDebounceTimers = {};
+
+/**
+ * 작업별 로그 패널 토글 (자동 로드 통합)
+ * @param {string} jobId - 작업 ID
+ */
+function toggleJobLogs(jobId) {
+    const logRow = document.getElementById(`logs-row-${jobId}`);
+
+    // 이미 열린 패널 닫기
+    if (currentOpenLogRow && currentOpenLogRow !== logRow) {
+        currentOpenLogRow.classList.add('hidden');
+    }
+
+    // 토글
+    if (logRow.classList.contains('hidden')) {
+        logRow.classList.remove('hidden');
+        loadJobLogs(jobId);
+        currentOpenLogRow = logRow;
+    } else {
+        logRow.classList.add('hidden');
+        currentOpenLogRow = null;
+    }
+}
+
+/**
+ * 작업별 로그 조회 API 호출
+ * @param {string} jobId - 작업 ID
+ * @param {string} level - 로그 레벨 (기본: ALL)
+ * @param {string} search - 검색어 (기본: 빈 문자열)
+ * @param {number} limit - 최대 줄 수 (기본: 100)
+ */
+function loadJobLogs(jobId, level = null, search = null, limit = null) {
+    const container = document.getElementById(`log-container-${jobId}`);
+
+    // 로딩 상태
+    container.innerHTML = `
+        <div class="text-center text-muted py-4">
+            <svg class="animate-spin h-6 w-6 mx-auto mb-2 text-info" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            로그 로딩 중...
+        </div>
+    `;
+
+    // 필터 값 가져오기 (파라미터 우선, 없으면 DOM에서 읽기)
+    const levelFilter = level || document.getElementById(`log-level-${jobId}`)?.value || 'ALL';
+    const searchFilter = search !== null ? search : (document.getElementById(`log-search-${jobId}`)?.value || '');
+    const limitFilter = limit || document.getElementById(`log-limit-${jobId}`)?.value || 100;
+
+    const params = new URLSearchParams({
+        limit: limitFilter,
+        level: levelFilter,
+        search: searchFilter
+    });
+
+    fetch(`/admin/system/background-jobs/${jobId}/logs?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderLogs(jobId, data.logs, data.total, data.filtered);
+            } else {
+                container.innerHTML = `
+                    <div class="text-center text-error py-4">
+                        <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                        </svg>
+                        로그 조회 실패: ${escapeHtml(data.message)}
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading job logs:', error);
+            container.innerHTML = `
+                <div class="text-center text-error py-4">
+                    <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                    </svg>
+                    오류 발생: ${escapeHtml(error.message)}
+                </div>
+            `;
+        });
+}
+
+/**
+ * 로그 목록 렌더링
+ * @param {string} jobId - 작업 ID
+ * @param {Array} logs - 로그 배열
+ * @param {number} total - 전체 로그 수
+ * @param {number} filtered - 필터링된 로그 수
+ */
+function renderLogs(jobId, logs, total, filtered) {
+    const container = document.getElementById(`log-container-${jobId}`);
+
+    if (logs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-11a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path>
+                </svg>
+                로그가 없습니다.
+            </div>
+        `;
+        return;
+    }
+
+    // 로그 통계 표시
+    let statsHtml = '';
+    if (total !== filtered) {
+        statsHtml = `
+            <div class="mb-2 text-xs text-muted">
+                전체 ${total}개 중 ${filtered}개 표시
+            </div>
+        `;
+    } else {
+        statsHtml = `
+            <div class="mb-2 text-xs text-muted">
+                전체 ${total}개 로그
+            </div>
+        `;
+    }
+
+    // 로그 레벨별 색상 클래스 및 아이콘 매핑
+    const levelClasses = {
+        'INFO': 'text-info',
+        'WARNING': 'text-warning',
+        'ERROR': 'text-error',
+        'DEBUG': 'text-muted'
+    };
+
+    const levelBadges = {
+        'INFO': 'badge-info',
+        'WARNING': 'badge-warning',
+        'ERROR': 'badge-error',
+        'DEBUG': 'badge-secondary'
+    };
+
+    // 로그 레벨별 아이콘 (접근성 + 시각적 구분)
+    const levelIcons = {
+        'ERROR': '🔴',
+        'WARNING': '⚠️',
+        'INFO': 'ℹ️',
+        'DEBUG': '🔍',
+        'UNKNOWN': '❓'
+    };
+
+    const logHtml = logs.map(log => {
+        const levelClass = levelClasses[log.level] || 'text-primary';
+        const badgeClass = levelBadges[log.level] || 'badge';
+        const levelIcon = levelIcons[log.level] || '';
+
+        return `
+            <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
+                <div class="flex items-start">
+                    <span class="text-muted text-xs mr-2 flex-shrink-0">[${escapeHtml(log.timestamp)}]</span>
+                    <span class="badge ${badgeClass} mr-2 flex-shrink-0">
+                        ${levelIcon} ${escapeHtml(log.level)}
+                    </span>
+                    <span class="${levelClass} flex-1 break-words">${escapeHtml(log.message)}</span>
+                    <span class="text-xs text-muted ml-2 flex-shrink-0">${escapeHtml(log.file)}:${log.line}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = statsHtml + logHtml;
+}
+
+/**
+ * 로그 수동 새로고침
+ * @param {string} jobId - 작업 ID
+ */
+function refreshJobLogs(jobId) {
+    const level = document.getElementById(`log-level-${jobId}`)?.value;
+    const search = document.getElementById(`log-search-${jobId}`)?.value;
+    const limit = document.getElementById(`log-limit-${jobId}`)?.value;
+    loadJobLogs(jobId, level, search, limit);
+}
+
+/**
+ * XSS 방어를 위한 HTML 이스케이프
+ * @param {string} text - 이스케이프할 텍스트
+ * @returns {string} 이스케이프된 텍스트
+ */
+function escapeHtml(text) {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+// 필터 변경 시 자동 갱신 (이벤트 위임 패턴)
+document.addEventListener('change', function(e) {
+    if (e.target.id.startsWith('log-level-') || e.target.id.startsWith('log-limit-')) {
+        const jobId = e.target.id.replace(/^log-(level|limit)-/, '');
+        refreshJobLogs(jobId);
+    }
+});
+
+// 검색 입력 시 디바운스 적용 (500ms)
+document.addEventListener('input', function(e) {
+    if (e.target.id.startsWith('log-search-')) {
+        const jobId = e.target.id.replace('log-search-', '');
+
+        // 기존 타이머 클리어
+        if (searchDebounceTimers[jobId]) {
+            clearTimeout(searchDebounceTimers[jobId]);
+        }
+
+        // 새 타이머 설정
+        searchDebounceTimers[jobId] = setTimeout(() => {
+            refreshJobLogs(jobId);
+        }, 500);
+    }
 });
 </script>
 {% endblock %} 
