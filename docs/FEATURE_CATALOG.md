@@ -213,6 +213,43 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "websocket"
 
 ---
 
+### 3.0. order-tracking-resilience (Priority 2 Phase 1)
+**설명**: 계좌 격리 및 배치 처리 복원력 (Transaction Resilience)
+**패턴**: 계좌별 트랜잭션 격리, 실패 시 continue 전략으로 다른 계좌 계속 진행
+**태그**: `@FEAT:order-tracking @COMP:job @TYPE:resilience`
+**주요 파일**:
+- `services/trading/order_manager.py` - `update_open_orders()` 메서드 (Line 1255-1264)
+**의존성**: Priority 1 안전장치 (compatible, no conflict)
+**성능**: 계좌 격리로 부분 실패 허용, 전체 처리 복원력 향상
+**호환성**: Priority 1 Critical Fixes와 완전 호환 (다른 레벨의 복원력 레이어)
+**검색**:
+```bash
+# 복원력 관련 코드 전체
+grep -r "@TYPE:resilience" --include="*.py"
+
+# Priority 2 Phase 1 변경사항
+grep -r "Priority 2 Phase 1" --include="*.py"
+
+# 계좌 격리 패턴
+grep -r "계좌 격리" --include="*.py"
+```
+
+**구현 세부사항**:
+- **Line 1255-1256**: Feature Tags + Priority 2 Phase 1 설명
+- **Line 1260**: 에러 로그 메시지에 "(다음 계좌 계속 진행)" 추가
+- **Line 1264**: 명시적 `continue` 문 (계좌 루프 격리)
+
+**효과**:
+- 계좌 A 실패 → 계좌 B 계속 처리
+- 명시적 의도 표현 (암묵적 동작 → 명시적 코드)
+- 운영자 로그 가시성 향상
+
+**Phase 2 (계획 중)**:
+- Circuit Breaker 추가 예정 (거래소별 연속 실패 제한)
+- 동일한 `@TYPE:resilience` 태그로 검색 가능
+
+---
+
 ### 3.1. order-tracking-improvement
 **설명**: 주문 체결 트래킹 개선 (WebSocket 심볼 정규화, 낙관적 잠금, 배치 쿼리 20배 최적화)
 **태그**: `@FEAT:order-tracking`, `@FEAT:websocket-integration`

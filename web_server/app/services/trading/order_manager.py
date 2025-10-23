@@ -1252,13 +1252,16 @@ class OrderManager:
                         f"삭제={total_deleted}"
                     )
 
+                # @FEAT:order-tracking @COMP:job @TYPE:resilience
+                # Priority 2 Phase 1: 계좌 격리 - 배치 처리 실패 시 다른 계좌 계속 진행
                 except Exception as e:
                     db.session.rollback()
                     logger.error(
-                        f"❌ 계좌 배치 처리 실패: account_id={account_id}, error={e}",
+                        f"❌ 계좌 배치 처리 실패: account_id={account_id}, error={e} (다음 계좌 계속 진행)",
                         exc_info=True
                     )
                     total_failed += len(db_orders)
+                    continue  # 다음 계좌로 계속 진행
 
             # Step 4: 최종 보고
             logger.info(
