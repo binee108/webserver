@@ -134,7 +134,7 @@ def subscribe_strategy(strategy_id):
         )
     except StrategyError as e:
         return create_error_response(
-            error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
+            error_code=ErrorCode.INVALID_PARAMETER,
             message='공개 전략 구독 중 오류가 발생했습니다.',
             details=str(e)
         )
@@ -517,7 +517,7 @@ def connect_account_to_strategy(strategy_id):
 
     except StrategyError as e:
         return create_error_response(
-            error_code=ErrorCode.BUSINESS_LOGIC_ERROR,
+            error_code=ErrorCode.INVALID_PARAMETER,
             message='계좌 연결 중 오류가 발생했습니다.',
             details=str(e)
         )
