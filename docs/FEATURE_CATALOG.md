@@ -19,6 +19,27 @@
 
 ## Recent Updates
 
+### 2025-10-23: Background Job Logs API Completed
+**영향 범위**: `background-job-logs`
+**파일**: `app/routes/admin.py` (Lines 1372-1577)
+
+**구현 내용**: Admin 대시보드 백그라운드 작업 로그 조회 API 완성
+- **기능**: Job ID별 로그 조회, 레벨/검색 필터링, Tail 방식 읽기
+- **보안**: APScheduler job 목록 기반 화이트리스트, Path Traversal 방어
+- **성능**: 최근 200KB만 읽기, 최대 500줄 limit, Non-greedy 정규식 파싱
+- **응답**: JSON 형식 (success, logs[], total, filtered, job_id)
+
+**태그**: `@FEAT:background-job-logs @COMP:route @TYPE:core`
+
+**문서**: `docs/features/background-scheduler.md` (새로운 섹션 추가)
+
+**검색**:
+```bash
+grep -n "@FEAT:background-job-logs" web_server/app/routes/admin.py
+```
+
+---
+
 ### 2025-10-21: CANCEL_ALL_ORDER Type Mismatch Fix
 **영향 범위**: `webhook-order`
 **파일**: `app/services/trading/core.py` (Line 1222)

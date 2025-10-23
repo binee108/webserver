@@ -255,3 +255,6 @@ markettype_*.py
 # Implementation plans
 .plan/
 
+# Temporary test directory
+.test/
+

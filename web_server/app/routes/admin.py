@@ -1363,3 +1363,215 @@ def get_metrics():
             'success': False,
             'error': str(e)
         }), 500
+
+
+# ============================================
+# 백그라운드 작업 로그 조회
+# ============================================
+
+# @FEAT:background-job-logs @COMP:route @TYPE:core
+@bp.route('/system/background-jobs/<job_id>/logs', methods=['GET'])
+@login_required
+@admin_required
+def get_job_logs(job_id):
+    """
+    특정 백그라운드 작업의 로그 조회
+
+    Args:
+        job_id (str): 백그라운드 작업 ID (예: rebalance_order_queue)
+
+    Query Parameters:
+        limit (int): 최대 로그 줄 수 (기본: 100, 최대: 500)
+        level (str): 로그 레벨 필터 (ALL, INFO, WARNING, ERROR, DEBUG)
+        search (str): 텍스트 검색어 (대소문자 무시)
+
+    Returns:
+        JSON (200):
+            {
+                "success": true,
+                "logs": [
+                    {
+                        "timestamp": "2025-10-23 14:08:29",
+                        "level": "INFO",
+                        "message": "재정렬 대상 조합: 3개",
+                        "file": "queue_rebalancer.py",
+                        "line": 123
+                    }
+                ],
+                "total": 1000,
+                "filtered": 45,
+                "job_id": "rebalance_order_queue"
+            }
+
+        JSON (404):
+            { "success": false, "message": "유효하지 않은 작업 ID: xxx", "logs": [], "total": 0, "filtered": 0, "job_id": "xxx" }
+
+        JSON (403):
+            { "success": false, "message": "로그 조회 중 오류가 발생했습니다.", "logs": [], "total": 0, "filtered": 0, "job_id": "xxx" }
+
+        JSON (500):
+            { "success": false, "message": "로그 조회 중 오류가 발생했습니다.", "logs": [], "total": 0, "filtered": 0 }
+    """
+    try:
+        from flask import current_app
+        from app import scheduler
+        import os
+        import re
+
+        # Job ID 검증 (화이트리스트)
+        valid_job_ids = [job.id for job in scheduler.get_jobs()]
+        if job_id not in valid_job_ids:
+            return jsonify({
+                'success': False,
+                'message': f'유효하지 않은 작업 ID: {job_id}',
+                'logs': [],
+                'total': 0,
+                'filtered': 0,
+                'job_id': job_id
+            }), 404
+
+        # 로그 파일 경로 가져오기
+        log_path = current_app.config.get('LOG_FILE')
+        if not log_path:
+            current_app.logger.error('LOG_FILE 설정이 없습니다.')
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0,
+                'job_id': job_id
+            }), 500
+
+        # 절대 경로로 변환 및 검증
+        log_path = os.path.abspath(log_path)
+        log_dir = os.path.dirname(log_path)
+
+        # 허용된 로그 디렉토리 내에 있는지 확인 (Path Traversal 방어)
+        allowed_log_dir = os.path.abspath(os.path.join(current_app.root_path, '..', 'logs'))
+        if not log_path.startswith(allowed_log_dir):
+            current_app.logger.error(f'보안: 허용되지 않은 로그 경로 접근 시도: {log_path}')
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0,
+                'job_id': job_id
+            }), 403
+
+        # 파일 존재 확인
+        if not os.path.exists(log_path):
+            return jsonify({
+                'success': False,
+                'message': '로그 파일을 찾을 수 없습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0,
+                'job_id': job_id
+            }), 404
+
+        # 쿼리 파라미터 파싱
+        limit = min(int(request.args.get('limit', 100)), 500)
+        level = request.args.get('level', 'ALL').upper()
+        search_term = request.args.get('search', '').lower()
+
+        # 로그 파일 읽기 (tail 방식 - 최근 1000줄)
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                # 파일 크기가 크면 마지막 부분만 읽기
+                try:
+                    f.seek(0, 2)  # 파일 끝으로 이동
+                    file_size = f.tell()
+                    # 대략 평균 라인 길이 200바이트 * 1000줄 = 200KB
+                    read_size = min(file_size, 200000)
+                    f.seek(max(0, file_size - read_size))
+                    # 첫 번째 불완전한 라인 제거
+                    f.readline()
+                    lines = f.readlines()
+                except (IOError, OSError):
+                    f.seek(0)
+                    lines = f.readlines()
+        except (IOError, OSError) as e:
+            current_app.logger.error(f'로그 파일 읽기 실패: {str(e)}')
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0,
+                'job_id': job_id
+            }), 500
+
+        # 로그 파싱 정규식
+        # 실제 로그 포맷 (app/__init__.py line 169):
+        # %(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]
+        # 예시: 2025-10-23 14:08:29,055 INFO: 재정렬 완료 [in /app/queue_rebalancer.py:123]
+        log_pattern = re.compile(
+            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ (\w+): (.+?) \[in (.+?):(\d+)\]'
+            #                                                  ^^^^          ^^^^
+            #                                                  non-greedy    non-greedy
+        )
+
+        parsed_logs = []
+        total_count = 0
+
+        for line in lines:
+            total_count += 1
+
+            # 정규식 파싱
+            match = log_pattern.match(line.strip())
+            if match:
+                timestamp, log_level, message, file_path, line_num = match.groups()
+
+                # 레벨 필터
+                if level != 'ALL' and log_level != level:
+                    continue
+
+                # 검색 필터
+                if search_term and search_term not in message.lower():
+                    continue
+
+                # 파일명만 추출 (전체 경로에서)
+                file_name = os.path.basename(file_path)
+
+                parsed_logs.append({
+                    'timestamp': timestamp,
+                    'level': log_level,
+                    'message': message.strip(),
+                    'file': file_name,
+                    'line': int(line_num)
+                })
+            else:
+                # 파싱 실패 시 fallback
+                if search_term and search_term not in line.lower():
+                    continue
+
+                parsed_logs.append({
+                    'timestamp': 'N/A',
+                    'level': 'UNKNOWN',
+                    'message': line.strip(),
+                    'file': 'N/A',
+                    'line': 0
+                })
+
+        # limit 적용
+        filtered_logs = parsed_logs[-limit:]
+
+        return jsonify({
+            'success': True,
+            'logs': filtered_logs,
+            'total': total_count,
+            'filtered': len(filtered_logs),
+            'job_id': job_id
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'로그 조회 중 오류 발생: {str(e)}', exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': '로그 조회 중 오류가 발생했습니다.',
+            'logs': [],
+            'total': 0,
+            'filtered': 0
+        }), 500

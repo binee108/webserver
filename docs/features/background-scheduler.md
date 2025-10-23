@@ -404,6 +404,63 @@ python run.py restart
 
 ---
 
+## 로그 조회 기능
+
+### 개요
+Admin 페이지에서 백그라운드 작업별 로그를 실시간으로 조회할 수 있습니다.
+
+### API 엔드포인트
+**경로**: `GET /admin/system/background-jobs/<job_id>/logs`
+**인증**: 관리자 권한 필수 (`@admin_required`)
+
+**파라미터**:
+- `job_id`: 백그라운드 작업 ID (예: `rebalance_order_queue`)
+- `level`: 로그 레벨 필터 (ALL, INFO, WARNING, ERROR, DEBUG)
+- `search`: 텍스트 검색어 (대소문자 무시)
+- `limit`: 반환 개수 (기본: 100, 최대: 500)
+
+**응답 예시** (200):
+```json
+{
+  "success": true,
+  "logs": [
+    {
+      "timestamp": "2025-10-23 14:08:29",
+      "level": "INFO",
+      "message": "재정렬 완료",
+      "file": "queue_rebalancer.py",
+      "line": 123
+    }
+  ],
+  "total": 1000,
+  "filtered": 45,
+  "job_id": "rebalance_order_queue"
+}
+```
+
+### 보안 고려사항
+- **인증**: 관리자 권한 검증 필수
+- **Path Traversal 방어**: 절대 경로 검증, APScheduler job 목록 화이트리스트 사용
+- **액세스 제한**: 허용된 로그 디렉토리 내만 접근 가능
+
+### 성능 최적화
+- **Tail 방식**: 최근 200KB만 읽기 (전체 파일 읽기 방지)
+- **Limit 제한**: 최대 500줄로 응답 크기 제한
+- **Non-greedy 정규식**: 빠른 로그 파싱
+
+### 구현 파일
+**파일**: `app/routes/admin.py` (Lines 1372-1577)
+**태그**: `@FEAT:background-job-logs @COMP:route @TYPE:core`
+
+**기능**:
+1. Job ID 화이트리스트 검증
+2. 로그 파일 접근 권한 검증
+3. Non-greedy 정규식으로 정확한 로그 파싱
+4. 레벨/검색 필터링
+5. Fallback 로직 (파싱 실패 시 원본 라인 반환)
+
+---
+
 ## 관련 문서
 - [주문 큐 시스템](./order-queue-system.md)
 - [웹훅 주문 처리](./webhook-order-processing.md)
