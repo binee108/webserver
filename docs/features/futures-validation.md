@@ -152,12 +152,114 @@ def get_exchange_metadata():
 
 ---
 
-## 다음 단계
+---
 
-### Phase 2: 프론트엔드 검증 통합 (구현 예정)
+## Phase 2: 프론트엔드 검증 로직
 
-계좌 연동 폼에서 선물 미지원 거래소 차단 로직 추가 예정입니다.
-상세 구현은 Phase 2 계획 문서를 참조하세요.
+### 개요
+계좌 연동 시도 시 프론트엔드에서 선물 미지원 거래소를 조기 차단하여 사용자 경험을 개선합니다.
+
+### 구현 내용
+
+#### 전역 변수
+
+**파일**: `app/templates/strategies.html` (Line 458-471)
+
+```javascript
+// @FEAT:futures-validation @COMP:route @TYPE:validation
+// 전략 데이터를 전역 변수로 설정 (Jinja2 렌더링)
+window.strategies = [
+    {
+        id: 1,
+        name: 'test1',
+        market_type: 'SPOT',
+        is_active: true,
+        is_public: false,
+        description: ''
+    }
+    // ... 전략 목록
+];
+```
+
+**용도**: 각 전략의 `market_type` 확인 (SPOT vs FUTURES)
+
+#### 검증 로직
+
+**파일**: `app/templates/strategies.html` (Line 1247-1297)
+**함수**: `connectAccount(strategyId, accountId, event)`
+
+```javascript
+// @FEAT:futures-validation @COMP:route @TYPE:validation
+function connectAccount(strategyId, accountId, event) {
+    // 1. 메타데이터 로드 확인
+    if (!window.EXCHANGE_METADATA) {
+        // fallback: 백엔드 검증 의존
+        showConnectionForm(strategyId, accountId, 'connect');
+        return;
+    }
+
+    // 2. 전략 정보 조회
+    const strategy = window.strategies?.find(s => s.id === parseInt(strategyId));
+    if (!strategy) {
+        showToast('전략 정보를 찾을 수 없습니다', 'error');
+        return;
+    }
+
+    // 3. 계좌 거래소 정보 추출 (data-exchange 속성)
+    const accountButton = event?.target?.closest('button');
+    const accountExchange = accountButton?.dataset?.exchange;
+
+    if (!accountExchange) {
+        showConnectionForm(strategyId, accountId, 'connect');
+        return;
+    }
+
+    // 4. 선물 전략인 경우 거래소 지원 여부 검증
+    if (strategy.market_type === 'FUTURES') {
+        const exchangeMeta = window.EXCHANGE_METADATA[accountExchange.toLowerCase()];
+
+        if (exchangeMeta && !exchangeMeta.supports_futures && !exchangeMeta.supports_perpetual) {
+            // 5. 지원 거래소 목록 생성 및 에러 메시지 표시
+            const supportedExchanges = Object.entries(window.EXCHANGE_METADATA)
+                .filter(([_, meta]) => meta.supports_futures || meta.supports_perpetual)
+                .map(([name, _]) => name.charAt(0).toUpperCase() + name.slice(1))
+                .join(', ');
+
+            showToast(
+                `이 거래소(${accountExchange})는 선물 거래를 지원하지 않습니다. 지원 거래소: ${supportedExchanges}`,
+                'error'
+            );
+            return;
+        }
+    }
+
+    // 검증 통과 시 연결 폼 표시
+    showConnectionForm(strategyId, accountId, 'connect');
+}
+```
+
+### 검증 흐름
+
+```
+사용자 계좌 연동 클릭
+    ↓
+connectAccount() 함수 실행
+    ├─ 1. EXCHANGE_METADATA 확인 (null 시 fallback)
+    ├─ 2. 전략 market_type 조회 (window.strategies)
+    ├─ 3. 계좌 거래소 정보 추출 (data-exchange 속성)
+    ├─ 4. FUTURES 전략 검증
+    │   ├─ 지원 거래소 → Step 5
+    │   └─ 미지원 거래소 → 토스트 에러 + 지원 목록 표시 + 종료
+    └─ 5. 연결 폼 표시 (showConnectionForm)
+```
+
+### 사용자 경험 개선
+
+- ✅ **조기 차단**: 400 에러 발생 전 프론트엔드에서 즉시 차단
+- ✅ **명확한 피드백**: 토스트 메시지로 사용자에게 문제 설명
+- ✅ **대안 제시**: 지원 거래소 목록 함께 표시
+- ✅ **API 절감**: 불필요한 백엔드 호출 감소 (네트워크 비용 최적화)
+- ✅ **Fallback 안전성**: 메타데이터 로드 실패 시 백엔드 검증으로 우회
 
 ---
 
@@ -198,6 +300,6 @@ curl -k https://222.98.151.163/api/system/exchange-metadata
 
 ---
 
-**상태**: Phase 1 Complete (API + Frontend Load)
+**상태**: Phase 1-2 Complete (API + Validation)
 **작성일**: 2025-10-23
-**최종 업데이트**: Phase 2 구현 예정
+**최종 업데이트**: Phase 2 완료 (2025-10-23)

@@ -455,6 +455,21 @@ function getCSRFToken() {
     }
 })();
 
+// @FEAT:futures-validation @COMP:route @TYPE:validation
+// 전략 데이터를 전역 변수로 설정 (Jinja2 렌더링)
+window.strategies = [
+    {% for strategy in strategies %}
+    {
+        id: {{ strategy.id }},
+        name: '{{ strategy.name }}',
+        market_type: '{{ strategy.market_type }}',
+        is_active: {{ 'true' if strategy.is_active else 'false' }},
+        is_public: {{ 'true' if strategy.is_public else 'false' }},
+        description: '{{ strategy.description or '' }}'
+    }{{ ',' if not loop.last else '' }}
+    {% endfor %}
+];
+
 // API 응답 처리 유틸리티 함수들
 function handleApiResponse(response) {
     if (!response.ok) {
@@ -1205,7 +1220,9 @@ function renderAccountModal(strategyId, allAccounts, connectedAccounts) {
                                 설정
                             </button>
                         ` : `
-                            <button onclick="connectAccount(${strategyId}, ${account.id})" class="btn btn-primary btn-sm">
+                            <button onclick="connectAccount(${strategyId}, ${account.id}, event)"
+                                    data-exchange="${account.exchange}"
+                                    class="btn btn-primary btn-sm">
                                 <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                                 </svg>
@@ -1227,8 +1244,55 @@ function renderAccountModal(strategyId, allAccounts, connectedAccounts) {
     modalContent.innerHTML = html;
 }
 
-function connectAccount(strategyId, accountId) {
-    // 연결 설정 폼 표시
+// @FEAT:futures-validation @COMP:route @TYPE:validation
+function connectAccount(strategyId, accountId, event) {
+    // 메타데이터 로드 실패 시 백엔드 검증으로 fallback
+    if (!window.EXCHANGE_METADATA) {
+        console.warn('⚠️ Exchange metadata not loaded, validation skipped');
+        showConnectionForm(strategyId, accountId, 'connect');
+        return;
+    }
+
+    // 전략 정보 조회 (window.strategies 전역 변수 사용)
+    const strategy = window.strategies?.find(s => s.id === parseInt(strategyId));
+    if (!strategy) {
+        showToast('전략 정보를 찾을 수 없습니다', 'error');
+        return;
+    }
+
+    // 계좌 정보 조회 (allAccounts 전역 변수는 loadStrategyAccountModal에서 설정됨)
+    // 하지만 여기서는 계좌가 이미 버튼 클릭 시점에 렌더링되어 있으므로,
+    // data-exchange 속성을 사용하거나, renderAccountModal 내부에서 계좌 정보 전달
+    // 현재 구현: 계좌 정보는 상단 modal의 data 속성에서 가져오기
+    const accountButton = event?.target?.closest('button');
+    const accountExchange = accountButton?.dataset?.exchange;
+
+    if (!accountExchange) {
+        console.error('❌ 계좌 거래소 정보를 찾을 수 없습니다');
+        showConnectionForm(strategyId, accountId, 'connect');
+        return;
+    }
+
+    // 선물 전략인 경우 거래소 선물 지원 여부 확인
+    if (strategy.market_type === 'FUTURES') {
+        const exchangeMeta = window.EXCHANGE_METADATA[accountExchange.toLowerCase()];
+
+        if (exchangeMeta && !exchangeMeta.supports_futures && !exchangeMeta.supports_perpetual) {
+            // 지원 거래소 목록 생성
+            const supportedExchanges = Object.entries(window.EXCHANGE_METADATA)
+                .filter(([_, meta]) => meta.supports_futures || meta.supports_perpetual)
+                .map(([name, _]) => name.charAt(0).toUpperCase() + name.slice(1))
+                .join(', ');
+
+            showToast(
+                `이 거래소(${accountExchange})는 선물 거래를 지원하지 않습니다. 지원 거래소: ${supportedExchanges}`,
+                'error'
+            );
+            return;
+        }
+    }
+
+    // 검증 통과 시 연결 폼 표시
     showConnectionForm(strategyId, accountId, 'connect');
 }
 
