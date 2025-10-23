@@ -19,6 +19,32 @@
 
 ## Recent Updates
 
+### 2025-10-23: Frontend Futures Validation Phase 1 Complete
+**영향 범위**: `futures-validation`
+**파일**:
+- `app/routes/system.py` (Lines 306-331) - 메타데이터 API
+- `app/templates/strategies.html` (Lines 441-456) - 프론트엔드 로드
+
+**구현 내용**: 선물 거래소 검증 API + 프론트엔드 캐싱
+- **메타데이터 API**: ExchangeMetadata 기반 거래소별 선물 지원 여부 제공
+- **프론트엔드 캐싱**: 페이지 로드 시 메타데이터 1회 로드 (window.EXCHANGE_METADATA)
+- **이중 검증**: 프론트엔드 (즉시 피드백) + 백엔드 (보안)
+
+**태그**:
+- `@FEAT:futures-validation @COMP:route @TYPE:core` (API)
+- `@FEAT:futures-validation @COMP:route @TYPE:integration` (프론트엔드)
+
+**문서**: `docs/features/futures-validation.md`
+
+**검색**:
+```bash
+grep -r "@FEAT:futures-validation" --include="*.py" --include="*.html"
+```
+
+**다음 Phase**: Phase 2에서 프론트엔드 검증 로직 통합 (계좌 선택 폼 차단)
+
+---
+
 ### 2025-10-23: Circuit Breaker & Gradual Recovery (Priority 2 Phase 2) Complete
 **영향 범위**: `order-tracking`
 **파일**: `app/services/trading/order_manager.py` (Lines 1024-1310)

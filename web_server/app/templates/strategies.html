@@ -438,6 +438,23 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+// @FEAT:futures-validation @COMP:route @TYPE:integration
+// 거래소 메타데이터 로드 (페이지 로드 시 1회)
+(async function loadExchangeMetadata() {
+    try {
+        const response = await fetch('/api/system/exchange-metadata');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        window.EXCHANGE_METADATA = data.payload || data; // 하위 호환
+        console.log('✅ Exchange metadata loaded');
+    } catch (error) {
+        console.warn('⚠️ Failed to load exchange metadata, validation will be skipped:', error);
+        window.EXCHANGE_METADATA = null;
+    }
+})();
+
 // API 응답 처리 유틸리티 함수들
 function handleApiResponse(response) {
     if (!response.ok) {
