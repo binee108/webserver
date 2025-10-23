@@ -9,6 +9,7 @@ Phase X: Step 5 (Documentation) - PendingOrder 취소 기능 문서화
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
 from decimal import Decimal
@@ -1020,6 +1021,16 @@ class OrderManager:
                 f"{len(open_orders)}개 주문"
             )
 
+            # @FEAT:order-tracking @COMP:job @TYPE:resilience
+            # Priority 2 Phase 2: Circuit Breaker - 거래소별 연속 실패 제한
+            try:
+                CIRCUIT_BREAKER_THRESHOLD = max(1, int(os.getenv('CIRCUIT_BREAKER_THRESHOLD', '3')))
+            except ValueError:
+                CIRCUIT_BREAKER_THRESHOLD = 3
+                logger.warning("⚠️ Invalid CIRCUIT_BREAKER_THRESHOLD, using default: 3")
+
+            exchange_failures = defaultdict(int)  # 거래소별 실패 카운터
+
             # Step 3: 계좌별 배치 처리
             total_processed = 0
             total_updated = 0
@@ -1027,11 +1038,25 @@ class OrderManager:
             total_failed = 0
 
             for account_id, db_orders in grouped_by_account.items():
+                exchange_name = None  # 변수 스코프 안전성 (예외 핸들러용)
                 try:
                     # Step 3-1: 계좌 조회
                     account = Account.query.get(account_id)
                     if not account:
                         logger.error(f"❌ 계정을 찾을 수 없음: account_id={account_id}")
+                        total_failed += len(db_orders)
+                        continue
+
+                    exchange_name = account.exchange.upper()
+
+                    # @FEAT:order-tracking @COMP:job @TYPE:resilience
+                    # Priority 2 Phase 2: Circuit Breaker - 거래소별 연속 실패 체크
+                    if exchange_failures[exchange_name] >= CIRCUIT_BREAKER_THRESHOLD:
+                        logger.warning(
+                            f"🚫 Circuit Breaker 발동: {exchange_name} "
+                            f"(연속 실패: {exchange_failures[exchange_name]}/{CIRCUIT_BREAKER_THRESHOLD}) - "
+                            f"계좌 {account.name}의 {len(db_orders)}개 주문 건너뜀"
+                        )
                         total_failed += len(db_orders)
                         continue
 
@@ -1252,6 +1277,15 @@ class OrderManager:
                         f"삭제={total_deleted}"
                     )
 
+                    # @FEAT:order-tracking @COMP:job @TYPE:resilience
+                    # Priority 2 Phase 2: Gradual Recovery - 성공 시 카운터 감소
+                    if exchange_failures[exchange_name] > 0:
+                        old_count = exchange_failures[exchange_name]
+                        exchange_failures[exchange_name] = max(0, old_count - 1)
+                        logger.info(
+                            f"✅ {exchange_name} 복구 진행: 실패 카운터 {old_count} → {exchange_failures[exchange_name]}"
+                        )
+
                 # @FEAT:order-tracking @COMP:job @TYPE:resilience
                 # Priority 2 Phase 1: 계좌 격리 - 배치 처리 실패 시 다른 계좌 계속 진행
                 except Exception as e:
@@ -1260,6 +1294,21 @@ class OrderManager:
                         f"❌ 계좌 배치 처리 실패: account_id={account_id}, error={e} (다음 계좌 계속 진행)",
                         exc_info=True
                     )
+
+                    # Circuit Breaker: 실패 시 카운터 증가 (exchange_name이 할당된 경우만)
+                    if exchange_name:
+                        exchange_failures[exchange_name] += 1
+                        logger.warning(
+                            f"⚠️ {exchange_name} 실패 카운터 증가: "
+                            f"{exchange_failures[exchange_name] - 1} → {exchange_failures[exchange_name]} "
+                            f"(임계값: {CIRCUIT_BREAKER_THRESHOLD})"
+                        )
+                    else:
+                        logger.warning(
+                            f"⚠️ 거래소 정보 없음: account_id={account_id} - "
+                            f"Circuit Breaker 카운터 증가 불가 (계좌 조회 실패)"
+                        )
+
                     total_failed += len(db_orders)
                     continue  # 다음 계좌로 계속 진행
 

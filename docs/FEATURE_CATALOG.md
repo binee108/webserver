@@ -19,23 +19,63 @@
 
 ## Recent Updates
 
-### 2025-10-23: Background Job Logs API Completed
-**영향 범위**: `background-job-logs`
-**파일**: `app/routes/admin.py` (Lines 1372-1577)
+### 2025-10-23: Circuit Breaker & Gradual Recovery (Priority 2 Phase 2) Complete
+**영향 범위**: `order-tracking`
+**파일**: `app/services/trading/order_manager.py` (Lines 1024-1310)
 
-**구현 내용**: Admin 대시보드 백그라운드 작업 로그 조회 API 완성
-- **기능**: Job ID별 로그 조회, 레벨/검색 필터링, Tail 방식 읽기
-- **보안**: APScheduler job 목록 기반 화이트리스트, Path Traversal 방어
-- **성능**: 최근 200KB만 읽기, 최대 500줄 limit, Non-greedy 정규식 파싱
-- **응답**: JSON 형식 (success, logs[], total, filtered, job_id)
+**구현 내용**: 거래소별 연속 실패 제한 및 점진적 복구 메커니즘
+- **Circuit Breaker Pattern**: 연속 3회(기본값) 실패 시 거래소 건너뜀
+- **Gradual Recovery**: 성공 시 실패 카운터 1씩 감소 (점진적 복구)
+- **설정**: `CIRCUIT_BREAKER_THRESHOLD` 환경변수로 임계값 조정
+- **효과**: 일시적 거래소 장애 시 다른 정상 거래소 계속 처리
 
-**태그**: `@FEAT:background-job-logs @COMP:route @TYPE:core`
+**태그**: `@FEAT:order-tracking @COMP:job @TYPE:resilience`
 
-**문서**: `docs/features/background-scheduler.md` (새로운 섹션 추가)
+**문서**: `docs/features/circuit-breaker.md` (새로운 문서 작성)
+
+**로그 패턴**:
+```
+🚫 Circuit Breaker 발동: BINANCE (연속 실패: 3/3) - 계좌 snlbinee의 5개 주문 건너뜀
+⚠️ BINANCE 실패 카운터 증가: 2 → 3 (임계값: 3)
+✅ BINANCE 복구 진행: 실패 카운터 3 → 2
+```
 
 **검색**:
 ```bash
-grep -n "@FEAT:background-job-logs" web_server/app/routes/admin.py
+grep -n "Circuit Breaker\|exchange_failures\|CIRCUIT_BREAKER_THRESHOLD" \
+  web_server/app/services/trading/order_manager.py
+```
+
+---
+
+### 2025-10-23: Background Job Logs UI + API Completed (Phase 2)
+**영향 범위**: `background-job-logs`
+**파일**:
+- `app/routes/admin.py` (Lines 1372-1577) - 백엔드 API
+- `app/templates/admin/system.html` (Lines 813-1051) - 프론트엔드 UI
+
+**구현 내용**: Admin 대시보드 백그라운드 작업 로그 조회 완성 (UI + API End-to-End)
+- **백엔드 API**: Job ID별 로그 조회, 레벨/검색 필터링, Tail 방식 읽기
+  - Path Traversal 방어 (절대 경로 검증, 화이트리스트)
+  - 최근 200KB 읽기, 최대 500줄 limit
+
+- **프론트엔드 UI**: Expandable Row 패턴 (5개 JavaScript 함수)
+  - 필터 컨트롤: 레벨, 검색(500ms 디바운스), Limit, 새로고침
+  - 아이콘 지원: 🔴 ERROR, ⚠️ WARNING, ℹ️ INFO, 🔍 DEBUG
+  - XSS 방어: escapeHtml() 적용
+  - JSDoc 완비 (@param, @returns)
+
+**태그**:
+- `@FEAT:background-job-logs @COMP:route @TYPE:core` (백엔드)
+- `@FEAT:background-job-logs @COMP:ui @TYPE:core` (프론트엔드)
+
+**문서**: `docs/features/background-scheduler.md` (업데이트, 470-504줄)
+
+**검색**:
+```bash
+# UI 함수 (5개)
+grep -n "toggleJobLogs\|loadJobLogs\|renderLogs\|refreshJobLogs\|escapeHtml" \
+  web_server/app/templates/admin/system.html
 ```
 
 ---
@@ -234,14 +274,16 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "websocket"
 
 ---
 
-### 3.0. order-tracking-resilience (Priority 2 Phase 1)
-**설명**: 계좌 격리 및 배치 처리 복원력 (Transaction Resilience)
-**패턴**: 계좌별 트랜잭션 격리, 실패 시 continue 전략으로 다른 계좌 계속 진행
+### 3.0. order-tracking-resilience (Priority 2 Phase 1-2)
+**설명**: 계좌 격리 + Circuit Breaker (거래소별 연속 실패 차단)
+**패턴**: 계좌별 트랜잭션 격리 + 거래소별 연속 실패 제한
 **태그**: `@FEAT:order-tracking @COMP:job @TYPE:resilience`
 **주요 파일**:
-- `services/trading/order_manager.py` - `update_open_orders()` 메서드 (Line 1255-1264)
+- `services/trading/order_manager.py` - `update_open_orders()` 메서드 (Lines 1024-1310)
 **의존성**: Priority 1 안전장치 (compatible, no conflict)
-**성능**: 계좌 격리로 부분 실패 허용, 전체 처리 복원력 향상
+**성능**:
+- Phase 1: 계좌 격리로 부분 실패 허용
+- Phase 2: 거래소 차단으로 장애 거래소 API 호출 50~100% 감소
 **호환성**: Priority 1 Critical Fixes와 완전 호환 (다른 레벨의 복원력 레이어)
 **검색**:
 ```bash
@@ -251,23 +293,26 @@ grep -r "@TYPE:resilience" --include="*.py"
 # Priority 2 Phase 1 변경사항
 grep -r "Priority 2 Phase 1" --include="*.py"
 
+# Priority 2 Phase 2 Circuit Breaker
+grep -n "Circuit Breaker\|exchange_failures\|CIRCUIT_BREAKER_THRESHOLD" \
+  web_server/app/services/trading/order_manager.py
+
 # 계좌 격리 패턴
 grep -r "계좌 격리" --include="*.py"
 ```
 
-**구현 세부사항**:
-- **Line 1255-1256**: Feature Tags + Priority 2 Phase 1 설명
-- **Line 1260**: 에러 로그 메시지에 "(다음 계좌 계속 진행)" 추가
-- **Line 1264**: 명시적 `continue` 문 (계좌 루프 격리)
+**Phase 1 (완료)**:
+- **Line 1291-1313**: 계좌 격리 + 계좌 배치 처리 실패 시 다른 계좌 계속 진행
+- 로그: "❌ 계좌 배치 처리 실패: account_id={id} (다음 계좌 계속 진행)"
 
-**효과**:
-- 계좌 A 실패 → 계좌 B 계속 처리
-- 명시적 의도 표현 (암묵적 동작 → 명시적 코드)
-- 운영자 로그 가시성 향상
+**Phase 2 (완료)**:
+- **Line 1024-1030**: Circuit Breaker 임계값 설정 (`CIRCUIT_BREAKER_THRESHOLD`, 기본값: 3)
+- **Line 1052-1061**: 거래소별 실패 카운터 체크 (임계값 이상 시 거래소 건너뜀)
+- **Line 1280-1287**: Gradual Recovery (성공 시 카운터 1씩 감소)
+- **Line 1296-1310**: 안전한 카운터 증가 (exchange_name 있을 때만)
+- 로그: "🚫 Circuit Breaker 발동", "⚠️ 실패 카운터 증가", "✅ 복구 진행"
 
-**Phase 2 (계획 중)**:
-- Circuit Breaker 추가 예정 (거래소별 연속 실패 제한)
-- 동일한 `@TYPE:resilience` 태그로 검색 가능
+**문서**: `docs/features/circuit-breaker.md`
 
 ---
 
