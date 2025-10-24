@@ -1547,7 +1547,9 @@ def get_job_logs(job_id):
 
                 # 태그 기반 필터링 (job_tag가 있을 경우)
                 if job_tag:
-                    if tag != job_tag.name:
+                    # job_tag: "[QUEUE_REBAL]" (constants.py에서 대괄호 포함)
+                    # tag: "QUEUE_REBAL" (정규식으로 추출, 대괄호 제외)
+                    if tag != job_tag.strip('[]'):  # 대괄호 제거하여 비교
                         continue  # 다른 작업의 로그는 스킵
 
                 # 로그 레벨 필터
