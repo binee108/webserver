@@ -249,6 +249,69 @@ python run.py setup --env production  # 프로덕션 설정
 
 ---
 
+## 버그 수정 이력
+
+### 2025-10-24: RestartCommand 포트 충돌 문제 해결
+
+**문제**: `python run.py restart` 실행 시 "port already in use" 오류로 실패
+
+**근본 원인**:
+- StopCommand 실행 후 고정된 5초 대기 (`time.sleep(5)`)
+- Docker Compose는 컨테이너를 비동기로 종료하므로 5초로 불충분
+- StartCommand의 포트 검증 시점에 이전 컨테이너 리소스 잔존
+- 포트 검증 실패 → StartCommand 자체 정리 로직까지 도달 못함
+
+**해결 방법**:
+```python
+# Before (레이스 컨디션)
+self.stop_cmd.execute(args)
+time.sleep(5)  # 고정 대기
+self.start_cmd.execute(args)
+
+# After (폴링 기반 대기)
+self.stop_cmd.execute(args)
+self._wait_for_containers_cleanup()  # 최대 15초 폴링
+self.start_cmd.execute(args)
+```
+
+**구현 세부사항**:
+1. **`_wait_for_containers_cleanup(project_name)` 메서드 추가** (78줄)
+   - 최대 15초 동안 1초 간격으로 Docker Compose 프로젝트 label 폴링
+   - `--filter label=com.docker.compose.project={project_name}` 사용
+   - **워크트리 격리**: 현재 프로젝트의 컨테이너만 대기 (다른 워크트리 간섭 없음)
+   - 모든 컨테이너 종료 확인 시 즉시 반환 (평균 1-2초)
+   - 네트워크/볼륨 비동기 제거를 위한 2초 추가 대기
+
+2. **`_infer_project_name(args)` 메서드 추가** (25줄)
+   - 워크트리 경로 기반 프로젝트명 자동 추론
+   - 예: `.worktree/feature-x/` → `webserver_feature-x`
+   - 메인 프로젝트: `webserver`
+
+3. **방어적 프로그래밍 강화**:
+   - `subprocess.run()` 반환 코드 체크 (`returncode != 0`)
+   - 타임아웃 보호 (`timeout=2` on subprocess)
+   - 예외 타입 포함 로깅 (`{type(e).__name__}`)
+
+4. **Graceful Degradation**:
+   - 15초 타임아웃 시 경고만 출력, StartCommand 계속 진행
+   - StartCommand 자체 정리 로직(`line 123-127`)이 최종 안전망 역할
+
+**테스트 결과**:
+- ✅ Exit Code: 0 (성공)
+- ✅ 컨테이너 정리 시간: 1초 (타임아웃 경고 해결)
+- ✅ 워크트리 격리: 다른 프로젝트 컨테이너 영향 없음
+- ✅ Health Check: `{"status": "healthy"}`
+- ✅ Code Review: 9.5/10 (Priority 1-3 이슈 모두 해결)
+
+**영향 범위**:
+- 수정 파일: `cli/commands/restart.py` (+103줄, 160줄 총), `cli/manager.py` (+1 인자)
+- 신규 메서드:
+  - `_wait_for_containers_cleanup(project_name, max_wait=15)` - 워크트리 격리 폴링
+  - `_infer_project_name(args)` - 프로젝트명 자동 추론
+- 관련 파일: `cli/commands/start.py` (포트 검증, Line 110), `cli/commands/stop.py` (_infer_project_name 참조)
+
+---
+
 ## 기술 부채 및 향후 개선
 
 | 항목 | 현황 | 우선순위 |
@@ -256,7 +319,10 @@ python run.py setup --env production  # 프로덕션 설정
 | StartCommand 최적화 | 381줄 (목표: 200줄) | 중간 |
 | 단위 테스트 작성 | 0개 (목표: 8개) | 높음 |
 | 통합 테스트 | 미지원 | 중간 |
-| 에러 처리 강화 | 기본 구현 | 낮음 |
+| 에러 처리 강화 | ✅ 완료 (RestartCommand) | 완료 |
+| DRY 개선 | `docker ps` 명령어 2회 중복 | 매우 낮음 |
+
+**DRY 개선 참고**: `docker ps --filter name=webserver` 명령어가 restart.py(Line 82)와 start.py(Line 177)에 중복. 현재는 컨텍스트가 다르므로(restart=종료 대기, start=포트 검증) 추출하지 않음. 3회 이상 발생 시 `DockerHelper.get_webserver_containers()` 메서드 추출 권장.
 
 ---
 

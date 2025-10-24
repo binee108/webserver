@@ -68,7 +68,7 @@ class TradingSystemCLI:
         stop_cmd = StopCommand(self.printer, self.docker, self.root_dir)
 
         # RestartCommand (Command 조합)
-        restart_cmd = RestartCommand(self.printer, stop_cmd, start_cmd)
+        restart_cmd = RestartCommand(self.printer, stop_cmd, start_cmd, self.root_dir)
 
         # LogsCommand
         logs_cmd = LogsCommand(self.printer, self.docker, self.root_dir)
