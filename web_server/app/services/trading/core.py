@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from flask import current_app
 
 from app import db
-from app.models import Account, Strategy, StrategyAccount
+from app.models import Account, Strategy, StrategyAccount, PendingOrder
 from app.constants import Exchange, MarketType, OrderType
 from app.services.exchange import exchange_service
 from app.services.security import security_service
@@ -1328,7 +1328,7 @@ class TradingCore:
             }
         }
 
-    # @FEAT:batch-parallel-processing @COMP:service @TYPE:helper
+    # @FEAT:batch-parallel-processing @FEAT:webhook-batch-queue @COMP:service @TYPE:core
     def _execute_account_batch(
         self,
         account_data: Dict[str, Any],
@@ -1337,12 +1337,25 @@ class TradingCore:
         trading_orders: List[tuple]
     ) -> List[Dict[str, Any]]:
         """
-        단일 계좌의 배치 주문 처리 (병렬 실행용 헬퍼)
+        Execute batch orders with intelligent routing for single account.
+
+        @FEAT:webhook-batch-queue @COMP:service @TYPE:core
+        Routes LIMIT/STOP orders to PendingOrder queue, MARKET/CANCEL to exchange directly.
+        Implements atomic batch enqueue with all-or-nothing commit pattern.
 
         Phase 2 구현:
         - DRY 원칙 준수: 기존 로직 재사용 (순차 처리 코드 107줄 제거)
         - 병렬 실행 목적: ThreadPoolExecutor에서 계좌별 독립 처리
         - Phase 0 통합: account_id 파라미터로 Rate Limiting 활성화
+
+        Routing Logic:
+        - QUEUED_TYPES (LIMIT/STOP_LIMIT/STOP_MARKET) → PendingOrder table
+        - DIRECT_TYPES (MARKET/CANCEL_ALL_ORDER) → Exchange batch API
+
+        Transaction Guarantees:
+        - Atomic commit: All queue orders succeed or all rollback
+        - SSE emission: After successful commit only
+        - Isolated error handling: SSE failure does not rollback DB
 
         Args:
             account_data: {'account': Account, 'strategy_account': StrategyAccount, 'orders': List[Dict]}
@@ -1362,10 +1375,108 @@ class TradingCore:
         )
 
         try:
+            # @FEAT:webhook-batch-queue @TYPE:core Order type separation
+            # Route orders based on OrderType constants (single source of truth)
+            queue_orders = [order for order in exchange_orders
+                            if order['type'].upper() in OrderType.QUEUED_TYPES]
+            direct_orders = [order for order in exchange_orders
+                             if order['type'].upper() in OrderType.DIRECT_TYPES]
+
+            logger.info(f"Order separation - Queue: {len(queue_orders)}, Direct: {len(direct_orders)}")
+
+            # Process queue orders with ATOMICITY
+            pending_order_ids = []
+
+            if queue_orders:
+                try:
+                    # @FEAT:webhook-batch-queue @TYPE:core Atomic batch enqueue
+                    # All-or-nothing pattern: commit=False in loop, single commit after
+                    # Rollback on any failure to prevent partial batch insertion
+                    for idx, order in enumerate(queue_orders):
+                        # Calculate original index for error reporting
+                        original_idx = exchange_orders.index(order)
+
+                        try:
+                            enqueue_result = self.service.order_queue_manager.enqueue(
+                                strategy_account_id=account_data['strategy_account'].id,
+                                symbol=order['symbol'],
+                                side=order['side'],
+                                order_type=order['type'],
+                                quantity=Decimal(str(order['amount'])),
+                                price=Decimal(str(order.get('price'))) if order.get('price') else None,
+                                stop_price=Decimal(str(order.get('params', {}).get('stopPrice'))) if order.get('params', {}).get('stopPrice') else None,
+                                market_type=market_type,
+                                commit=False  # Atomic pattern: Defer commit until all enqueues succeed
+                            )
+
+                            if enqueue_result['success']:
+                                pending_order_ids.append(enqueue_result['pending_order_id'])
+                                results.append({
+                                    'order_index': original_idx,
+                                    'success': True,
+                                    'result': {
+                                        'action': 'queued',
+                                        'queued': True,
+                                        'pending_order_id': enqueue_result['pending_order_id'],
+                                        'priority': enqueue_result['priority'],
+                                        'account_id': account.id,
+                                        'account_name': account.name
+                                    },
+                                    'order_type': order['type'],
+                                    'event_type': 'order_created'
+                                })
+                            else:
+                                # Enqueue failed - rollback all
+                                db.session.rollback()
+                                logger.error(f"Enqueue failed for order {idx}: {enqueue_result.get('error')}")
+                                return [{
+                                    'order_index': original_idx,
+                                    'success': False,
+                                    'error': enqueue_result.get('error', 'Unknown enqueue error')
+                                }]
+                        except Exception as e:
+                            # Exception during enqueue - rollback all
+                            db.session.rollback()
+                            logger.error(f"Exception during enqueue for order {idx}: {e}")
+                            return [{
+                                'order_index': original_idx,
+                                'success': False,
+                                'error': f'Enqueue exception: {str(e)}'
+                            }]
+
+                    # Atomic commit - all or nothing (All enqueues succeed or all rollback)
+                    db.session.commit()
+                    logger.info(f"✅ 큐 배치 커밋 완료 - {len(pending_order_ids)}개 주문 저장됨")
+
+                    # @FEAT:webhook-batch-queue @TYPE:integration SSE emission after commit
+                    # Isolated try-catch: SSE failure does not rollback DB transaction
+                    for pending_order_id in pending_order_ids:
+                        pending_order = PendingOrder.query.get(pending_order_id)
+                        if pending_order and self.service and hasattr(self.service, 'event_emitter'):
+                            user_id = pending_order.strategy_account.strategy.user_id
+                            self.service.event_emitter.emit_pending_order_event(
+                                event_type='order_created',
+                                pending_order=pending_order,
+                                user_id=user_id
+                            )
+                except Exception as e:
+                    db.session.rollback()
+                    logger.error(f"Failed to commit enqueued orders: {e}")
+                    return [{
+                        'order_index': 0,
+                        'success': False,
+                        'error': f'DB commit failed: {str(e)}'
+                    }]
+
+            # Process direct orders (MARKET/CANCEL) - UNCHANGED logic
+            if not direct_orders:
+                # No direct orders to process
+                return results
+
             # CRITICAL FIX: account_id 전달 (Phase 0 Rate Limiting 활성화)
             batch_result = exchange_service.create_batch_orders(
                 account=account,
-                orders=exchange_orders,
+                orders=direct_orders,  # Only MARKET/CANCEL now
                 market_type=market_type.lower(),
                 account_id=account.id  # ✅ 필수 파라미터
             )
