@@ -64,6 +64,105 @@ grep -r "@FEAT:futures-validation" --include="*.py" --include="*.html"
 
 ---
 
+### 2025-10-23: Worktree Service Conflict Detection & Auto-Resolution (Updated)
+**영향 범위**: `worktree-conflict-resolution`
+**파일**:
+- `run.py` (Lines 412-416, 468-610, 833-904, 987-1077, 1164-1247) - TradingSystemManager 확장
+
+**구현 내용**: 여러 git worktree 환경에서 서비스 충돌 자동 해결
+- **check_port_availability()**: 필수 포트(443, 5001, 5432) 사용 가능 여부 확인
+- **get_running_containers_info()**: Docker 컨테이너의 실행 경로 추적
+- **check_running_services()**: 다른 worktree 경로의 실행 중인 서비스 감지
+- **stop_other_services()**: 충돌 서비스 자동 종료 (docker-compose down)
+- **detect_and_stop_conflicts()**: 충돌 감지 및 종료 로직 통합 (재사용 가능)
+- **start_system() 개선**: 시작 전 충돌 방지 로직 추가
+- **restart_system() 개선**: 재시작 전 충돌 방지 로직 추가
+- **clean_system() 개선**: 정리 전 충돌 방지 로직 추가
+
+**적용 명령어**: `start`, `restart`, `clean`
+
+**사용 시나리오**:
+```bash
+# worktree1에서 서비스 실행 중
+cd /path/to/worktree1
+python run.py start  # ✅ 정상 실행
+
+# worktree2에서 시작
+cd /path/to/worktree2
+python run.py start  # ⚠️ worktree1 서비스 감지 → 종료 → 시작
+
+# worktree2에서 재시작
+python run.py restart  # ⚠️ 다른 경로 서비스 감지 → 종료 → 재시작
+
+# worktree3에서 정리
+cd /path/to/worktree3
+python run.py clean  # ⚠️ 모든 경로 서비스 감지 → 종료 → 정리
+```
+
+**기능**:
+- ✅ Docker 컨테이너 라벨로 실행 경로 추적
+- ✅ 포트 충돌 사전 확인 (Windows/macOS/Linux 지원)
+- ✅ 다른 경로 서비스 자동 정리
+- ✅ 포트 해제 대기 (3초)
+- ✅ 사용자 친화적 상태 메시지
+
+**태그**: `@FEAT:worktree-conflict-resolution @COMP:util @TYPE:core`
+
+**문서**: `README.md` (Lines 70-91)
+
+**검색**:
+```bash
+# 충돌 감지 관련 메서드
+grep -n "check_running_services\|stop_other_services\|detect_and_stop_conflicts" run.py
+
+# 통합된 명령어
+grep -n "def start_system\|def restart_system\|def clean_system" run.py
+```
+
+---
+
+### 2025-10-23: Background Log Tagging System (Phase 2) Complete
+**영향 범위**: `background-log-tagging`
+**파일**:
+- `app/utils/logging.py` (Lines 58-141) - TaggedLogger, 데코레이터
+- `app/__init__.py` - 10개 함수에 데코레이터 적용
+
+**구현 내용**: 데코레이터 기반 자동 태그 적용
+- **TaggedLogger**: Flask logger 래핑, 자동 태그 적용 (모든 로그 레벨)
+- **@tag_background_logger**: 백그라운드 함수에 자동 태그 적용
+- **적용 범위**: 10개 함수 (2개 제외, Phase 3 예정)
+- **효과**: 기존 코드 변경 없이 자동 태그 (누락 불가능)
+
+**주의사항**: Thread safety - 동시 작업 간 태그 혼선 가능 (Low severity)
+
+**태그**: `@FEAT:background-log-tagging @COMP:util @TYPE:helper`
+
+**문서**: `docs/features/background_log_tagging.md`
+
+**검색**:
+```bash
+grep -r "@tag_background_logger" --include="*.py" web_server/app/
+grep -r "@FEAT:background-log-tagging" --include="*.py" web_server/app/
+```
+
+---
+
+### 2025-10-23: Background Log Tagging System (Phase 1) Complete
+**영향 범위**: `background-log-tagging`
+**파일**:
+- `app/constants.py` (Lines 939-985)
+- `app/utils/logging.py` (Lines 1-51)
+
+**구현 내용**: 백그라운드 작업별 로그 태그 시스템
+- **BackgroundJobTag**: 13개 백그라운드 작업의 고유 태그 정의
+- **format_background_log()**: 일관된 로그 포맷팅 함수
+- **JOB_TAG_MAP**: Admin 페이지 job_id → 태그 변환 매핑
+- **효과**: Admin/system 페이지에서 작업별 로그 필터링 가능
+
+**태그**: `@FEAT:background-log-tagging @COMP:config,util @TYPE:core,helper`
+
+---
+
 ### 2025-10-23: Circuit Breaker & Gradual Recovery (Priority 2 Phase 2) Complete
 **영향 범위**: `order-tracking`
 **파일**: `app/services/trading/order_manager.py` (Lines 1024-1310)
