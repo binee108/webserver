@@ -406,20 +406,116 @@ class EnvSetupWizard:
         
         return self.confirm_and_save()
 
+def detect_worktree_environment():
+    """
+    워크트리 환경 감지 및 정보 반환
+
+    Returns:
+        dict or None: 워크트리 정보 또는 None (메인 프로젝트)
+        {
+            'is_worktree': bool,
+            'name': str,  # 워크트리 이름 (예: 'background-log-tagging')
+            'path': Path,  # 워크트리 전체 경로
+            'main_project_path': Path  # 메인 프로젝트 경로
+        }
+    """
+    current_path = Path(__file__).parent.resolve()
+
+    # .worktree/ 패턴 확인
+    if '.worktree' in current_path.parts:
+        # .worktree의 인덱스 찾기
+        parts = current_path.parts
+        worktree_idx = parts.index('.worktree')
+
+        # 메인 프로젝트 경로 (루트 ~ .worktree 이전까지)
+        main_project_path = Path(*parts[:worktree_idx])
+
+        # 워크트리 이름 (.worktree 다음 디렉토리)
+        worktree_name = parts[worktree_idx + 1] if len(parts) > worktree_idx + 1 else 'unknown'
+
+        return {
+            'is_worktree': True,
+            'name': worktree_name,
+            'path': current_path,
+            'main_project_path': main_project_path
+        }
+
+    return None
+
+
+def find_available_port(start_port, end_port):
+    """
+    지정된 범위 내에서 사용 가능한 포트 찾기
+
+    Args:
+        start_port (int): 시작 포트
+        end_port (int): 종료 포트
+
+    Returns:
+        int or None: 사용 가능한 포트 또는 None (모두 사용 중)
+    """
+    for port in range(start_port, end_port + 1):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                result = s.connect_ex(('localhost', port))
+                if result != 0:  # 포트 사용 불가 = 사용 가능
+                    return port
+        except Exception:
+            continue
+
+    return None
+
+
 class TradingSystemManager:
     """트레이딩 시스템 관리 클래스"""
-    
+
     def __init__(self):
         self.root_dir = Path(__file__).parent.resolve()  # Absolute path
         self.web_server_dir = self.root_dir / "web_server"
         self.docker_compose_file = self.root_dir / "docker-compose.yml"
-        self.required_ports = [443, 5001, 5432]  # HTTPS, Flask, PostgreSQL
+
+        # 워크트리 환경 감지
+        self.worktree_env = detect_worktree_environment()
+
+        # 워크트리 환경에 따른 포트 설정
+        if self.worktree_env:
+            # 워크트리: 동적 포트 할당
+            self.flask_port = find_available_port(5001, 5010)
+            self.postgres_port = find_available_port(5432, 5441)
+            self.https_port = find_available_port(443, 452) if os.getenv('FLASK_ENV') == 'production' else None
+
+            if not self.flask_port or not self.postgres_port:
+                raise RuntimeError("사용 가능한 포트를 찾을 수 없습니다. (Flask: 5001-5010, PostgreSQL: 5432-5441)")
+
+            # Docker Compose 프로젝트 이름 설정
+            self.compose_project_name = f"webserver-{self.worktree_env['name']}"
+        else:
+            # 메인 프로젝트: 고정 포트
+            self.flask_port = 5001
+            self.postgres_port = 5432
+            self.https_port = 443
+            self.compose_project_name = "webserver"
+
+        # 필수 포트 목록 (체크용)
+        self.required_ports = [self.flask_port, self.postgres_port]
+        if self.https_port and os.getenv('FLASK_ENV') == 'production':
+            self.required_ports.append(self.https_port)
         
     def print_banner(self):
         """시스템 배너 출력"""
         print("=" * 60 + f"{Colors.RESET}\n")
         print("🚀 암호화폐 트레이딩 시스템")
         print("   Cryptocurrency Trading System")
+
+        # 워크트리 환경 표시
+        if self.worktree_env:
+            print(f"\n{Colors.CYAN}📂 워크트리 환경: {self.worktree_env['name']}{Colors.RESET}")
+            print(f"{Colors.BLUE}   Flask 포트: {self.flask_port}, PostgreSQL 포트: {self.postgres_port}{Colors.RESET}")
+            print(f"{Colors.YELLOW}   프로젝트명: {self.compose_project_name}{Colors.RESET}")
+        else:
+            print(f"\n{Colors.GREEN}🏠 메인 프로젝트{Colors.RESET}")
+
         print("=" * 60 + f"{Colors.RESET}\n")
     
     def print_status(self, message, status="info"):
@@ -722,7 +818,125 @@ class TradingSystemManager:
         
         self.print_status("PostgreSQL 시작 시간 초과", "error")
         return False
-    
+
+    def check_main_db_exists(self):
+        """
+        메인 프로젝트 DB 볼륨 존재 확인
+
+        Returns:
+            bool: 메인 DB 볼륨 존재 여부
+        """
+        try:
+            result = subprocess.run(
+                ['docker', 'volume', 'inspect', 'webserver_postgres_data'],
+                capture_output=True,
+                text=True
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def copy_main_db_to_worktree(self):
+        """
+        메인 프로젝트 DB 볼륨을 워크트리 볼륨으로 복사
+
+        Returns:
+            bool: 복사 성공 여부
+        """
+        if not self.worktree_env:
+            return True  # 메인 프로젝트는 복사 불필요
+
+        main_volume = 'webserver_postgres_data'
+        worktree_volume = f"{self.compose_project_name}_postgres_data"
+
+        self.print_status(f"메인 DB 볼륨 복사 중... ({main_volume} → {worktree_volume})", "info")
+
+        # 1. 메인 DB 볼륨 존재 확인
+        if not self.check_main_db_exists():
+            self.print_status("메인 프로젝트 DB 볼륨이 존재하지 않습니다.", "warning")
+            self.print_status("초기화된 DB로 시작합니다.", "info")
+            return True
+
+        try:
+            # 2. 임시 백업 파일 생성
+            timestamp = int(time.time())
+            backup_file = f"/tmp/db_backup_{timestamp}.tar.gz"
+
+            # 3. 메인 볼륨에서 백업
+            self.print_status("메인 DB 백업 생성 중...", "info")
+            subprocess.run(
+                ['docker', 'run', '--rm',
+                 '-v', f'{main_volume}:/source',
+                 '-v', '/tmp:/backup',
+                 'alpine',
+                 'tar', 'czf', f'/backup/db_backup_{timestamp}.tar.gz', '-C', '/source', '.'],
+                check=True,
+                capture_output=True
+            )
+
+            # 4. 워크트리 볼륨 생성 (이미 존재하면 무시)
+            subprocess.run(
+                ['docker', 'volume', 'create', worktree_volume],
+                capture_output=True  # 에러 무시 (이미 존재할 수 있음)
+            )
+
+            # 5. 워크트리 볼륨으로 복원
+            self.print_status("워크트리 DB 볼륨으로 복원 중...", "info")
+            subprocess.run(
+                ['docker', 'run', '--rm',
+                 '-v', f'{worktree_volume}:/target',
+                 '-v', '/tmp:/backup',
+                 'alpine',
+                 'tar', 'xzf', f'/backup/db_backup_{timestamp}.tar.gz', '-C', '/target'],
+                check=True,
+                capture_output=True
+            )
+
+            # 6. 백업 파일 정리
+            try:
+                os.remove(backup_file)
+            except Exception:
+                pass
+
+            self.print_status(f"DB 볼륨 복사 완료! ({worktree_volume})", "success")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            self.print_status(f"DB 볼륨 복사 실패: {e}", "error")
+            return False
+        except Exception as e:
+            self.print_status(f"DB 볼륨 복사 중 오류: {e}", "error")
+            return False
+
+    def get_services_to_start(self):
+        """
+        환경 모드에 따라 시작할 서비스 목록 반환
+
+        Returns:
+            list: 시작할 서비스 이름 리스트
+        """
+        # .env 파일에서 FLASK_ENV 읽기
+        env_file = self.root_dir / '.env'
+        flask_env = 'development'  # 기본값
+
+        if env_file.exists():
+            try:
+                with open(env_file, 'r') as f:
+                    for line in f:
+                        if line.startswith('FLASK_ENV='):
+                            flask_env = line.split('=')[1].strip()
+                            break
+            except Exception:
+                pass
+
+        # 환경 모드에 따라 서비스 선택
+        if flask_env == 'production':
+            # 프로덕션 모드: postgres + app + nginx (HTTPS)
+            return ['postgres', 'app', 'nginx']
+        else:
+            # 개발 모드: postgres + app만 (HTTP)
+            return ['postgres', 'app']
+
     def generate_ssl_certificates(self):
         """SSL 인증서 생성 (Pure Python, OpenSSL 도구 불필요)"""
         self.print_status("SSL 인증서 확인 중...", "info")
@@ -833,26 +1047,26 @@ class TradingSystemManager:
     def start_system(self):
         """시스템 시작"""
         self.print_banner()
-        
+
         if not self.check_requirements():
             return False
-        
+
         try:
             # Check for services running from other directories
             if not self.detect_and_stop_conflicts():
                 return False
-            
+
             # Check port availability
             self.print_status("필수 포트 확인 중...", "info")
             unavailable_ports = []
             for port in self.required_ports:
                 if not self.check_port_availability(port):
                     unavailable_ports.append(port)
-            
+
             if unavailable_ports:
                 self.print_status(f"다음 포트가 이미 사용 중입니다: {', '.join(map(str, unavailable_ports))}", "warning")
                 self.print_status("충돌하는 프로세스를 종료하거나 포트를 변경해주세요", "error")
-                
+
                 # Try to identify what's using the ports
                 for port in unavailable_ports:
                     try:
@@ -862,51 +1076,73 @@ class TradingSystemManager:
                             result = subprocess.run(['lsof', '-i', f':{port}'], capture_output=True, text=True, timeout=5)
                         else:  # Linux
                             result = subprocess.run(['ss', '-tulpn'], capture_output=True, text=True, timeout=5)
-                        
+
                         if result.stdout:
                             print(f"\n포트 {port} 사용 정보:")
                             print(result.stdout[:500])  # Limit output
                     except Exception:
                         pass
-                
+
                 return False
             else:
                 self.print_status("모든 필수 포트 사용 가능", "success")
-            
+
             print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
             self.print_status(f"현재 경로에서 서비스 시작: {self.root_dir}", "info")
             print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
-            
+
+            # 워크트리 환경 설정
+            if self.worktree_env:
+                self.print_status("워크트리 환경 변수 설정 중...", "info")
+                os.environ['APP_PORT'] = str(self.flask_port)
+                os.environ['POSTGRES_PORT'] = str(self.postgres_port)
+                os.environ['COMPOSE_PROJECT_NAME'] = self.compose_project_name
+
+                if self.https_port:
+                    os.environ['HTTPS_PORT'] = str(self.https_port)
+
+                self.print_status(f"포트 설정: Flask={self.flask_port}, PostgreSQL={self.postgres_port}", "success")
+
             # 기존 컨테이너 정리 (orphan 컨테이너 포함)
             self.print_status("기존 컨테이너 정리 중...", "info")
-            self.run_command(self.compose_cmd + ['down', '--remove-orphans'], cwd=self.root_dir)
-            
-            # SSL 인증서 생성/확인
-            if not self.generate_ssl_certificates():
-                return False
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'down', '--remove-orphans'], cwd=self.root_dir)
+
+            # 워크트리 환경에서 메인 DB 복사
+            if self.worktree_env:
+                if not self.copy_main_db_to_worktree():
+                    self.print_status("DB 복사에 실패했지만 계속 진행합니다.", "warning")
+
+            # SSL 인증서 생성/확인 (프로덕션 모드만)
+            services_to_start = self.get_services_to_start()
+            if 'nginx' in services_to_start:
+                if not self.generate_ssl_certificates():
+                    return False
+
             # PostgreSQL 먼저 시작
             self.print_status("PostgreSQL 데이터베이스 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'postgres'], cwd=self.root_dir)
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'postgres'], cwd=self.root_dir)
+
             # PostgreSQL 준비 대기
             if not self.wait_for_postgres():
                 return False
-            
+
             # Flask 앱 시작
             self.print_status("Flask 애플리케이션 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'app'], cwd=self.root_dir)
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'app'], cwd=self.root_dir)
+
             # 앱 준비 대기
             self.print_status("Flask 애플리케이션 준비 대기 중...", "info")
             time.sleep(5)
-            
+
             # 데이터베이스 테이블은 애플리케이션 시작 시 자동으로 생성됩니다
             self.print_status("데이터베이스 테이블 자동 생성 준비 완료", "success")
-            
-            # Nginx 시작 (마지막에)
-            self.print_status("Nginx 리버스 프록시 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'nginx'], cwd=self.root_dir)
+
+            # Nginx 시작 (환경 모드에 따라)
+            if 'nginx' in services_to_start:
+                self.print_status("Nginx 리버스 프록시 시작 중...", "info")
+                self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'nginx'], cwd=self.root_dir)
+            else:
+                self.print_status("개발 모드: Nginx 제외, HTTP만 사용", "info")
             
             # 네트워크 정보 수집
             local_ip = self.get_local_ip()
@@ -914,23 +1150,30 @@ class TradingSystemManager:
             
             # 시작 완료 메시지
             print(f"\n{Colors.GREEN}{Colors.BOLD}✅ 트레이딩 시스템이 성공적으로 시작되었습니다!{Colors.RESET}\n")
-            
-            print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소:{Colors.RESET}")
-            print(f"   로컬: https://localhost")
+
+            # 환경 모드별 접근 주소 표시
+            if 'nginx' in services_to_start:
+                # 프로덕션 모드: HTTPS 포함
+                print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소 (HTTPS):{Colors.RESET}")
+                https_port_display = f":{self.https_port}" if self.https_port != 443 else ""
+                print(f"   로컬: https://localhost{https_port_display}")
+                if local_ip and local_ip != "127.0.0.1":
+                    print(f"   네트워크: https://{local_ip}{https_port_display}")
+                if external_ip:
+                    print(f"   외부: https://{external_ip}{https_port_display}")
+                print()
+
+            # HTTP 접근 정보
+            print(f"{Colors.BLUE}🔧 HTTP 접근:{Colors.RESET}")
+            flask_port_display = f":{self.flask_port}" if self.flask_port != 5001 else ":5001"
+            print(f"   로컬: http://localhost{flask_port_display} (직접 Flask 접근)")
             if local_ip and local_ip != "127.0.0.1":
-                print(f"   네트워크: https://{local_ip}")
-            if external_ip:
-                print(f"   외부: https://{external_ip}")
+                print(f"   네트워크: http://{local_ip}{flask_port_display}")
             print()
-            
-            print(f"{Colors.BLUE}🔧 내부 HTTP 접근:{Colors.RESET}")
-            print(f"   로컬: http://localhost:5001 (직접 Flask 접근)")
-            if local_ip and local_ip != "127.0.0.1":
-                print(f"   네트워크: http://{local_ip}:5001")
-            print()
-            
-            print(f"{Colors.RED}🚫 외부 HTTP: http://localhost → HTTPS로 리다이렉트{Colors.RESET}")
-            print(f"{Colors.MAGENTA}🐘 PostgreSQL: localhost:5432{Colors.RESET}\n")
+
+            # PostgreSQL 접근 정보
+            postgres_port_display = f":{self.postgres_port}" if self.postgres_port != 5432 else ":5432"
+            print(f"{Colors.MAGENTA}🐘 PostgreSQL: localhost{postgres_port_display}{Colors.RESET}\n")
             
             print(f"{Colors.YELLOW}⚠️  브라우저에서 보안 경고가 나타나면:{Colors.RESET}")
             print("   Chrome: '고급' → '안전하지 않음(권장하지 않음)' → '계속 진행'")
@@ -939,12 +1182,14 @@ class TradingSystemManager:
             print(f"{Colors.WHITE}👤 기본 로그인 정보:{Colors.RESET}")
             print("   사용자명: admin")
             print("   비밀번호: admin_test_0623\n")
-            
+
             print(f"{Colors.GREEN}🔗 웹훅 접근:{Colors.RESET}")
-            print("   HTTPS (로컬): https://localhost/api/webhook")
-            if external_ip:
-                print(f"   HTTPS (외부): https://{external_ip}/api/webhook")
-            print("   HTTP (내부): http://localhost:5001/api/webhook")
+            if 'nginx' in services_to_start:
+                https_port_display = f":{self.https_port}" if self.https_port != 443 else ""
+                print(f"   HTTPS (로컬): https://localhost{https_port_display}/api/webhook")
+                if external_ip:
+                    print(f"   HTTPS (외부): https://{external_ip}{https_port_display}/api/webhook")
+            print(f"   HTTP (내부): http://localhost:{self.flask_port}/api/webhook")
             print()
             
             print(f"{Colors.CYAN}📋 유용한 명령어:{Colors.RESET}")
@@ -956,7 +1201,13 @@ class TradingSystemManager:
             # 브라우저 자동 열기 (선택사항)
             try:
                 time.sleep(5)  # 서비스 완전 시작 대기
-                webbrowser.open('https://localhost')
+                if 'nginx' in services_to_start:
+                    # 프로덕션 모드: HTTPS
+                    https_port_display = f":{self.https_port}" if self.https_port != 443 else ""
+                    webbrowser.open(f'https://localhost{https_port_display}')
+                else:
+                    # 개발 모드: HTTP
+                    webbrowser.open(f'http://localhost:{self.flask_port}')
             except:
                 pass
             
@@ -966,19 +1217,37 @@ class TradingSystemManager:
             self.print_status(f"시스템 시작 실패: {e}", "error")
             return False
     
-    def stop_system(self):
-        """시스템 중지"""
-        self.print_status("트레이딩 시스템 중지 중...", "info")
-        
+    def stop_system(self, project_name=None):
+        """
+        시스템 중지
+
+        Args:
+            project_name (str, optional): 중지할 프로젝트명. None이면 현재 프로젝트 중지
+        """
         # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
         if not hasattr(self, 'compose_cmd'):
             self.check_requirements()
-        
+
+        # 프로젝트명 결정
+        if project_name:
+            # 특정 프로젝트 중지
+            target_project = project_name
+            self.print_status(f"프로젝트 중지 중: {target_project}", "info")
+        else:
+            # 현재 프로젝트 중지
+            target_project = self.compose_project_name
+            self.print_status("트레이딩 시스템 중지 중...", "info")
+
         try:
-            self.run_command(self.compose_cmd + ['down'], cwd=self.root_dir)
-            self.print_status("시스템이 중지되었습니다.", "success")
-            print(f"\n{Colors.BLUE}💡 데이터는 보존되었습니다. 다시 시작하려면 'python run.py start'를 실행하세요.{Colors.RESET}")
-            print(f"{Colors.RED}🗑️  모든 데이터를 삭제하려면 'python run.py clean'을 실행하세요.{Colors.RESET}")
+            self.run_command(self.compose_cmd + ['-p', target_project, 'down'], cwd=self.root_dir)
+
+            if project_name:
+                self.print_status(f"✅ {target_project} 프로젝트가 중지되었습니다.", "success")
+            else:
+                self.print_status("시스템이 중지되었습니다.", "success")
+                print(f"\n{Colors.BLUE}💡 데이터는 보존되었습니다. 다시 시작하려면 'python run.py start'를 실행하세요.{Colors.RESET}")
+                print(f"{Colors.RED}🗑️  모든 데이터를 삭제하려면 'python run.py clean'을 실행하세요.{Colors.RESET}")
+
             return True
         except subprocess.CalledProcessError as e:
             self.print_status(f"시스템 중지 실패: {e}", "error")
@@ -1023,51 +1292,83 @@ class TradingSystemManager:
             print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
             self.print_status(f"현재 경로에서 서비스 시작: {self.root_dir}", "info")
             print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
-            
+
+            # 워크트리 환경 설정
+            if self.worktree_env:
+                self.print_status("워크트리 환경 변수 설정 중...", "info")
+                os.environ['APP_PORT'] = str(self.flask_port)
+                os.environ['POSTGRES_PORT'] = str(self.postgres_port)
+                os.environ['COMPOSE_PROJECT_NAME'] = self.compose_project_name
+
+                if self.https_port:
+                    os.environ['HTTPS_PORT'] = str(self.https_port)
+
+                self.print_status(f"포트 설정: Flask={self.flask_port}, PostgreSQL={self.postgres_port}", "success")
+
             # 기존 컨테이너 정리 (orphan 컨테이너 포함)
             self.print_status("기존 컨테이너 정리 중...", "info")
-            self.run_command(self.compose_cmd + ['down', '--remove-orphans'], cwd=self.root_dir)
-            
-            # SSL 인증서 생성/확인
-            if not self.generate_ssl_certificates():
-                return False
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'down', '--remove-orphans'], cwd=self.root_dir)
+
+            # 워크트리 환경에서 메인 DB 복사
+            if self.worktree_env:
+                if not self.copy_main_db_to_worktree():
+                    self.print_status("DB 복사에 실패했지만 계속 진행합니다.", "warning")
+
+            # SSL 인증서 생성/확인 (프로덕션 모드만)
+            services_to_start = self.get_services_to_start()
+            if 'nginx' in services_to_start:
+                if not self.generate_ssl_certificates():
+                    return False
+
             # PostgreSQL 먼저 시작
             self.print_status("PostgreSQL 데이터베이스 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'postgres'], cwd=self.root_dir)
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'postgres'], cwd=self.root_dir)
+
             # PostgreSQL 준비 대기
             if not self.wait_for_postgres():
                 return False
-            
+
             # Flask 앱 시작
             self.print_status("Flask 애플리케이션 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'app'], cwd=self.root_dir)
-            
+            self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'app'], cwd=self.root_dir)
+
             # 앱 준비 대기
             self.print_status("Flask 애플리케이션 준비 대기 중...", "info")
             time.sleep(5)
-            
+
             # 데이터베이스 테이블은 애플리케이션 시작 시 자동으로 생성됩니다
             self.print_status("데이터베이스 테이블 자동 생성 준비 완료", "success")
-            
-            # Nginx 시작 (마지막에)
-            self.print_status("Nginx 리버스 프록시 시작 중...", "info")
-            self.run_command(self.compose_cmd + ['up', '-d', 'nginx'], cwd=self.root_dir)
-            
+
+            # Nginx 시작 (환경 모드에 따라)
+            if 'nginx' in services_to_start:
+                self.print_status("Nginx 리버스 프록시 시작 중...", "info")
+                self.run_command(self.compose_cmd + ['-p', self.compose_project_name, 'up', '-d', 'nginx'], cwd=self.root_dir)
+            else:
+                self.print_status("개발 모드: Nginx 제외, HTTP만 사용", "info")
+
             # 네트워크 정보 수집
             local_ip = self.get_local_ip()
             external_ip = self.get_external_ip()
-            
+
             # 재시작 완료 메시지
             print(f"\n{Colors.GREEN}{Colors.BOLD}✅ 트레이딩 시스템이 성공적으로 재시작되었습니다!{Colors.RESET}\n")
-            
-            print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소:{Colors.RESET}")
-            print(f"   로컬: https://localhost")
-            if local_ip and local_ip != "127.0.0.1":
-                print(f"   네트워크: https://{local_ip}")
-            if external_ip:
-                print(f"   외부: https://{external_ip}")
+
+            # 환경 모드별 접근 주소 표시
+            if 'nginx' in services_to_start:
+                # 프로덕션 모드: HTTPS 포함
+                print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소 (HTTPS):{Colors.RESET}")
+                https_port_display = f":{self.https_port}" if self.https_port != 443 else ""
+                print(f"   로컬: https://localhost{https_port_display}")
+                if local_ip and local_ip != "127.0.0.1":
+                    print(f"   네트워크: https://{local_ip}{https_port_display}")
+                if external_ip:
+                    print(f"   외부: https://{external_ip}{https_port_display}")
+            else:
+                # 개발 모드: HTTP만
+                print(f"{Colors.BLUE}🌐 웹 인터페이스 접근 주소 (HTTP):{Colors.RESET}")
+                print(f"   로컬: http://localhost:{self.flask_port}")
+                if local_ip and local_ip != "127.0.0.1":
+                    print(f"   네트워크: http://{local_ip}:{self.flask_port}")
             print()
             
             return True
@@ -1161,10 +1462,273 @@ class TradingSystemManager:
         except subprocess.CalledProcessError as e:
             self.print_status(f"상태 확인 실패: {e}", "error")
     
-    def clean_system(self):
-        """시스템 완전 정리 (데이터, SSL 인증서, Docker 이미지 포함)"""
+    def get_all_webserver_projects(self):
+        """
+        모든 webserver 관련 Docker Compose 프로젝트 목록 반환
+
+        Returns:
+            list: 프로젝트명 리스트 (예: ['webserver', 'webserver-feature-a', 'webserver-feature-b'])
+        """
+        try:
+            # 모든 컨테이너 조회 (실행 중이거나 중지된 것 포함)
+            result = subprocess.run(
+                ['docker', 'ps', '-a', '--format', '{{.Label "com.docker.compose.project"}}'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # webserver로 시작하는 프로젝트만 필터링
+            projects = set()
+            for line in result.stdout.strip().split('\n'):
+                if line and line.startswith('webserver'):
+                    projects.add(line)
+
+            return sorted(list(projects))
+
+        except subprocess.CalledProcessError:
+            return []
+
+    def list_all_projects(self):
+        """
+        모든 webserver 관련 프로젝트를 표 형식으로 출력
+
+        Returns:
+            bool: 성공 여부
+        """
+        projects = self.get_all_webserver_projects()
+
+        if not projects:
+            self.print_status("실행 중인 webserver 프로젝트가 없습니다.", "info")
+            return True
+
+        # 각 프로젝트의 상세 정보 수집
+        print(f"\n{Colors.CYAN}{'='*80}{Colors.RESET}")
+        print(f"{Colors.BOLD}Docker Compose 프로젝트 목록 (webserver){Colors.RESET}")
+        print(f"{Colors.CYAN}{'='*80}{Colors.RESET}\n")
+
+        # 헤더
+        print(f"{Colors.BOLD}{'프로젝트명':<40} {'상태':<15} {'컨테이너 수':<15}{Colors.RESET}")
+        print("-" * 80)
+
+        for project in projects:
+            # 프로젝트의 컨테이너 정보 조회
+            try:
+                result = subprocess.run(
+                    ['docker', 'ps', '-a', '--filter', f'label=com.docker.compose.project={project}',
+                     '--format', '{{.Status}}'],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+
+                statuses = result.stdout.strip().split('\n')
+                container_count = len([s for s in statuses if s])
+
+                # 실행 중인 컨테이너 확인
+                running_count = len([s for s in statuses if s.startswith('Up')])
+
+                if running_count == container_count and container_count > 0:
+                    status = f"{Colors.GREEN}실행 중{Colors.RESET}"
+                elif running_count > 0:
+                    status = f"{Colors.YELLOW}부분 실행{Colors.RESET}"
+                else:
+                    status = f"{Colors.RED}중지됨{Colors.RESET}"
+
+                print(f"{project:<40} {status:<24} {container_count}개")
+
+            except subprocess.CalledProcessError:
+                print(f"{project:<40} {Colors.RED}오류{Colors.RESET:<24} -")
+
+        print(f"\n{Colors.CYAN}{'='*80}{Colors.RESET}")
+        print(f"\n{Colors.BLUE}사용 가능한 명령어:{Colors.RESET}")
+        print(f"  python run.py stop [프로젝트명]   - 특정 프로젝트 중지")
+        print(f"  python run.py clean [프로젝트명]  - 특정 프로젝트 완전 정리")
+        print(f"  python run.py stop --all         - 모든 프로젝트 중지")
+        print(f"  python run.py clean --all        - 모든 프로젝트 완전 정리\n")
+
+        return True
+
+    def stop_all_projects(self):
+        """
+        모든 webserver 관련 프로젝트 중지
+
+        Returns:
+            bool: 성공 여부
+        """
+        projects = self.get_all_webserver_projects()
+
+        if not projects:
+            self.print_status("중지할 webserver 프로젝트가 없습니다.", "info")
+            return True
+
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        self.print_status(f"발견된 webserver 프로젝트: {len(projects)}개", "info")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+
+        for project in projects:
+            print(f"{Colors.YELLOW}📦 {project}{Colors.RESET}")
+
+        print()
+        confirm = input(f"{Colors.RED}모든 프로젝트를 중지하시겠습니까? (yes/no): {Colors.RESET}")
+
+        if confirm.lower() not in ['yes', 'y']:
+            self.print_status("작업이 취소되었습니다.", "info")
+            return True
+
+        print()
+        success_count = 0
+        fail_count = 0
+
+        for project in projects:
+            self.print_status(f"프로젝트 중지 중: {project}", "info")
+            try:
+                self.run_command(
+                    self.compose_cmd + ['-p', project, 'down'],
+                    cwd=self.root_dir
+                )
+                self.print_status(f"✅ {project} 중지 완료", "success")
+                success_count += 1
+            except subprocess.CalledProcessError as e:
+                self.print_status(f"❌ {project} 중지 실패: {e}", "error")
+                fail_count += 1
+
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        self.print_status(f"중지 완료: {success_count}개, 실패: {fail_count}개", "success" if fail_count == 0 else "warning")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+
+        return fail_count == 0
+
+    def clean_all_projects(self):
+        """
+        모든 webserver 관련 프로젝트 완전 정리 (볼륨 포함)
+
+        Returns:
+            bool: 성공 여부
+        """
+        projects = self.get_all_webserver_projects()
+
+        if not projects:
+            self.print_status("정리할 webserver 프로젝트가 없습니다.", "info")
+            return True
+
+        print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 프로젝트들이 완전히 삭제됩니다:{Colors.RESET}\n")
+
+        for project in projects:
+            print(f"{Colors.RED}  • {project} (모든 데이터 및 볼륨 포함){Colors.RESET}")
+
+        print(f"\n{Colors.YELLOW}이 작업은 되돌릴 수 없습니다!{Colors.RESET}\n")
+
+        confirm = input(f"{Colors.RED}정말로 모든 프로젝트를 삭제하시겠습니까? (yes/no): {Colors.RESET}")
+
+        if confirm.lower() not in ['yes', 'y']:
+            self.print_status("작업이 취소되었습니다.", "info")
+            return True
+
+        print()
+        success_count = 0
+        fail_count = 0
+
+        for project in projects:
+            self.print_status(f"프로젝트 정리 중: {project}", "info")
+            try:
+                # 볼륨 포함 완전 삭제
+                self.run_command(
+                    self.compose_cmd + ['-p', project, 'down', '--rmi', 'all', '-v'],
+                    cwd=self.root_dir
+                )
+                self.print_status(f"✅ {project} 정리 완료", "success")
+                success_count += 1
+            except subprocess.CalledProcessError:
+                # 이미지 삭제 실패 시 볼륨만이라도 삭제 시도
+                try:
+                    self.run_command(
+                        self.compose_cmd + ['-p', project, 'down', '-v'],
+                        cwd=self.root_dir
+                    )
+                    self.print_status(f"⚠️  {project} 부분 정리 완료 (이미지 제외)", "warning")
+                    success_count += 1
+                except subprocess.CalledProcessError as e:
+                    self.print_status(f"❌ {project} 정리 실패: {e}", "error")
+                    fail_count += 1
+
+        # Docker 시스템 정리
+        print()
+        self.print_status("Docker 시스템 정리 중...", "info")
+        try:
+            subprocess.run(['docker', 'volume', 'prune', '-f'], capture_output=True)
+            subprocess.run(['docker', 'network', 'prune', '-f'], capture_output=True)
+            self.print_status("Docker 시스템 정리 완료", "success")
+        except subprocess.CalledProcessError as e:
+            self.print_status(f"Docker 시스템 정리 중 오류: {e}", "warning")
+
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        self.print_status(f"정리 완료: {success_count}개, 실패: {fail_count}개", "success" if fail_count == 0 else "warning")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+
+        return fail_count == 0
+
+    def clean_system(self, project_name=None):
+        """
+        시스템 완전 정리 (데이터, SSL 인증서, Docker 이미지 포함)
+
+        Args:
+            project_name (str, optional): 정리할 프로젝트명. None이면 현재 프로젝트 정리
+        """
+        # 특정 프로젝트 정리
+        if project_name:
+            self.print_status(f"프로젝트 정리 중: {project_name}", "warning")
+
+            print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 항목들이 삭제됩니다:{Colors.RESET}")
+            print(f"{Colors.RED}  • {project_name} 프로젝트의 모든 데이터{Colors.RESET}")
+            print(f"{Colors.RED}  • Docker 볼륨 및 네트워크{Colors.RESET}")
+            print(f"{Colors.RED}  • Docker 이미지{Colors.RESET}")
+            print(f"\n{Colors.YELLOW}이 작업은 되돌릴 수 없습니다!{Colors.RESET}\n")
+
+            confirm = input(f"{Colors.RED}정말로 {project_name} 프로젝트를 삭제하시겠습니까? (yes/no): {Colors.RESET}")
+
+            if confirm.lower() not in ['yes', 'y']:
+                self.print_status("작업이 취소되었습니다.", "info")
+                return True
+
+            # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
+            if not hasattr(self, 'compose_cmd'):
+                self.check_requirements()
+
+            try:
+                # 볼륨 포함 완전 삭제
+                self.run_command(
+                    self.compose_cmd + ['-p', project_name, 'down', '--rmi', 'all', '-v'],
+                    cwd=self.root_dir
+                )
+                self.print_status(f"✅ {project_name} 프로젝트 정리 완료", "success")
+
+                # Docker 시스템 정리
+                self.print_status("Docker 시스템 정리 중...", "info")
+                try:
+                    subprocess.run(['docker', 'volume', 'prune', '-f'], capture_output=True)
+                    subprocess.run(['docker', 'network', 'prune', '-f'], capture_output=True)
+                    self.print_status("Docker 시스템 정리 완료", "success")
+                except subprocess.CalledProcessError as e:
+                    self.print_status(f"Docker 시스템 정리 중 오류: {e}", "warning")
+
+                return True
+            except subprocess.CalledProcessError:
+                # 이미지 삭제 실패 시 볼륨만이라도 삭제 시도
+                try:
+                    self.run_command(
+                        self.compose_cmd + ['-p', project_name, 'down', '-v'],
+                        cwd=self.root_dir
+                    )
+                    self.print_status(f"⚠️  {project_name} 부분 정리 완료 (이미지 제외)", "warning")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    self.print_status(f"❌ {project_name} 정리 실패: {e}", "error")
+                    return False
+
+        # 현재 프로젝트 완전 정리 (기존 로직)
         self.print_status("시스템 완전 정리를 시작합니다...", "warning")
-        
+
         # 상세한 경고 메시지
         print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 항목들이 완전히 삭제됩니다:{Colors.RESET}")
         print(f"{Colors.RED}  • 모든 데이터베이스 데이터 (사용자, 거래기록, 설정 등){Colors.RESET}")
@@ -1173,7 +1737,7 @@ class TradingSystemManager:
         print(f"{Colors.RED}  • Docker 볼륨 및 네트워크{Colors.RESET}")
         print(f"{Colors.RED}  • 로그 파일{Colors.RESET}")
         print(f"\n{Colors.YELLOW}이 작업은 되돌릴 수 없습니다!{Colors.RESET}\n")
-        
+
         try:
             # 확인 메시지
             if platform.system() == 'Windows':
@@ -1257,10 +1821,14 @@ class TradingSystemManager:
 def main():
     """메인 함수"""
     parser = argparse.ArgumentParser(description='암호화폐 트레이딩 시스템 관리')
-    parser.add_argument('command', nargs='?', choices=['start', 'stop', 'restart', 'logs', 'status', 'clean', 'setup'],
+    parser.add_argument('command', nargs='?', choices=['start', 'stop', 'restart', 'logs', 'status', 'clean', 'setup', 'ls'],
                        help='실행할 명령어')
+    parser.add_argument('project_name', nargs='?',
+                       help='프로젝트 이름 (stop, clean 명령어와 함께 사용)')
     parser.add_argument('-f', '--follow', action='store_true',
                        help='로그를 실시간으로 확인 (logs 명령어와 함께 사용)')
+    parser.add_argument('--all', action='store_true',
+                       help='모든 webserver 프로젝트에 대해 명령 실행 (stop, clean 명령어와 함께 사용)')
     parser.add_argument('--setup', action='store_true',
                        help='환경 설정 마법사 실행')
     
@@ -1301,20 +1869,67 @@ def main():
     manager = TradingSystemManager()
     
     try:
-        if args.command == 'start':
-            success = manager.start_system()
+        if args.command == 'ls':
+            # 프로젝트 목록 조회
+            success = manager.list_all_projects()
+        elif args.command == 'start':
+            if args.all:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그는 start 명령어와 함께 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.project_name:
+                print(f"{Colors.YELLOW}⚠️  start 명령어는 프로젝트명을 지정할 수 없습니다.{Colors.RESET}")
+                success = False
+            else:
+                success = manager.start_system()
         elif args.command == 'stop':
-            success = manager.stop_system()
+            if args.all and args.project_name:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그와 프로젝트명을 동시에 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.all:
+                success = manager.stop_all_projects()
+            elif args.project_name:
+                success = manager.stop_system(project_name=args.project_name)
+            else:
+                success = manager.stop_system()
         elif args.command == 'restart':
-            success = manager.restart_system()
+            if args.all:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그는 restart 명령어와 함께 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.project_name:
+                print(f"{Colors.YELLOW}⚠️  restart 명령어는 프로젝트명을 지정할 수 없습니다.{Colors.RESET}")
+                success = False
+            else:
+                success = manager.restart_system()
         elif args.command == 'logs':
-            manager.show_logs(follow=args.follow)
-            success = True
+            if args.all:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그는 logs 명령어와 함께 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.project_name:
+                print(f"{Colors.YELLOW}⚠️  logs 명령어는 프로젝트명을 지정할 수 없습니다.{Colors.RESET}")
+                success = False
+            else:
+                manager.show_logs(follow=args.follow)
+                success = True
         elif args.command == 'status':
-            manager.show_status()
-            success = True
+            if args.all:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그는 status 명령어와 함께 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.project_name:
+                print(f"{Colors.YELLOW}⚠️  status 명령어는 프로젝트명을 지정할 수 없습니다.{Colors.RESET}")
+                success = False
+            else:
+                manager.show_status()
+                success = True
         elif args.command == 'clean':
-            success = manager.clean_system()
+            if args.all and args.project_name:
+                print(f"{Colors.YELLOW}⚠️  --all 플래그와 프로젝트명을 동시에 사용할 수 없습니다.{Colors.RESET}")
+                success = False
+            elif args.all:
+                success = manager.clean_all_projects()
+            elif args.project_name:
+                success = manager.clean_system(project_name=args.project_name)
+            else:
+                success = manager.clean_system()
         else:
             parser.print_help()
             success = False
