@@ -16,6 +16,7 @@ from functools import wraps
 from app import db, csrf
 from app.models import User, Account, Strategy, StrategyAccount
 from app.services.telegram import telegram_service
+from app.constants import BackgroundJobTag, JOB_TAG_MAP
 import secrets
 import string
 from datetime import datetime, timedelta, date
@@ -1377,8 +1378,11 @@ def get_job_logs(job_id):
     """
     특정 백그라운드 작업의 로그 조회
 
+    **태그 기반 필터링**: JOB_TAG_MAP을 통해 job_id를 BackgroundJobTag로 변환하여
+    해당 작업의 로그만 정확하게 필터링합니다. (Phase 4 개선)
+
     Args:
-        job_id (str): 백그라운드 작업 ID (예: rebalance_order_queue)
+        job_id (str): 백그라운드 작업 ID (예: queue_rebalancer, update_open_orders)
 
     Query Parameters:
         limit (int): 최대 로그 줄 수 (기본: 100, 최대: 500)
@@ -1393,6 +1397,7 @@ def get_job_logs(job_id):
                     {
                         "timestamp": "2025-10-23 14:08:29",
                         "level": "INFO",
+                        "tag": "QUEUE_REBAL",  # 🆕 추가됨 (Phase 4)
                         "message": "재정렬 대상 조합: 3개",
                         "file": "queue_rebalancer.py",
                         "line": 123
@@ -1400,7 +1405,7 @@ def get_job_logs(job_id):
                 ],
                 "total": 1000,
                 "filtered": 45,
-                "job_id": "rebalance_order_queue"
+                "job_id": "queue_rebalancer"
             }
 
         JSON (404):
@@ -1411,6 +1416,11 @@ def get_job_logs(job_id):
 
         JSON (500):
             { "success": false, "message": "로그 조회 중 오류가 발생했습니다.", "logs": [], "total": 0, "filtered": 0 }
+
+    Note:
+        - 태그 없는 로그도 파싱 가능 (하위 호환성)
+        - job_id가 JOB_TAG_MAP에 없으면 WARNING 로그 출력 후 모든 로그 반환
+        - API 응답의 'tag' 필드는 Optional (null 가능)
     """
     try:
         from flask import current_app
@@ -1505,13 +1515,24 @@ def get_job_logs(job_id):
 
         # 로그 파싱 정규식
         # 실제 로그 포맷 (app/__init__.py line 169):
-        # %(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]
-        # 예시: 2025-10-23 14:08:29,055 INFO: 재정렬 완료 [in /app/queue_rebalancer.py:123]
+        # %(asctime)s %(levelname)s: [TAG] %(message)s [in %(pathname)s:%(lineno)d]
+        # 예시: 2025-10-23 14:08:29,055 INFO: [QUEUE_REBAL] 재정렬 완료 [in /app/queue_rebalancer.py:123]
         log_pattern = re.compile(
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ (\w+): (.+?) \[in (.+?):(\d+)\]'
-            #                                                  ^^^^          ^^^^
-            #                                                  non-greedy    non-greedy
+            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ '  # 그룹 1: timestamp
+            r'(\w+): '                                      # 그룹 2: level
+            r'(?:\[([A-Z_]+)\] )?'                         # 그룹 3: tag (선택적)
+            r'(.+?) '                                       # 그룹 4: message
+            r'\[in (.+?):(\d+)\]',                         # 그룹 5,6: file, line
+            re.VERBOSE
         )
+
+        # Job ID → Tag 매핑 조회
+        job_tag = JOB_TAG_MAP.get(job_id)
+        if not job_tag:
+            current_app.logger.warning(
+                f'Job ID "{job_id}"에 대한 태그 매핑이 없습니다. '
+                f'사용 가능한 Job ID: {", ".join(JOB_TAG_MAP.keys())}'
+            )
 
         parsed_logs = []
         total_count = 0
@@ -1522,13 +1543,18 @@ def get_job_logs(job_id):
             # 정규식 파싱
             match = log_pattern.match(line.strip())
             if match:
-                timestamp, log_level, message, file_path, line_num = match.groups()
+                timestamp, log_level, tag, message, file_path, line_num = match.groups()
 
-                # 레벨 필터
+                # 태그 기반 필터링 (job_tag가 있을 경우)
+                if job_tag:
+                    if tag != job_tag.name:
+                        continue  # 다른 작업의 로그는 스킵
+
+                # 로그 레벨 필터
                 if level != 'ALL' and log_level != level:
                     continue
 
-                # 검색 필터
+                # 검색어 필터
                 if search_term and search_term not in message.lower():
                     continue
 
@@ -1538,18 +1564,20 @@ def get_job_logs(job_id):
                 parsed_logs.append({
                     'timestamp': timestamp,
                     'level': log_level,
+                    'tag': tag,  # 🆕 추가
                     'message': message.strip(),
                     'file': file_name,
                     'line': int(line_num)
                 })
             else:
-                # 파싱 실패 시 fallback
+                # 파싱 실패 시 fallback (태그 없는 로그도 포함)
                 if search_term and search_term not in line.lower():
                     continue
 
                 parsed_logs.append({
                     'timestamp': 'N/A',
                     'level': 'UNKNOWN',
+                    'tag': None,  # 🆕 추가
                     'message': line.strip(),
                     'file': 'N/A',
                     'line': 0
