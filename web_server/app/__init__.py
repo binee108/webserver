@@ -70,6 +70,8 @@ if config is None:
         'default': DefaultConfig
     }
 from datetime import datetime
+from app.utils.logging import tag_background_logger
+from app.constants import BackgroundJobTag
 
 # 전역 확장 객체들
 db = SQLAlchemy()
@@ -189,6 +191,10 @@ def create_app(config_name=None):
     background_log_level = getattr(logging, app.config.get('BACKGROUND_LOG_LEVEL', 'WARNING').upper())
     background_logger.setLevel(background_log_level)
     background_logger.addHandler(file_handler)
+
+    # 백그라운드 작업 로깅 태그 지원을 위한 TaggedLogger 래핑
+    from app.utils.logging import TaggedLogger
+    app.logger = TaggedLogger(app.logger)
 
     app.logger.info('Trading System startup')
 
@@ -763,6 +769,7 @@ def refresh_market_info_with_context():
     except Exception as e:
         current_app.logger.error(f"❌ MarketInfo 백그라운드 갱신 실패: {e}")
 
+@tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
 def warm_up_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""
     with app.app_context():
@@ -781,6 +788,7 @@ def warm_up_precision_cache_with_context(app):
         except Exception as e:
             app.logger.error(f'❌ Precision 캐시 웜업 실패: {str(e)}')
 
+@tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
 def update_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 주기적 업데이트"""
     with app.app_context():
@@ -941,6 +949,7 @@ def warm_up_market_caches_with_context(app):
             app.logger.error(f'❌ 가격 캐시 초기 웜업 실패: {str(e)}')
 
 
+@tag_background_logger(BackgroundJobTag.PRICE_CACHE)
 def update_price_cache_with_context(app):
     """주기적으로 가격 캐시를 갱신"""
     with app.app_context():
@@ -950,6 +959,7 @@ def update_price_cache_with_context(app):
         except Exception as e:
             app.logger.error(f'❌ 가격 캐시 업데이트 실패: {str(e)}')
 
+@tag_background_logger(BackgroundJobTag.ORDER_UPDATE)
 def update_open_orders_with_context(app):
     """Flask 앱 컨텍스트 내에서 미체결 주문 상태 업데이트"""
     with app.app_context():
@@ -969,6 +979,7 @@ def update_open_orders_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.PNL_CALC)
 def calculate_unrealized_pnl_with_context(app):
     """Flask 앱 컨텍스트 내에서 미실현 손익 계산"""
     with app.app_context():
@@ -988,6 +999,7 @@ def calculate_unrealized_pnl_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.DAILY_SUMMARY)
 def send_daily_summary_with_context(app):
     """Flask 앱 컨텍스트 내에서 일일 요약 보고서 전송"""
     with app.app_context():
@@ -1022,6 +1034,7 @@ def send_daily_summary_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.AUTO_REBAL)
 def auto_rebalance_all_accounts_with_context(app):
     """
     Phase 2: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
@@ -1097,6 +1110,7 @@ def auto_rebalance_all_accounts_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.PERF_CALC)
 def calculate_daily_performance_with_context(app):
     """
     Phase 3.4: Flask 앱 컨텍스트 내에서 일일 성과 계산
@@ -1162,6 +1176,7 @@ def calculate_daily_performance_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.LOCK_RELEASE)
 def release_stale_order_locks_with_context(app):
     """
     Phase 2: Flask 앱 컨텍스트 내에서 오래된 처리 잠금 해제
@@ -1176,6 +1191,7 @@ def release_stale_order_locks_with_context(app):
         except Exception as e:
             app.logger.error(f"❌ 오래된 처리 잠금 해제 실패: {str(e)}")
 
+@tag_background_logger(BackgroundJobTag.WS_HEALTH)
 def check_websocket_health_with_context(app):
     """
     Phase 4: Flask 앱 컨텍스트 내에서 WebSocket 연결 상태 모니터링
