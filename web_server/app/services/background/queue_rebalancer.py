@@ -52,6 +52,8 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             from app import db
             from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
             from app.services.trading.order_queue_manager import OrderQueueManager
+            from app.utils.logging import format_background_log
+            from app.constants import BackgroundJobTag
 
             global _last_memory_check, _psutil_warning_shown, _last_status_log
 
@@ -66,11 +68,17 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                     memory_info = process.memory_info()
                     memory_mb = memory_info.rss / 1024 / 1024
 
-                    logger.info(f"📊 메모리 사용량: {memory_mb:.2f} MB")
+                    logger.info(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
+                        f"📊 메모리 사용량: {memory_mb:.2f} MB"
+                    ))
 
                     # 메모리 경고
                     if memory_mb > 500:
-                        logger.warning(f"⚠️ 높은 메모리 사용량 감지: {memory_mb:.2f} MB")
+                        logger.warning(format_background_log(
+                            BackgroundJobTag.QUEUE_REBAL,
+                            f"⚠️ 높은 메모리 사용량 감지: {memory_mb:.2f} MB"
+                        ))
 
                         if memory_mb > 1024:
                             try:
@@ -81,25 +89,35 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                                         f"메모리 사용량: {memory_mb:.2f} MB"
                                     )
                             except Exception as e:
-                                logger.debug(f"텔레그램 알림 실패 (메모리 경고): {e}")
+                                logger.debug(format_background_log(
+                                    BackgroundJobTag.QUEUE_REBAL,
+                                    f"텔레그램 알림 실패 (메모리 경고): {e}"
+                                ))
 
                     _last_memory_check = current_time
 
                 except ImportError:
                     if not _psutil_warning_shown:
-                        logger.warning("⚠️ psutil 패키지가 설치되지 않아 메모리 모니터링을 건너뜁니다")
+                        logger.warning(format_background_log(
+                            BackgroundJobTag.QUEUE_REBAL,
+                            "⚠️ psutil 패키지가 설치되지 않아 메모리 모니터링을 건너뜁니다"
+                        ))
                         _psutil_warning_shown = True
                 except Exception as e:
-                    logger.error(f"❌ 메모리 체크 실패: {e}")
+                    logger.error(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
+                        f"❌ 메모리 체크 실패: {e}"
+                    ))
 
             # 5분마다 상태 요약 로그 (메모리 체크와 동일한 간격)
             if current_time - _last_status_log > 300:  # 5분
                 active_accounts_count = Account.query.filter_by(is_active=True).count()
-                logger.info(
+                logger.info(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
                     f"📊 대기열 재정렬 상태 요약 - "
                     f"활성 계정: {active_accounts_count}개, "
                     f"주기: 1초"
-                )
+                ))
                 _last_status_log = current_time
 
             # Step 1: 활성 계정 조회
@@ -134,17 +152,24 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             all_pairs: Set[Tuple[int, str]] = set(open_order_pairs) | set(pending_order_pairs)
 
             # 디버깅: 중복 검증 (DEBUG 레벨)
-            logger.debug(
+            logger.debug(format_background_log(
+                BackgroundJobTag.QUEUE_REBAL,
                 f"🔍 재정렬 대상 조합 - "
                 f"OpenOrder: {len(open_order_pairs)}개, "
                 f"PendingOrder: {len(pending_order_pairs)}개, "
                 f"합집합: {len(all_pairs)}개"
-            )
+            ))
 
             if all_pairs:
-                logger.debug(f"🔍 재정렬 대상 상세:")
+                logger.debug(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"🔍 재정렬 대상 상세:"
+                ))
                 for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
-                    logger.debug(f"  [{idx}] Account {account_id}: {symbol}")
+                    logger.debug(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
+                        f"  [{idx}] Account {account_id}: {symbol}"
+                    ))
 
             if not all_pairs:
                 # 재정렬할 주문이 없으면 조용히 종료 (로그 스팸 방지)
@@ -168,7 +193,10 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
 
             # 대기열 적체 알림
             if large_queues:
-                logger.warning(f"⚠️ 대기열 적체 감지 - {len(large_queues)}개 심볼")
+                logger.warning(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"⚠️ 대기열 적체 감지 - {len(large_queues)}개 심볼"
+                ))
 
                 # Telegram 알림 (10개 이상 적체 시)
                 if len(large_queues) >= 10:
@@ -186,7 +214,10 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                                 message
                             )
                     except Exception as e:
-                        logger.debug(f"텔레그램 알림 실패 (대기열 적체): {e}")
+                        logger.debug(format_background_log(
+                            BackgroundJobTag.QUEUE_REBAL,
+                            f"텔레그램 알림 실패 (대기열 적체): {e}"
+                        ))
 
             # Step 4: 각 (account_id, symbol)별 재정렬
             total_cancelled = 0
@@ -203,7 +234,10 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             for account_id, symbol in all_pairs:
                 try:
                     # 디버깅: 처리 시작 (DEBUG 레벨)
-                    logger.debug(f"🔍 재정렬 처리 시작 - Account {account_id}, Symbol: {symbol}")
+                    logger.debug(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
+                        f"🔍 재정렬 처리 시작 - Account {account_id}, Symbol: {symbol}"
+                    ))
                     processed_pairs.append((account_id, symbol))
 
                     result = queue_manager.rebalance_symbol(
@@ -212,25 +246,30 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                     )
 
                     # 디버깅: 처리 완료 (DEBUG 레벨)
-                    logger.debug(
+                    logger.debug(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
                         f"🔍 재정렬 처리 완료 - Account {account_id}, Symbol: {symbol}, "
                         f"결과: {result.get('success')}, 취소: {result.get('cancelled')}, 실행: {result.get('executed')}"
-                    )
+                    ))
 
                     if result.get('success'):
                         total_cancelled += result.get('cancelled', 0)
                         total_executed += result.get('executed', 0)
                     else:
                         total_errors += 1
-                        logger.warning(
+                        logger.warning(format_background_log(
+                            BackgroundJobTag.QUEUE_REBAL,
                             f"⚠️  재정렬 실패 - account_id={account_id}, symbol={symbol}, "
                             f"error={result.get('error')}"
-                        )
+                        ))
 
                 except Exception as e:
                     total_errors += 1
                     logger.error(
-                        f"❌ 재정렬 예외 발생 - account_id={account_id}, symbol={symbol}: {e}",
+                        format_background_log(
+                            BackgroundJobTag.QUEUE_REBAL,
+                            f"❌ 재정렬 예외 발생 - account_id={account_id}, symbol={symbol}: {e}"
+                        ),
                         exc_info=True
                     )
 
@@ -252,7 +291,10 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             # 적체가 해소되지 않았을 때만 알림
             resolved_count = len(large_queues) - len(still_large_queues)
             if resolved_count > 0:
-                logger.info(f"✅ 대기열 적체 해소 - {resolved_count}개 심볼")
+                logger.info(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"✅ 대기열 적체 해소 - {resolved_count}개 심볼"
+                ))
 
             # 여전히 적체 중이고 10개 이상이면 Telegram 알림
             if still_large_queues and len(still_large_queues) >= 10:
@@ -270,29 +312,43 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                             message
                         )
                 except Exception as e:
-                    logger.debug(f"텔레그램 알림 실패 (대기열 적체): {e}")
+                    logger.debug(format_background_log(
+                        BackgroundJobTag.QUEUE_REBAL,
+                        f"텔레그램 알림 실패 (대기열 적체): {e}"
+                    ))
             elif still_large_queues:
-                logger.warning(f"⚠️ 대기열 적체 지속 - {len(still_large_queues)}개 심볼 (10개 미만이므로 텔레그램 알림 생략)")
+                logger.warning(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"⚠️ 대기열 적체 지속 - {len(still_large_queues)}개 심볼 (10개 미만이므로 텔레그램 알림 생략)"
+                ))
 
             # Step 6: 결과 로깅 (실제 작업 발생 시에만 INFO)
             if total_cancelled > 0 or total_executed > 0:
-                logger.info(
+                logger.info(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
                     f"🔄 대기열 재정렬 완료 - "
                     f"대상: {len(all_pairs)}개 심볼, "
                     f"취소: {total_cancelled}개, "
                     f"실행: {total_executed}개, "
                     f"오류: {total_errors}개"
-                )
+                ))
             elif total_errors > 0:
-                logger.warning(
+                logger.warning(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
                     f"⚠️ 대기열 재정렬 중 오류 발생 - "
                     f"대상: {len(all_pairs)}개 심볼, "
                     f"오류: {total_errors}개"
-                )
+                ))
 
         except Exception as e:
             # 스케줄러 중단 방지를 위한 최상위 예외 처리
-            logger.error(f"❌ 대기열 재정렬 스케줄러 오류: {e}", exc_info=True)
+            logger.error(
+                format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"❌ 대기열 재정렬 스케줄러 오류: {e}"
+                ),
+                exc_info=True
+            )
 
             # Telegram 알림 (다른 스케줄러 패턴과 일치)
             try:
@@ -303,7 +359,10 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                     f"상세 로그를 확인하세요."
                 )
             except Exception as e:
-                logger.debug(f"텔레그램 알림 실패 (스케줄러 오류): {e}")
+                logger.debug(format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"텔레그램 알림 실패 (스케줄러 오류): {e}"
+                ))
 
 
 # @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:helper
@@ -333,6 +392,8 @@ def rebalance_specific_symbol_with_context(
     with app.app_context():
         try:
             from app.services.trading import trading_service
+            from app.utils.logging import format_background_log
+            from app.constants import BackgroundJobTag
 
             queue_manager = trading_service.order_queue_manager
             result = queue_manager.rebalance_symbol(
@@ -340,16 +401,20 @@ def rebalance_specific_symbol_with_context(
                 symbol=symbol
             )
 
-            logger.info(
+            logger.info(format_background_log(
+                BackgroundJobTag.QUEUE_REBAL,
                 f"🔧 수동 재정렬 완료 - account_id={account_id}, symbol={symbol}, "
                 f"결과={result}"
-            )
+            ))
 
             return result
 
         except Exception as e:
             logger.error(
-                f"❌ 수동 재정렬 실패 - account_id={account_id}, symbol={symbol}: {e}",
+                format_background_log(
+                    BackgroundJobTag.QUEUE_REBAL,
+                    f"❌ 수동 재정렬 실패 - account_id={account_id}, symbol={symbol}: {e}"
+                ),
                 exc_info=True
             )
             return {

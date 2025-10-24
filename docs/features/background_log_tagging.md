@@ -11,7 +11,8 @@
 - [x] Phase 1: 태그 시스템 설계 및 중앙 집중화 (완료)
 - [x] Phase 2: 데코레이터 기반 자동 태그 적용 (완료)
 - [x] Phase 3.1: app/__init__.py MARKET_INFO 함수 (완료)
-- [ ] Phase 3.2-3.N: 개별 파일 로깅 개선 (예정)
+- [x] Phase 3.2: queue_rebalancer.py 로깅 개선 (완료)
+- [ ] Phase 3.3-3.N: 개별 파일 로깅 개선 (예정)
 
 ---
 
@@ -230,10 +231,180 @@ current_app.logger.info(format_background_log(
 
 ---
 
+## Phase 3.2: queue_rebalancer.py Logging Improvements ✅ COMPLETE
+
+### 개요
+대기열 재정렬 백그라운드 작업(`queue_rebalancer.py`)의 24개 로그 라인에 `[QUEUE_REBAL]` 태그를 적용하여 admin/system 페이지에서 정확한 로그 필터링이 가능하도록 개선.
+
+- **파일**: `app/services/background/queue_rebalancer.py`
+- **실행 주기**: 1초 (고빈도 작업)
+- **태그**: `BackgroundJobTag.QUEUE_REBAL`
+- **적용 로그**: 24개 (INFO 5, WARNING 6, ERROR 4, DEBUG 9)
+
+### 로그 분포
+
+| Level | Count | Purpose |
+|-------|-------|---------|
+| INFO | 5 | 실제 상태 변화 (메모리 상태, 적체 해소, 재정렬 완료) |
+| WARNING | 6 | 주의 필요 (메모리 경고, 적체 감지, 재정렬 실패) |
+| ERROR | 4 | 작업 실패 (메모리 체크, 재정렬 예외, 스케줄러 오류) |
+| DEBUG | 9 | 반복 진단 (대상 상세, 처리 단계) |
+| **Total** | **24** | |
+
+### 백그라운드 로깅 정책 적용
+
+#### Pattern 1: Early Return (Lines 128-129, 174-176)
+```python
+# 활성 계정 없음 → 조용히 종료 (로그 없음)
+if not active_accounts:
+    return
+```
+**근거**: 1초 주기 고빈도 작업의 로그 스팸 방지
+
+#### Pattern 2: 5-Minute Summary (Lines 113-121)
+```python
+# 5분마다만 INFO 상태 요약
+if current_time - _last_status_log > 300:
+    app.logger.info(format_background_log(
+        BackgroundJobTag.QUEUE_REBAL,
+        f"📊 상태 요약 - 활성: {len(active_accounts)}개 계정"
+    ))
+```
+**근거**: 가시성과 로그 볼륨의 균형
+
+#### Pattern 3: Change-Based INFO (Lines 326-334)
+```python
+# 실제 작업 발생 시에만 INFO
+if total_cancelled > 0 or total_executed > 0:
+    app.logger.info(format_background_log(
+        BackgroundJobTag.QUEUE_REBAL,
+        f"🔄 재정렬 완료 - 취소: {total_cancelled}개, 실행: {total_executed}개"
+    ))
+```
+**근거**: Signal vs Noise 비율 최적화
+
+#### Pattern 4: DEBUG for Repetitive Tasks (Lines 155-172)
+```python
+# 반복 작업의 상세 정보는 DEBUG
+for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
+    app.logger.debug(format_background_log(
+        BackgroundJobTag.QUEUE_REBAL,
+        f"  [{idx}] Account {account_id}: {symbol}"
+    ))
+```
+**근거**: 1초마다 INFO 로그 스팸 방지
+
+#### Pattern 5: Telegram DEBUG Level (Lines 92-95, 217-220, 314-318, 362-365)
+```python
+# 텔레그램 알림 실패는 DEBUG (ERROR 아님)
+app.logger.debug(format_background_log(
+    BackgroundJobTag.QUEUE_REBAL,
+    f"⚠️ 텔레그램 알림 실패 (메모리 경고): {e}"
+))
+```
+**근거**: 텔레그램은 비핵심 기능, ERROR 로그 오염 방지
+
+### 구현 방식
+
+#### Import 위치 (함수 내부)
+```python
+def rebalance_all_symbols_with_context(app):
+    """대기열 재정렬 메인 함수"""
+    # Phase 3.1 교훈 반영: Flask 컨텍스트 안전성
+    from app.utils.logging import format_background_log
+    from app.constants import BackgroundJobTag
+
+    with app.app_context():
+        # ... 로직 ...
+```
+
+#### 태그 적용 패턴
+```python
+# 기본 로그
+app.logger.info(format_background_log(
+    BackgroundJobTag.QUEUE_REBAL,
+    f"📊 메모리 사용량: {memory_mb:.2f} MB"
+))
+
+# 예외 정보 포함
+app.logger.error(
+    format_background_log(
+        BackgroundJobTag.QUEUE_REBAL,
+        f"❌ 재정렬 예외 - account_id={account_id}: {e}"
+    ),
+    exc_info=True  # 스택 트레이스 보존
+)
+```
+
+### 검증 명령어
+
+```bash
+# 태그 사용 횟수 (expect 24)
+grep -c "BackgroundJobTag.QUEUE_REBAL" web_server/app/services/background/queue_rebalancer.py
+
+# 로그 레벨별 분포 검증
+grep "logger.info" web_server/app/services/background/queue_rebalancer.py | grep QUEUE_REBAL | wc -l    # expect 5
+grep "logger.warning" web_server/app/services/background/queue_rebalancer.py | grep QUEUE_REBAL | wc -l  # expect 6
+grep "logger.error" web_server/app/services/background/queue_rebalancer.py | grep QUEUE_REBAL | wc -l    # expect 4
+grep "logger.debug" web_server/app/services/background/queue_rebalancer.py | grep QUEUE_REBAL | wc -l    # expect 9
+
+# 런타임 로그 확인
+grep "\[QUEUE_REBAL\]" web_server/logs/app.log | tail -20
+
+# Docker 로그 확인
+docker logs background-log-tagging-app-1 | grep "\[QUEUE_REBAL\]" | tail -20
+```
+
+### 기능 태그
+
+```python
+# @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core @DEPS:order-tracking,telegram-notification
+```
+
+### 코드 변경
+- `app/services/background/queue_rebalancer.py`:
+  - Import 추가: 4줄 (2개 함수 내부)
+  - 24개 로그 라인 태그 래핑: 96 insertions, 31 deletions
+  - 기능 로직 변경 없음 (로깅만 개선)
+
+**합계: +65줄 (net)**
+
+### Phase 3.1 교훈 반영
+
+✅ **Flask 컨텍스트 안전성**: 함수 내부 import로 `current_app` 문제 방지
+✅ **명시적 `app` 파라미터**: `with app.app_context()` 패턴 유지
+✅ **예외 처리**: `exc_info=True` 파라미터 올바르게 보존 (3곳)
+✅ **로그 검증**: Docker logs와 app.log 모두 확인
+
+### 검증 완료
+- ✅ Code Review: APPROVED
+- ✅ Syntax: Python compiler passed
+- ✅ Tag Count: 24/24 (100%)
+- ✅ Logging Policy: 5가지 패턴 모두 준수
+- ✅ No functional changes: 로깅만 개선
+
+### Known Issues
+
+**None** - Phase 3.2 구현 완벽 완료
+
+---
+
 ## 검색
 
 ```bash
+# 기능 태그 검색
 grep -r "@FEAT:background-log-tagging" --include="*.py" web_server/app/
+
+# 데코레이터 사용 검색
 grep -r "@tag_background_logger" --include="*.py" web_server/app/
+
+# Phase 3.1: MARKET_INFO 태그 검색
 grep -n "BackgroundJobTag.MARKET_INFO" web_server/app/__init__.py
+
+# Phase 3.2: QUEUE_REBAL 태그 검색
+grep -n "BackgroundJobTag.QUEUE_REBAL" web_server/app/services/background/queue_rebalancer.py
+
+# 런타임 로그 검색
+grep "\[MARKET_INFO\]" web_server/logs/app.log | tail -20
+grep "\[QUEUE_REBAL\]" web_server/logs/app.log | tail -20
 ```
