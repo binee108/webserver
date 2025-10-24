@@ -561,29 +561,29 @@ class OrderQueueManager:
                     if result:
                         cancelled_count += 1
 
-                # ✅ v2.1: 실패한 주문 수집
-                executed_count = 0
-                failed_orders = []
+                # Phase 2: Execute pending orders via batch API
+                if to_execute:
+                    batch_result = self._process_pending_batch(
+                        pending_orders=to_execute
+                    )
 
-                for pending_order in to_execute:
-                    result = self._execute_pending_order(pending_order)
-                    if result['success']:
-                        executed_count += 1
-                    else:
-                        # 실패 시 분류 정보 추가
-                        error_type = self._classify_failure_type(result.get('error', ''))
-                        failed_orders.append({
-                            'pending_id': result.get('pending_id', pending_order.id),
-                            'symbol': pending_order.symbol,
-                            'error': result.get('error', 'Unknown error'),
-                            'error_type': error_type,
-                            'recoverable': self._is_recoverable(error_type)
-                        })
+                    executed_count = batch_result['executed']
+                    failed_count = batch_result['failed']
 
-                logger.info(
-                    f"✅ 재정렬 완료 - 취소: {cancelled_count}개, "
-                    f"실행: {executed_count}개, 실패: {len(failed_orders)}개"
-                )
+                    logger.info(
+                        f"🎯 재정렬 완료 (배치) - "
+                        f"취소: {cancelled_count}개, "
+                        f"성공: {executed_count}개, "
+                        f"실패: {failed_count}개"
+                    )
+                else:
+                    executed_count = 0
+                    failed_count = 0
+
+                    logger.info(
+                        f"✅ 재정렬 완료 - 취소: {cancelled_count}개 "
+                        f"(실행 대상 없음)"
+                    )
 
                 # 호출자가 commit 제어
                 if commit:
@@ -610,7 +610,7 @@ class OrderQueueManager:
                     'success': True,
                     'cancelled': cancelled_count,
                     'executed': executed_count,
-                    'failed_orders': failed_orders,  # ✅ v2.1: 실패한 주문 목록 추가
+                    'failed': failed_count if to_execute else 0,  # Phase 2: Batch result
                     'total_orders': len(all_orders),
                     'active_orders': len(active_orders) - cancelled_count + executed_count,
                     'pending_orders': len(pending_orders) + cancelled_count - executed_count,
@@ -628,6 +628,223 @@ class OrderQueueManager:
                     'cancelled': 0,
                     'executed': 0
                 }
+
+    # @FEAT:webhook-batch-queue @COMP:service @TYPE:core
+    def _process_pending_batch(
+        self,
+        pending_orders: List[PendingOrder]
+    ) -> Dict[str, Any]:
+        """
+        Process pending orders via exchange batch API (80% API call reduction)
+
+        @FEAT:webhook-batch-queue @COMP:service @TYPE:core
+        Phase 2: Rebalancer integration with multi-account support
+
+        Architecture:
+            1. Group by account_id → independent processing (exception isolation)
+            2. Batch in chunks of 5 (Binance limit; Bybit supports 10 but unified)
+            3. Index-based result mapping (result[i] ↔ pending_order[i])
+            4. Per-order error classification (permanent → delete, temporary → retry)
+            5. Caller controls commit (transaction boundary)
+
+        Args:
+            pending_orders (List[PendingOrder]): Orders to execute via batch API
+
+        Returns:
+            Dict[str, Any]:
+                - 'success': bool (overall status)
+                - 'executed': int (successfully created OpenOrders)
+                - 'failed': int (retry or deleted after MAX_RETRY_COUNT=5)
+
+        Performance: N orders = ceil(N/5) API calls (vs N individual calls)
+
+        Error Isolation:
+            - Account failure doesn't block other accounts
+            - Batch failure: all orders in batch marked for retry
+            - Retry exhaustion: delete after 5 attempts (see MAX_RETRY_COUNT)
+
+        Phase 1 Consistency: Reuses _classify_failure_type(), MAX_RETRY_COUNT
+        See Also: _execute_pending_order() (deprecated), _emit_pending_order_sse()
+        """
+
+        if not pending_orders:
+            return {'success': True, 'executed': 0, 'failed': 0}
+
+        # Step 1: Group orders by account_id (multi-account support)
+        from collections import defaultdict
+        orders_by_account = defaultdict(list)
+
+        for pending_order in pending_orders:
+            account_id = pending_order.strategy_account.account_id
+            orders_by_account[account_id].append(pending_order)
+
+        logger.info(f"📦 배치 처리 시작 - {len(orders_by_account)}개 계좌, {len(pending_orders)}개 주문")
+
+        success_count = 0
+        failed_count = 0
+
+        # Step 2: Process each account independently (exception isolation)
+        for account_id, account_orders in orders_by_account.items():
+            try:
+                # Get account info
+                first_order = account_orders[0]
+                strategy_account = first_order.strategy_account
+                account = strategy_account.account
+                symbol = first_order.symbol
+                market_type = first_order.market_type
+
+                logger.info(f"  🔄 Account {account_id} ({account.name}): {len(account_orders)}개 주문 처리 중...")
+
+                # Batch size 5: Binance limit (Bybit=10, but unified to 5 for cross-exchange consistency)
+                for i in range(0, len(account_orders), 5):
+                    batch = account_orders[i:i+5]
+
+                    logger.debug(f"    ⚙️  배치 {i//5 + 1}: {len(batch)}개 주문")
+
+                    # Step 1: Convert to CCXT format
+                    # Why: Exchange API requires lowercase side, float types, stopPrice in params
+                    # Transforms: PendingOrder (Decimal, 'BUY') → CCXT (float, 'buy')
+                    exchange_orders = []
+                    for pending_order in batch:
+                        order_dict = {
+                            'symbol': pending_order.symbol,
+                            'side': pending_order.side.lower(),
+                            'type': pending_order.order_type,
+                            'amount': float(pending_order.quantity),
+                        }
+
+                        # Add price if LIMIT order
+                        if pending_order.price:
+                            order_dict['price'] = float(pending_order.price)
+
+                        # Add stop_price if STOP order
+                        if pending_order.stop_price:
+                            order_dict['params'] = {'stopPrice': float(pending_order.stop_price)}
+
+                        exchange_orders.append(order_dict)
+
+                    # Step 2: Execute batch API (1 call for 5 orders = 80% reduction)
+                    # Why batch size 5: Binance limit (Bybit supports 10 but we unify to 5)
+                    # Upbit fallback: No batch API, uses individual execution
+                    try:
+                        batch_result = self.service.exchange_service.create_batch_orders(
+                            account=account,
+                            orders=exchange_orders,  # All 5 orders at once
+                            market_type=market_type.lower(),
+                            account_id=account.id
+                        )
+
+                        logger.info(f"    ✅ 배치 API 호출 성공: {len(exchange_orders)}개 주문")
+
+                    except Exception as batch_error:
+                        # Batch API call failed - mark all as failed
+                        logger.error(f"    ❌ 배치 API 호출 실패: {batch_error}")
+
+                        for pending_order in batch:
+                            # Classify failure type
+                            failure_type = self._classify_failure_type(str(batch_error))
+
+                            if failure_type == "permanent":
+                                db.session.delete(pending_order)
+                                logger.warning(f"    🗑️  영구 실패 - 삭제: PendingOrder {pending_order.id}")
+                            elif failure_type == "temporary":
+                                pending_order.retry_count += 1
+                                # Note: Uses > comparison (not >=), allowing 6 total retries (0→1→2→3→4→5→6)
+                                # MAX_RETRY_COUNT=5 means "retry more than 5 times triggers deletion"
+                                if pending_order.retry_count > self.MAX_RETRY_COUNT:
+                                    db.session.delete(pending_order)
+                                    logger.warning(f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id}")
+                                    self._emit_pending_order_sse(account_id, symbol)
+                                else:
+                                    logger.warning(f"    ⏳ 재시도 예약: PendingOrder {pending_order.id}")
+
+                        failed_count += len(batch)
+                        continue  # Skip to next batch
+
+                    # Step 3: Parse results via index mapping (result[i] ↔ pending_order[i])
+                    # Why index-based: Exchange preserves request order, simpler than ID matching
+                    # Error detection: 'code' (Binance), 'error_code' (Upbit), 'status'=='error' (generic)
+                    # Success: OpenOrder → SSE → Delete | Failure: Classify → Retry or Delete
+                    batch_results = batch_result.get('results', [])
+
+                    # Index-based mapping: Simpler than order ID matching, exchange preserves request order
+                    for idx, result_item in enumerate(batch_results):
+                        if idx >= len(batch):
+                            logger.warning(f"    ⚠️  결과 인덱스 초과: {idx} >= {len(batch)}")
+                            break
+
+                        pending_order = batch[idx]
+
+                        # Multi-exchange error detection (plan requirement)
+                        is_exchange_error = (
+                            'code' in result_item or          # Binance
+                            'error_code' in result_item or     # Upbit
+                            result_item.get('status') == 'error'  # Generic
+                        )
+
+                        if is_exchange_error:
+                            # FAILURE PATH
+                            error_msg = result_item.get('msg') or result_item.get('message', 'Unknown error')
+                            logger.error(f"    ❌ 주문 실패: PendingOrder {pending_order.id}, 사유: {error_msg}")
+
+                            # Classify failure type
+                            failure_type = self._classify_failure_type(error_msg)
+
+                            if failure_type == "permanent":
+                                db.session.delete(pending_order)
+                                logger.warning(f"    🗑️  영구 실패 - 삭제: PendingOrder {pending_order.id}")
+                            elif failure_type == "temporary":
+                                pending_order.retry_count += 1
+                                # Note: Uses > comparison (not >=), allowing 6 total retries (0→1→2→3→4→5→6)
+                                # MAX_RETRY_COUNT=5 means "retry more than 5 times triggers deletion"
+                                if pending_order.retry_count > self.MAX_RETRY_COUNT:
+                                    db.session.delete(pending_order)
+                                    logger.warning(f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id}")
+                                    self._emit_pending_order_sse(account_id, symbol)
+                                else:
+                                    logger.warning(f"    ⏳ 재시도 예약: PendingOrder {pending_order.id} ({pending_order.retry_count}/{self.MAX_RETRY_COUNT})")
+
+                            failed_count += 1
+                        else:
+                            # SUCCESS PATH
+                            order_data = result_item
+
+                            logger.info(f"    ✅ 주문 성공: PendingOrder {pending_order.id} → OpenOrder")
+
+                            # Create OpenOrder record
+                            self.service.order_manager.create_open_order_record(
+                                strategy_account=strategy_account,
+                                order_result=order_data,
+                                symbol=pending_order.symbol,
+                                side=pending_order.side,
+                                order_type=pending_order.order_type,
+                                quantity=pending_order.quantity,
+                                price=pending_order.price,
+                                stop_price=pending_order.stop_price
+                            )
+
+                            # Emit SSE event
+                            self._emit_pending_order_sse(account_id, symbol)
+
+                            # Delete PendingOrder
+                            db.session.delete(pending_order)
+
+                            success_count += 1
+
+                logger.info(f"  ✅ Account {account_id} 완료 - 성공: {success_count}, 실패: {failed_count}")
+
+            except Exception as account_error:
+                # Account-level exception: log and continue with other accounts
+                logger.error(f"  ❌ Account {account_id} 전체 실패: {account_error}")
+                failed_count += len(account_orders)
+                continue  # ✅ Exception Isolation: Other accounts continue processing
+
+        # NO internal commit - caller controls transaction boundary (rebalance_symbol commits atomically)
+        return {
+            'success': True,
+            'executed': success_count,
+            'failed': failed_count
+        }
 
     # @FEAT:order-queue @COMP:service @TYPE:helper
     def _get_order_sort_price(self, order: OpenOrder) -> Optional[Decimal]:
@@ -672,32 +889,24 @@ class OrderQueueManager:
             error_message: 거래소 API 에러 메시지
 
         Returns:
-            str: 'insufficient_balance', 'rate_limit', 'invalid_symbol',
-                 'limit_exceeded', 'network_error', 'unknown'
+            str: 'permanent' or 'temporary'
+                - permanent: 영구 실패 (삭제 필요) - 잔고 부족, 잘못된 심볼, 제한 초과
+                - temporary: 일시적 실패 (재시도 가능) - Rate Limit, 네트워크 오류
         """
         error_lower = error_message.lower()
 
-        # 잔고 부족
-        if any(keyword in error_lower for keyword in ['balance', 'insufficient', 'funds']):
-            return 'insufficient_balance'
+        # 일시적 오류 (재시도 가능)
+        temporary_keywords = ['rate limit', 'too many', 'throttle', 'timeout', 'network', 'connection']
+        if any(keyword in error_lower for keyword in temporary_keywords):
+            return 'temporary'
 
-        # Rate Limit
-        if any(keyword in error_lower for keyword in ['rate limit', 'too many', 'throttle']):
-            return 'rate_limit'
+        # 영구적 오류 (재시도 불가)
+        permanent_keywords = ['balance', 'insufficient', 'funds', 'invalid symbol', 'unknown symbol', 'exceeds']
+        if any(keyword in error_lower for keyword in permanent_keywords):
+            return 'permanent'
 
-        # 잘못된 심볼
-        if any(keyword in error_lower for keyword in ['invalid symbol', 'unknown symbol']):
-            return 'invalid_symbol'
-
-        # 제한 초과 (영구적)
-        if 'exceeds' in error_lower or 'limit' in error_lower:
-            return 'limit_exceeded'
-
-        # 네트워크 오류
-        if any(keyword in error_lower for keyword in ['timeout', 'network', 'connection']):
-            return 'network_error'
-
-        return 'unknown'
+        # 기본값: 일시적 오류로 분류 (재시도 기회 부여)
+        return 'temporary'
 
     # @FEAT:order-queue @COMP:service @TYPE:helper
     def _is_recoverable(self, error_type: str) -> bool:
@@ -717,6 +926,45 @@ class OrderQueueManager:
         # non_recoverable_types = ['insufficient_balance', 'invalid_symbol', 'limit_exceeded']
 
         return error_type in recoverable_types
+
+    # @FEAT:webhook-batch-queue @COMP:service @TYPE:helper
+    def _emit_pending_order_sse(self, account_id: int, symbol: str):
+        """
+        Emit SSE event for PendingOrder changes (DRY helper)
+
+        @FEAT:webhook-batch-queue @COMP:service @TYPE:helper
+        Reduces SSE emission code duplication (20 lines → 1 method call)
+
+        Args:
+            account_id (int): Account ID for event filtering
+            symbol (str): Trading pair symbol (e.g., 'BTC/USDT')
+
+        Behavior:
+            - Emits 'order_list_update' SSE event
+            - Frontend updates Order List table in real-time
+            - Gracefully handles emission failures (warning log only)
+
+        Usage:
+            Called after PendingOrder deletion (success, retry exhaustion, permanent failure)
+
+        Example:
+            # After successful batch execution
+            self._emit_pending_order_sse(account_id=1, symbol='BTC/USDT')
+            # Frontend receives: {'type': 'order_list_update', 'account_id': 1, 'symbol': 'BTC/USDT'}
+        """
+        try:
+            # Import SSE emitter
+            from web_server.app.services.sse.emitter import emit_order_list_update
+
+            # Emit order list update event
+            emit_order_list_update(
+                account_id=account_id,
+                symbol=symbol,
+                event_type='pending_order_cancelled'
+            )
+
+        except Exception as e:
+            logger.warning(f"⚠️  SSE 발송 실패 (account_id={account_id}, symbol={symbol}): {e}")
 
     # @FEAT:order-queue @COMP:service @TYPE:integration
     def _move_to_pending(self, open_order: OpenOrder) -> bool:
