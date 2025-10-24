@@ -1517,13 +1517,16 @@ def get_job_logs(job_id):
         # 실제 로그 포맷 (app/__init__.py line 169):
         # %(asctime)s %(levelname)s: [TAG] %(message)s [in %(pathname)s:%(lineno)d]
         # 예시: 2025-10-23 14:08:29,055 INFO: [QUEUE_REBAL] 재정렬 완료 [in /app/queue_rebalancer.py:123]
+        # 🚨 중요: re.VERBOSE 플래그를 절대 추가하지 마세요!
+        # re.VERBOSE는 정규식 내의 리터럴 공백을 모두 무시하여 파싱이 실패합니다.
+        # 테스트 결과: re.VERBOSE 있으면 level="UNKNOWN", 없으면 정상 파싱
         log_pattern = re.compile(
             r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ '  # 그룹 1: timestamp
             r'(\w+): '                                      # 그룹 2: level
             r'(?:\[([A-Z_]+)\] )?'                         # 그룹 3: tag (선택적)
             r'(.+?) '                                       # 그룹 4: message
-            r'\[in (.+?):(\d+)\]',                         # 그룹 5,6: file, line
-            re.VERBOSE
+            r'\[in (.+?):(\d+)\]'                          # 그룹 5,6: file, line
+            # 절대 re.VERBOSE 추가하지 말것! (리터럴 공백 매칭 필수)
         )
 
         # Job ID → Tag 매핑 조회
