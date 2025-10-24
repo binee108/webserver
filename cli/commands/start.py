@@ -14,6 +14,17 @@ from .base import BaseCommand
 from cli.helpers.printer import Colors
 
 
+class PortAllocationError(Exception):
+    """포트 할당 실패 예외
+
+    @FEAT:dynamic-port-allocation @COMP:service @TYPE:core
+
+    포트 범위 내 사용 가능 포트가 없을 때 발생합니다.
+    워크트리 환경에서 다중 서비스 실행 시 포트 충돌을 명확히 보고합니다.
+    """
+    pass
+
+
 class StartCommand(BaseCommand):
     """시스템 시작 명령어
 
@@ -106,8 +117,8 @@ class StartCommand(BaseCommand):
             if not self._detect_and_stop_conflicts():
                 return 1
 
-            # 필수 포트 확인
-            if not self._check_required_ports():
+            # 필수 포트 확인 (args 전달)
+            if not self._check_required_ports(args):
                 return 1
 
             # 현재 경로 출력
@@ -214,29 +225,195 @@ class StartCommand(BaseCommand):
             # 충돌 감지 실패는 무시하고 계속 진행
             return True
 
-    def _check_required_ports(self) -> bool:
-        """필수 포트 사용 가능 여부 확인
+    def _calculate_hash_port(self, project_name: str, start_port: int, end_port: int) -> int:
+        """프로젝트명 기반 해시 포트 계산
+
+        @FEAT:dynamic-port-allocation @COMP:service @TYPE:helper
+
+        워크트리별 일관된 포트 할당을 위해 프로젝트명의 해시값을 기반으로
+        포트 범위 내의 오프셋을 계산합니다. 같은 워크트리는 항상 동일 포트를 할당받습니다.
+
+        Args:
+            project_name: 프로젝트명 (예: "webserver_feature-branch")
+            start_port: 포트 범위 시작 (예: 5002)
+            end_port: 포트 범위 끝 (예: 5100)
 
         Returns:
-            bool: 모든 포트 사용 가능하면 True
+            int: 계산된 포트 번호 (start_port <= port <= end_port)
+
+        Examples:
+            >>> self._calculate_hash_port("webserver_test", 5002, 5100)
+            5042  # 항상 동일 값 반환
+        """
+        port_range = end_port - start_port
+        hash_offset = abs(hash(project_name)) % port_range
+        return start_port + hash_offset
+
+    def _allocate_ports_dynamically(self, project_name: str) -> dict:
+        """포트 충돌 시 동적으로 빈 포트 할당
+
+        @FEAT:dynamic-port-allocation @COMP:service @TYPE:core
+
+        워크트리 환경에서 포트 충돌 발생 시 자동으로 빈 포트를 탐색하여 할당하고,
+        할당된 포트를 .env.local에 영구 저장하여 재시작 시에도 동일 포트를 사용합니다.
+
+        포트 할당 우선순위:
+        1. .env.local에 저장된 이전 할당 포트 (존재하고 사용 가능하면 재사용)
+        2. 프로젝트명 해시 기반 포트 (일관성 보장)
+        3. 포트 범위 내 순차 검색 (충돌 시 다음 가용 포트)
+        4. 범위 소진 → PortAllocationError 발생
+
+        Args:
+            project_name: 프로젝트명 (예: "webserver_feature-branch")
+
+        Returns:
+            dict: 할당된 포트 딕셔너리
+                {"HTTPS_PORT": 4431, "APP_PORT": 5002, "POSTGRES_PORT": 5433}
+
+        Raises:
+            PortAllocationError: 포트 범위 내 사용 가능 포트 없음
+                (범위: HTTPS 4431-4529, APP 5002-5100, POSTGRES 5433-5531)
+
+        Examples:
+            >>> ports = self._allocate_ports_dynamically("webserver_feature")
+            >>> ports["APP_PORT"]  # "5042"
+        """
+        MAX_PORT_RETRIES = 10
+        PORT_RANGES = {
+            "HTTPS_PORT": (4431, 4529),      # 100개 범위
+            "APP_PORT": (5002, 5100),        # 100개 범위
+            "POSTGRES_PORT": (5433, 5531)    # 100개 범위
+        }
+
+        allocated_ports = {}
+
+        # Step 1: .env.local에서 이전 할당 포트 로드 (Graceful Degradation)
+        env_dict = self.env.load_local_env(self.root_dir)
+
+        for port_name, (start_port, end_port) in PORT_RANGES.items():
+            # Step 2: 저장된 포트 우선 사용 (일관성 보장)
+            if port_name in env_dict:
+                try:
+                    saved_port = int(env_dict[port_name])
+                    if self.network.check_port_availability(saved_port):
+                        allocated_ports[port_name] = saved_port
+                        self.printer.print_status(f"✅ {port_name} 재사용: {saved_port}", "success")
+                        continue
+                except ValueError:
+                    # 파싱 실패: .env.local 파일이 손상되었으나 계속 진행
+                    pass
+
+            # Step 3: 해시 기반 포트 시도 (워크트리별 일관된 할당)
+            hash_port = self._calculate_hash_port(project_name, start_port, end_port)
+            if self.network.check_port_availability(hash_port):
+                allocated_ports[port_name] = hash_port
+                self.printer.print_status(f"✅ {port_name} 할당: {hash_port} (hash)", "success")
+                continue
+
+            # Step 4: 범위 내 순차 검색 (충돌 시 다음 가용 포트 찾기)
+            # 이미 할당된 포트는 제외하여 중복 할당 방지
+            candidate_port = self.network.find_available_port((start_port, end_port))
+            if candidate_port and candidate_port not in allocated_ports.values():
+                allocated_ports[port_name] = candidate_port
+                self.printer.print_status(
+                    f"{port_name} 충돌 감지 → {candidate_port} 할당", "warning"
+                )
+                found = True
+            else:
+                found = False
+
+            # Step 5: 범위 소진 처리 (명확한 에러 메시지 제공)
+            if not found:
+                raise PortAllocationError(
+                    f"❌ {port_name} 할당 실패: 포트 범위 {start_port}-{end_port} 내 사용 가능 포트 없음.\n"
+                    f"   해결 방법:\n"
+                    f"   1. 다른 워크트리를 중지: python run.py stop --all\n"
+                    f"   2. 수동 포트 지정: python run.py start --{port_name.lower()} 4550"
+                )
+
+        # Step 6: 할당 포트 .env.local에 영구 저장 (재시작 시 재사용)
+        if self.env.save_local_env(self.root_dir, allocated_ports):
+            self.printer.print_status("💾 포트 설정이 .env.local에 저장되었습니다.", "success")
+        else:
+            # 파일 저장 실패해도 이미 할당된 포트는 사용 가능
+            self.printer.print_status("⚠️  포트 설정 저장 실패 (계속 진행)", "warning")
+
+        return allocated_ports
+
+    def _check_required_ports(self, args: list) -> bool:
+        """필수 포트 사용 가능 여부 확인 (충돌 시 동적 할당)
+
+        @FEAT:dynamic-port-allocation @COMP:service @TYPE:core
+
+        워크트리 환경에서 필수 포트(HTTPS, Flask, PostgreSQL)의 사용 가능 여부를 확인합니다.
+        포트 충돌 발생 시 자동으로 동적 포트 할당을 시작합니다.
+
+        Args:
+            args: 명령행 인자 (프로젝트명 추출용, 예: ["custom_project_name"])
+
+        Returns:
+            bool: 모든 포트 사용 가능하거나 동적 할당 성공 시 True, 실패 시 False
+
+        Note:
+            - 메인 프로젝트: 고정 포트 (443, 5001, 5432)
+            - 워크트리 프로젝트: 동적 할당 (4431-4529, 5002-5100, 5433-5531 범위)
+            - 할당된 포트는 os.environ과 self.required_ports로 즉시 반영
+
+        Examples:
+            >>> result = self._check_required_ports([])
+            >>> result  # True if all ports available or dynamic allocation succeeded
         """
         self.printer.print_status("필수 포트 확인 중...", "info")
-        unavailable_ports = []
+        conflicting_ports = []
 
         for port in self.required_ports:
             if not self.network.check_port_availability(port):
-                unavailable_ports.append(port)
+                conflicting_ports.append(port)
 
-        if unavailable_ports:
+        if conflicting_ports:
             self.printer.print_status(
-                f"다음 포트가 이미 사용 중입니다: {', '.join(map(str, unavailable_ports))}",
+                f"다음 포트가 이미 사용 중입니다: {', '.join(map(str, conflicting_ports))}",
                 "warning"
             )
-            self.printer.print_status("충돌하는 프로세스를 종료하거나 포트를 변경해주세요", "error")
 
-            # 포트 사용 정보 출력 시도
-            self._print_port_usage(unavailable_ports)
-            return False
+            # 포트 충돌 시 동적 할당 시도
+            self.printer.print_status("🔄 포트 충돌 감지, 동적 할당 시작...", "info")
+
+            try:
+                # 프로젝트명 추출
+                project_name = self.project_name
+                if args:
+                    project_name = args[0]
+
+                # 동적 포트 할당
+                allocated_ports = self._allocate_ports_dynamically(project_name)
+
+                # 할당된 포트로 환경 변수 오버라이드
+                for port_name, port_value in allocated_ports.items():
+                    os.environ[port_name] = str(port_value)
+
+                # 인스턴스 변수 업데이트
+                if "HTTPS_PORT" in allocated_ports:
+                    self.https_port = allocated_ports["HTTPS_PORT"]
+                if "APP_PORT" in allocated_ports:
+                    self.flask_port = allocated_ports["APP_PORT"]
+                if "POSTGRES_PORT" in allocated_ports:
+                    self.postgres_port = allocated_ports["POSTGRES_PORT"]
+
+                # 필수 포트 목록 업데이트
+                self.required_ports = [
+                    allocated_ports.get("HTTPS_PORT", self.https_port),
+                    allocated_ports.get("APP_PORT", self.flask_port),
+                    allocated_ports.get("POSTGRES_PORT", self.postgres_port)
+                ]
+
+                self.printer.print_status("✅ 동적 포트 할당 성공", "success")
+                return True
+
+            except PortAllocationError as e:
+                self.printer.print_status(str(e), "error")
+                self._print_port_usage(conflicting_ports)
+                return False
 
         self.printer.print_status("모든 필수 포트 사용 가능", "success")
         return True
