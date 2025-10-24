@@ -390,7 +390,6 @@ class Exchange:
         return value
 
 
-# @FEAT:webhook-batch-queue @COMP:constants @TYPE:config
 class OrderType:
     """통합 주문 타입 관리 (크립토 + 증권)"""
     # 기본 주문 타입 (크립토 + 증권 공통)
@@ -414,10 +413,6 @@ class OrderType:
     LIMIT_LOWER = 'limit'
     STOP_LIMIT_LOWER = 'stop_limit'
     STOP_MARKET_LOWER = 'stop_market'
-
-    # @FEAT:webhook-batch-queue Queue routing classification
-    QUEUED_TYPES = ['LIMIT', 'STOP_LIMIT', 'STOP_MARKET']  # Go to queue first
-    DIRECT_TYPES = ['MARKET', 'CANCEL_ALL_ORDER']  # Execute immediately
 
     # STOP 주문 그룹 (stopPrice 필요)
     STOP_ORDERS = [STOP_MARKET, STOP_LIMIT, CONDITIONAL_LIMIT]
