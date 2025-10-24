@@ -19,6 +19,51 @@
 
 ## Recent Updates
 
+### 2025-10-23: Frontend Futures Validation Phase 1-2 Complete
+**영향 범위**: `futures-validation`
+**파일**:
+- `app/routes/system.py` (Lines 306-331) - 메타데이터 API (@TYPE:core)
+- `app/templates/strategies.html` (Lines 441-456) - 메타데이터 로드 (@TYPE:integration)
+- `app/templates/strategies.html` (Lines 458-471) - 전략 데이터 전역 변수 (@TYPE:validation)
+- `app/templates/strategies.html` (Lines 1247-1297) - 검증 로직 (connectAccount) (@TYPE:validation)
+
+**구현 내용**:
+
+**Phase 1**: API + 메타데이터 캐싱 (완료)
+- 거래소 메타데이터 API 구현 (system.py:306-331)
+- 프론트엔드 메타데이터 자동 로드 (strategies.html:441-456)
+- 브라우저 메모리 캐싱 (window.EXCHANGE_METADATA)
+
+**Phase 2**: 프론트엔드 검증 로직 (NEW - 완료)
+- 전략 데이터 전역 변수 (window.strategies)
+- connectAccount() 함수 검증 로직 5단계 구현:
+  1. EXCHANGE_METADATA 확인 (null 시 fallback)
+  2. 전략 정보 조회 (window.strategies)
+  3. 계좌 거래소 정보 추출 (data-exchange 속성)
+  4. FUTURES 전략 검증 (지원 여부)
+  5. 토스트 에러 메시지 표시 (지원 거래소 목록 포함)
+- **사용자 경험**: 400 에러 발생 전 조기 차단, 명확한 피드백, 대안 제시
+
+**태그**:
+- `@FEAT:futures-validation @COMP:route @TYPE:core` (API)
+- `@FEAT:futures-validation @COMP:route @TYPE:integration` (메타데이터 로드)
+- `@FEAT:futures-validation @COMP:route @TYPE:validation` (전략 변수, 검증 로직)
+
+**문서**: `docs/features/futures-validation.md` (Phase 1-2 완성, ~264줄)
+
+**검색**:
+```bash
+grep -r "@FEAT:futures-validation" --include="*.py" --include="*.html"
+```
+
+**완료 기준**:
+- ✅ Phase 1: API 엔드포인트 + 메타데이터 로드
+- ✅ Phase 2: 프론트엔드 검증 로직 + 사용자 피드백
+- ✅ 기능 문서 (futures-validation.md) 완성
+- ✅ FEATURE_CATALOG 업데이트
+
+---
+
 ### 2025-10-23: Worktree Service Conflict Detection & Auto-Resolution (Updated)
 **영향 범위**: `worktree-conflict-resolution`
 **파일**:

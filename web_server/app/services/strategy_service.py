@@ -236,6 +236,7 @@ class StrategyService:
     def get_strategies_by_user(self, user_id: int) -> List[Dict[str, Any]]:
         """사용자의 전략 목록 조회 (최적화된 쿼리 패턴)"""
         try:
+            logger.debug(f"[DEBUG] Starting get_strategies_by_user for user_id={user_id}")
             # 최적화된 쿼리: 단일 쿼리로 모든 필요한 관계 로드
             strategies = (
                 Strategy.query
@@ -250,6 +251,7 @@ class StrategyService:
                 .filter_by(user_id=user_id)
                 .all()
             )
+            logger.debug(f"[DEBUG] Query returned {len(strategies)} strategies for user_id={user_id}")
 
             strategies_data = []
             refreshed_accounts = set()
@@ -326,7 +328,7 @@ class StrategyService:
             return strategies_data
 
         except Exception as e:
-            logger.error(f"전략 목록 조회 오류: {str(e)}")
+            logger.error(f"전략 목록 조회 오류 (user_id={user_id}): {str(e)}", exc_info=True)
             raise StrategyError(f"전략 목록 조회 실패: {str(e)}")
 
     # @FEAT:strategy-management @COMP:service @TYPE:core

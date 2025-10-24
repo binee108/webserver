@@ -5,7 +5,7 @@ Main Page Routes
 Handles main page rendering, dashboard, accounts, strategies, and position pages.
 """
 
-from flask import Blueprint, render_template, redirect, url_for
+from flask import Blueprint, render_template, redirect, url_for, current_app, flash
 from flask_login import login_required, current_user
 from app.models import Strategy, Account, Trade, OpenOrder, StrategyAccount, StrategyPosition
 from app.services.strategy_service import strategy_service, StrategyError
@@ -110,9 +110,13 @@ def strategies():
         return render_template('strategies.html', strategies=strategies_data, MarketType=MarketType, Exchange=Exchange)
     except StrategyError as e:
         # 오류 발생 시 빈 목록으로 처리
+        current_app.logger.error(f"StrategyError in /strategies route for user {current_user.id}: {str(e)}", exc_info=True)
+        flash(f'전략 목록 로드 오류: {str(e)}', 'error')
         return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
     except Exception as e:
         # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
+        current_app.logger.error(f"Unexpected error in /strategies route for user {current_user.id}: {str(e)}", exc_info=True)
+        flash('전략 목록을 불러오는 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의하세요.', 'error')
         return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
 
 # @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core

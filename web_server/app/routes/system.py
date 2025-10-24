@@ -8,6 +8,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 from datetime import datetime
 from app import db
+from app.exchanges.metadata import ExchangeMetadata, MarketType
 
 bp = Blueprint('system', __name__, url_prefix='/api')
 
@@ -297,6 +298,33 @@ def clear_cache():
         }), 200
     except Exception as e:
         current_app.logger.error(f'캐시 정리 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:futures-validation @COMP:route @TYPE:core
+@bp.route('/system/exchange-metadata', methods=['GET'])
+@login_required
+def get_exchange_metadata():
+    """거래소 메타데이터 조회 (선물 지원 여부)"""
+    try:
+        metadata = {}
+        for exchange_name in ExchangeMetadata.METADATA.keys():
+            metadata[exchange_name] = {
+                'supports_futures': ExchangeMetadata.supports_market_type(
+                    exchange_name, MarketType.FUTURES
+                ),
+                'supports_perpetual': ExchangeMetadata.supports_market_type(
+                    exchange_name, MarketType.PERPETUAL
+                )
+            }
+        return jsonify({
+            'success': True,
+            'payload': metadata
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f'거래소 메타데이터 조회 오류: {str(e)}')
         return jsonify({
             'success': False,
             'error': str(e)
