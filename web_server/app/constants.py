@@ -973,20 +973,28 @@ class BackgroundJobTag:
 # Job ID → Tag 매핑 (admin 페이지 로그 파싱용)
 # Purpose: admin/system에서 job_id 파라미터로 로그 필터링 시 사용
 # Usage: JOB_TAG_MAP.get(job_id) → BackgroundJobTag or None
+# IMPORTANT: 키는 APScheduler Job ID와 정확히 일치해야 함 (app/__init__.py 참조)
+# Example: scheduler.add_job(..., id='precision_cache_update', ...) → 키는 'precision_cache_update'
+# Validation: grep "id='" app/__init__.py | grep scheduler.add_job
 JOB_TAG_MAP = {
-    'precision_cache': BackgroundJobTag.PRECISION_CACHE,
-    'symbol_validator': BackgroundJobTag.SYMBOL_VALID,
-    'market_info': BackgroundJobTag.MARKET_INFO,
-    'price_cache': BackgroundJobTag.PRICE_CACHE,
-    'update_open_orders': BackgroundJobTag.ORDER_UPDATE,
-    'update_positions': BackgroundJobTag.PNL_CALC,
-    'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,
-    'calculate_daily_performance': BackgroundJobTag.PERF_CALC,
-    'auto_rebalance': BackgroundJobTag.AUTO_REBAL,
-    'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,
-    'queue_rebalancer': BackgroundJobTag.QUEUE_REBAL,
-    'release_stale_processing': BackgroundJobTag.LOCK_RELEASE,
-    'websocket_health_monitor': BackgroundJobTag.WS_HEALTH,
+    # Infrastructure Services
+    'precision_cache_update': BackgroundJobTag.PRECISION_CACHE,       # Line 542 (app/__init__.py)
+    'symbol_validator_refresh': BackgroundJobTag.SYMBOL_VALID,        # Line 555
+    'refresh_market_info': BackgroundJobTag.MARKET_INFO,              # Line 574
+    'update_price_cache': BackgroundJobTag.PRICE_CACHE,               # Line 587
+
+    # Trading Operations
+    'update_open_orders': BackgroundJobTag.ORDER_UPDATE,              # Line 598
+    'calculate_unrealized_pnl': BackgroundJobTag.PNL_CALC,            # Line 610
+    'auto_rebalance_accounts': BackgroundJobTag.AUTO_REBAL,           # Line 654
+    'rebalance_order_queue': BackgroundJobTag.QUEUE_REBAL,            # Line 681
+    'release_stale_order_locks': BackgroundJobTag.LOCK_RELEASE,       # Line 693
+
+    # Monitoring & Reporting
+    'check_websocket_health': BackgroundJobTag.WS_HEALTH,             # Line 705
+    'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,             # Line 623
+    'calculate_daily_performance': BackgroundJobTag.PERF_CALC,        # Line 637
+    'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,       # Line 668
 }
 
 
