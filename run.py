@@ -410,9 +410,10 @@ class TradingSystemManager:
     """트레이딩 시스템 관리 클래스"""
     
     def __init__(self):
-        self.root_dir = Path(__file__).parent
+        self.root_dir = Path(__file__).parent.resolve()  # Absolute path
         self.web_server_dir = self.root_dir / "web_server"
         self.docker_compose_file = self.root_dir / "docker-compose.yml"
+        self.required_ports = [443, 5001, 5432]  # HTTPS, Flask, PostgreSQL
         
     def print_banner(self):
         """시스템 배너 출력"""
@@ -463,6 +464,150 @@ class TradingSystemManager:
             return None
         except Exception:
             return None
+    
+    def check_port_availability(self, port):
+        """Check if a port is available"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                result = s.connect_ex(('localhost', port))
+                return result != 0  # Port is available if connection fails
+        except Exception:
+            return True  # Assume available if check fails
+    
+    def get_running_containers_info(self):
+        """Get information about running trading system containers"""
+        try:
+            # Get all running containers with docker-compose labels
+            result = subprocess.run(
+                ['docker', 'ps', '--format', '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project.working_dir"}}|{{.Label "com.docker.compose.project"}}'],
+                capture_output=True, text=True, check=True
+            )
+            
+            containers = []
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split('|')
+                if len(parts) >= 4:
+                    container_id, name, working_dir, project = parts[0], parts[1], parts[2], parts[3]
+                    # Filter trading system related containers
+                    if any(keyword in name.lower() for keyword in ['postgres', 'nginx', 'app', 'trading']):
+                        containers.append({
+                            'id': container_id,
+                            'name': name,
+                            'working_dir': working_dir,
+                            'project': project
+                        })
+            
+            return containers
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+    
+    def check_running_services(self):
+        """Check if there are services running from different directories"""
+        containers = self.get_running_containers_info()
+        
+        if not containers:
+            return None
+        
+        # Check if any container is from a different directory
+        other_services = []
+        current_services = []
+        
+        for container in containers:
+            working_dir = container['working_dir']
+            if working_dir and working_dir != str(self.root_dir):
+                other_services.append(container)
+            elif working_dir == str(self.root_dir):
+                current_services.append(container)
+        
+        return {
+            'other_services': other_services,
+            'current_services': current_services
+        }
+    
+    def stop_other_services(self, other_services):
+        """Stop services running from other directories"""
+        if not other_services:
+            return True
+        
+        # Group by working directory
+        services_by_dir = {}
+        for container in other_services:
+            working_dir = container['working_dir']
+            if working_dir not in services_by_dir:
+                services_by_dir[working_dir] = []
+            services_by_dir[working_dir].append(container)
+        
+        self.print_status(f"다른 경로에서 실행 중인 서비스 발견:", "warning")
+        for working_dir, containers in services_by_dir.items():
+            print(f"  📂 {working_dir}")
+            for container in containers:
+                print(f"     - {container['name']}")
+        
+        print()
+        
+        # Stop each directory's services
+        for working_dir in services_by_dir.keys():
+            self.print_status(f"서비스 종료 중: {working_dir}", "info")
+            try:
+                # Try to use docker-compose down in that directory
+                working_path = Path(working_dir)
+                if working_path.exists() and (working_path / 'docker-compose.yml').exists():
+                    subprocess.run(
+                        self.compose_cmd + ['down', '--remove-orphans'],
+                        cwd=working_dir,
+                        capture_output=True,
+                        timeout=30
+                    )
+                    self.print_status(f"서비스 종료 완료: {working_dir}", "success")
+                else:
+                    # If directory doesn't exist, stop containers manually
+                    for container in services_by_dir[working_dir]:
+                        subprocess.run(['docker', 'stop', container['id']], 
+                                     capture_output=True, timeout=10)
+                    self.print_status(f"컨테이너 수동 종료 완료: {working_dir}", "success")
+            except Exception as e:
+                self.print_status(f"종료 중 오류 발생: {e}", "warning")
+                # Try force stop
+                for container in services_by_dir[working_dir]:
+                    try:
+                        subprocess.run(['docker', 'stop', container['id']], 
+                                     capture_output=True, timeout=10)
+                    except:
+                        pass
+        
+        # Wait for containers to stop and ports to be released
+        self.print_status("포트 해제 대기 중...", "info")
+        time.sleep(3)
+        
+        return True
+    
+    def detect_and_stop_conflicts(self):
+        """Detect and stop services from other worktree directories"""
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        self.print_status("다른 경로의 실행 중인 서비스 확인 중...", "info")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+        
+        running_services = self.check_running_services()
+        
+        if running_services and running_services['other_services']:
+            print(f"\n{Colors.YELLOW}⚠️  다른 worktree 경로에서 실행 중인 서비스가 감지되었습니다!{Colors.RESET}\n")
+            
+            # Stop other services automatically
+            if not self.stop_other_services(running_services['other_services']):
+                self.print_status("다른 서비스 종료 실패", "error")
+                return False
+            
+            self.print_status("다른 경로의 서비스가 성공적으로 종료되었습니다", "success")
+            print()
+        elif running_services and running_services['current_services']:
+            self.print_status("현재 경로에서 이미 실행 중인 컨테이너가 있습니다", "info")
+        else:
+            self.print_status("실행 중인 서비스 없음", "success")
+        
+        return True
     
     def check_requirements(self):
         """시스템 요구사항 확인"""
@@ -693,6 +838,45 @@ class TradingSystemManager:
             return False
         
         try:
+            # Check for services running from other directories
+            if not self.detect_and_stop_conflicts():
+                return False
+            
+            # Check port availability
+            self.print_status("필수 포트 확인 중...", "info")
+            unavailable_ports = []
+            for port in self.required_ports:
+                if not self.check_port_availability(port):
+                    unavailable_ports.append(port)
+            
+            if unavailable_ports:
+                self.print_status(f"다음 포트가 이미 사용 중입니다: {', '.join(map(str, unavailable_ports))}", "warning")
+                self.print_status("충돌하는 프로세스를 종료하거나 포트를 변경해주세요", "error")
+                
+                # Try to identify what's using the ports
+                for port in unavailable_ports:
+                    try:
+                        if platform.system() == 'Windows':
+                            result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, timeout=5)
+                        elif platform.system() == 'Darwin':  # macOS
+                            result = subprocess.run(['lsof', '-i', f':{port}'], capture_output=True, text=True, timeout=5)
+                        else:  # Linux
+                            result = subprocess.run(['ss', '-tulpn'], capture_output=True, text=True, timeout=5)
+                        
+                        if result.stdout:
+                            print(f"\n포트 {port} 사용 정보:")
+                            print(result.stdout[:500])  # Limit output
+                    except Exception:
+                        pass
+                
+                return False
+            else:
+                self.print_status("모든 필수 포트 사용 가능", "success")
+            
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            self.print_status(f"현재 경로에서 서비스 시작: {self.root_dir}", "info")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+            
             # 기존 컨테이너 정리 (orphan 컨테이너 포함)
             self.print_status("기존 컨테이너 정리 중...", "info")
             self.run_command(self.compose_cmd + ['down', '--remove-orphans'], cwd=self.root_dir)
@@ -802,11 +986,95 @@ class TradingSystemManager:
     
     def restart_system(self):
         """시스템 재시작"""
+        self.print_banner()
         self.print_status("시스템 재시작 중...", "info")
+        
+        # Check requirements first
+        if not self.check_requirements():
+            return False
+        
+        # Detect and stop services from other directories
+        if not self.detect_and_stop_conflicts():
+            return False
+        
+        # Stop current directory services
         self.stop_system()
+        
         # Docker 컨테이너가 완전히 정리될 때까지 충분히 대기
+        self.print_status("컨테이너 정리 대기 중...", "info")
         time.sleep(5)
-        return self.start_system()
+        
+        # Start system (without duplicate conflict detection)
+        try:
+            # Check port availability
+            self.print_status("필수 포트 확인 중...", "info")
+            unavailable_ports = []
+            for port in self.required_ports:
+                if not self.check_port_availability(port):
+                    unavailable_ports.append(port)
+            
+            if unavailable_ports:
+                self.print_status(f"다음 포트가 이미 사용 중입니다: {', '.join(map(str, unavailable_ports))}", "warning")
+                self.print_status("충돌하는 프로세스를 종료하거나 포트를 변경해주세요", "error")
+                return False
+            else:
+                self.print_status("모든 필수 포트 사용 가능", "success")
+            
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            self.print_status(f"현재 경로에서 서비스 시작: {self.root_dir}", "info")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
+            
+            # 기존 컨테이너 정리 (orphan 컨테이너 포함)
+            self.print_status("기존 컨테이너 정리 중...", "info")
+            self.run_command(self.compose_cmd + ['down', '--remove-orphans'], cwd=self.root_dir)
+            
+            # SSL 인증서 생성/확인
+            if not self.generate_ssl_certificates():
+                return False
+            
+            # PostgreSQL 먼저 시작
+            self.print_status("PostgreSQL 데이터베이스 시작 중...", "info")
+            self.run_command(self.compose_cmd + ['up', '-d', 'postgres'], cwd=self.root_dir)
+            
+            # PostgreSQL 준비 대기
+            if not self.wait_for_postgres():
+                return False
+            
+            # Flask 앱 시작
+            self.print_status("Flask 애플리케이션 시작 중...", "info")
+            self.run_command(self.compose_cmd + ['up', '-d', 'app'], cwd=self.root_dir)
+            
+            # 앱 준비 대기
+            self.print_status("Flask 애플리케이션 준비 대기 중...", "info")
+            time.sleep(5)
+            
+            # 데이터베이스 테이블은 애플리케이션 시작 시 자동으로 생성됩니다
+            self.print_status("데이터베이스 테이블 자동 생성 준비 완료", "success")
+            
+            # Nginx 시작 (마지막에)
+            self.print_status("Nginx 리버스 프록시 시작 중...", "info")
+            self.run_command(self.compose_cmd + ['up', '-d', 'nginx'], cwd=self.root_dir)
+            
+            # 네트워크 정보 수집
+            local_ip = self.get_local_ip()
+            external_ip = self.get_external_ip()
+            
+            # 재시작 완료 메시지
+            print(f"\n{Colors.GREEN}{Colors.BOLD}✅ 트레이딩 시스템이 성공적으로 재시작되었습니다!{Colors.RESET}\n")
+            
+            print(f"{Colors.CYAN}🌐 웹 인터페이스 접근 주소:{Colors.RESET}")
+            print(f"   로컬: https://localhost")
+            if local_ip and local_ip != "127.0.0.1":
+                print(f"   네트워크: https://{local_ip}")
+            if external_ip:
+                print(f"   외부: https://{external_ip}")
+            print()
+            
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self.print_status(f"시스템 재시작 실패: {e}", "error")
+            return False
     
     def show_logs(self, follow=False):
         """로그 확인"""
@@ -920,6 +1188,14 @@ class TradingSystemManager:
             # check_requirements가 호출되지 않았을 수 있으므로 compose_cmd 확인
             if not hasattr(self, 'compose_cmd'):
                 self.check_requirements()
+            
+            # Detect and stop services from other directories first
+            print()
+            if not self.detect_and_stop_conflicts():
+                self.print_status("다른 경로 서비스 종료 실패", "warning")
+                # Continue anyway since we're cleaning
+            
+            print()
             
             # 1. Docker 컨테이너, 볼륨, 이미지 삭제
             self.print_status("Docker 컨테이너, 볼륨, 이미지 삭제 중...", "info")

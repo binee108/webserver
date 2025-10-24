@@ -67,6 +67,37 @@ python run.py logs        # 로그 확인
 python run.py clean       # 완전 초기화
 ```
 
+### 🌳 Git Worktree 자동 충돌 해결
+
+여러 worktree에서 작업 시, 다른 경로에서 실행 중인 서비스를 자동으로 감지하고 정리합니다:
+
+```bash
+# worktree1에서 서비스 실행 중
+cd /path/to/worktree1
+python run.py start  # ✅ 정상 실행
+
+# worktree2에서 start
+cd /path/to/worktree2
+python run.py start  # ⚠️ worktree1 서비스 감지 → 종료 → 시작
+
+# worktree2에서 restart
+python run.py restart  # ⚠️ 다른 경로 서비스 감지 → 종료 → 재시작
+
+# worktree3에서 clean
+cd /path/to/worktree3
+python run.py clean  # ⚠️ 모든 경로 서비스 감지 → 종료 → 정리
+```
+
+**적용 명령어**: `start`, `restart`, `clean`
+
+**자동 처리 내용:**
+- ✅ 다른 worktree의 실행 중인 컨테이너 자동 감지
+- ✅ 포트 충돌 (443, 5001, 5432) 사전 확인
+- ✅ 충돌 서비스 자동 정리 (docker-compose down)
+- ✅ 포트 해제 대기 후 현재 경로 서비스 시작/재시작
+- ✅ 안전한 전환을 위한 상태 확인
+- ✅ 모든 명령어에서 일관된 동작
+
 ---
 
 ## 📖 사용 방법
