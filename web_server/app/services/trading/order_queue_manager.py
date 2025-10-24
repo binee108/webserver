@@ -675,6 +675,14 @@ class OrderQueueManager:
         orders_by_account = defaultdict(list)
 
         for pending_order in pending_orders:
+            # Bug Fix: Prevent AttributeError if strategy_account is None
+            if not pending_order.strategy_account:
+                logger.error(
+                    f"[_process_pending_batch] PendingOrder {pending_order.id} has no strategy_account, skipping"
+                )
+                failed_count += 1  # Include skipped orders in failed count for accurate metrics
+                continue
+
             account_id = pending_order.strategy_account.account_id
             orders_by_account[account_id].append(pending_order)
 
@@ -749,14 +757,20 @@ class OrderQueueManager:
                                 logger.warning(f"    🗑️  영구 실패 - 삭제: PendingOrder {pending_order.id}")
                             elif failure_type == "temporary":
                                 pending_order.retry_count += 1
-                                # Note: Uses > comparison (not >=), allowing 6 total retries (0→1→2→3→4→5→6)
-                                # MAX_RETRY_COUNT=5 means "retry more than 5 times triggers deletion"
-                                if pending_order.retry_count > self.MAX_RETRY_COUNT:
+                                # Bug Fix: Changed > to >= for correct retry count (5 retries: 0→1→2→3→4→5)
+                                # MAX_RETRY_COUNT=5 means "delete after 5 retries"
+                                if pending_order.retry_count >= self.MAX_RETRY_COUNT:
                                     db.session.delete(pending_order)
-                                    logger.warning(f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id}")
+                                    logger.warning(
+                                        f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id} "
+                                        f"(retry_count={pending_order.retry_count}, max={self.MAX_RETRY_COUNT})"
+                                    )
                                     self._emit_pending_order_sse(account_id, symbol)
                                 else:
-                                    logger.warning(f"    ⏳ 재시도 예약: PendingOrder {pending_order.id}")
+                                    logger.warning(
+                                        f"    ⏳ 재시도 예약: PendingOrder {pending_order.id} "
+                                        f"({pending_order.retry_count}/{self.MAX_RETRY_COUNT})"
+                                    )
 
                         failed_count += len(batch)
                         continue  # Skip to next batch
@@ -795,14 +809,20 @@ class OrderQueueManager:
                                 logger.warning(f"    🗑️  영구 실패 - 삭제: PendingOrder {pending_order.id}")
                             elif failure_type == "temporary":
                                 pending_order.retry_count += 1
-                                # Note: Uses > comparison (not >=), allowing 6 total retries (0→1→2→3→4→5→6)
-                                # MAX_RETRY_COUNT=5 means "retry more than 5 times triggers deletion"
-                                if pending_order.retry_count > self.MAX_RETRY_COUNT:
+                                # Bug Fix: Changed > to >= for correct retry count (5 retries: 0→1→2→3→4→5)
+                                # MAX_RETRY_COUNT=5 means "delete after 5 retries"
+                                if pending_order.retry_count >= self.MAX_RETRY_COUNT:
                                     db.session.delete(pending_order)
-                                    logger.warning(f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id}")
+                                    logger.warning(
+                                        f"    🗑️  재시도 한계 초과 - 삭제: PendingOrder {pending_order.id} "
+                                        f"(retry_count={pending_order.retry_count}, max={self.MAX_RETRY_COUNT})"
+                                    )
                                     self._emit_pending_order_sse(account_id, symbol)
                                 else:
-                                    logger.warning(f"    ⏳ 재시도 예약: PendingOrder {pending_order.id} ({pending_order.retry_count}/{self.MAX_RETRY_COUNT})")
+                                    logger.warning(
+                                        f"    ⏳ 재시도 예약: PendingOrder {pending_order.id} "
+                                        f"({pending_order.retry_count}/{self.MAX_RETRY_COUNT})"
+                                    )
 
                             failed_count += 1
                         else:

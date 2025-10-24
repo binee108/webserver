@@ -1218,9 +1218,19 @@ class TradingCore:
 
                 # Phase 2: Calculate total cancelled orders for batch SSE
                 # @FEAT:webhook-order @COMP:service @TYPE:core
-                total_cancelled = sum(
-                    len(r.get('cancelled_orders', [])) for r in successful_cancels
-                )
+                # Bug Fix: Type-safe handling of cancelled_orders (can be List[Dict] or int)
+                total_cancelled = 0
+                for r in successful_cancels:
+                    cancelled = r.get('cancelled_orders', [])
+                    if isinstance(cancelled, list):
+                        total_cancelled += len(cancelled)
+                    elif isinstance(cancelled, int):
+                        total_cancelled += cancelled
+                    else:
+                        logger.warning(
+                            f"Unexpected type for cancelled_orders: {type(cancelled)}, "
+                            f"account_id={r.get('account_id')}"
+                        )
 
                 results.append({
                     'order_index': original_idx,
