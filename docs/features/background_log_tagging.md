@@ -10,7 +10,8 @@
 
 - [x] Phase 1: 태그 시스템 설계 및 중앙 집중화 (완료)
 - [x] Phase 2: 데코레이터 기반 자동 태그 적용 (완료)
-- [ ] Phase 3: 개별 파일 로깅 개선 (예정)
+- [x] Phase 3.1: app/__init__.py MARKET_INFO 함수 (완료)
+- [ ] Phase 3.2-3.N: 개별 파일 로깅 개선 (예정)
 
 ---
 
@@ -160,9 +161,79 @@ self._logger.debug(format_background_log(tag, formatted_message), **kwargs)
 
 ---
 
+## Phase 3.1: app/__init__.py MARKET_INFO 함수 ✅ COMPLETE
+
+### 개요
+`current_app` 사용 함수에 `[MARKET_INFO]` 태그를 직접 호출 방식으로 적용.
+데코레이터 미지원 함수를 위한 대체 방식 구현.
+
+### 구현 내용
+
+#### 적용 함수 (2개)
+1. `warm_up_market_info_with_context()` (Line 713-753)
+   - 서버 시작 시 MarketInfo 캐시 준비
+   - 로그: 3개 (INFO, WARNING, ERROR)
+   - 방식: 직접 호출 (`format_background_log()`)
+
+2. `refresh_market_info_with_context()` (Line 767-793)
+   - 백그라운드 MarketInfo 갱신 (317초 주기)
+   - 로그: 2개 (DEBUG, ERROR)
+   - 방식: 직접 호출 (`format_background_log()`)
+
+#### 기능 태그 추가
+```python
+# @FEAT:background-log-tagging @COMP:app-init @TYPE:warmup
+def warm_up_market_info_with_context():
+    ...
+
+# @FEAT:background-log-tagging @COMP:app-init @TYPE:background-refresh
+def refresh_market_info_with_context():
+    ...
+```
+
+#### Docstring 업데이트
+- 로그 태그 및 레벨 명시 (Logging 섹션)
+- WHY 정보 추가 (함수 목적)
+- Returns 정보 명시
+
+### 구현 방식 선택: 직접 호출
+
+**이유**: `current_app` 사용 함수는 데코레이터 호환 불가 (시그니처 제약)
+```python
+# ❌ 데코레이터 미지원 (app 파라미터 필수)
+@tag_background_logger(BackgroundJobTag.MARKET_INFO)
+def refresh_market_info_with_context():  # 파라미터 없음
+    with current_app.app_context():
+        ...
+
+# ✅ 직접 호출 방식 채택
+current_app.logger.info(format_background_log(
+    BackgroundJobTag.MARKET_INFO,
+    "✅ Warmup 완료"
+))
+```
+
+### 코드 변경
+- `app/__init__.py`: +19/-8 lines (net +11)
+  - 기능 태그 추가: 2줄
+  - Docstring 확장: 17줄
+- **합계: +11줄**
+
+### 검증 완료
+- ✅ Code Review: 98/100
+- ✅ Syntax: Python compiler passed
+- ✅ Tag Count: 5/5 (expected)
+
+### Known Issues
+
+**None** - Phase 3.1 구현 완벽 완료
+
+---
+
 ## 검색
 
 ```bash
 grep -r "@FEAT:background-log-tagging" --include="*.py" web_server/app/
 grep -r "@tag_background_logger" --include="*.py" web_server/app/
+grep -n "BackgroundJobTag.MARKET_INFO" web_server/app/__init__.py
 ```

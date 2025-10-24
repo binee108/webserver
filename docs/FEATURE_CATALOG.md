@@ -76,6 +76,59 @@ grep -n "def start_system\|def restart_system\|def clean_system" run.py
 
 ---
 
+### 2025-10-24: Background Log Tagging System - Phase 3.1 Complete
+**영향 범위**: `background-log-tagging`
+**파일**:
+- `app/__init__.py` (Lines 712-793) - MARKET_INFO 함수 태그 및 Docstring 업데이트
+- `docs/features/background_log_tagging.md` - Phase 3.1 섹션 추가
+- `docs/FEATURE_CATALOG.md` - 기능 카탈로그 업데이트
+
+**구현 내용**: current_app 사용 함수에 [MARKET_INFO] 태그 적용 (직접 호출 방식)
+- **warm_up_market_info_with_context()** (Line 713-753, +19/-8)
+  - 서버 시작 시 MarketInfo 캐시 준비
+  - 로그: INFO, WARNING, ERROR (3개)
+  - 기능 태그: `@FEAT:background-log-tagging @COMP:app-init @TYPE:warmup`
+
+- **refresh_market_info_with_context()** (Line 767-793)
+  - 백그라운드 갱신 (317초 주기)
+  - 로그: DEBUG, ERROR (2개)
+  - 기능 태그: `@FEAT:background-log-tagging @COMP:app-init @TYPE:background-refresh`
+
+**기술**:
+- Phase 1 인프라 재사용 (`format_background_log`, `BackgroundJobTag.MARKET_INFO`)
+- 직접 호출 방식 선택: `current_app` 사용 함수는 데코레이터 호환 불가 (시그니처 제약)
+- Docstring 업데이트: Logging 섹션 추가 (레벨, 태그, 목적)
+
+**효과**:
+- ✅ 코드 최소화: +11 lines (net, ~0.8% 증가)
+- ✅ 완전한 태그 커버리지: 5/5 로그 (100%)
+- ✅ 명확한 로그 의도: Docstring으로 레벨 명시
+
+**코드 변경**:
+- `app/__init__.py`: +19/-8 lines (net +11)
+  - 기능 태그: +2줄
+  - Docstring: +17줄
+
+**태그**: `@FEAT:background-log-tagging @COMP:app-init @TYPE:core,warmup`
+
+**문서**: `docs/features/background_log_tagging.md` (Phase 3.1 섹션)
+
+**검색**:
+```bash
+# MARKET_INFO 태그 사용 코드
+grep -n "BackgroundJobTag.MARKET_INFO" web_server/app/__init__.py
+
+# 함수 위치
+grep -n "def warm_up_market_info_with_context\|def refresh_market_info_with_context" web_server/app/__init__.py
+
+# 기능 태그 확인
+grep -n "@FEAT:background-log-tagging" web_server/app/__init__.py
+```
+
+**Quality Score**: 98/100 (code-reviewer 승인)
+
+---
+
 ### 2025-10-24: Background Log Tagging System - Phase 2 Documentation Complete
 **영향 범위**: `background-log-tagging`
 **파일**:
