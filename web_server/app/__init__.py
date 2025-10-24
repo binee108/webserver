@@ -70,6 +70,8 @@ if config is None:
         'default': DefaultConfig
     }
 from datetime import datetime
+from app.utils.logging import tag_background_logger, format_background_log
+from app.constants import BackgroundJobTag
 
 # 전역 확장 객체들
 db = SQLAlchemy()
@@ -189,6 +191,10 @@ def create_app(config_name=None):
     background_log_level = getattr(logging, app.config.get('BACKGROUND_LOG_LEVEL', 'WARNING').upper())
     background_logger.setLevel(background_log_level)
     background_logger.addHandler(file_handler)
+
+    # 백그라운드 작업 로깅 태그 지원을 위한 TaggedLogger 래핑
+    from app.utils.logging import TaggedLogger
+    app.logger = TaggedLogger(app.logger)
 
     app.logger.info('Trading System startup')
 
@@ -562,6 +568,7 @@ def register_background_jobs(app):
     # - 5분 TTL보다 짧아 캐시 만료 전 선행 갱신 보장
     scheduler.add_job(
         func=refresh_market_info_with_context,
+        args=(app,),
         trigger='interval',
         seconds=317,  # 5분 17초 (소수 주기)
         id='refresh_market_info',
@@ -703,15 +710,26 @@ def register_background_jobs(app):
 
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
 
-# @FEAT:precision-system @COMP:service @TYPE:helper
+# @FEAT:background-log-tagging @COMP:app-init @TYPE:warmup
 def warm_up_market_info_with_context():
     """
     Flask app context 내에서 MarketInfo warmup 실행
+
+    서버 시작 시 모든 거래소의 MarketInfo를 메모리에 로드하여
+    첫 요청부터 빠른 응답 제공. 실패 시 degraded mode로 시작.
 
     Note:
         - Werkzeug reloader 중복 실행 방지 (WERKZEUG_RUN_MAIN 체크)
         - 비동기 실행하여 서버 시작 블로킹 방지
         - 실패해도 서버 시작 계속 (degraded mode)
+
+    Logging (Tag: [MARKET_INFO]):
+        - INFO: Warmup 완료 (모든 거래소 성공)
+        - WARNING: Warmup 일부 실패 (degraded mode 시작)
+        - ERROR: Warmup 전체 실패 (exception 발생)
+
+    Returns:
+        None
     """
     import os
     from flask import current_app
@@ -728,41 +746,70 @@ def warm_up_market_info_with_context():
 
             # 결과 검증
             if result['failed']:
-                current_app.logger.warning(
+                current_app.logger.warning(format_background_log(
+                    BackgroundJobTag.MARKET_INFO,
                     f"⚠️ Warmup 일부 실패 - degraded mode로 시작 "
                     f"(실패: {len(result['failed'])}개)"
-                )
+                ))
             else:
-                current_app.logger.info("✅ Warmup 완료 - 모든 거래소 캐시 준비됨")
+                current_app.logger.info(format_background_log(
+                    BackgroundJobTag.MARKET_INFO,
+                    "✅ Warmup 완료 - 모든 거래소 캐시 준비됨"
+                ))
 
     except Exception as e:
-        current_app.logger.error(f"❌ Warmup 실패: {e} - degraded mode로 시작")
+        current_app.logger.error(format_background_log(
+            BackgroundJobTag.MARKET_INFO,
+            f"❌ Warmup 실패: {e} - degraded mode로 시작"
+        ))
         # 실패해도 서버 시작은 계속
 
-# @FEAT:precision-system @COMP:service @TYPE:helper
-def refresh_market_info_with_context():
+# @FEAT:background-log-tagging @COMP:app-init @TYPE:background-refresh
+def refresh_market_info_with_context(app):
     """
     Flask app context 내에서 MarketInfo 백그라운드 갱신 실행
 
+    Args:
+        app: Flask application instance (스케줄러에서 전달)
+
+    스케줄러에 의해 주기적으로 호출되며(317초 간격), 모든 거래소의
+    MarketInfo를 갱신하여 최신 상태 유지.
+
     Note:
+        - 스케줄러가 별도 스레드에서 호출하므로 app 파라미터 필수
+        - current_app 프록시 사용 불가 (thread-local 컨텍스트 없음)
         - 317초(5분 17초) 주기로 실행 (소수 시간대, 정각 트래픽 회피)
         - API 기반 거래소만 갱신 (Binance, Bybit)
         - 고정 규칙 거래소는 건너뜀 (Upbit, Bithumb)
         - 갱신 실패 시 기존 캐시 유지 (안전)
+
+    Logging (Tag: [MARKET_INFO]):
+        - DEBUG: 백그라운드 갱신 정보 (거래소 개수, 마켓 개수)
+        - ERROR: 갱신 실패 (exception 발생)
+
+    Returns:
+        None
     """
+    from app.services.exchange import ExchangeService
+
     try:
-        with current_app.app_context():
+        with app.app_context():
             exchange_service = ExchangeService()
             result = exchange_service.refresh_api_based_market_info()
 
             # DEBUG 로그 (고빈도 작업)
-            current_app.logger.debug(
+            app.logger.debug(format_background_log(
+                BackgroundJobTag.MARKET_INFO,
                 f"🔄 백그라운드 갱신: {len(result['refreshed_exchanges'])}개 거래소, "
                 f"{result['total_markets']}개 마켓"
-            )
+            ))
     except Exception as e:
-        current_app.logger.error(f"❌ MarketInfo 백그라운드 갱신 실패: {e}")
+        app.logger.error(format_background_log(
+            BackgroundJobTag.MARKET_INFO,
+            f"❌ MarketInfo 백그라운드 갱신 실패: {e}"
+        ))
 
+@tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
 def warm_up_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""
     with app.app_context():
@@ -781,6 +828,7 @@ def warm_up_precision_cache_with_context(app):
         except Exception as e:
             app.logger.error(f'❌ Precision 캐시 웜업 실패: {str(e)}')
 
+@tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
 def update_precision_cache_with_context(app):
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 주기적 업데이트"""
     with app.app_context():
@@ -941,6 +989,7 @@ def warm_up_market_caches_with_context(app):
             app.logger.error(f'❌ 가격 캐시 초기 웜업 실패: {str(e)}')
 
 
+@tag_background_logger(BackgroundJobTag.PRICE_CACHE)
 def update_price_cache_with_context(app):
     """주기적으로 가격 캐시를 갱신"""
     with app.app_context():
@@ -950,6 +999,7 @@ def update_price_cache_with_context(app):
         except Exception as e:
             app.logger.error(f'❌ 가격 캐시 업데이트 실패: {str(e)}')
 
+@tag_background_logger(BackgroundJobTag.ORDER_UPDATE)
 def update_open_orders_with_context(app):
     """Flask 앱 컨텍스트 내에서 미체결 주문 상태 업데이트"""
     with app.app_context():
@@ -969,6 +1019,7 @@ def update_open_orders_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.PNL_CALC)
 def calculate_unrealized_pnl_with_context(app):
     """Flask 앱 컨텍스트 내에서 미실현 손익 계산"""
     with app.app_context():
@@ -988,6 +1039,7 @@ def calculate_unrealized_pnl_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.DAILY_SUMMARY)
 def send_daily_summary_with_context(app):
     """Flask 앱 컨텍스트 내에서 일일 요약 보고서 전송"""
     with app.app_context():
@@ -1022,6 +1074,7 @@ def send_daily_summary_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.AUTO_REBAL)
 def auto_rebalance_all_accounts_with_context(app):
     """
     Phase 2: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
@@ -1097,6 +1150,7 @@ def auto_rebalance_all_accounts_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.PERF_CALC)
 def calculate_daily_performance_with_context(app):
     """
     Phase 3.4: Flask 앱 컨텍스트 내에서 일일 성과 계산
@@ -1162,6 +1216,7 @@ def calculate_daily_performance_with_context(app):
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
+@tag_background_logger(BackgroundJobTag.LOCK_RELEASE)
 def release_stale_order_locks_with_context(app):
     """
     Phase 2: Flask 앱 컨텍스트 내에서 오래된 처리 잠금 해제
@@ -1176,6 +1231,7 @@ def release_stale_order_locks_with_context(app):
         except Exception as e:
             app.logger.error(f"❌ 오래된 처리 잠금 해제 실패: {str(e)}")
 
+@tag_background_logger(BackgroundJobTag.WS_HEALTH)
 def check_websocket_health_with_context(app):
     """
     Phase 4: Flask 앱 컨텍스트 내에서 WebSocket 연결 상태 모니터링

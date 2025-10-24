@@ -970,6 +970,14 @@ function renderLogs(jobId, logs, total, filtered) {
         const badgeClass = levelBadges[log.level] || 'badge';
         const levelIcon = levelIcons[log.level] || '';
 
+        // @FEAT:background-log-tagging @COMP:admin-ui @TYPE:helper
+        // 태그 뱃지 추가 (조건부 렌더링) - log.tag가 존재할 때만 표시
+        const tagBadge = log.tag ? `
+            <span class="badge badge-accent mr-2 flex-shrink-0">
+                ${escapeHtml(log.tag)}
+            </span>
+        ` : '';
+
         return `
             <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
                 <div class="flex items-start">
@@ -977,6 +985,7 @@ function renderLogs(jobId, logs, total, filtered) {
                     <span class="badge ${badgeClass} mr-2 flex-shrink-0">
                         ${levelIcon} ${escapeHtml(log.level)}
                     </span>
+                    ${tagBadge}
                     <span class="${levelClass} flex-1 break-words">${escapeHtml(log.message)}</span>
                     <span class="text-xs text-muted ml-2 flex-shrink-0">${escapeHtml(log.file)}:${log.line}</span>
                 </div>

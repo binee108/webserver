@@ -936,6 +936,55 @@ ORDER_TYPE_GROUPS = {
 }
 
 
+class BackgroundJobTag:
+    """백그라운드 작업 태그 (로그 구분용)
+
+    @FEAT:background-log-tagging @COMP:config @TYPE:core
+
+    각 백그라운드 작업의 로그를 구분하기 위한 태그 상수입니다.
+    Format: [TAG_NAME] (대괄호로 감싼 대문자)
+    Usage: admin/system 페이지에서 작업별 로그 필터링 용도
+
+    네이밍 규칙:
+    - 최대 15자 (괄호 제외)
+    - 명확하고 축약된 이름 사용
+    - 작업의 핵심 기능을 즉시 알 수 있도록 구성
+    """
+    PRECISION_CACHE = "[PRECISION_CACHE]"    # Precision 캐시 업데이트 (30초 주기)
+    SYMBOL_VALID = "[SYMBOL_VALID]"          # Symbol Validator 갱신 (30초 주기)
+    MARKET_INFO = "[MARKET_INFO]"            # MarketInfo 백그라운드 갱신 (30초 주기)
+    PRICE_CACHE = "[PRICE_CACHE]"            # 가격 캐시 업데이트 (5초 주기)
+    ORDER_UPDATE = "[ORDER_UPDATE]"          # 미체결 주문 상태 업데이트 (29초 주기)
+    PNL_CALC = "[PNL_CALC]"                  # 미실현 손익 계산 (29초 주기)
+    DAILY_SUMMARY = "[DAILY_SUMMARY]"        # 일일 요약 전송 (매일 09:00)
+    PERF_CALC = "[PERF_CALC]"                # 일일 성과 계산 (매일 09:05)
+    AUTO_REBAL = "[AUTO_REBAL]"              # 자동 리밸런싱 (매시 17분)
+    TOKEN_REFRESH = "[TOKEN_REFRESH]"        # 증권 OAuth 토큰 갱신 (매시 정각)
+    QUEUE_REBAL = "[QUEUE_REBAL]"            # 대기열 재정렬 (1초 주기)
+    LOCK_RELEASE = "[LOCK_RELEASE]"          # 오래된 처리 잠금 해제 (5분 주기)
+    WS_HEALTH = "[WS_HEALTH]"                # WebSocket 연결 상태 모니터링 (30초 주기)
+
+# @FEAT:background-log-tagging @COMP:config @TYPE:core
+# Job ID → Tag 매핑 (admin 페이지 로그 파싱용)
+# Purpose: admin/system에서 job_id 파라미터로 로그 필터링 시 사용
+# Usage: JOB_TAG_MAP.get(job_id) → BackgroundJobTag or None
+JOB_TAG_MAP = {
+    'precision_cache': BackgroundJobTag.PRECISION_CACHE,
+    'symbol_validator': BackgroundJobTag.SYMBOL_VALID,
+    'market_info': BackgroundJobTag.MARKET_INFO,
+    'price_cache': BackgroundJobTag.PRICE_CACHE,
+    'update_open_orders': BackgroundJobTag.ORDER_UPDATE,
+    'update_positions': BackgroundJobTag.PNL_CALC,
+    'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,
+    'calculate_daily_performance': BackgroundJobTag.PERF_CALC,
+    'auto_rebalance': BackgroundJobTag.AUTO_REBAL,
+    'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,
+    'queue_rebalancer': BackgroundJobTag.QUEUE_REBAL,
+    'release_stale_processing': BackgroundJobTag.LOCK_RELEASE,
+    'websocket_health_monitor': BackgroundJobTag.WS_HEALTH,
+}
+
+
 class OrderEventType:
     """주문 이벤트 타입"""
     ORDER_CREATED = 'order_created'     # 주문 생성

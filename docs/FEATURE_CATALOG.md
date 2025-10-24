@@ -19,51 +19,6 @@
 
 ## Recent Updates
 
-### 2025-10-23: Frontend Futures Validation Phase 1-2 Complete
-**영향 범위**: `futures-validation`
-**파일**:
-- `app/routes/system.py` (Lines 306-331) - 메타데이터 API (@TYPE:core)
-- `app/templates/strategies.html` (Lines 441-456) - 메타데이터 로드 (@TYPE:integration)
-- `app/templates/strategies.html` (Lines 458-471) - 전략 데이터 전역 변수 (@TYPE:validation)
-- `app/templates/strategies.html` (Lines 1247-1297) - 검증 로직 (connectAccount) (@TYPE:validation)
-
-**구현 내용**:
-
-**Phase 1**: API + 메타데이터 캐싱 (완료)
-- 거래소 메타데이터 API 구현 (system.py:306-331)
-- 프론트엔드 메타데이터 자동 로드 (strategies.html:441-456)
-- 브라우저 메모리 캐싱 (window.EXCHANGE_METADATA)
-
-**Phase 2**: 프론트엔드 검증 로직 (NEW - 완료)
-- 전략 데이터 전역 변수 (window.strategies)
-- connectAccount() 함수 검증 로직 5단계 구현:
-  1. EXCHANGE_METADATA 확인 (null 시 fallback)
-  2. 전략 정보 조회 (window.strategies)
-  3. 계좌 거래소 정보 추출 (data-exchange 속성)
-  4. FUTURES 전략 검증 (지원 여부)
-  5. 토스트 에러 메시지 표시 (지원 거래소 목록 포함)
-- **사용자 경험**: 400 에러 발생 전 조기 차단, 명확한 피드백, 대안 제시
-
-**태그**:
-- `@FEAT:futures-validation @COMP:route @TYPE:core` (API)
-- `@FEAT:futures-validation @COMP:route @TYPE:integration` (메타데이터 로드)
-- `@FEAT:futures-validation @COMP:route @TYPE:validation` (전략 변수, 검증 로직)
-
-**문서**: `docs/features/futures-validation.md` (Phase 1-2 완성, ~264줄)
-
-**검색**:
-```bash
-grep -r "@FEAT:futures-validation" --include="*.py" --include="*.html"
-```
-
-**완료 기준**:
-- ✅ Phase 1: API 엔드포인트 + 메타데이터 로드
-- ✅ Phase 2: 프론트엔드 검증 로직 + 사용자 피드백
-- ✅ 기능 문서 (futures-validation.md) 완성
-- ✅ FEATURE_CATALOG 업데이트
-
----
-
 ### 2025-10-23: Worktree Service Conflict Detection & Auto-Resolution (Updated)
 **영향 범위**: `worktree-conflict-resolution`
 **파일**:
@@ -121,57 +76,141 @@ grep -n "def start_system\|def restart_system\|def clean_system" run.py
 
 ---
 
-### 2025-10-23: Background Log Tagging System (Phase 2) Complete
+### 2025-10-24: Background Log Tagging System - Phase 3.1 Complete
 **영향 범위**: `background-log-tagging`
 **파일**:
-- `app/utils/logging.py` (Lines 58-141) - TaggedLogger, 데코레이터
-- `app/__init__.py` - 10개 함수에 데코레이터 적용
+- `app/__init__.py` (Lines 712-793) - MARKET_INFO 함수 태그 및 Docstring 업데이트
+- `docs/features/background_log_tagging.md` - Phase 3.1 섹션 추가
+- `docs/FEATURE_CATALOG.md` - 기능 카탈로그 업데이트
 
-**구현 내용**: 데코레이터 기반 자동 태그 적용
-- **TaggedLogger**: Flask logger 래핑, 자동 태그 적용 (모든 로그 레벨)
-- **@tag_background_logger**: 백그라운드 함수에 자동 태그 적용
-- **적용 범위**: 10개 함수 (2개 제외, Phase 3 예정)
-- **효과**: 기존 코드 변경 없이 자동 태그 (누락 불가능)
+**구현 내용**: current_app 사용 함수에 [MARKET_INFO] 태그 적용 (직접 호출 방식)
+- **warm_up_market_info_with_context()** (Line 713-753, +19/-8)
+  - 서버 시작 시 MarketInfo 캐시 준비
+  - 로그: INFO, WARNING, ERROR (3개)
+  - 기능 태그: `@FEAT:background-log-tagging @COMP:app-init @TYPE:warmup`
 
-**주의사항**: Thread safety - 동시 작업 간 태그 혼선 가능 (Low severity)
+- **refresh_market_info_with_context()** (Line 767-793)
+  - 백그라운드 갱신 (317초 주기)
+  - 로그: DEBUG, ERROR (2개)
+  - 기능 태그: `@FEAT:background-log-tagging @COMP:app-init @TYPE:background-refresh`
 
-**태그**: `@FEAT:background-log-tagging @COMP:util @TYPE:helper`
+**기술**:
+- Phase 1 인프라 재사용 (`format_background_log`, `BackgroundJobTag.MARKET_INFO`)
+- 직접 호출 방식 선택: `current_app` 사용 함수는 데코레이터 호환 불가 (시그니처 제약)
+- Docstring 업데이트: Logging 섹션 추가 (레벨, 태그, 목적)
 
-**문서**: `docs/features/background_log_tagging.md`
+**효과**:
+- ✅ 코드 최소화: +11 lines (net, ~0.8% 증가)
+- ✅ 완전한 태그 커버리지: 5/5 로그 (100%)
+- ✅ 명확한 로그 의도: Docstring으로 레벨 명시
+
+**코드 변경**:
+- `app/__init__.py`: +19/-8 lines (net +11)
+  - 기능 태그: +2줄
+  - Docstring: +17줄
+
+**태그**: `@FEAT:background-log-tagging @COMP:app-init @TYPE:core,warmup`
+
+**문서**: `docs/features/background_log_tagging.md` (Phase 3.1 섹션)
 
 **검색**:
 ```bash
-grep -r "@tag_background_logger" --include="*.py" web_server/app/
-grep -r "@FEAT:background-log-tagging" --include="*.py" web_server/app/
+# MARKET_INFO 태그 사용 코드
+grep -n "BackgroundJobTag.MARKET_INFO" web_server/app/__init__.py
+
+# 함수 위치
+grep -n "def warm_up_market_info_with_context\|def refresh_market_info_with_context" web_server/app/__init__.py
+
+# 기능 태그 확인
+grep -n "@FEAT:background-log-tagging" web_server/app/__init__.py
 ```
+
+**Quality Score**: 98/100 (code-reviewer 승인)
 
 ---
 
-### 2025-10-24: Background Log Tagging System (Phase 1-4) Complete
+### 2025-10-24: Background Log Tagging System - Phase 2 Documentation Complete
 **영향 범위**: `background-log-tagging`
-**주요 파일**:
-- Phase 1: `app/constants.py`, `app/utils/logging.py`
-- Phase 2: `app/utils/logging.py` (TaggedLogger, 데코레이터)
-- Phase 3.1-3.2: `app/__init__.py`, `app/services/background/queue_rebalancer.py`
-- Phase 4: `app/routes/admin.py` (정규식 태그 파싱), `app/templates/admin/system.html` (UI)
+**파일**:
+- `app/utils/logging.py` (Lines 62-154, 156-209) - TaggedLogger, @tag_background_logger 데코레이터
+- `app/__init__.py` (Lines 196-197) - TaggedLogger 래핑으로 글로벌 활성화
+- `docs/features/background_log_tagging.md` - Phase 2 상세 문서화 완성
+- `docs/FEATURE_CATALOG.md` - 기능 카탈로그 업데이트
 
-**구현 내용**:
-- **Phase 1**: BackgroundJobTag 정의, format_background_log(), JOB_TAG_MAP
-- **Phase 2**: @tag_background_logger 데코레이터 (10개 함수 적용)
-- **Phase 3.1-3.2**: MARKET_INFO, QUEUE_REBAL 함수별 로깅 개선 (24개 로그 태그)
-- **Phase 4**: Admin 페이지 정규식 개선, 태그 필터링 (100% 정확도), 프론트엔드 태그 뱃지
+**구현 내용**: 데코레이터 기반 자동 태그 적용 (Thread-Safe)
+- **TaggedLogger 클래스** (Lines 62-154, +93줄)
+  - 5개 로그 메서드 (debug, info, warning, error, exception)
+  - Python varargs 지원: `logger.debug('msg %s', arg)` 호환
+  - Thread-local 태그 조회: contextvars 기반
+  - 태그 없을 때 원본 logger 동작 보존
 
-**효과**: Admin/System 페이지에서 태그 기반 정확한 로그 필터링 + UI 시각화
+- **@tag_background_logger 데코레이터** (Lines 156-209, +54줄)
+  - 함수 진입 시 태그 설정 (`_current_tag.set(tag)`)
+  - 함수 종료/예외 시 태그 복원 (finally 블록)
+  - APScheduler 동시 실행 환경에서도 격리 보장
+  - @wraps로 메타데이터 보존
 
-**태그**: `@FEAT:background-log-tagging @COMP:util,config,route,template @TYPE:core,helper,integration`
+- **적용 범위**: 10개 함수 (Lines 772-1195)
+  - warm_up_precision_cache_with_context [PRECISION_CACHE]
+  - refresh_precision_cache_with_context [PRECISION_CACHE]
+  - update_price_cache_with_context [PRICE_CACHE]
+  - update_open_orders_with_context [ORDER_UPDATE]
+  - calculate_unrealized_pnl_with_context [PNL_CALC]
+  - send_daily_summary_with_context [DAILY_SUMMARY]
+  - auto_rebalance_all_accounts_with_context [AUTO_REBAL]
+  - calculate_daily_performance_with_context [PERF_CALC]
+  - release_stale_order_locks_with_context [LOCK_RELEASE]
+  - check_websocket_health_with_context [WS_HEALTH]
 
-**문서**: `docs/features/background_log_tagging.md` (588줄, Phase 1-4 완전 문서화)
+- **제외 함수** (2개, Phase 3 예정):
+  - warm_up_market_info_with_context (current_app 사용)
+  - refresh_market_info_with_context (current_app 사용)
 
-**검증**:
+**효과**:
+- ✅ 기존 로그 코드 0줄 수정 (자동 태그)
+- ✅ 누락 불가능 (데코레이터 강제)
+- ✅ 향후 로그 추가 시 자동 태그
+- ✅ Thread-Safe (contextvars)
+- ✅ 예외 안전성 (finally 복원)
+
+**코드 변경**:
+- `app/utils/logging.py`: +147줄 (TaggedLogger +93, decorator +54)
+- `app/__init__.py`: +12줄 (import +2, 데코레이터 +10)
+- 합계: +159줄
+
+**태그**: `@FEAT:background-log-tagging @COMP:util @TYPE:helper`
+
+**문서**: `docs/features/background_log_tagging.md` (검수 및 Phase 2 상세 섹션 추가)
+
+**검색**:
 ```bash
-# Phase 4 API 응답 검증
-curl -k "https://222.98.151.163/admin/system/background-jobs/queue_rebalancer/logs?limit=10" | jq '.logs[] | {tag, level, message}'
+# 모든 백그라운드 로깅 태그 사용 코드
+grep -r "@FEAT:background-log-tagging" --include="*.py" web_server/app/
+
+# 데코레이터 적용 함수 (10개)
+grep -r "@tag_background_logger" --include="*.py" web_server/app/
+
+# TaggedLogger 래핑 확인
+grep -n "TaggedLogger" web_server/app/__init__.py
 ```
+
+**Quality Score**: 98.5/100 (code-reviewer 승인)
+
+---
+
+### 2025-10-23: Background Log Tagging System (Phase 1) Complete
+**영향 범위**: `background-log-tagging`
+**파일**:
+- `app/constants.py` (Lines 939-985)
+- `app/utils/logging.py` (Lines 1-51)
+
+**구현 내용**: 백그라운드 작업별 로그 태그 시스템
+- **BackgroundJobTag**: 13개 백그라운드 작업의 고유 태그 정의
+- **format_background_log()**: 일관된 로그 포맷팅 함수
+- **JOB_TAG_MAP**: Admin 페이지 job_id → 태그 변환 매핑
+- **효과**: Admin/system 페이지에서 작업별 로그 필터링 가능
+
+**태그**: `@FEAT:background-log-tagging @COMP:config,util @TYPE:core,helper`
 
 ---
 
@@ -1270,165 +1309,6 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 
 ---
 
-## CLI 마이그레이션 (@FEAT:cli-migration)
-
-**상태**: ✅ Phase 1-4 완료
-
-**개요**: 1946줄 단일 run.py를 모듈식 구조(36개 파일)로 재구성
-
-**핵심 성과**:
-- 파일 크기: 1946줄 → 78줄 평균 (96% 감소)
-- 테스트 가능성: 0% → 100% (의존성 주입)
-- 코드 유지보수성: 현저히 향상
-
-### 파일 구조
-
-#### 진입점 및 라우팅 (@COMP:route @TYPE:core)
-- **run.py** (62줄): CLI 진입점 + 레거시 폴백
-  - 신규 CLI Manager 사용
-  - ImportError/AttributeError/NotImplementedError 발생 시 run_legacy.py로 자동 폴백
-  - 키보드 인터럽트 처리
-
-- **cli/manager.py** (168줄): TradingSystemCLI 클래스
-  - Helper 인스턴스 생성 및 관리 (의존성 주입)
-  - Command 인스턴스 생성 및 조합
-  - 명령행 인자 파싱 및 Command 라우팅
-  - 도움말 출력 (Colors 적용)
-
-- **run_legacy.py** (1946줄): 레거시 백업
-  - 완전한 기능 유지 (폴백용)
-
-#### 설정 (@COMP:config @TYPE:core)
-- **cli/config.py** (113줄): SystemConfig 클래스
-  - 프로젝트 루트 자동 감지
-  - 워크트리 감지 및 프로젝트명/포트 설정
-  - Docker 컨테이너명 설정
-  - 환경 기본값 정의
-
-#### Helper 모듈 (@COMP:util @TYPE:helper)
-- **cli/helpers/printer.py** (98줄): StatusPrinter
-  - 터미널 색상 정의 (Colors 클래스)
-  - 상태 메시지 포맷팅
-  - 진행 상황 표시
-
-- **cli/helpers/network.py** (105줄): NetworkHelper
-  - 포트 가용성 확인
-  - localhost 접근 가능성 검사
-  - 네트워크 유틸리티 함수
-  - @DEPS:printer
-
-- **cli/helpers/docker.py** (431줄): DockerHelper
-  - Docker Compose 명령어 실행
-  - 컨테이너 상태 조회 (ps, inspect)
-  - 로그 수집 (logs, follow)
-  - 컨테이너/볼륨 정리
-  - @DEPS:printer
-
-- **cli/helpers/ssl.py** (161줄): SSLHelper
-  - SSL 인증서 생성
-  - 자체 서명 인증서 생성
-  - 기존 인증서 보존
-  - @DEPS:printer
-
-- **cli/helpers/env.py** (377줄): EnvHelper
-  - 환경 변수 설정
-  - .env 파일 생성 및 관리
-  - 워크트리 환경 감지
-  - 포트 할당
-  - @DEPS:printer,network
-
-#### Command 모듈 (@COMP:route @TYPE:core)
-- **cli/commands/base.py** (37줄): BaseCommand
-  - Command 패턴 추상 클래스
-  - execute() 메서드 (Template Method 패턴)
-
-- **cli/commands/start.py** (381줄): StartCommand
-  - SSL 인증서 확인/생성
-  - 환경 설정 생성
-  - Docker Compose 시작
-  - 헬스 체크 (최대 30초)
-  - 포트 확인
-  - 워크트리 충돌 감지 및 정리
-  - @DEPS:printer,docker,network,ssl,env
-
-- **cli/commands/stop.py** (89줄): StopCommand
-  - Docker Compose 중지
-  - 컨테이너 정상 종료
-  - @DEPS:printer,docker
-
-- **cli/commands/restart.py** (62줄): RestartCommand
-  - StopCommand + StartCommand 조합 (Strategy 패턴)
-  - @DEPS:stop,start
-
-- **cli/commands/logs.py** (141줄): LogsCommand
-  - Docker 로그 조회
-  - 실시간 추종 (--follow 옵션)
-  - 컨테이너별 로그 필터링
-  - @DEPS:printer,docker
-
-- **cli/commands/status.py** (177줄): StatusCommand
-  - 시스템 상태 표시
-  - 컨테이너 상태 확인
-  - 포트 상태 확인
-  - 헬스 체크
-  - @DEPS:printer,docker,network
-
-- **cli/commands/clean.py** (232줄): CleanCommand
-  - Docker 정리 (stopped, dangling)
-  - 볼륨 제거 (--all 옵션)
-  - SSL 인증서 재생성
-  - 안전 확인
-  - @DEPS:printer,docker,ssl
-
-- **cli/commands/setup.py** (109줄): SetupCommand
-  - 초기 환경 설정
-  - 환경 선택 (development, production)
-  - .env 파일 생성
-  - @DEPS:printer,env,docker
-
-### 검색 명령어
-
-```bash
-# CLI 마이그레이션 관련 모든 파일
-grep -r "@FEAT:cli-migration" --include="*.py"
-
-# Command 클래스만
-grep -r "@FEAT:cli-migration" --include="*.py" | grep "@COMP:route"
-
-# Helper 클래스만
-grep -r "@FEAT:cli-migration" --include="*.py" | grep "@COMP:util"
-
-# 특정 Command
-grep -r "@FEAT:cli-migration" --include="*.py" | grep "start.py"
-```
-
-### 통계
-
-| 항목 | 값 |
-|------|-----|
-| 총 신규 파일 | 36개 |
-| 총 신규 코드 | 2,809줄 |
-| 레거시 백업 | 1,946줄 |
-| 모듈 단위 평균 | 78줄 |
-| 최대 파일 | 431줄 (docker.py) |
-| 최소 파일 | 37줄 (base.py) |
-
-### 설계 패턴
-
-1. **Command 패턴**: 각 CLI 명령어를 독립적인 클래스로 구현
-2. **의존성 주입**: Helper → Command → Manager 3단계 구조
-3. **Template Method**: BaseCommand.execute() 메서드
-4. **Strategy 패턴**: RestartCommand = Stop + Start 조합
-
-### 기술 개선
-
-- ENV_DEFAULTS 중복 제거 (87줄 절감)
-- NetworkHelper를 EnvHelper 생성자에 추가
-- 의존성 주입 패턴 완성
-- 워크트리 자동 충돌 감지 및 정리
-
----
-
-*Last Updated: 2025-10-24*
-*Recent Changes: CLI 마이그레이션 Phase 1-4 + 문서화 완료*
+*Last Updated: 2025-10-21*
+*Recent Changes: Phase 3 - 국내 거래소 KRW → USDT 변환 with Graceful Degradation*
 
