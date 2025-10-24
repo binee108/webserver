@@ -408,6 +408,11 @@ class OrderType:
     CANCEL = 'CANCEL'
     CANCEL_ALL_ORDER = 'CANCEL_ALL_ORDER'
 
+    # @FEAT:webhook-batch-queue @COMP:config @TYPE:core
+    # Individual Commit Pattern routing groups (Phase 1)
+    QUEUED_TYPES = ['LIMIT', 'STOP_LIMIT', 'STOP_MARKET']  # Route to PendingOrder queue
+    DIRECT_TYPES = ['MARKET', 'CANCEL_ALL_ORDER']  # Execute immediately on exchange
+
     # 소문자 버전 (API 연동용)
     MARKET_LOWER = 'market'
     LIMIT_LOWER = 'limit'
