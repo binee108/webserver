@@ -13,6 +13,11 @@ class StopCommand(BaseCommand):
     """시스템 중지 명령어
 
     TradingSystemManager.stop_system() 로직을 Command 패턴으로 구현
+
+    **옵션**:
+    - 인자 없음: 현재 프로젝트만 중지
+    - --all: 모든 webserver 프로젝트 중지
+    - <project_name>: 특정 프로젝트 중지
     """
 
     def __init__(self, printer, docker, root_dir: Path):
@@ -31,11 +36,15 @@ class StopCommand(BaseCommand):
         """시스템 중지 실행
 
         Args:
-            args (list): 명령행 인자 (예: ['project_name'])
+            args (list): 명령행 인자 (예: ['--all'] 또는 ['project_name'])
 
         Returns:
             int: 종료 코드 (0=성공, 1=실패)
         """
+        # --all 옵션 처리
+        if args and args[0] == '--all':
+            return self._stop_all_projects()
+
         # 프로젝트명 결정
         if args:
             project_name = args[0]
@@ -68,6 +77,51 @@ class StopCommand(BaseCommand):
         except Exception as e:
             self.printer.print_status(f"예기치 않은 오류 발생: {e}", "error")
             return 1
+
+    def _stop_all_projects(self) -> int:
+        """모든 webserver 프로젝트 중지
+
+        Returns:
+            int: 종료 코드 (0=성공, 1=부분 실패)
+        """
+        self.printer.print_status("모든 webserver 프로젝트 중지 중...", "info")
+
+        # 모든 webserver 프로젝트 조회 (BaseCommand 메서드 사용)
+        projects = super()._get_all_webserver_projects()
+
+        if not projects:
+            self.printer.print_status("실행 중인 webserver 프로젝트가 없습니다.", "info")
+            return 0
+
+        # 각 프로젝트 중지
+        failed_projects = []
+        stopped_count = 0
+
+        for project in projects:
+            try:
+                self.printer.print_status(f"  → {project} 중지 중...", "info")
+                self.docker.run_command(
+                    self.docker.compose_cmd + ['-p', project, 'down'],
+                    cwd=self.root_dir
+                )
+                stopped_count += 1
+            except subprocess.CalledProcessError as e:
+                self.printer.print_status(f"  ✗ {project} 중지 실패: {e}", "warning")
+                failed_projects.append(project)
+            except Exception as e:
+                self.printer.print_status(f"  ✗ {project} 중지 중 오류: {e}", "warning")
+                failed_projects.append(project)
+
+        # 결과 요약
+        if failed_projects:
+            self.printer.print_status(
+                f"⚠️  {stopped_count}/{len(projects)}개 프로젝트 중지 (실패: {', '.join(failed_projects)})",
+                "warning"
+            )
+            return 1
+        else:
+            self.printer.print_status(f"✅ {stopped_count}개 프로젝트가 모두 중지되었습니다.", "success")
+            return 0
 
     def _infer_project_name(self) -> str:
         """현재 경로 기반 프로젝트명 추론

@@ -6,6 +6,7 @@ import subprocess
 from typing import List
 
 from .base import BaseCommand
+from cli.helpers.printer import Colors
 
 
 class ListCommand(BaseCommand):
@@ -34,8 +35,8 @@ class ListCommand(BaseCommand):
             int: 종료 코드 (0=성공, 1=실패)
         """
         try:
-            # 모든 webserver 프로젝트 조회
-            projects = self._get_all_webserver_projects()
+            # 모든 webserver 프로젝트 조회 (BaseCommand 메서드 사용)
+            projects = super()._get_all_webserver_projects()
 
             if not projects:
                 self.printer.print_status("실행 중인 webserver 프로젝트가 없습니다.", "info")
@@ -57,60 +58,13 @@ class ListCommand(BaseCommand):
             self.printer.print_status(f"프로젝트 목록 조회 실패: {e}", "error")
             return 1
 
-    def _get_all_webserver_projects(self) -> List[str]:
-        """모든 webserver 관련 프로젝트 조회
-
-        Returns:
-            List[str]: 프로젝트명 리스트 (정렬됨)
-        """
-        try:
-            result = subprocess.run(
-                ['docker', 'compose', 'ls', '--format', 'json'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-
-            # JSON 파싱하여 webserver로 시작하는 프로젝트만 추출
-            import json
-            projects_data = json.loads(result.stdout)
-
-            projects = set()
-            for item in projects_data:
-                name = item.get('Name', '')
-                if name and name.startswith('webserver'):
-                    projects.add(name)
-
-            return sorted(list(projects))
-
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
-            # 폴백: docker ps로 라벨 기반 조회
-            try:
-                result = subprocess.run(
-                    ['docker', 'ps', '-a', '--filter', 'label=com.docker.compose.project',
-                     '--format', '{{.Label "com.docker.compose.project"}}'],
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-
-                projects = set()
-                for line in result.stdout.strip().split('\n'):
-                    if line and line.startswith('webserver'):
-                        projects.add(line)
-
-                return sorted(list(projects))
-
-            except subprocess.CalledProcessError:
-                return []
-
     def _print_header(self, project_count: int):
         """표 헤더 출력
 
         Args:
             project_count (int): 프로젝트 개수
         """
-        colors = self.printer.Colors
+        colors = Colors
 
         print(f"\n{colors.CYAN}{'='*80}{colors.RESET}")
         print(f"{colors.BOLD}Docker Compose 프로젝트 목록 ({project_count}개){colors.RESET}")
@@ -126,7 +80,7 @@ class ListCommand(BaseCommand):
         Args:
             project (str): 프로젝트명
         """
-        colors = self.printer.Colors
+        colors = Colors
 
         try:
             # 프로젝트의 컨테이너 정보 조회
@@ -159,7 +113,7 @@ class ListCommand(BaseCommand):
 
     def _print_footer(self):
         """표 푸터 및 사용 가이드 출력"""
-        colors = self.printer.Colors
+        colors = Colors
 
         print(f"\n{colors.CYAN}{'='*80}{colors.RESET}")
         print(f"\n{colors.BLUE}사용 가능한 명령어:{colors.RESET}")
