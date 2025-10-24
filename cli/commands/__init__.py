@@ -10,6 +10,7 @@ from .logs import LogsCommand
 from .status import StatusCommand
 from .clean import CleanCommand
 from .setup import SetupCommand
+from .list import ListCommand
 
 __all__ = [
     'BaseCommand',
@@ -20,4 +21,5 @@ __all__ = [
     'StatusCommand',
     'CleanCommand',
     'SetupCommand',
+    'ListCommand',
 ]

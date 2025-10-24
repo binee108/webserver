@@ -16,7 +16,7 @@ from .config import SystemConfig
 from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper
 from .commands import (
     StartCommand, StopCommand, RestartCommand, LogsCommand,
-    StatusCommand, CleanCommand, SetupCommand
+    StatusCommand, CleanCommand, SetupCommand, ListCommand
 )
 
 
@@ -82,6 +82,9 @@ class TradingSystemCLI:
         # SetupCommand
         setup_cmd = SetupCommand(self.printer, self.env, self.docker, self.root_dir)
 
+        # ListCommand
+        list_cmd = ListCommand(self.printer, self.docker)
+
         return {
             'start': start_cmd,
             'stop': stop_cmd,
@@ -90,6 +93,7 @@ class TradingSystemCLI:
             'status': status_cmd,
             'clean': clean_cmd,
             'setup': setup_cmd,
+            'ls': list_cmd,  # ls 명령어 추가
         }
 
     def run(self, args: list) -> int:
@@ -152,6 +156,7 @@ class TradingSystemCLI:
   status      - 시스템 상태 확인
   clean       - 시스템 정리 (컨테이너/볼륨)
   setup       - 초기 환경 설정
+  ls          - 실행 중인 프로젝트 목록
 
 옵션:
   -h, --help  - 도움말 표시
