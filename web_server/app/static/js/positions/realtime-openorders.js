@@ -140,13 +140,6 @@ class RealtimeOpenOrdersManager {
         this.sseManager.on('order_batch_update', (data) => {
             this.handleBatchOrderUpdate(data);
         });
-
-        // Listen to event bus events
-        if (this.eventBus) {
-            this.eventBus.on('sse:order_update', (data) => {
-                this.handleOrderUpdate(data);
-            });
-        }
     }
     
     /**
@@ -176,10 +169,11 @@ class RealtimeOpenOrdersManager {
             this.showOpenOrdersError('열린 주문을 불러오는 중 오류가 발생했습니다.');
         }
     }
-    
+
     /**
+     * @FEAT:individual-toast @COMP:integration @TYPE:core
      * Handle order update from SSE
-     * Note: Toasts are only shown by Batch SSE (CLAUDE.md SSE 정책)
+     * Shows individual toast notification for each order event (order_created, order_filled, order_cancelled)
      */
     handleOrderUpdate(data) {
         try {
@@ -219,11 +213,15 @@ class RealtimeOpenOrdersManager {
             switch (eventType) {
                 case 'order_created':
                     this.upsertOrder(data);
+                    // Show individual toast for order creation
+                    this.showOrderNotification(eventType, data);
                     break;
 
                 case 'order_filled':
                 case 'order_cancelled':
                     this.removeOrder(data.order_id);
+                    // Show individual toast for order completion/cancellation
+                    this.showOrderNotification(eventType, data);
                     break;
 
                 case 'order_updated':
@@ -957,11 +955,11 @@ class RealtimeOpenOrdersManager {
             countElement.className = count > 0 ? 'ml-2 badge badge-warning' : 'ml-2 badge badge-secondary';
         }
     }
-    
+
     /**
+     * @FEAT:individual-toast @COMP:integration @TYPE:core
      * Show order notification
-     * Note: NOT used for Order List SSE (use Batch SSE instead)
-     * Used for: WebSocket exchange events, manual triggers
+     * Used for: Individual order events (order_created, order_filled, order_cancelled) and WebSocket exchange events
      */
     showOrderNotification(eventType, data) {
         const eventTypeMap = {
