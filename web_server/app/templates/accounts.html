@@ -1,0 +1,429 @@
+<!-- @FEAT:account-management @COMP:template @TYPE:core -->
+{% extends "base.html" %}
+
+{% block title %}계좌 관리 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/accounts.css') }}">
+<style>
+.highlight-update {
+    animation: flash-balance 0.6s ease;
+}
+
+@keyframes flash-balance {
+    from { background-color: rgba(34, 197, 94, 0.2); }
+    to { background-color: transparent; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8 page-accounts">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>계좌 관리</h1>
+                    <p>거래소 API 키를 관리하고 계좌를 연결하세요</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="bg-white bg-opacity-20 rounded-lg px-4 py-2">
+                    <span class="text-sm font-medium">총 {{ accounts|length }}개</span>
+                </div>
+                <button onclick="openAddAccountModal()" 
+                        class="btn btn-primary">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                    </svg>
+                    <span>계좌 추가</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 플래시 메시지 -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">
+                    <div class="flex justify-between items-center">
+                        <span>{{ message }}</span>
+                        <button onclick="this.parentElement.parentElement.remove()" class="alert-close">&times;</button>
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <!-- 계좌 통계 카드 -->
+    <div class="stats-grid">
+        <!-- 총 계좌 수 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>총 계좌</h3>
+                    <p class="stats-value text-primary">{{ accounts|length }}</p>
+                    <p class="stats-subtitle">등록된 계좌</p>
+                </div>
+                <div class="stats-icon bg-blue-100 text-blue-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 활성 계좌 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>활성 계좌</h3>
+                    <p class="stats-value text-success">{{ accounts|selectattr('is_active')|list|length }}</p>
+                    <p class="stats-subtitle">연결된 계좌</p>
+                </div>
+                <div class="stats-icon bg-green-100 text-success">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Binance 계좌 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>Binance</h3>
+                    <p class="stats-value text-warning">{{ accounts|selectattr('exchange', 'equalto', 'binance')|list|length }}</p>
+                    <p class="stats-subtitle">바이낸스 계좌</p>
+                </div>
+                <div class="stats-icon bg-yellow-100 text-warning">
+                    <span class="text-lg font-bold">B</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upbit 계좌 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>Upbit</h3>
+                    <p class="stats-value text-accent">{{ accounts|selectattr('exchange', 'equalto', 'upbit')|list|length }}</p>
+                    <p class="stats-subtitle">업비트 계좌</p>
+                </div>
+                <div class="stats-icon bg-purple-100 text-accent">
+                    <span class="text-lg font-bold">U</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 계좌 목록 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color flex items-center justify-between">
+            <div>
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                    등록된 계좌
+                </h2>
+                <p class="text-sm text-muted mt-1">거래소 API 키를 관리하고 연결 상태를 확인하세요</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button onclick="refreshAllBalances(event)" class="btn btn-secondary">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    잔고 새로고침
+                </button>
+            </div>
+        </div>
+        <div class="p-6">
+            {% if accounts %}
+                <div class="overflow-x-auto">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>거래소</th>
+                                <th>계좌명</th>
+                                <th>상태</th>
+                                <th>현물 잔고 (USDT)</th>
+                                <th>선물 잔고 (USDT)</th>
+                                <th>스냅샷 시간</th>
+                                <th>마지막 수정</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for account in accounts %}
+                            <tr data-account-id="{{ account.id }}">
+                                <td>
+                                    <div class="flex items-center">
+                                        <div class="flex-shrink-0 h-10 w-10">
+                                            {% if account.exchange == 'binance' %}
+                                                <div class="h-10 w-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                                                    <span class="text-sm font-bold text-warning">B</span>
+                                                </div>
+                                            {% elif account.exchange == 'upbit' %}
+                                                <div class="h-10 w-10 bg-purple-100 rounded-full flex items-center justify-center">
+                                                    <span class="text-sm font-bold text-accent">U</span>
+                                                </div>
+                                            {% elif account.exchange == 'bybit' %}
+                                                <div class="h-10 w-10 bg-orange-100 rounded-full flex items-center justify-center">
+                                                    <span class="text-xs font-bold text-warning">BY</span>
+                                                </div>
+                                            {% elif account.exchange == 'okx' %}
+                                                <div class="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                                    <span class="text-sm font-bold text-info">O</span>
+                                                </div>
+                                            {% else %}
+                                                <div class="h-10 w-10 bg-secondary rounded-full flex items-center justify-center">
+                                                    <span class="text-sm font-bold text-muted">?</span>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="ml-4">
+                                            <div class="text-sm font-medium text-primary">{{ account.exchange.title() }}</div>
+                                            <div class="text-sm text-muted">{{ account.public_api[:8] }}...</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="text-sm font-medium text-primary">{{ account.name }}</div>
+                                    <div class="text-sm text-muted">API 연동</div>
+                                </td>
+                                <td>
+                                    {% if account.is_active %}
+                                        <span class="badge badge-success">
+                                            <div class="w-1.5 h-1.5 bg-green-400 rounded-full mr-1.5"></div>
+                                            활성
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-error">
+                                            <div class="w-1.5 h-1.5 bg-red-400 rounded-full mr-1.5"></div>
+                                            비활성
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <!-- Phase 4.2: Native Currency Symbol -->
+                                <td class="text-sm font-medium text-primary" id="account-spot-balance-{{ account.id }}">
+                                    {% if account.latest_spot_balance is not none %}
+                                        {{ currency_symbol(Exchange, account.exchange) }}{{ '%.2f'|format(account.latest_spot_balance) }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm font-medium text-primary" id="account-futures-balance-{{ account.id }}">
+                                    {% if account.latest_futures_balance is not none %}
+                                        {{ currency_symbol(Exchange, account.exchange) }}{{ '%.2f'|format(account.latest_futures_balance) }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm text-muted" id="account-balance-date-{{ account.id }}">
+                                    {% if account.latest_balance_date %}
+                                        {{ account.latest_balance_date.strftime('%Y-%m-%d') }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-sm text-muted" id="account-updated-{{ account.id }}">
+                                    {{ account.updated_at.strftime('%Y-%m-%d %H:%M') if account.updated_at else '없음' }}
+                                </td>
+                                <td class="table-actions">
+                                    <div class="flex space-x-2">
+                                        <button onclick="testConnection(event, '{{ account.id }}')"
+                                                class="btn btn-primary btn-sm"
+                                                title="연결 테스트">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            테스트
+                                        </button>
+                                        <button onclick="editAccount(event, '{{ account.id }}')"
+                                                class="btn btn-secondary btn-sm"
+                                                title="계좌 수정">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path>
+                                            </svg>
+                                            수정
+                                        </button>
+                                        <button onclick="deleteAccount(event, '{{ account.id }}')"
+                                                class="btn btn-error btn-sm"
+                                                title="계좌 삭제">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd"></path>
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            삭제
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-12">
+                    <svg class="mx-auto h-12 w-12 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                    </svg>
+                    <h3 class="mt-2 text-sm font-medium text-primary">등록된 계좌가 없습니다</h3>
+                    <p class="mt-1 text-sm text-muted">거래소 API 키를 추가하여 자동 거래를 시작하세요.</p>
+                    <div class="mt-6">
+                        <button onclick="openAddAccountModal()" 
+                                class="btn btn-primary">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
+                            첫 번째 계좌 추가
+                        </button>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 보안 안내 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z" clip-rule="evenodd"></path>
+                </svg>
+                보안 주의사항
+            </h2>
+        </div>
+        <div class="p-6">
+            <div class="alert alert-warning">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <h3 class="text-sm font-medium text-warning">API 키 보안 가이드</h3>
+                        <div class="mt-2 text-sm text-warning">
+                            <ul class="list-disc pl-5 space-y-1">
+                                <li>API 키는 암호화되어 저장되며, 거래 권한만 부여하세요</li>
+                                <li>출금 권한은 절대 부여하지 마세요</li>
+                                <li>정기적으로 API 키를 갱신하는 것을 권장합니다</li>
+                                <li>의심스러운 활동이 감지되면 즉시 API 키를 비활성화하세요</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 토스트 알림 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<!-- 계좌 추가/수정 모달 -->
+<div id="accountModal" class="modal-overlay hidden">
+    <div class="modal-content max-w-lg">
+        <div class="modal-header">
+            <div class="flex items-center">
+                <div class="bg-accent rounded-full p-2 mr-3">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+                <h3 id="modalTitle" class="text-lg font-semibold text-primary">계좌 추가</h3>
+            </div>
+            <button onclick="closeAccountModal()" class="modal-close">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="modal-body">
+            <form id="accountForm" onsubmit="submitAccount(event)">
+                <input type="hidden" id="accountId" name="account_id">
+                
+                <div class="space-y-4">
+                    <div class="form-group">
+                        <label for="exchange" class="form-label">거래소</label>
+                        <select id="exchange" name="exchange" required class="form-select">
+                            <option value="">선택하세요</option>
+                            <option value="binance">Binance (해외)</option>
+                            <option value="upbit">Upbit (국내)</option>
+                            <option value="bybit">Bybit (해외)</option>
+                            <option value="okx">OKX (해외)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="name" class="form-label">계좌명</label>
+                        <input type="text" id="name" name="name" required 
+                               class="form-input" 
+                               placeholder="예: 메인 계좌">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="public_api" class="form-label">API Key</label>
+                        <input type="text" id="public_api" name="public_api" required 
+                               class="form-input"
+                               autocomplete="off" 
+                               spellcheck="false"
+                               maxlength="100"
+                               pattern="[A-Za-z0-9]{20,100}">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="secret_api" class="form-label">API Secret</label>
+                        <input type="password" id="secret_api" name="secret_api"
+                               class="form-input"
+                               autocomplete="new-password"
+                               spellcheck="false" 
+                               maxlength="200"
+                               pattern="[A-Za-z0-9+/=]{40,200}"
+                               placeholder="변경하지 않으려면 비워두세요">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="passphrase" class="form-label">Passphrase (OKX만 해당)</label>
+                        <input type="password" id="passphrase" name="passphrase" 
+                               class="form-input"
+                               autocomplete="new-password"
+                               spellcheck="false"
+                               maxlength="50"
+                               placeholder="변경하지 않으려면 비워두세요">
+                    </div>                    
+                    <div class="flex items-center">
+                        <input type="checkbox" id="is_testnet" name="is_testnet" 
+                               class="rounded border-color text-accent shadow-sm focus:border-accent focus:ring focus:ring-accent focus:ring-opacity-50">
+                        <label for="is_testnet" class="ml-2 text-sm text-primary">테스트넷 사용</label>
+                    </div>
+                </div>
+                
+                <div class="flex space-x-3 mt-6">
+                    <button type="button" onclick="closeAccountModal()" 
+                            class="btn btn-secondary flex-1">
+                        취소
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary flex-1">
+                        저장
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/accounts.js') }}"></script>
+{% endblock %} 

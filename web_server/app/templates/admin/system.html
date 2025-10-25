@@ -1,0 +1,1251 @@
+{% extends "base.html" %}
+
+{% block title %}시스템 모니터링 - 관리자{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"></path>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>시스템 모니터링</h1>
+                    <p>실시간 시스템 상태 및 백그라운드 작업 관리</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 시스템 통계 카드 -->
+    <div class="stats-grid md:grid-cols-4">
+        <!-- 사용자 통계 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>사용자</h3>
+                    <p class="stats-value text-info">{{ stats.active_users }}<span class="text-lg text-muted">/{{ stats.total_users }}</span></p>
+                    <p class="stats-subtitle">활성/전체</p>
+                </div>
+                <div class="stats-icon bg-info-light">
+                    <svg class="w-6 h-6 text-info" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 계좌 통계 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>계좌</h3>
+                    <p class="stats-value text-success">{{ stats.active_accounts }}<span class="text-lg text-muted">/{{ stats.total_accounts }}</span></p>
+                    <p class="stats-subtitle">활성/전체</p>
+                </div>
+                <div class="stats-icon bg-success-light">
+                    <svg class="w-6 h-6 text-success" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 전략 통계 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>전략</h3>
+                    <p class="stats-value text-accent">{{ stats.active_strategies }}<span class="text-lg text-muted">/{{ stats.total_strategies }}</span></p>
+                    <p class="stats-subtitle">활성/전체</p>
+                </div>
+                <div class="stats-icon bg-accent-light">
+                    <svg class="w-6 h-6 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 스케줄러 상태 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>스케줄러</h3>
+                    <p class="stats-value {% if scheduler_running %}text-success{% else %}text-error{% endif %}">
+                        {% if scheduler_running %}실행중{% else %}중지됨{% endif %}
+                    </p>
+                    <p class="stats-subtitle">APScheduler</p>
+                </div>
+                <div class="stats-icon {% if scheduler_running %}bg-success-light{% else %}bg-error-light{% endif %}">
+                    <svg class="w-6 h-6 {% if scheduler_running %}text-success{% else %}text-error{% endif %}" fill="currentColor" viewBox="0 0 20 20">
+                        {% if scheduler_running %}
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        {% else %}
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                        {% endif %}
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 스케줄러 제어 패널 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"></path>
+                </svg>
+                APScheduler 제어
+            </h2>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div class="flex items-center space-x-4">
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-secondary">상태</p>
+                            <div class="flex items-center mt-1">
+                                <div class="w-3 h-3 rounded-full {% if scheduler_running %}bg-success{% else %}bg-error{% endif %} mr-2"></div>
+                                <span class="text-lg font-semibold {% if scheduler_running %}text-success{% else %}text-error{% endif %}">
+                                    {% if scheduler_running %}실행중{% else %}중지됨{% endif %}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-secondary">등록된 작업</p>
+                            <p class="text-lg font-semibold text-primary mt-1">{{ jobs|length }}개</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center justify-end space-x-3">
+                    <button onclick="controlScheduler('start')" 
+                            class="btn btn-success">
+                        <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
+                        </svg>
+                        시작
+                    </button>
+                    <button onclick="controlScheduler('restart')" 
+                            class="btn btn-warning">
+                        <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                        </svg>
+                        재시작
+                    </button>
+                    <button onclick="controlScheduler('stop')" 
+                            class="btn btn-error">
+                        <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path>
+                        </svg>
+                        중지
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 백그라운드 작업 목록 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"></path>
+                </svg>
+                백그라운드 작업 목록
+            </h2>
+        </div>
+        <div class="p-6">
+            {% if jobs %}
+            <div class="overflow-x-auto">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>작업 정보</th>
+                            <th>다음 실행</th>
+                            <th>트리거</th>
+                            <th>함수</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in jobs %}
+                        <!-- 작업 행 (클릭 가능) @FEAT:background-scheduler @COMP:ui -->
+                        <tr onclick="toggleJobLogs('{{ job.id }}')"
+                            class="cursor-pointer hover:bg-secondary transition-colors"
+                            role="button"
+                            tabindex="0"
+                            onkeypress="if(event.key==='Enter') toggleJobLogs('{{ job.id }}')">
+                            <td>
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0 h-10 w-10">
+                                        <div class="h-10 w-10 rounded-full bg-info-light flex items-center justify-center">
+                                            <svg class="w-5 h-5 text-info" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <div class="ml-4">
+                                        <div class="text-sm font-medium text-primary">{{ job.name }}</div>
+                                        <div class="text-sm text-muted">ID: <code class="bg-secondary px-1 rounded">{{ job.id }}</code></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                {% if job.next_run_time %}
+                                    <div class="text-sm text-primary">{{ job.next_run_time.strftime('%Y-%m-%d') }}</div>
+                                    <div class="text-sm text-muted">{{ job.next_run_time.strftime('%H:%M:%S') }}</div>
+                                {% else %}
+                                    <span class="badge badge-secondary">
+                                        없음
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-accent">
+                                    {{ job.trigger }}
+                                </span>
+                            </td>
+                            <td class="text-sm text-muted">
+                                <code class="bg-secondary px-2 py-1 rounded text-xs">{{ job.func_name }}</code>
+                            </td>
+                        </tr>
+
+                        <!-- 로그 패널 행 (초기에는 숨김) -->
+                        <tr id="logs-row-{{ job.id }}" class="hidden">
+                            <td colspan="4" class="p-0">
+                                <div class="bg-secondary border-t border-color">
+                                    <!-- 로그 패널 컴포넌트 -->
+                                    <div class="p-6 space-y-4">
+                                        <!-- 패널 헤더 -->
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center">
+                                                <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                                                </svg>
+                                                <h3 class="text-lg font-semibold text-primary">로그 조회: {{ job.id }}</h3>
+                                            </div>
+                                            <button onclick="event.stopPropagation(); toggleJobLogs('{{ job.id }}')"
+                                                    class="text-muted hover:text-primary"
+                                                    aria-label="로그 패널 닫기">
+                                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+
+                                        <!-- 필터 컨트롤 -->
+                                        <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+                                            <select id="log-level-{{ job.id }}"
+                                                    class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                    aria-label="로그 레벨 필터">
+                                                <option value="ALL">전체</option>
+                                                <option value="DEBUG">🔍 DEBUG</option>
+                                                <option value="INFO">ℹ️ INFO</option>
+                                                <option value="WARNING">⚠️ WARNING</option>
+                                                <option value="ERROR">🔴 ERROR</option>
+                                            </select>
+
+                                            <input type="text"
+                                                   id="log-search-{{ job.id }}"
+                                                   placeholder="검색..."
+                                                   class="form-input flex-1 text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                   aria-label="로그 검색">
+
+                                            <select id="log-limit-{{ job.id }}"
+                                                    class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                                                    aria-label="로그 표시 줄 수">
+                                                <option value="50">50줄</option>
+                                                <option value="100" selected>100줄</option>
+                                                <option value="200">200줄</option>
+                                                <option value="500">500줄</option>
+                                            </select>
+
+                                            <button onclick="refreshJobLogs('{{ job.id }}')"
+                                                    class="btn btn-outline btn-sm"
+                                                    aria-label="로그 새로고침">
+                                                <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                                                </svg>
+                                                새로고침
+                                            </button>
+                                        </div>
+
+                                        <!-- 로그 리스트 컨테이너 -->
+                                        <div id="log-container-{{ job.id }}"
+                                             class="bg-primary rounded-lg p-4 font-mono text-sm max-h-96 overflow-y-auto border border-color"
+                                             role="log"
+                                             aria-label="작업 로그">
+                                            <!-- 로그 동적 삽입 -->
+                                            <div class="text-center text-muted py-4">작업을 클릭하여 로그를 조회하세요.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <svg class="mx-auto h-12 w-12 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                </svg>
+                <h3 class="mt-2 text-sm font-medium text-primary">등록된 작업이 없습니다</h3>
+                <p class="mt-1 text-sm text-muted">백그라운드 작업이 등록되지 않았습니다.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- 전역 텔레그램 설정 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                </svg>
+                전역 텔레그램 설정
+            </h2>
+            <p class="text-sm text-secondary mt-1">시스템 오류 및 상태 알림을 위한 전역 텔레그램 봇 설정</p>
+        </div>
+        <div class="p-6">
+            <div class="space-y-6">
+                <!-- 전역 텔레그램 설정 상태 표시 -->
+                <div id="globalTelegramConfigStatus" class="mb-4">
+                    <!-- JavaScript로 동적 업데이트 -->
+                </div>
+                
+                <div class="form-group">
+                    <label for="global_telegram_bot_token" class="form-label">전역 봇 토큰</label>
+                    <div class="flex space-x-2">
+                        <input type="password" id="global_telegram_bot_token" 
+                               class="form-input flex-1" 
+                               placeholder="예: 123456789:AAE...xyz">
+                        <button type="button" onclick="toggleTokenVisibility()" 
+                                class="btn btn-secondary btn-sm">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="form-help">시스템 오류 및 상태 알림을 전송할 전역 텔레그램 봇 토큰입니다.</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="global_telegram_chat_id" class="form-label">전역 Chat ID</label>
+                    <input type="text" id="global_telegram_chat_id" 
+                           class="form-input" 
+                           placeholder="예: 123456789">
+                    <p class="form-help">시스템 알림을 받을 관리자의 텔레그램 Chat ID입니다.</p>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                    <div class="flex space-x-2">
+                        <button type="button" onclick="saveGlobalTelegramSettings()" 
+                                class="btn btn-primary">
+                            <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            저장
+                        </button>
+                        <button type="button" onclick="testGlobalTelegram()" 
+                                id="testGlobalTelegramBtn"
+                                class="btn btn-info">
+                            <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            테스트
+                        </button>
+                    </div>
+                    <button type="button" onclick="loadGlobalTelegramSettings()" 
+                            class="btn btn-secondary">
+                        <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                        </svg>
+                        새로고침
+                    </button>
+                </div>
+                
+                <!-- 전역 텔레그렘 상태 -->
+                <div id="globalTelegramStatus" class="hidden">
+                    <div class="alert alert-info">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                            </svg>
+                            <span id="globalTelegramStatusMessage">전역 텔레그램 설정을 확인하세요.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 수동 작업 실행 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-success" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
+                </svg>
+                수동 작업 실행
+            </h2>
+            <p class="text-sm text-secondary mt-1">백그라운드 작업을 즉시 실행할 수 있습니다.</p>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button onclick="triggerJob('update_orders')" 
+                        class="quick-action-card gradient-blue">
+                    <div class="flex items-center justify-between">
+                        <div class="content">
+                            <div class="title">주문 상태 업데이트</div>
+                            <div class="description">미체결 주문 상태 확인</div>
+                        </div>
+                        <div class="icon-container">
+                            <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </button>
+                
+                <button onclick="triggerJob('calculate_pnl')" 
+                        class="quick-action-card gradient-purple">
+                    <div class="flex items-center justify-between">
+                        <div class="content">
+                            <div class="title">손익 계산</div>
+                            <div class="description">미실현 손익 업데이트</div>
+                        </div>
+                        <div class="icon-container">
+                            <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"></path>
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </button>
+                
+                <button onclick="triggerJob('daily_summary')" 
+                        class="quick-action-card gradient-green">
+                    <div class="flex items-center justify-between">
+                        <div class="content">
+                            <div class="title">일일 보고서</div>
+                            <div class="description">요약 보고서 전송</div>
+                        </div>
+                        <div class="icon-container">
+                            <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
+                                <path fill-rule="evenodd" d="M4 5a2 2 0 012-2v1a2 2 0 002 2h4a2 2 0 002-2V3a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 알림 모달 -->
+<div id="notification" class="toast hidden">
+    <div class="toast-content">
+        <div class="flex items-center">
+            <div id="notification-icon" class="flex-shrink-0 mr-3"></div>
+            <div>
+                <p id="notification-message" class="text-sm font-medium"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showNotification(message, type = 'info') {
+    const notification = document.getElementById('notification');
+    const messageEl = document.getElementById('notification-message');
+    const iconEl = document.getElementById('notification-icon');
+    
+    messageEl.textContent = message;
+    
+    // 아이콘 설정
+    if (type === 'success') {
+        iconEl.innerHTML = '<div class="w-6 h-6 bg-success-light rounded-full flex items-center justify-center"><svg class="w-4 h-4 text-success" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg></div>';
+        notification.className = 'toast success';
+    } else if (type === 'error') {
+        iconEl.innerHTML = '<div class="w-6 h-6 bg-error-light rounded-full flex items-center justify-center"><svg class="w-4 h-4 text-error" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg></div>';
+        notification.className = 'toast error';
+    } else {
+        iconEl.innerHTML = '<div class="w-6 h-6 bg-info-light rounded-full flex items-center justify-center"><svg class="w-4 h-4 text-info" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg></div>';
+        notification.className = 'toast info';
+    }
+    
+    notification.classList.remove('hidden');
+    
+    // 3초 후 자동 숨김
+    setTimeout(() => {
+        notification.classList.add('hidden');
+    }, 3000);
+}
+
+function controlScheduler(action) {
+    const actionNames = {
+        'start': '시작',
+        'stop': '중지',
+        'restart': '재시작'
+    };
+    
+    if (!confirm(`정말로 스케줄러를 ${actionNames[action]}하시겠습니까?`)) {
+        return;
+    }
+    
+    fetch('/api/system/scheduler-control', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({action: action})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message, 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showNotification('오류: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('요청 처리 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+function triggerJob(jobType) {
+    const jobNames = {
+        'update_orders': '미체결 주문 상태 업데이트',
+        'calculate_pnl': '미실현 손익 계산',
+        'daily_summary': '일일 요약 보고서 전송'
+    };
+    
+    if (!confirm(`${jobNames[jobType]} 작업을 실행하시겠습니까?`)) {
+        return;
+    }
+    
+    const button = event.target.closest('button');
+    const originalContent = button.innerHTML;
+    
+    // 로딩 상태
+    button.disabled = true;
+    button.innerHTML = `
+        <div class="flex items-center justify-center">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            실행 중...
+        </div>
+    `;
+    
+    fetch('/api/system/trigger-job', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({job_type: jobType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message, 'success');
+        } else {
+            showNotification('오류: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('요청 처리 중 오류가 발생했습니다.', 'error');
+    })
+    .finally(() => {
+        button.disabled = false;
+        button.innerHTML = originalContent;
+    });
+}
+
+// 페이지 로드 시 스케줄러 상태 자동 새로고침 (30초마다)
+setInterval(() => {
+    fetch('/api/system/scheduler-status')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('스케줄러 상태:', data.scheduler_running ? '실행중' : '중지됨');
+        }
+    })
+    .catch(error => console.error('스케줄러 상태 확인 오류:', error));
+}, 30000);
+
+// 전역 텔레그램 설정 관련 함수들
+function loadGlobalTelegramSettings() {
+    fetch('/admin/system/telegram-settings', {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const settings = data.settings;
+            document.getElementById('global_telegram_bot_token').value = settings.bot_token_full || '';
+            document.getElementById('global_telegram_chat_id').value = settings.chat_id || '';
+            updateGlobalTelegramStatus(settings.bot_token_full, settings.chat_id);
+        } else {
+            showNotification('설정 조회 실패: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('설정 조회 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+function updateGlobalTelegramStatus(botToken, chatId) {
+    const statusDiv = document.getElementById('globalTelegramConfigStatus');
+    
+    if (botToken && chatId) {
+        statusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-success-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-success" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-success">전역 텔레그램 알림 활성화됨</p>
+                    <p class="text-xs text-success-dark">다음 시스템 알림이 관리자에게 전송됩니다:</p>
+                    <ul class="text-xs text-success-dark mt-1 ml-4 list-disc">
+                        <li>시스템 오류 및 예외 상황</li>
+                        <li>거래소 연결 문제</li>
+                        <li>웹훅 처리 오류</li>
+                        <li>시스템 시작/종료 상태</li>
+                        <li>일일 거래 요약 보고서</li>
+                    </ul>
+                </div>
+            </div>
+        `;
+    } else {
+        statusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-warning-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-warning">전역 텔레그램 알림 비활성화됨</p>
+                    <p class="text-xs text-warning-dark">봇 토큰과 Chat ID를 모두 입력해야 다음 기능이 활성화됩니다:</p>
+                    <ul class="text-xs text-warning-dark mt-1 ml-4 list-disc">
+                        <li>시스템 오류 및 예외 상황 알림</li>
+                        <li>거래소 연결 문제 알림</li>
+                        <li>웹훅 처리 오류 알림</li>
+                        <li>시스템 시작/종료 상태 알림</li>
+                        <li>일일 거래 요약 보고서</li>
+                    </ul>
+                    <p class="text-xs text-error mt-2"><strong>주의:</strong> 설정이 미완료된 동안 시스템 문제를 즉시 알 수 없습니다.</p>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function saveGlobalTelegramSettings() {
+    const botToken = document.getElementById('global_telegram_bot_token').value.trim();
+    const chatId = document.getElementById('global_telegram_chat_id').value.trim();
+    
+    // 둘 다 있거나 둘 다 없어야 함
+    if ((botToken && !chatId) || (!botToken && chatId)) {
+        showNotification('봇 토큰과 Chat ID를 모두 입력하거나 모두 비워두어야 합니다.', 'error');
+        return;
+    }
+    
+    fetch('/admin/system/telegram-settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            bot_token: botToken,
+            chat_id: chatId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message, 'success');
+            // 설정을 다시 로드하여 마스킹된 토큰 표시 및 상태 업데이트
+            setTimeout(() => {
+                loadGlobalTelegramSettings();
+                updateGlobalTelegramStatus(botToken, chatId);
+            }, 1000);
+        } else {
+            showNotification('설정 저장 실패: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('설정 저장 중 오류가 발생했습니다.', 'error');
+    });
+}
+
+function testGlobalTelegram() {
+    const testBtn = document.getElementById('testGlobalTelegramBtn');
+    const statusDiv = document.getElementById('globalTelegramStatus');
+    const statusMessage = document.getElementById('globalTelegramStatusMessage');
+    const originalContent = testBtn.innerHTML;
+    
+    // 현재 입력칸의 값 가져오기
+    const botToken = document.getElementById('global_telegram_bot_token').value.trim();
+    const chatId = document.getElementById('global_telegram_chat_id').value.trim();
+    
+    // 입력값 검증
+    if (!botToken || !chatId) {
+        showNotification('봇 토큰과 Chat ID를 모두 입력해야 테스트할 수 있습니다.', 'error');
+        return;
+    }
+    
+    // 버튼 비활성화 및 로딩 상태
+    testBtn.disabled = true;
+    testBtn.innerHTML = `
+        <div class="flex items-center">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            테스트 중...
+        </div>
+    `;
+    
+    fetch('/admin/system/test-global-telegram', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            bot_token: botToken,
+            chat_id: chatId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        statusDiv.classList.remove('hidden');
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>✅ 전역 텔레그램 연결 성공! 테스트 메시지를 확인하세요.</span>
+                    </div>
+                </div>
+            `;
+            showNotification('전역 텔레그램 테스트 메시지가 전송되었습니다!', 'success');
+        } else {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>❌ ${data.message}</span>
+                    </div>
+                </div>
+            `;
+            showNotification(`전역 텔레그램 연결 실패: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = `
+            <div class="alert alert-error">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>❌ 연결 테스트 중 오류가 발생했습니다.</span>
+                </div>
+            </div>
+        `;
+        showNotification('연결 테스트 중 오류가 발생했습니다.', 'error');
+    })
+    .finally(() => {
+        testBtn.disabled = false;
+        testBtn.innerHTML = originalContent;
+    });
+}
+
+function toggleTokenVisibility() {
+    const tokenInput = document.getElementById('global_telegram_bot_token');
+    if (tokenInput.type === 'password') {
+        tokenInput.type = 'text';
+    } else {
+        tokenInput.type = 'password';
+    }
+}
+
+// 페이지 로드 시 전역 텔레그램 설정 로드
+document.addEventListener('DOMContentLoaded', function() {
+    loadGlobalTelegramSettings();
+});
+
+// ============================================================================
+// 백그라운드 작업 로그 조회 UI
+// @FEAT:background-job-logs @COMP:ui @TYPE:core
+// ============================================================================
+
+// 현재 열린 로그 패널 추적
+let currentOpenLogRow = null;
+
+// 검색 디바운스 타이머 저장
+let searchDebounceTimers = {};
+
+/**
+ * 작업별 로그 패널 토글 (자동 로드 통합)
+ * @param {string} jobId - 작업 ID
+ */
+function toggleJobLogs(jobId) {
+    const logRow = document.getElementById(`logs-row-${jobId}`);
+
+    // 이미 열린 패널 닫기
+    if (currentOpenLogRow && currentOpenLogRow !== logRow) {
+        currentOpenLogRow.classList.add('hidden');
+    }
+
+    // 토글
+    if (logRow.classList.contains('hidden')) {
+        logRow.classList.remove('hidden');
+        loadJobLogs(jobId);
+        currentOpenLogRow = logRow;
+    } else {
+        logRow.classList.add('hidden');
+        currentOpenLogRow = null;
+    }
+}
+
+/**
+ * 작업별 로그 조회 API 호출
+ * @param {string} jobId - 작업 ID
+ * @param {string} level - 로그 레벨 (기본: ALL)
+ * @param {string} search - 검색어 (기본: 빈 문자열)
+ * @param {number} limit - 최대 줄 수 (기본: 100)
+ */
+function loadJobLogs(jobId, level = null, search = null, limit = null) {
+    const container = document.getElementById(`log-container-${jobId}`);
+
+    // 로딩 상태
+    container.innerHTML = `
+        <div class="text-center text-muted py-4">
+            <svg class="animate-spin h-6 w-6 mx-auto mb-2 text-info" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            로그 로딩 중...
+        </div>
+    `;
+
+    // 필터 값 가져오기 (파라미터 우선, 없으면 DOM에서 읽기)
+    const levelFilter = level || document.getElementById(`log-level-${jobId}`)?.value || 'ALL';
+    const searchFilter = search !== null ? search : (document.getElementById(`log-search-${jobId}`)?.value || '');
+    const limitFilter = limit || document.getElementById(`log-limit-${jobId}`)?.value || 100;
+
+    const params = new URLSearchParams({
+        limit: limitFilter,
+        level: levelFilter,
+        search: searchFilter
+    });
+
+    fetch(`/admin/system/background-jobs/${jobId}/logs?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderLogs(jobId, data.logs, data.total, data.filtered);
+            } else {
+                container.innerHTML = `
+                    <div class="text-center text-error py-4">
+                        <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                        </svg>
+                        로그 조회 실패: ${escapeHtml(data.message)}
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading job logs:', error);
+            container.innerHTML = `
+                <div class="text-center text-error py-4">
+                    <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                    </svg>
+                    오류 발생: ${escapeHtml(error.message)}
+                </div>
+            `;
+        });
+}
+
+/**
+ * 로그 목록 렌더링
+ * @param {string} jobId - 작업 ID
+ * @param {Array} logs - 로그 배열
+ * @param {number} total - 전체 로그 수
+ * @param {number} filtered - 필터링된 로그 수
+ */
+function renderLogs(jobId, logs, total, filtered) {
+    const container = document.getElementById(`log-container-${jobId}`);
+
+    if (logs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-11a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path>
+                </svg>
+                로그가 없습니다.
+            </div>
+        `;
+        return;
+    }
+
+    // 로그 통계 표시
+    let statsHtml = '';
+    if (total !== filtered) {
+        statsHtml = `
+            <div class="mb-2 text-xs text-muted">
+                전체 ${total}개 중 ${filtered}개 표시
+            </div>
+        `;
+    } else {
+        statsHtml = `
+            <div class="mb-2 text-xs text-muted">
+                전체 ${total}개 로그
+            </div>
+        `;
+    }
+
+    // 로그 레벨별 색상 클래스 및 아이콘 매핑
+    const levelClasses = {
+        'INFO': 'text-info',
+        'WARNING': 'text-warning',
+        'ERROR': 'text-error',
+        'DEBUG': 'text-muted'
+    };
+
+    const levelBadges = {
+        'INFO': 'badge-info',
+        'WARNING': 'badge-warning',
+        'ERROR': 'badge-error',
+        'DEBUG': 'badge-secondary'
+    };
+
+    // 로그 레벨별 아이콘 (접근성 + 시각적 구분)
+    const levelIcons = {
+        'ERROR': '🔴',
+        'WARNING': '⚠️',
+        'INFO': 'ℹ️',
+        'DEBUG': '🔍',
+        'UNKNOWN': '❓'
+    };
+
+    const logHtml = logs.map(log => {
+        const levelClass = levelClasses[log.level] || 'text-primary';
+        const badgeClass = levelBadges[log.level] || 'badge';
+        const levelIcon = levelIcons[log.level] || '';
+
+        // @FEAT:background-log-tagging @COMP:admin-ui @TYPE:helper
+        // 태그 뱃지 추가 (조건부 렌더링) - log.tag가 존재할 때만 표시
+        const tagBadge = log.tag ? `
+            <span class="badge badge-accent mr-2 flex-shrink-0">
+                ${escapeHtml(log.tag)}
+            </span>
+        ` : '';
+
+        return `
+            <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
+                <div class="flex items-start">
+                    <span class="text-muted text-xs mr-2 flex-shrink-0">[${escapeHtml(log.timestamp)}]</span>
+                    <span class="badge ${badgeClass} mr-2 flex-shrink-0">
+                        ${levelIcon} ${escapeHtml(log.level)}
+                    </span>
+                    ${tagBadge}
+                    <span class="${levelClass} flex-1 break-words">${escapeHtml(log.message)}</span>
+                    <span class="text-xs text-muted ml-2 flex-shrink-0">${escapeHtml(log.file)}:${log.line}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = statsHtml + logHtml;
+}
+
+/**
+ * 로그 수동 새로고침
+ * @param {string} jobId - 작업 ID
+ */
+function refreshJobLogs(jobId) {
+    const level = document.getElementById(`log-level-${jobId}`)?.value;
+    const search = document.getElementById(`log-search-${jobId}`)?.value;
+    const limit = document.getElementById(`log-limit-${jobId}`)?.value;
+    loadJobLogs(jobId, level, search, limit);
+}
+
+/**
+ * XSS 방어를 위한 HTML 이스케이프
+ * @param {string} text - 이스케이프할 텍스트
+ * @returns {string} 이스케이프된 텍스트
+ */
+function escapeHtml(text) {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+// 필터 변경 시 자동 갱신 (이벤트 위임 패턴)
+document.addEventListener('change', function(e) {
+    if (e.target.id.startsWith('log-level-') || e.target.id.startsWith('log-limit-')) {
+        const jobId = e.target.id.replace(/^log-(level|limit)-/, '');
+        refreshJobLogs(jobId);
+    }
+});
+
+// 검색 입력 시 디바운스 적용 (500ms)
+document.addEventListener('input', function(e) {
+    if (e.target.id.startsWith('log-search-')) {
+        const jobId = e.target.id.replace('log-search-', '');
+
+        // 기존 타이머 클리어
+        if (searchDebounceTimers[jobId]) {
+            clearTimeout(searchDebounceTimers[jobId]);
+        }
+
+        // 새 타이머 설정
+        searchDebounceTimers[jobId] = setTimeout(() => {
+            refreshJobLogs(jobId);
+        }, 500);
+    }
+});
+</script>
+{% endblock %} 
+<!-- Phase 1: 주문 추적 시스템 섹션 -->
+<div class="card mt-8">
+    <div class="px-6 py-4 border-b border-color">
+        <h2 class="text-xl font-semibold text-primary flex items-center">
+            <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
+                <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 1 1 0 000 2H4a1 1 0 100 2h12a1 1 0 100-2h-2a1 1 0 100-2 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"></path>
+            </svg>
+            주문 추적 시스템
+        </h2>
+        <p class="text-sm text-secondary mt-1">실시간 주문 추적 및 성과 모니터링</p>
+    </div>
+    <div class="p-6">
+        <div class="flex space-x-4 mb-6">
+            <a href="{{ url_for('admin.order_tracking') }}" class="btn btn-primary">
+                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"></path>
+                    <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"></path>
+                </svg>
+                상세 모니터링
+            </a>
+            <button onclick="loadTrackingStats()" class="btn btn-outline">
+                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                </svg>
+                통계 새로고침
+            </button>
+        </div>
+        
+        <!-- 추적 통계 요약 -->
+        <div id="trackingStatsContainer" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-secondary rounded-lg p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-muted">활성 세션</p>
+                        <p class="text-2xl font-bold text-primary" id="activeSessionCount">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-success-light rounded-full flex items-center justify-center">
+                        <svg class="w-6 h-6 text-success" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-secondary rounded-lg p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-muted">24시간 체결</p>
+                        <p class="text-2xl font-bold text-primary" id="executionCount24h">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-info-light rounded-full flex items-center justify-center">
+                        <svg class="w-6 h-6 text-info" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-secondary rounded-lg p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-muted">오류율</p>
+                        <p class="text-2xl font-bold text-primary" id="errorRate">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-warning-light rounded-full flex items-center justify-center">
+                        <svg class="w-6 h-6 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 관리 액션 -->
+        <div class="space-y-3">
+            <div class="flex items-center justify-between p-3 bg-secondary rounded-lg">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-3 text-info" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span class="text-sm font-medium">세션 정리</span>
+                </div>
+                <button onclick="cleanupSessions()" class="btn btn-sm btn-outline">
+                    실행
+                </button>
+            </div>
+            
+            <div class="flex items-center justify-between p-3 bg-secondary rounded-lg">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-3 text-info" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
+                        <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 1 1 0 000 2H4a1 1 0 100 2h12a1 1 0 100-2h-2a1 1 0 100-2 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm9.707 5.707a1 1 0 00-1.414-1.414L9 12.586l-1.293-1.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span class="text-sm font-medium">성과 계산</span>
+                </div>
+                <button onclick="calculatePerformance()" class="btn btn-sm btn-outline">
+                    배치 실행
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// 주문 추적 시스템 관련 함수들
+function loadTrackingStats() {
+    fetch('/admin/system/order-tracking/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // 세션 통계 업데이트
+                document.getElementById('activeSessionCount').textContent = 
+                    data.session_stats.active_sessions || '0';
+                
+                // 체결 통계 업데이트
+                document.getElementById('executionCount24h').textContent = 
+                    data.execution_stats.total_executions || '0';
+                
+                // 오류율 업데이트
+                const errorRate = data.session_stats.error_rate || 0;
+                document.getElementById('errorRate').textContent = 
+                    errorRate.toFixed(1) + '%';
+                
+                showAlert('통계가 업데이트되었습니다.', 'success');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading tracking stats:', error);
+            showAlert('통계 로드 실패', 'error');
+        });
+}
+
+function cleanupSessions() {
+    if (!confirm('5분 이상 비활성 세션을 정리하시겠습니까?')) {
+        return;
+    }
+    
+    fetch('/admin/system/order-tracking/cleanup-sessions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify({ timeout_minutes: 5 })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            loadTrackingStats();
+        } else {
+            showAlert(data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error cleaning up sessions:', error);
+        showAlert('세션 정리 실패', 'error');
+    });
+}
+
+function calculatePerformance() {
+    if (!confirm('최근 7일간의 성과를 재계산하시겠습니까?')) {
+        return;
+    }
+    
+    const btn = event.target;
+    const originalText = btn.textContent;
+    btn.textContent = '처리중...';
+    btn.disabled = true;
+    
+    fetch('/admin/system/order-tracking/calculate-performance', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify({ days_back: 7 })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+        } else {
+            showAlert(data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error calculating performance:', error);
+        showAlert('성과 계산 실패', 'error');
+    })
+    .finally(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    });
+}
+
+// 페이지 로드 시 추적 통계 로드
+document.addEventListener('DOMContentLoaded', function() {
+    loadTrackingStats();
+});
+</script>

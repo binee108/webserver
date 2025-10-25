@@ -1,0 +1,143 @@
+"""시스템 중지 명령어
+
+@FEAT:cli-migration @COMP:route @TYPE:core
+"""
+import subprocess
+from pathlib import Path
+
+from .base import BaseCommand
+from cli.helpers.printer import Colors
+
+
+class StopCommand(BaseCommand):
+    """시스템 중지 명령어
+
+    TradingSystemManager.stop_system() 로직을 Command 패턴으로 구현
+
+    **옵션**:
+    - 인자 없음: 현재 프로젝트만 중지
+    - --all: 모든 webserver 프로젝트 중지
+    - <project_name>: 특정 프로젝트 중지
+    """
+
+    def __init__(self, printer, docker, root_dir: Path):
+        """초기화
+
+        Args:
+            printer: StatusPrinter 인스턴스
+            docker: DockerHelper 인스턴스
+            root_dir: 프로젝트 루트 디렉토리
+        """
+        super().__init__(printer)
+        self.docker = docker
+        self.root_dir = root_dir
+
+    def execute(self, args: list) -> int:
+        """시스템 중지 실행
+
+        Args:
+            args (list): 명령행 인자 (예: ['--all'] 또는 ['project_name'])
+
+        Returns:
+            int: 종료 코드 (0=성공, 1=실패)
+        """
+        # --all 옵션 처리
+        if args and args[0] == '--all':
+            return self._stop_all_projects()
+
+        # 프로젝트명 결정
+        if args:
+            project_name = args[0]
+            self.printer.print_status(f"프로젝트 중지 중: {project_name}", "info")
+        else:
+            # 기본 프로젝트명 추론
+            project_name = self._infer_project_name()
+            self.printer.print_status("트레이딩 시스템 중지 중...", "info")
+
+        try:
+            # Docker Compose down 실행
+            self.docker.run_command(
+                self.docker.compose_cmd + ['-p', project_name, 'down'],
+                cwd=self.root_dir
+            )
+
+            # 성공 메시지
+            if args:
+                self.printer.print_status(f"✅ {project_name} 프로젝트가 중지되었습니다.", "success")
+            else:
+                self.printer.print_status("시스템이 중지되었습니다.", "success")
+                print(f"\n{Colors.BLUE}💡 데이터는 보존되었습니다. 다시 시작하려면 'python run.py start'를 실행하세요.{Colors.RESET}")
+                print(f"{Colors.RED}🗑️  모든 데이터를 삭제하려면 'python run.py clean'을 실행하세요.{Colors.RESET}")
+
+            return 0
+
+        except subprocess.CalledProcessError as e:
+            self.printer.print_status(f"시스템 중지 실패: {e}", "error")
+            return 1
+        except Exception as e:
+            self.printer.print_status(f"예기치 않은 오류 발생: {e}", "error")
+            return 1
+
+    def _stop_all_projects(self) -> int:
+        """모든 webserver 프로젝트 중지
+
+        Returns:
+            int: 종료 코드 (0=성공, 1=부분 실패)
+        """
+        self.printer.print_status("모든 webserver 프로젝트 중지 중...", "info")
+
+        # 모든 webserver 프로젝트 조회 (BaseCommand 메서드 사용)
+        projects = super()._get_all_webserver_projects()
+
+        if not projects:
+            self.printer.print_status("실행 중인 webserver 프로젝트가 없습니다.", "info")
+            return 0
+
+        # 각 프로젝트 중지
+        failed_projects = []
+        stopped_count = 0
+
+        for project in projects:
+            try:
+                self.printer.print_status(f"  → {project} 중지 중...", "info")
+                self.docker.run_command(
+                    self.docker.compose_cmd + ['-p', project, 'down'],
+                    cwd=self.root_dir
+                )
+                stopped_count += 1
+            except subprocess.CalledProcessError as e:
+                self.printer.print_status(f"  ✗ {project} 중지 실패: {e}", "warning")
+                failed_projects.append(project)
+            except Exception as e:
+                self.printer.print_status(f"  ✗ {project} 중지 중 오류: {e}", "warning")
+                failed_projects.append(project)
+
+        # 결과 요약
+        if failed_projects:
+            self.printer.print_status(
+                f"⚠️  {stopped_count}/{len(projects)}개 프로젝트 중지 (실패: {', '.join(failed_projects)})",
+                "warning"
+            )
+            return 1
+        else:
+            self.printer.print_status(f"✅ {stopped_count}개 프로젝트가 모두 중지되었습니다.", "success")
+            return 0
+
+    def _infer_project_name(self) -> str:
+        """현재 경로 기반 프로젝트명 추론
+
+        Returns:
+            str: 프로젝트명
+        """
+        # 워크트리 환경 감지
+        try:
+            current_path = str(self.root_dir.resolve())
+            if '.worktree' in current_path:
+                # 워크트리 디렉토리 이름 추출
+                worktree_name = self.root_dir.name
+                return f"webserver_{worktree_name.replace('.', '_')}"
+        except Exception:
+            pass
+
+        # 기본 프로젝트명
+        return "webserver"

@@ -1,0 +1,172 @@
+"""
+Main Page Routes
+
+@FEAT:api-gateway @COMP:route @TYPE:core
+Handles main page rendering, dashboard, accounts, strategies, and position pages.
+"""
+
+from flask import Blueprint, render_template, redirect, url_for, current_app, flash
+from flask_login import login_required, current_user
+from app.models import Strategy, Account, Trade, OpenOrder, StrategyAccount, StrategyPosition
+from app.services.strategy_service import strategy_service, StrategyError
+from app import db
+# Phase 4.2: Pass Exchange enum to template for currency symbol conditional
+from app.constants import MarketType, Exchange
+from datetime import datetime, timedelta
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload, selectinload
+
+bp = Blueprint('main', __name__)
+
+# @FEAT:api-gateway @COMP:route @TYPE:core
+@bp.route('/')
+def index():
+    """홈페이지"""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.dashboard'))
+    return redirect(url_for('auth.login'))
+
+# @FEAT:api-gateway @COMP:route @TYPE:core
+@bp.route('/dashboard')
+@login_required
+def dashboard():
+    """대시보드 페이지"""
+    # 사용자의 전략들
+    strategies = Strategy.query.filter_by(user_id=current_user.id).all()
+    active_strategies = [s for s in strategies if s.is_active]
+
+    # 오늘 거래 수 계산
+    today = datetime.now().date()
+    today_trades_count = 0
+
+    # 미체결 주문 수 계산
+    pending_orders_count = 0
+
+    # 최근 거래 내역 (최대 5개)
+    recent_trades = []
+
+    if strategies:
+        strategy_ids = [s.id for s in strategies]
+
+        # 오늘 거래 수
+        today_trades_count = db.session.query(Trade).join(StrategyAccount).filter(
+            StrategyAccount.strategy_id.in_(strategy_ids),
+            func.date(Trade.timestamp) == today
+        ).count()
+
+        # 미체결 주문 수
+        pending_orders_count = db.session.query(OpenOrder).join(StrategyAccount).filter(
+            StrategyAccount.strategy_id.in_(strategy_ids),
+            OpenOrder.status.in_(['OPEN', 'PARTIALLY_FILLED'])
+        ).count()
+
+        # 최근 거래 내역
+        recent_trades = db.session.query(Trade).join(StrategyAccount).filter(
+            StrategyAccount.strategy_id.in_(strategy_ids)
+        ).order_by(Trade.timestamp.desc()).limit(5).all()
+
+    return render_template('dashboard.html', MarketType=MarketType,
+                         strategies=active_strategies,
+                         active_strategies_count=len(active_strategies),
+                         today_trades_count=today_trades_count,
+                         pending_orders_count=pending_orders_count,
+                         recent_trades=recent_trades)
+
+# @FEAT:account-management @COMP:route @TYPE:core
+@bp.route('/accounts')
+@login_required
+def accounts():
+    """계좌 관리 페이지"""
+    accounts = (
+        Account.query
+        .options(selectinload(Account.daily_summaries))
+        .filter_by(user_id=current_user.id)
+        .all()
+    )
+
+    for account in accounts:
+        latest_summary = None
+        if account.daily_summaries:
+            try:
+                latest_summary = max(account.daily_summaries, key=lambda s: s.date)
+            except ValueError:
+                latest_summary = None
+
+        account.latest_balance = float(latest_summary.ending_balance) if latest_summary else None
+        account.latest_spot_balance = float(latest_summary.spot_balance) if latest_summary else None
+        account.latest_futures_balance = float(latest_summary.futures_balance) if latest_summary else None
+        account.latest_balance_date = latest_summary.date if latest_summary else None
+
+    return render_template('accounts.html', accounts=accounts, MarketType=MarketType, Exchange=Exchange)
+
+# @FEAT:api-gateway @FEAT:strategy-management @COMP:route @TYPE:core
+@bp.route('/strategies')
+@login_required
+def strategies():
+    """전략 관리 페이지"""
+    try:
+        # 내 전략만 서버 렌더, 구독/공개 전략은 클라이언트에서 API 호출로 로드
+        strategies_data = strategy_service.get_strategies_by_user(current_user.id)
+        return render_template('strategies.html', strategies=strategies_data, MarketType=MarketType, Exchange=Exchange)
+    except StrategyError as e:
+        # 오류 발생 시 빈 목록으로 처리
+        current_app.logger.error(f"StrategyError in /strategies route for user {current_user.id}: {str(e)}", exc_info=True)
+        flash(f'전략 목록 로드 오류: {str(e)}', 'error')
+        return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
+    except Exception as e:
+        # 예상치 못한 오류 발생 시에도 빈 목록으로 처리
+        current_app.logger.error(f"Unexpected error in /strategies route for user {current_user.id}: {str(e)}", exc_info=True)
+        flash('전략 목록을 불러오는 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의하세요.', 'error')
+        return render_template('strategies.html', strategies=[], MarketType=MarketType, Exchange=Exchange)
+
+# @FEAT:api-gateway @FEAT:position-tracking @COMP:route @TYPE:core
+@bp.route('/strategies/<int:strategy_id>/positions')
+@login_required
+def strategy_positions(strategy_id):
+    """전략별 포지션 관리 페이지 (소유 전략 + 구독 전략 모두 지원)"""
+    # 전략 존재 확인
+    strategy = Strategy.query.filter_by(id=strategy_id).first()
+    if not strategy:
+        return redirect(url_for('main.strategies'))
+
+    # 권한 확인: StrategyService.verify_strategy_access() 사용
+    from app.services.strategy_service import StrategyService
+    from flask import current_app
+
+    has_access, error_msg = StrategyService.verify_strategy_access(strategy_id, current_user.id)
+    if not has_access:
+        current_app.logger.warning(
+            f'포지션 페이지 접근 거부 - 사용자: {current_user.id}, 전략: {strategy_id}'
+        )
+        return redirect(url_for('main.strategies'))
+
+    # 해당 전략의 활성 포지션만 조회 (항상 내 계좌 기준으로 제한)
+    positions_query = StrategyPosition.query\
+        .join(StrategyAccount)\
+        .join(Account)\
+        .options(joinedload(StrategyPosition.strategy_account).joinedload(StrategyAccount.account))\
+        .filter(
+            StrategyAccount.strategy_id == strategy_id,
+            Account.user_id == current_user.id,
+            StrategyPosition.quantity != 0
+        ).all()
+
+    # StrategyPosition 객체들을 딕셔너리로 변환 (JSON 직렬화 가능하도록)
+    positions = []
+    for pos in positions_query:
+        position_dict = {
+            'position_id': pos.id,  # 통일된 명명: position_id 사용
+            'symbol': pos.symbol,
+            'quantity': float(pos.quantity) if pos.quantity else 0,
+            'entry_price': float(pos.entry_price) if pos.entry_price else 0,
+            'last_updated': pos.last_updated.isoformat() if pos.last_updated else None,
+            'strategy_account_id': pos.strategy_account_id,
+            'account': {
+                'id': pos.strategy_account.account.id,
+                'name': pos.strategy_account.account.name,
+                'exchange': pos.strategy_account.account.exchange
+            } if pos.strategy_account and pos.strategy_account.account else None
+        }
+        positions.append(position_dict)
+
+    return render_template('positions.html', strategy=strategy, positions=positions, MarketType=MarketType)

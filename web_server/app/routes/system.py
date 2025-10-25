@@ -1,0 +1,331 @@
+"""
+시스템 관리 및 모니터링 엔드포인트
+
+@FEAT:health-monitoring @COMP:route @TYPE:core
+System health checks, scheduler control, cache management, and background job triggers.
+"""
+from flask import Blueprint, request, jsonify, current_app
+from flask_login import login_required, current_user
+from datetime import datetime
+from app import db
+from app.exchanges.metadata import ExchangeMetadata, MarketType
+
+bp = Blueprint('system', __name__, url_prefix='/api')
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/health', methods=['GET'])
+def health_check():
+    """시스템 헬스 체크 엔드포인트 - 민감한 정보 제거"""
+    try:
+        # 데이터베이스 연결만 확인
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
+
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception:
+        return jsonify({
+            'status': 'unhealthy',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 503
+
+# @FEAT:telegram-notification @COMP:route @TYPE:integration
+@bp.route('/system/test-telegram', methods=['POST'])
+@login_required
+def test_telegram():
+    """텔레그램 연결 테스트 엔드포인트"""
+    try:
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        from app.services.telegram import telegram_service
+        result = telegram_service.test_connection()
+        return jsonify(result), 200 if result['success'] else 400
+    except Exception as e:
+        current_app.logger.error(f'텔레그램 테스트 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': f'텔레그램 테스트 실패: {str(e)}'
+        }), 500
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/scheduler-status', methods=['GET'])
+@login_required
+def get_scheduler_status():
+    """APScheduler 작업 상태 조회 (개선된 버전)"""
+    try:
+        from app import scheduler
+
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        # 스케줄러 상태
+        scheduler_running = scheduler.running if scheduler else False
+
+        # 등록된 작업 목록
+        jobs = []
+        if scheduler and scheduler_running:
+            for job in scheduler.get_jobs():
+                jobs.append({
+                    'id': job.id,
+                    'name': job.name,
+                    'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None,
+                    'trigger': str(job.trigger),
+                    'func_name': job.func.__name__ if hasattr(job.func, '__name__') else str(job.func)
+                })
+
+        # 추가 상태 정보
+        status_info = {
+            'is_running': scheduler_running,
+            'jobs_count': len(jobs),
+            'jobs': jobs,
+            'last_check': datetime.utcnow().isoformat()
+        }
+
+        return jsonify({
+            'success': True,
+            'scheduler_running': scheduler_running,
+            'status': status_info
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'스케줄러 상태 조회 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/scheduler-control', methods=['POST'])
+@login_required
+def control_scheduler():
+    """APScheduler 작업 제어 (시작/중지/재시작)"""
+    try:
+        from app import scheduler
+
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        data = request.get_json()
+        action = data.get('action')  # 'start', 'stop', 'restart'
+
+        if action == 'start':
+            if not scheduler.running:
+                scheduler.start()
+                message = 'APScheduler가 시작되었습니다.'
+            else:
+                message = 'APScheduler가 이미 실행 중입니다.'
+
+        elif action == 'stop':
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+                message = 'APScheduler가 중지되었습니다.'
+            else:
+                message = 'APScheduler가 이미 중지되어 있습니다.'
+
+        elif action == 'restart':
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+            scheduler.start()
+            message = 'APScheduler가 재시작되었습니다.'
+
+        else:
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 액션입니다. (start, stop, restart 중 선택)'
+            }), 400
+
+        current_app.logger.info(f'스케줄러 제어: {action} - {message}')
+
+        return jsonify({
+            'success': True,
+            'message': message,
+            'scheduler_running': scheduler.running
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'스케줄러 제어 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/trigger-job', methods=['POST'])
+@login_required
+def trigger_job():
+    """특정 백그라운드 작업 수동 실행"""
+    try:
+        from app import scheduler
+        from app.services.trading import trading_service as order_service
+        from app.services.trading import trading_service as position_service
+        from app.services.analytics import analytics_service
+        from app.services.telegram import telegram_service
+
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        data = request.get_json()
+        job_type = data.get('job_type')  # 'update_orders', 'calculate_pnl', 'daily_summary'
+
+        if job_type == 'update_orders':
+            order_service.update_open_orders_status()
+            message = '미체결 주문 상태 업데이트가 완료되었습니다.'
+
+        elif job_type == 'calculate_pnl':
+            position_service.calculate_unrealized_pnl()
+            message = '미실현 손익 계산이 완료되었습니다.'
+
+        elif job_type == 'daily_summary':
+            # 모든 계정에 대한 일일 요약 생성 (예시로 첫 번째 계정만)
+            from app.models import Account
+            accounts = Account.query.filter_by(is_active=True).all()
+            summary_data = {}
+            for account in accounts:
+                try:
+                    account_summary = analytics_service.get_daily_summary(account.id)
+                    summary_data[account.name] = account_summary
+                except Exception as e:
+                    current_app.logger.error(f'계정 {account.name} 일일 요약 생성 실패: {str(e)}')
+
+            telegram_service.send_daily_summary(summary_data)
+            message = '일일 요약 보고서가 전송되었습니다.'
+
+        elif job_type == 'calculate_performance':
+            # Phase 3.4: 일일 성과 계산 수동 실행
+            from app import calculate_daily_performance_with_context
+            calculate_daily_performance_with_context(current_app._get_current_object())
+            message = '일일 성과 계산이 완료되었습니다.'
+
+        else:
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 작업 타입입니다.'
+            }), 400
+
+        current_app.logger.info(f'수동 작업 실행: {job_type} - {message}')
+
+        return jsonify({
+            'success': True,
+            'message': message
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'수동 작업 실행 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/cache-stats', methods=['GET'])
+@login_required
+def cache_stats():
+    """캐시 통계 조회"""
+    try:
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        from app.services.exchange import exchange_service
+
+        stats = exchange_service.get_cache_stats()
+
+        return jsonify({
+            'success': True,
+            'cache_stats': stats,
+            'message': 'Market 캐시를 통한 API 호출 최적화 활성화됨'
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f'캐시 통계 조회 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:health-monitoring @COMP:route @TYPE:core
+@bp.route('/system/cache-clear', methods=['POST'])
+@login_required
+def clear_cache():
+    """캐시 정리"""
+    try:
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': '관리자 권한이 필요합니다.'
+            }), 403
+
+        from app.services.exchange import exchange_service
+        from app.services.price_cache import price_cache
+
+        data = request.get_json() or {}
+        exchange_name = data.get('exchange')
+        market_type = data.get('market_type')  # SPOT, FUTURES
+        cache_type = data.get('type', 'all')  # 'price', 'exchange', 'all'
+
+        if cache_type == 'price':
+            count = price_cache.clear_cache(exchange=exchange_name, market_type=market_type)
+            message = f"가격 캐시 정리 완료 - {count}개 항목 삭제"
+        elif cache_type == 'exchange':
+            count = exchange_service.clear_all_cache()
+            message = f"거래소 연결 캐시 정리 완료 - {count}개 클라이언트 제거"
+        else:
+            price_count = price_cache.clear_cache()
+            exchange_count = exchange_service.clear_all_cache()
+            message = f"모든 캐시 정리 완료 - 가격: {price_count}개, 연결: {exchange_count}개"
+
+        current_app.logger.info(f'캐시 정리: {cache_type} - {message}')
+
+        return jsonify({
+            'success': True,
+            'message': message
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f'캐시 정리 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# @FEAT:futures-validation @COMP:route @TYPE:core
+@bp.route('/system/exchange-metadata', methods=['GET'])
+@login_required
+def get_exchange_metadata():
+    """거래소 메타데이터 조회 (선물 지원 여부)"""
+    try:
+        metadata = {}
+        for exchange_name in ExchangeMetadata.METADATA.keys():
+            metadata[exchange_name] = {
+                'supports_futures': ExchangeMetadata.supports_market_type(
+                    exchange_name, MarketType.FUTURES
+                ),
+                'supports_perpetual': ExchangeMetadata.supports_market_type(
+                    exchange_name, MarketType.PERPETUAL
+                )
+            }
+        return jsonify({
+            'success': True,
+            'payload': metadata
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f'거래소 메타데이터 조회 오류: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

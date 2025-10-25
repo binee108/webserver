@@ -1,0 +1,362 @@
+{# Phase 4.3: Import currency symbol macro #}
+{% from 'macros/currency.html' import currency_symbol %}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}트레이딩 자동화 시스템{% endblock %}</title>
+    
+    <!-- TailwindCSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Alpine.js CDN -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom CSS - Main Unified Stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+
+    <!-- Toast Notification System -->
+    <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+
+    <!-- Additional head content from child templates -->
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Navigation -->
+    {% if current_user.is_authenticated %}
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="{{ url_for('main.dashboard') }}" class="navbar-brand">
+                        📈 Trading System
+                    </a>
+                </div>
+                
+                <!-- Desktop Navigation -->
+                <div class="navbar-nav desktop-nav">
+                    <a href="{{ url_for('main.dashboard') }}" 
+                       class="nav-link">
+                        대시보드
+                    </a>
+                    <a href="{{ url_for('main.accounts') }}" 
+                       class="nav-link">
+                        계좌 관리
+                    </a>
+                    <a href="{{ url_for('main.strategies') }}" 
+                       class="nav-link">
+                        전략 관리
+                    </a>
+                    
+                    {% if current_user.is_admin %}
+                    <div class="dropdown" x-data="{ open: false }">
+                        <button @click="open = !open" 
+                                class="nav-link flex items-center text-purple-600 hover:text-purple-900">
+                            관리자
+                            <svg class="ml-1 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                            </svg>
+                        </button>
+                        
+                        <div x-show="open" @click.away="open = false" 
+                             class="dropdown-menu">
+                            <a href="{{ url_for('admin.users') }}" 
+                               class="dropdown-item">
+                                👥 사용자 관리
+                            </a>
+                            <a href="{{ url_for('admin.system') }}" 
+                               class="dropdown-item">
+                                🖥️ 시스템 모니터링
+                            </a>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- 테마 토글 버튼 -->
+                    <button onclick="toggleTheme()" class="nav-link flex items-center">
+                        <svg id="theme-icon-light" class="theme-icon w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"></path>
+                        </svg>
+                        <svg id="theme-icon-dark" class="theme-icon w-4 h-4 hidden" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path>
+                        </svg>
+                        <span id="theme-text" class="ml-1">라이트</span>
+                    </button>
+                    
+                    <div class="dropdown" x-data="{ open: false }">
+                        <button @click="open = !open" 
+                                class="nav-link flex items-center">
+                            {{ current_user.username }}
+                            <svg class="ml-1 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                            </svg>
+                        </button>
+                        
+                        <div x-show="open" @click.away="open = false" 
+                             class="dropdown-menu">
+                            <a href="{{ url_for('auth.profile') }}" 
+                               class="dropdown-item">
+                                👤 프로필 설정
+                            </a>
+                            {% if current_user.is_admin %}
+                            <a href="{{ url_for('admin.change_admin_password') }}" 
+                               class="dropdown-item">
+                                🔐 비밀번호 변경
+                            </a>
+                            {% else %}
+                            <a href="{{ url_for('auth.change_password') }}" 
+                               class="dropdown-item">
+                                🔐 비밀번호 변경
+                            </a>
+                            {% endif %}
+                            <div class="dropdown-divider"></div>
+                            <a href="{{ url_for('auth.logout') }}" 
+                               class="dropdown-item">
+                                🚪 로그아웃
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mobile Navigation -->
+                <div class="mobile-nav" x-data="{ mobileMenuOpen: false }">
+                    <!-- Theme Toggle (Mobile) -->
+                    <button onclick="toggleTheme()" class="mobile-theme-toggle">
+                        <svg id="mobile-theme-icon-light" class="theme-icon w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"></path>
+                        </svg>
+                        <svg id="mobile-theme-icon-dark" class="theme-icon w-5 h-5 hidden" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path>
+                        </svg>
+                    </button>
+
+                    <!-- Hamburger Menu Button -->
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" 
+                            class="mobile-menu-button"
+                            :class="{ 'active': mobileMenuOpen }"
+                            aria-label="메뉴 열기/닫기">
+                        <span class="hamburger-line"></span>
+                        <span class="hamburger-line"></span>
+                        <span class="hamburger-line"></span>
+                    </button>
+
+                    <!-- Mobile Menu Overlay -->
+                    <div x-show="mobileMenuOpen" 
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0"
+                         x-transition:enter-end="opacity-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100"
+                         x-transition:leave-end="opacity-0"
+                         @click="mobileMenuOpen = false"
+                         class="mobile-menu-overlay">
+                    </div>
+
+                    <!-- Mobile Menu -->
+                    <div x-show="mobileMenuOpen" 
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="transform translate-x-full"
+                         x-transition:enter-end="transform translate-x-0"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="transform translate-x-0"
+                         x-transition:leave-end="transform translate-x-full"
+                         class="mobile-menu"
+                         @click.away="mobileMenuOpen = false">
+                        
+                        <div class="mobile-menu-header">
+                            <h3 class="mobile-menu-title">메뉴</h3>
+                            <button @click="mobileMenuOpen = false" class="mobile-menu-close">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="mobile-menu-content">
+                            <div class="mobile-menu-section">
+                                <a href="{{ url_for('main.dashboard') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 5 4-4 4 4"></path>
+                                    </svg>
+                                    <span>대시보드</span>
+                                </a>
+                                
+                                <a href="{{ url_for('main.accounts') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                                    </svg>
+                                    <span>계좌 관리</span>
+                                </a>
+                                
+                                <a href="{{ url_for('main.strategies') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                    </svg>
+                                    <span>전략 관리</span>
+                                </a>
+                            </div>
+
+                            {% if current_user.is_admin %}
+                            <div class="mobile-menu-section">
+                                <div class="mobile-menu-section-title">관리자 메뉴</div>
+                                <a href="{{ url_for('admin.users') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                                    </svg>
+                                    <span>사용자 관리</span>
+                                </a>
+                                
+                                <a href="{{ url_for('admin.system') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                                    </svg>
+                                    <span>시스템 모니터링</span>
+                                </a>
+                            </div>
+                            {% endif %}
+
+                            <div class="mobile-menu-section">
+                                <div class="mobile-menu-section-title">계정</div>
+                                <a href="{{ url_for('auth.profile') }}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                    </svg>
+                                    <span>프로필 설정</span>
+                                </a>
+                                
+                                <a href="{% if current_user.is_admin %}{{ url_for('admin.change_admin_password') }}{% else %}{{ url_for('auth.change_password') }}{% endif %}" 
+                                   class="mobile-menu-item"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1 1 21 9z"></path>
+                                    </svg>
+                                    <span>비밀번호 변경</span>
+                                </a>
+                                
+                                <a href="{{ url_for('auth.logout') }}" 
+                                   class="mobile-menu-item logout"
+                                   @click="mobileMenuOpen = false">
+                                    <svg class="mobile-menu-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                                    </svg>
+                                    <span>로그아웃</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+    
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="main-container py-4">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}"
+                 x-data="{ show: true }" x-show="show" x-transition>
+                <div class="flex justify-between items-center">
+                    <span>{{ message }}</span>
+                    <button @click="show = false" class="alert-close">&times;</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endwith %}
+    
+    <!-- Main Content -->
+    <main class="main-container">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="main-container py-4 text-center">
+            © 2024 Trading Automation System. All rights reserved.
+        </div>
+    </footer>
+
+    <!-- Global Theme Management Script -->
+    <script>
+        // Global Theme Management System
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            applyTheme(savedTheme);
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            applyTheme(newTheme);
+            localStorage.setItem('theme', newTheme);
+        }
+
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const lightIcon = document.getElementById('theme-icon-light');
+            const darkIcon = document.getElementById('theme-icon-dark');
+            const themeText = document.getElementById('theme-text');
+            
+            // Mobile theme icons
+            const mobileLightIcon = document.getElementById('mobile-theme-icon-light');
+            const mobileDarkIcon = document.getElementById('mobile-theme-icon-dark');
+            
+            if (lightIcon && darkIcon && themeText) {
+                if (theme === 'dark') {
+                    lightIcon.classList.add('hidden');
+                    darkIcon.classList.remove('hidden');
+                    themeText.textContent = '다크';
+                    
+                    // Update mobile icons
+                    if (mobileLightIcon && mobileDarkIcon) {
+                        mobileLightIcon.classList.add('hidden');
+                        mobileDarkIcon.classList.remove('hidden');
+                    }
+                } else {
+                    lightIcon.classList.remove('hidden');
+                    darkIcon.classList.add('hidden');
+                    themeText.textContent = '라이트';
+                    
+                    // Update mobile icons
+                    if (mobileLightIcon && mobileDarkIcon) {
+                        mobileLightIcon.classList.remove('hidden');
+                        mobileDarkIcon.classList.add('hidden');
+                    }
+                }
+            }
+        }
+
+        // Initialize theme as soon as possible to prevent flash
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        })();
+
+        // Initialize theme on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initTheme();
+        });
+    </script>
+</body>
+</html> 

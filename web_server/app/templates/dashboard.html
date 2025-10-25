@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8 page-dashboard">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"></path>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>대시보드</h1>
+                    <p>{{ current_user.username }}님, 환영합니다!</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="theme-toggle">
+                    <svg class="theme-icon" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span id="last-update"></span>
+                </div>
+                <button onclick="refreshDashboard()" class="btn btn-primary">
+                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    새로고침
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 통계 개요 -->
+    <div class="stats-grid">
+        <!-- Phase 4.4 Phase 2: USDT 기준 표시 안내 툴팁 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <div class="flex items-center gap-2">
+                        <h3>총 자본 (Total Capital)</h3>
+                        <!-- 네이티브 브라우저 툴팁: KRW 거래소도 USDT로 통합 표시됨을 사용자에게 안내 -->
+                        <span class="tooltip-icon text-muted text-sm" title="모든 자본은 USDT 기준으로 통합 표시됩니다">ℹ️</span>
+                    </div>
+                    <p id="total-capital" class="stats-value text-primary">$0.00</p>
+                    <p class="stats-subtitle">전체 할당 자본 (USDT 기준)</p>
+                </div>
+                <div class="stats-icon bg-blue-100 text-blue-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 총 손익 (실현 손익만) -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>총 손익 (Total PnL)</h3>
+                    <p id="total-pnl" class="stats-value">$0.00</p>
+                    <p class="stats-subtitle">실현된 총 손익</p>
+                </div>
+                <div class="stats-icon bg-green-100 text-green-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 누적 수익률 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>누적 수익률 (Cumulative Return)</h3>
+                    <p id="cumulative-return" class="stats-value">0.00%</p>
+                    <p class="stats-subtitle">실현 손익 기준 수익률</p>
+                </div>
+                <div class="stats-icon bg-purple-100 text-purple-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 승률 -->
+        <div class="stats-card">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <h3>전체 승률 (Win Rate)</h3>
+                    <p id="overall-win-rate" class="stats-value text-primary">0.00%</p>
+                    <p class="stats-subtitle">청산 거래 기준 승률</p>
+                </div>
+                <div class="stats-icon bg-teal-100 text-teal-600">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 전략 관리 섹션 -->
+    <div class="section-container">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-primary">활성 전략</h2>
+            <a href="{{ url_for('main.strategies') }}" class="btn btn-secondary">
+                전략 관리
+                <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+            </a>
+        </div>
+        <div id="strategies-container" class="strategy-grid">
+            <!-- 전략 카드들이 JavaScript로 동적 생성됩니다 -->
+        </div>
+    </div>
+
+    <!-- 최근 거래 내역 -->
+    <div class="section-container">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-primary">최근 거래 내역</h2>
+            <button onclick="toggleTradeFilters()" class="btn btn-secondary">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
+                </svg>
+                필터
+            </button>
+        </div>
+
+        <!-- 필터 패널 -->
+        <div id="trade-filters-panel" class="card mb-6 hidden">
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="form-group">
+                        <label for="filter-strategy" class="form-label">전략</label>
+                        <select id="filter-strategy" class="form-select">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filter-account" class="form-label">계좌</label>
+                        <select id="filter-account" class="form-select">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filter-symbol" class="form-label">심볼</label>
+                        <input type="text" id="filter-symbol" class="form-input" placeholder="예: BTC">
+                    </div>
+                    <div class="form-group">
+                        <label for="filter-period" class="form-label">기간</label>
+                        <select id="filter-period" class="form-select">
+                            <option value="all">전체</option>
+                            <option value="today">오늘</option>
+                            <option value="week">최근 7일</option>
+                            <option value="month">최근 30일</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-2 mt-4">
+                    <button onclick="resetTradeFilters()" class="btn btn-secondary">초기화</button>
+                    <button onclick="applyTradeFilters()" class="btn btn-primary">적용</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card rounded-xl">
+            <div id="recent-trades-container" class="relative" style="max-height: 600px; overflow-y: auto;">
+                <!-- 거래 내역이 JavaScript로 동적 생성됩니다 -->
+            </div>
+            <!-- 로딩 인디케이터 -->
+            <div id="trades-loading" class="hidden text-center py-4">
+                <svg class="animate-spin h-6 w-6 mx-auto text-accent" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 전략 상세 모달 -->
+<div id="strategy-detail-modal" class="modal-overlay hidden">
+    <div class="modal-content max-w-6xl">
+        <div class="modal-header">
+            <h2 id="modal-strategy-name" class="text-xl font-bold text-primary">전략 상세 정보</h2>
+            <button onclick="closeStrategyModal()" class="modal-close">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <!-- 탭 네비게이션 -->
+            <div class="flex space-x-1 mb-6 border-b border-color">
+                <button onclick="showModalTab('overview')" class="tab-button overview-tab active">
+                    종합 성과
+                </button>
+                <button onclick="showModalTab('accounts')" class="tab-button accounts-tab text-secondary">
+                    계좌별 성과
+                </button>
+            </div>
+
+            <!-- 종합 성과 탭 -->
+            <div id="modal-overview-tab" class="modal-tab-content">
+                <!-- 주요 지표 -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">총 손익 (Total PnL)</p>
+                        <p id="modal-total-pnl" class="mt-1 text-3xl font-semibold text-success">$0.00</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">수익률 (ROI)</p>
+                        <p id="modal-total-roi" class="mt-1 text-3xl font-semibold text-success">0.00%</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">최대 낙폭 (MDD)</p>
+                        <p id="modal-mdd" class="mt-1 text-3xl font-semibold text-error">0.00%</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-sm text-muted mb-1">Profit Factor</p>
+                        <p id="modal-profit-factor" class="mt-1 text-3xl font-semibold text-primary">0.00</p>
+                    </div>
+                </div>
+
+                <!-- 차트 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold text-primary mb-4">수익 곡선 (Equity Curve)</h3>
+                    <div class="bg-secondary rounded-lg p-4 chart-card">
+                        <canvas id="modal-equity-curve-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 상세 지표 테이블 -->
+                <div>
+                    <h3 class="text-lg font-semibold text-primary mb-4">상세 지표</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table">
+                            <tbody id="modal-metrics-table">
+                                <!-- 지표들이 JavaScript로 동적 생성됩니다 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 계좌별 성과 탭 -->
+            <div id="modal-accounts-tab" class="modal-tab-content hidden">
+                <div id="modal-accounts-container" class="space-y-4">
+                    <!-- 계좌별 데이터가 JavaScript로 동적 생성됩니다 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 토스트 알림 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %} 

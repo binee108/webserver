@@ -1,327 +1,567 @@
-# 시스템 아키텍처
+# 프로젝트 아키텍처 문서
 
-## 개요
+> **목적**: 이 문서는 트레이딩 자동화 시스템의 전반적인 구조를 이해하고, 유지보수 시 필요한 기능별 상세 문서를 빠르게 찾을 수 있도록 돕습니다.
 
-암호화폐 자동 거래 시스템은 Flask 웹 프레임워크를 기반으로 한 모놀리식 아키텍처로 구성되어 있습니다. 시스템은 MVC 패턴을 따르며, 서비스 레이어를 통해 비즈니스 로직을 분리하여 유지보수성과 확장성을 높였습니다.
+## 📋 목차
 
-## 아키텍처 다이어그램
+1. [프로젝트 개요](#프로젝트-개요)
+2. [시스템 아키텍처](#시스템-아키텍처)
+3. [디렉토리 구조](#디렉토리-구조)
+4. [핵심 컴포넌트](#핵심-컴포넌트)
+5. [기능별 상세 문서](#기능별-상세-문서)
+6. [개발 환경 설정](#개발-환경-설정)
+7. [배포 환경](#배포-환경)
+
+---
+
+## 프로젝트 개요
+
+### 시스템 설명
+트레이딩뷰(TradingView) 및 외부 시그널 소스로부터 웹훅을 수신하여 다중 거래소(Binance, Bybit, 한국투자증권 등)에 자동으로 주문을 실행하는 트레이딩 자동화 시스템입니다.
+
+### 주요 기능
+- ✅ **웹훅 기반 주문 처리**: TradingView 알림을 수신하여 실시간 주문 실행
+- ✅ **다중 거래소 지원**: Binance, Bybit, 한국투자증권 통합
+- ✅ **주문 큐 시스템**: 동적 우선순위 기반 주문 대기열 관리
+- ✅ **실시간 모니터링**: SSE(Server-Sent Events)를 통한 실시간 주문/포지션 업데이트
+- ✅ **전략 관리**: 다중 전략 및 계좌 연결 지원
+- ✅ **백그라운드 작업**: 주문 재정렬, 체결 모니터링, 가격 캐싱 등
+
+### 기술 스택
+- **Backend**: Python 3.10, Flask
+- **Database**: PostgreSQL 15
+- **ORM**: SQLAlchemy, Flask-Migrate
+- **Task Scheduler**: APScheduler
+- **Web Server**: Nginx (SSL Termination), Gunicorn/Flask Dev Server
+- **Container**: Docker, Docker Compose
+- **Real-time**: SSE (Server-Sent Events)
+- **Exchange Integration**: ccxt, 한국투자증권 REST API
+
+---
+
+## 시스템 아키텍처
+
+### 3-Layer 서비스 아키텍처
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Client Layer                              │
-├─────────────────────────────────────────────────────────────────────┤
-│  Web Browser  │  WebSocket Client  │  Webhook Client  │  Telegram  │
-└───────┬───────┴─────────┬──────────┴────────┬─────────┴─────┬──────┘
-        │                 │                   │               │
-        ▼                 ▼                   ▼               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Application Layer                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────┐ │
-│  │   Routes    │  │  WebSocket   │  │   Webhook    │  │ Telegram│ │
-│  │(Blueprints) │  │   Manager    │  │   Handler    │  │   Bot   │ │
-│  └──────┬──────┘  └──────┬───────┘  └──────┬───────┘  └────┬────┘ │
-│         │                │                  │                │      │
-│         ▼                ▼                  ▼                ▼      │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                     Service Layer                            │  │
-│  ├──────────────────────────────────────────────────────────────┤  │
-│  │ Exchange │ Trading │ Position │ Strategy │ Analytics │ Event │  │
-│  │ Service  │ Service │ Service  │ Service  │  Service  │Service│  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Data Layer                                   │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌────────────────┐  ┌────────────────────────┐ │
-│  │  SQLAlchemy  │  │     Cache      │  │   Background Jobs    │ │
-│  │   (Models)   │  │  (In-Memory)   │  │   (APScheduler)      │ │
-│  └──────┬───────┘  └────────────────┘  └────────────────────────┘ │
-│         │                                                           │
-│         ▼                                                           │
-│  ┌──────────────┐                                                  │
-│  │   Database   │                                                  │
-│  │   (SQLite/   │                                                  │
-│  │  PostgreSQL) │                                                  │
-│  └──────────────┘                                                  │
-└─────────────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     External Services                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐ │
-│  │   Binance   │  │    Bybit    │  │     OKX     │  │ Telegram  │ │
-│  │     API     │  │     API     │  │     API     │  │    API    │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └───────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   외부 클라이언트                             │
+│  (TradingView, Web Dashboard, Mobile App)                   │
+└────────────┬────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Nginx (SSL Termination)                   │
+│                      Port: 443 (HTTPS)                       │
+└────────────┬────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Flask Application                         │
+│                      Port: 5001 (HTTP)                       │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              API Routes (Level 3)                      │ │
+│  │  - /api/webhook    : 웹훅 수신                         │ │
+│  │  - /api/dashboard  : 대시보드 데이터                   │ │
+│  │  - /api/strategies : 전략 관리                         │ │
+│  │  - /api/accounts   : 계좌 관리                         │ │
+│  │  - /api/positions  : 포지션 조회                       │ │
+│  │  - /sse/*          : 실시간 이벤트 스트림              │ │
+│  └────────────┬───────────────────────────────────────────┘ │
+│               │                                              │
+│               ▼                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │          Business Logic Services (Level 2)             │ │
+│  │                                                         │ │
+│  │  Domain Services:                                      │ │
+│  │  ┌──────────────────────────────────────────────────┐ │ │
+│  │  │ webhook_service    : 웹훅 데이터 정규화/라우팅   │ │ │
+│  │  │ trading_service    : 거래 실행 오케스트레이션     │ │ │
+│  │  │ strategy_service   : 전략 CRUD 및 권한 관리      │ │ │
+│  │  │ capital_service    : 자본 관리 및 배분          │ │ │
+│  │  │ analytics          : 성과 분석 및 통계           │ │ │
+│  │  └──────────────────────────────────────────────────┘ │ │
+│  │                                                         │ │
+│  │  Trading Module (app/services/trading/):               │ │
+│  │  ┌──────────────────────────────────────────────────┐ │ │
+│  │  │ core                : 거래 실행 코어 로직         │ │ │
+│  │  │ order_manager       : 주문 생명주기 관리          │ │ │
+│  │  │ position_manager    : 포지션 및 PnL 관리         │ │ │
+│  │  │ quantity_calculator : 수량 계산 로직             │ │ │
+│  │  │ order_queue_manager : 주문 대기열 재정렬         │ │ │
+│  │  │ record_manager      : 거래 기록 저장             │ │ │
+│  │  │ event_emitter       : SSE 이벤트 발행            │ │ │
+│  │  └──────────────────────────────────────────────────┘ │ │
+│  │                                                         │ │
+│  │  Background Jobs (app/services/background/):           │ │
+│  │  ┌──────────────────────────────────────────────────┐ │ │
+│  │  │ queue_rebalancer       : 주문 큐 재정렬 (1초)    │ │ │
+│  │  │ order_fill_monitor     : 체결 감시 (10초)        │ │ │
+│  │  │ price_cache_updater    : 가격 캐시 갱신 (1초)    │ │ │
+│  │  └──────────────────────────────────────────────────┘ │ │
+│  └────────────┬───────────────────────────────────────────┘ │
+│               │                                              │
+│               ▼                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │       Infrastructure Services (Level 1)                │ │
+│  │                                                         │ │
+│  │  ┌──────────────────────────────────────────────────┐ │ │
+│  │  │ exchange_service : 거래소 통합 어댑터             │ │ │
+│  │  │ price_cache      : 심볼 가격 캐싱                 │ │ │
+│  │  │ telegram         : 알림 전송                      │ │ │
+│  │  │ event_service    : SSE 이벤트 발행               │ │ │
+│  │  │ security         : 인증/권한 검증                 │ │ │
+│  │  └──────────────────────────────────────────────────┘ │ │
+│  └────────────┬───────────────────────────────────────────┘ │
+│               │                                              │
+│               ▼                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │          SQLAlchemy (ORM) + PostgreSQL                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    External Services                         │
+│  - Binance API                                              │
+│  - Bybit API                                                │
+│  - 한국투자증권 API                                          │
+│  - Telegram Bot API                                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 레이어별 상세 설명
+### 서비스 계층 의존성 규칙
 
-### 1. Client Layer (클라이언트 레이어)
+1. **Level 1 (Infrastructure)**: 외부 서비스, 데이터베이스, 캐시 등 기반 인프라
+   - 다른 레벨에 의존하지 않음
+   - 예: `exchange_service`, `price_cache`, `telegram`, `event_service`
 
-#### Web Browser
-- **역할**: 사용자 인터페이스 제공
-- **기술**: HTML5, CSS3, JavaScript
-- **특징**: 
-  - Bootstrap 5 기반 반응형 디자인
-  - 실시간 WebSocket 연결
-  - Light/Dark 테마 지원
+2. **Level 2 (Domain)**: 비즈니스 로직 및 도메인 서비스
+   - Level 1에만 의존 가능
+   - 예: `trading_service`, `webhook_service`, `strategy_service`, `analytics`
 
-#### WebSocket Client
-- **역할**: 실시간 가격 업데이트
-- **구현**: 
-  - `websocket-manager.js`: WebSocket 연결 관리
-  - `position-realtime-manager.js`: 포지션 실시간 업데이트
-  - 거래소별 WebSocket 핸들러 (binance, bybit, okx)
+3. **Level 3 (Application)**: API 엔드포인트 및 라우팅
+   - Level 1, Level 2에 의존 가능
+   - 예: `/api/webhook`, `/api/strategies`, `/sse/*`
 
-#### Webhook Client
-- **역할**: 외부 시스템에서 거래 시그널 전송
-- **형식**: HTTP POST 요청
-- **인증**: Strategy-specific token
+**⚠️ 중요**: 하위 레벨은 상위 레벨에 의존할 수 없습니다. (순환 참조 방지)
 
-#### Telegram
-- **역할**: 알림 및 리포트 수신
-- **기능**: 거래 알림, 일일 리포트, 오류 알림
+---
 
-### 2. Application Layer (애플리케이션 레이어)
+## 디렉토리 구조
 
-#### Routes (Blueprint 구조)
 ```
-routes/
-├── auth.py      # 인증 관련 라우트
-├── admin.py     # 관리자 기능
-├── accounts.py  # 거래소 계정 관리
-├── strategies.py # 전략 관리
-├── positions.py # 포지션 관리
-├── capital.py   # 자본 관리
-├── dashboard.py # 대시보드 API
-├── webhook.py   # 웹훅 처리
-└── system.py    # 시스템 관리
-```
-
-각 Blueprint는 관련 기능을 모듈화하여 관리합니다:
-- **인증 체크**: `@login_required` 데코레이터
-- **권한 관리**: `@admin_required` 데코레이터
-- **CSRF 보호**: 자동 적용
-
-#### WebSocket Manager
-- **실시간 가격 스트리밍**: 거래소 WebSocket API 연결
-- **자동 재연결**: 연결 실패 시 자동 복구
-- **멀티플렉싱**: 여러 심볼 동시 구독
-
-#### Webhook Handler
-- **시그널 수신**: POST `/webhook/<strategy_key>`
-- **검증**: Strategy key 확인
-- **처리**: Trading Service로 전달
-
-### 3. Service Layer (서비스 레이어)
-
-비즈니스 로직을 캡슐화하여 재사용성과 테스트 용이성을 높입니다.
-
-#### Exchange Service (`exchange_service.py`)
-```python
-class ExchangeService:
-    - initialize_exchange()  # 거래소 연결 초기화
-    - get_balance()         # 잔고 조회
-    - get_positions()       # 포지션 조회
-    - get_open_orders()     # 미체결 주문 조회
-    - get_precision()       # 거래 정밀도 조회
-```
-
-#### Trading Service (`trading_service.py`)
-```python
-class TradingService:
-    - process_webhook_signal()  # 웹훅 시그널 처리
-    - execute_order()          # 주문 실행
-    - calculate_order_size()   # 주문 수량 계산
-    - manage_risk()           # 리스크 관리
-```
-
-#### Position Service (`position_service.py`)
-```python
-class PositionService:
-    - get_all_positions()      # 전체 포지션 조회
-    - update_position()        # 포지션 업데이트
-    - close_position()         # 포지션 청산
-    - calculate_pnl()          # 손익 계산
-```
-
-#### Strategy Service (`strategy_service.py`)
-```python
-class StrategyService:
-    - create_strategy()        # 전략 생성
-    - update_strategy()        # 전략 수정
-    - get_active_strategies()  # 활성 전략 조회
-    - validate_signal()        # 시그널 검증
-```
-
-### 4. Data Layer (데이터 레이어)
-
-#### Models (SQLAlchemy ORM)
-```python
-# 주요 모델 구조
-User                # 사용자 정보
-Account             # 거래소 계정
-Strategy            # 거래 전략
-StrategyAccount     # 전략-계정 연결
-StrategyCapital     # 자본 배분
-StrategyPosition    # 가상 포지션
-Trade               # 거래 내역
-OpenOrder           # 미체결 주문
-WebhookLog          # 웹훅 로그
-DailyAccountSummary # 일일 요약
+webserver/
+├── web_server/                    # 메인 애플리케이션
+│   ├── app/
+│   │   ├── __init__.py           # Flask 앱 초기화, APScheduler 설정
+│   │   ├── models.py             # SQLAlchemy 모델 정의
+│   │   ├── constants.py          # 상수 정의 (OrderType, MarketType 등)
+│   │   │
+│   │   ├── routes/               # API 엔드포인트 (Level 3)
+│   │   │   ├── webhook.py        # 웹훅 수신 엔드포인트
+│   │   │   ├── strategies.py     # 전략 관리 API
+│   │   │   ├── accounts.py       # 계좌 관리 API
+│   │   │   ├── positions.py      # 포지션 조회 API
+│   │   │   ├── dashboard.py      # 대시보드 API
+│   │   │   └── ...
+│   │   │
+│   │   ├── services/             # 비즈니스 로직 서비스 (Level 2)
+│   │   │   ├── webhook_service.py        # 웹훅 처리 오케스트레이션
+│   │   │   ├── strategy_service.py       # 전략 CRUD
+│   │   │   ├── capital_service.py        # 자본 관리
+│   │   │   ├── analytics.py              # 성과 분석
+│   │   │   │
+│   │   │   ├── trading/                  # Trading 모듈 (6개 전문 모듈)
+│   │   │   │   ├── core.py               # 거래 실행 코어
+│   │   │   │   ├── order_manager.py      # 주문 생명주기
+│   │   │   │   ├── position_manager.py   # 포지션 관리
+│   │   │   │   ├── quantity_calculator.py # 수량 계산
+│   │   │   │   ├── order_queue_manager.py # 주문 큐 재정렬
+│   │   │   │   ├── record_manager.py     # 거래 기록
+│   │   │   │   └── event_emitter.py      # 이벤트 발행
+│   │   │   │
+│   │   │   ├── background/               # 백그라운드 작업
+│   │   │   │   └── queue_rebalancer.py   # 주문 재정렬 스케줄러
+│   │   │   │
+│   │   │   ├── exchanges/                # 거래소 통합 (Level 1)
+│   │   │   │   ├── binance_websocket.py  # Binance WebSocket
+│   │   │   │   └── bybit_websocket.py    # Bybit WebSocket
+│   │   │   │
+│   │   │   ├── exchange.py               # 거래소 추상화 레이어 (Level 1)
+│   │   │   ├── price_cache.py            # 가격 캐싱 (Level 1)
+│   │   │   ├── telegram.py               # Telegram 알림 (Level 1)
+│   │   │   ├── event_service.py          # SSE 이벤트 (Level 1)
+│   │   │   └── security.py               # 인증/권한 (Level 1)
+│   │   │
+│   │   ├── exchanges/                    # 거래소 어댑터
+│   │   │   ├── crypto/                   # 암호화폐 거래소
+│   │   │   │   ├── binance.py
+│   │   │   │   └── bybit.py
+│   │   │   └── securities/               # 증권 거래소
+│   │   │       └── korea_investment.py   # 한국투자증권
+│   │   │
+│   │   ├── utils/                        # 유틸리티
+│   │   │   └── logging_security.py       # 보안 로깅
+│   │   │
+│   │   └── security/                     # 보안 모듈
+│   │       └── ...
+│   │
+│   ├── logs/                     # 애플리케이션 로그
+│   │   └── app.log
+│   │
+│   └── requirements.txt          # Python 의존성
+│
+├── migrations/                   # Flask-Migrate 마이그레이션
+│   └── versions/
+│
+├── config/                       # 설정 파일
+│   ├── Dockerfile                # Docker 이미지 빌드
+│   └── nginx-ssl.conf            # Nginx 설정
+│
+├── scripts/                      # 실행 스크립트
+│   ├── app.py                    # 메인 실행 파일
+│   └── ...
+│
+├── docs/                         # 프로젝트 문서
+│   ├── ARCHITECTURE.md           # (이 파일) 아키텍처 요약
+│   ├── features/                 # 기능별 상세 문서
+│   │   ├── webhook-order-processing.md      # 웹훅 주문 처리
+│   │   ├── order-queue-system.md            # 주문 큐 시스템
+│   │   ├── background-scheduler.md          # 백그라운드 스케줄러
+│   │   └── exchange-integration.md          # 거래소 통합
+│   └── ...
+│
+├── docker-compose.yml            # Docker Compose 설정
+├── run.py                        # 로컬 개발 실행 스크립트
+├── CLAUDE.md                     # 프로젝트 개발 가이드라인
+└── README.md                     # 프로젝트 README
 ```
 
-#### Cache Layer
-- **용도**: 거래소 정밀도 정보 캐싱
-- **구현**: In-memory dictionary
-- **관리**: APScheduler로 주기적 정리
+---
 
-#### Background Jobs (APScheduler)
-```python
-# 스케줄된 작업
-1. update_order_statuses()     # 30초마다
-2. update_unrealized_pnl()     # 5분마다
-3. send_daily_summary()        # 매일 21:00
-4. clean_precision_cache()     # 1시간마다
+## 핵심 컴포넌트
+
+### 1. 웹훅 처리 파이프라인
+**경로**: `web_server/app/routes/webhook.py` → `web_server/app/services/webhook_service.py`
+
+- **역할**: TradingView 등 외부 시그널 수신 및 거래 실행 라우팅
+- **처리 흐름**:
+  1. 웹훅 수신 및 정규화
+  2. 전략 조회 및 토큰 검증
+  3. 주문 타입별 파라미터 검증
+  4. Trading Service로 거래 위임
+  5. 결과 반환 및 WebhookLog 기록
+
+📄 **상세 문서**: [웹훅 주문 처리 가이드](./features/webhook-order-processing.md)
+
+### 2. Trading Service (거래 실행)
+**경로**: `web_server/app/services/trading/`
+
+Trading Service는 6개의 전문 모듈로 분리되어 있습니다:
+
+| 모듈 | 파일 | 역할 |
+|------|------|------|
+| **Core** | `core.py` | 거래 실행 코어 로직, 계좌별 주문 오케스트레이션 |
+| **Order Manager** | `order_manager.py` | 주문 생명주기 관리 (생성/취소/조회) |
+| **Position Manager** | `position_manager.py` | 포지션 관리, PnL 계산 |
+| **Quantity Calculator** | `quantity_calculator.py` | 주문 수량 계산 (qty_per, 포지션 청산 등) |
+| **Order Queue Manager** | `order_queue_manager.py` | 주문 대기열 동적 재정렬 |
+| **Record Manager** | `record_manager.py` | 거래 기록 저장 (DB 트랜잭션) |
+| **Event Emitter** | `event_emitter.py` | SSE 이벤트 발행 (실시간 알림) |
+
+📄 **상세 문서**: [웹훅 주문 처리 가이드](./features/webhook-order-processing.md)
+
+### 3. 주문 큐 시스템
+**경로**: `web_server/app/services/trading/order_queue_manager.py`
+
+- **역할**: 거래소 최대 심볼 수 제한 대응 (Binance: 200개)
+- **구조**:
+  - `OpenOrder`: 거래소에 실제로 전송된 주문 (활성 상태)
+  - `PendingOrder`: 대기 중인 주문 (거래소 미전송)
+- **동적 재정렬**: 우선순위 기반으로 상위 N개만 OpenOrder로 유지
+  - 우선순위 = `priority` (낮을수록 높음) → `sort_price` → `created_at` (오래된 것 우선)
+
+📄 **상세 문서**: [주문 큐 시스템 가이드](./features/order-queue-system.md)
+
+### 4. 백그라운드 스케줄러
+**경로**: `web_server/app/__init__.py` (APScheduler 설정)
+
+- **Scheduler 설정**:
+  - **라이브러리**: APScheduler (BackgroundScheduler)
+  - **주의사항**: Flask Reloader 환경에서 중복 실행 방지 (`WERKZEUG_RUN_MAIN` 체크)
+
+- **주요 작업**:
+
+| 작업 | 실행 주기 | 파일 | 역할 |
+|------|----------|------|------|
+| `rebalance_order_queue` | 1초 | `background/queue_rebalancer.py` | 주문 큐 재정렬 (우선순위 변경 감지) |
+| `monitor_order_fills` | 10초 | `order_fill_monitor.py` | 체결 감시 및 Position 업데이트 |
+| `update_price_cache` | 1초 | `price_cache.py` | 심볼 가격 캐시 갱신 |
+
+📄 **상세 문서**: [백그라운드 스케줄러 가이드](./features/background-scheduler.md)
+
+### 5. 거래소 통합 레이어
+**경로**: `web_server/app/exchanges/` + `web_server/app/services/exchange.py`
+
+- **지원 거래소**:
+  - **Crypto**: Binance, Bybit (ccxt 기반)
+  - **Securities**: 한국투자증권 (REST API)
+
+- **Unified Exchange Interface**:
+  ```python
+  class UnifiedExchangeInterface:
+      def create_order(symbol, side, order_type, quantity, price=None, stop_price=None) -> Order
+      def cancel_order(order_id, symbol) -> bool
+      def fetch_order(order_id, symbol) -> Order
+      def fetch_balance() -> dict
+      def fetch_positions(symbol=None) -> list[Position]
+  ```
+
+📄 **상세 문서**: [거래소 통합 가이드](./features/exchange-integration.md)
+
+### 6. 실시간 이벤트 시스템 (SSE)
+**경로**: `web_server/app/services/event_service.py` + `web_server/app/routes/main.py` (`/sse/*`)
+
+- **역할**: 웹 대시보드에 실시간 주문/포지션 업데이트 전송
+- **이벤트 타입**:
+  - `order_created`: 주문 생성
+  - `order_filled`: 주문 체결
+  - `order_cancelled`: 주문 취소
+  - `position_updated`: 포지션 업데이트
+
+---
+
+## 기능별 상세 문서
+
+유지보수 대상 기능을 찾아 상세 문서를 참조하세요:
+
+### 핵심 기능
+1. **[웹훅 주문 처리](./features/webhook-order-processing.md)**
+   - 웹훅 수신부터 주문 실행까지의 전체 흐름
+   - 단일 주문 / 배치 주문 처리
+   - 에러 처리 및 로깅
+
+2. **[주문 큐 시스템](./features/order-queue-system.md)**
+   - OpenOrder / PendingOrder 구조
+   - 동적 우선순위 재정렬 알고리즘
+   - 거래소 제한 대응 전략
+
+3. **[백그라운드 스케줄러](./features/background-scheduler.md)**
+   - APScheduler 설정 및 작업 등록
+   - Flask Reloader 중복 실행 방지
+   - 주요 백그라운드 작업 목록
+
+4. **[거래소 통합](./features/exchange-integration.md)**
+   - Unified Exchange Interface 설계
+   - Crypto / Securities 어댑터 구현
+   - API 호출 에러 처리
+
+### 데이터베이스
+5. **데이터베이스 스키마**
+   - 주요 테이블: `Strategy`, `Account`, `StrategyAccount`, `OpenOrder`, `PendingOrder`, `Trade`, `Position`, `WebhookLog`
+   - 관계도 및 인덱스 전략
+   - 마이그레이션 관리 (Flask-Migrate)
+
+### 보안 및 인증
+6. **인증 및 권한 관리**
+   - 웹훅 토큰 검증
+   - 전략 소유자 vs 구독자 권한
+   - API 엔드포인트 보안
+
+---
+
+## 개발 환경 설정
+
+### 로컬 개발 (개발자용)
+
+1. **Python 가상 환경 생성**:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate  # macOS/Linux
+   # .venv\Scripts\activate  # Windows
+   ```
+
+2. **의존성 설치**:
+   ```bash
+   cd web_server
+   pip install -r requirements.txt
+   # 또는 uv 사용 (프로젝트 표준)
+   uv pip install -r requirements.txt
+   ```
+
+3. **환경 변수 설정** (`.env` 파일):
+   ```env
+   DATABASE_URL=postgresql://trader:password123@localhost:5432/trading_system
+   FLASK_ENV=development
+   TELEGRAM_BOT_TOKEN=your_token_here
+   TELEGRAM_CHAT_ID=your_chat_id_here
+   ```
+
+4. **PostgreSQL 실행** (Docker):
+   ```bash
+   docker-compose up postgres -d
+   ```
+
+5. **데이터베이스 마이그레이션**:
+   ```bash
+   cd web_server
+   flask db upgrade
+   ```
+
+6. **개발 서버 실행**:
+   ```bash
+   # 방법 1: run.py 스크립트 (권장)
+   python run.py restart
+
+   # 방법 2: Flask CLI
+   cd web_server
+   python -m flask run --host=0.0.0.0 --port=5001
+   ```
+
+### 디버깅 팁
+
+- **로그 확인**: `web_server/logs/app.log`
+- **로그 정리 후 재시작** (정확한 디버깅을 위해):
+  ```bash
+  rm -rf web_server/logs/*
+  python run.py restart
+  ```
+- **스케줄러 중복 실행 방지**: 개발 서버 실행 시 `WERKZEUG_RUN_MAIN` 환경 변수가 설정되어 있는지 확인
+
+### 테스트
+
+- **웹훅 테스트**: `CLAUDE.md` 파일의 "웹훅 기능 테스트 시나리오" 참조
+  - 테스트 전략: `test1`
+  - 테스트 토큰: `unmCgoDsy1UfUFo9pisGJzstVcIUFU2gb67F87cEYss`
+
+---
+
+## 배포 환경
+
+### Docker Compose (프로덕션)
+
+**구성 요소**:
+- **postgres**: PostgreSQL 15 (데이터베이스)
+- **app**: Flask 애플리케이션 (Python 3.10)
+- **nginx**: Nginx (SSL Termination, 리버스 프록시)
+
+**실행**:
+```bash
+# 전체 스택 시작
+docker-compose up -d
+
+# 로그 확인
+docker-compose logs -f app
+
+# 서비스 재시작
+docker-compose restart app
 ```
 
-### 5. External Services (외부 서비스)
+**포트 매핑**:
+- `443` (HTTPS) → Nginx → Flask (5001)
+- `80` (HTTP) → Nginx (리다이렉트)
+- `5432` (PostgreSQL)
 
-#### 거래소 API (CCXT)
-- **Binance**: Spot/Futures 거래
-- **Bybit**: Derivatives 거래
-- **OKX**: 다양한 거래 상품
-- **통합**: CCXT 라이브러리로 API 통합
+### 환경 변수 (`docker-compose.yml`)
 
-#### Telegram Bot API
-- **알림**: 거래 실행, 오류 발생
-- **리포트**: 일일 거래 요약
-- **명령**: 봇 명령어 처리
-
-## 데이터 흐름
-
-### 1. 웹훅 시그널 처리 흐름
-```
-Webhook Client → Webhook Route → Trading Service → Exchange Service → Exchange API
-                                        ↓
-                                 Position Service
-                                        ↓
-                                  Database Update
-                                        ↓
-                                 Telegram Notification
+```yaml
+environment:
+  - DATABASE_URL=postgresql://trader:password123@postgres:5432/trading_system
+  - FLASK_ENV=development  # 프로덕션 시 'production'으로 변경
+  - ENABLE_SSL=false       # Nginx가 SSL 처리
+  - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+  - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
 ```
 
-### 2. 실시간 가격 업데이트 흐름
-```
-Exchange WebSocket → WebSocket Manager → Browser WebSocket Client → UI Update
-```
+---
 
-### 3. 포지션 조회 흐름
-```
-Browser → Position Route → Position Service → Exchange Service → Exchange API
-                                    ↓
-                              Database Cache
-                                    ↓
-                              Response to Browser
-```
+## 유지보수 가이드라인
 
-## 보안 아키텍처
+### 코드 변경 시 주의사항
 
-### 인증 및 권한
-- **사용자 인증**: Flask-Login 세션 기반
-- **비밀번호**: bcrypt 해싱
-- **권한 레벨**: 일반 사용자, 관리자
+1. **CLAUDE.md 규칙 준수**: 프로젝트 루트의 `CLAUDE.md` 파일 참조
+   - 단일 소스, 단일 경로 원칙
+   - 스파게티 코드 방지
+   - 네이밍 규칙 준수
 
-### API 보안
-- **CSRF 보호**: Flask-WTF CSRF 토큰
-- **API 키 암호화**: 데이터베이스 저장 시 암호화
-- **웹훅 인증**: Strategy-specific key
+2. **서비스 계층 의존성 검증**:
+   ```bash
+   python scripts/check_service_dependencies.py
+   ```
+   - 위반 건수가 0이어야 함
 
-### 네트워크 보안
-- **HTTPS**: 프로덕션 환경 필수
-- **CORS**: 필요시 설정
-- **Rate Limiting**: 거래소 API 제한 준수
+3. **테스트 및 재시작**:
+   ```bash
+   # 로그 정리
+   rm -rf web_server/logs/*
 
-## 확장성 고려사항
+   # 서비스 재시작
+   python run.py restart
 
-### 수평 확장
-- **무상태 설계**: 세션 외부 저장 가능
-- **로드 밸런싱**: 여러 인스턴스 실행 가능
-- **데이터베이스**: PostgreSQL/MySQL로 확장
+   # 3초 대기 후 테스트
+   sleep 3
+   curl -k -s -X POST https://222.98.151.163/api/webhook -H "Content-Type: application/json" -d '{...}'
+   ```
 
-### 수직 확장
-- **비동기 처리**: Celery 추가 가능
-- **캐싱**: Redis 도입 가능
-- **모니터링**: Prometheus/Grafana 연동
+4. **Git 커밋**: 사용자가 명시적으로 요청할 때만 수행
+   - 커밋 메시지는 **한국어**로 작성
+   - Conventional Commits 형식 권장: `feat:`, `fix:`, `chore:` 등
 
-### 마이크로서비스 전환
-- **서비스 분리**: Service Layer 기반 분리 용이
-- **API Gateway**: 별도 구현 가능
-- **메시지 큐**: RabbitMQ/Kafka 도입 가능
+---
 
-## 모니터링 및 로깅
+## 문제 해결 (Troubleshooting)
 
-### 로깅 시스템
-```python
-# 환경별 로깅 레벨
-- 개발 환경: DEBUG (모든 로그 출력)
-- 프로덕션 환경: INFO (사용자 액션), WARNING (백그라운드 작업)
+### 주문이 실행되지 않을 때
 
-# 로거 구분
-- app.logger: 애플리케이션 메인 로거 (사용자 요청 처리)
-- trading_system.background: 백그라운드 작업 전용 로거 (스케줄러)
+1. **전략 및 계좌 상태 확인**:
+   - 전략이 `is_active=True`인지 확인
+   - 계좌가 활성화되어 있는지 확인
+   - 전략-계좌 링크(`StrategyAccount`)가 존재하는지 확인
 
-# 로그 파일
-- app.log: 통합 로그 파일 (RotatingFileHandler, 10MB 단위)
-```
+2. **로그 분석**:
+   ```bash
+   tail -f web_server/logs/app.log | grep ERROR
+   ```
 
-### 백그라운드 작업 로깅 최적화
-- **스케줄러 작업**: 일반적인 완료 메시지는 DEBUG 레벨
-- **오류 상황**: ERROR/WARNING 레벨로 중요 이벤트만 기록
-- **사용자 액션**: INFO 레벨로 거래 실행 등 중요 액션 기록
+3. **웹훅 로그 조회** (API):
+   ```bash
+   curl -k https://222.98.151.163/api/webhooks/logs?limit=10
+   ```
 
-### 모니터링 포인트
-- **시스템 상태**: 백그라운드 작업 상태
-- **거래 모니터링**: 주문 실행, 포지션 변화
-- **오류 추적**: 예외 발생, API 오류
-- **성능 지표**: 응답 시간, 처리량
+### 스케줄러가 동작하지 않을 때
 
-## 개발 및 배포
+1. **스케줄러 시작 로그 확인**:
+   ```bash
+   grep "APScheduler 시작됨" web_server/logs/app.log
+   ```
+   - 한 번만 출력되어야 함 (두 번 출력 시 중복 실행 문제)
 
-### 개발 환경
-- **로컬 개발**: SQLite, Flask 개발 서버
-- **테스트**: pytest, 격리된 테스트 DB
-- **디버깅**: Flask 디버그 모드
+2. **Flask Reloader 확인**:
+   - 개발 환경에서 `WERKZEUG_RUN_MAIN` 환경 변수가 설정되어 있는지 확인
+   - `app/__init__.py:336` 라인의 조건 검증 로직 확인
 
-### 프로덕션 배포
-- **웹 서버**: Gunicorn/uWSGI
-- **리버스 프록시**: Nginx
-- **데이터베이스**: PostgreSQL/MySQL
-- **프로세스 관리**: systemd/supervisor
+### 거래소 API 에러
 
-### CI/CD 파이프라인 (권장)
-```
-Git Push → GitHub Actions → 테스트 실행 → Docker 빌드 → 배포
-```
+1. **API 키 유효성 확인**:
+   - 계좌 설정에서 API Key/Secret이 올바른지 확인
+   - 거래소 웹사이트에서 API 권한 확인
 
-## 성능 최적화
+2. **거래소 제한 확인**:
+   - IP 화이트리스트 설정 (필요 시)
+   - Rate Limit 초과 여부 확인
 
-### 데이터베이스 최적화
-- **인덱스**: 자주 조회하는 컬럼
-- **쿼리 최적화**: N+1 문제 해결
-- **연결 풀링**: SQLAlchemy 설정
+---
 
-### 캐싱 전략
-- **정밀도 캐시**: 거래소 정보 캐싱
-- **세션 캐시**: Redis 도입 고려
-- **정적 파일**: CDN 활용
+## 추가 리소스
 
-### 비동기 처리
-- **백그라운드 작업**: APScheduler 활용
-- **웹훅 처리**: 큐 시스템 도입 고려
-- **대량 데이터**: 배치 처리
+- **프로젝트 README**: `README.md`
+- **개발 가이드라인**: `CLAUDE.md`
+- **API 문서**: `docs/` 디렉토리 내 각 거래소별 문서
+- **GitHub Issues**: 버그 리포트 및 기능 요청
+
+---
+
+*Last Updated: 2025-10-10*
+*Version: 1.0.0*

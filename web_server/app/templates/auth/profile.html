@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+
+{% block title %}프로필 설정 - 트레이딩 자동화 시스템{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="header-info">
+                <div class="header-icon">
+                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <h1>프로필 설정</h1>
+                    <p>개인 정보 및 텔레그램 알림 설정을 관리하세요.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 프로필 설정 폼 -->
+    <form method="POST" class="space-y-8">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        
+        <!-- 기본 정보 섹션 -->
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clip-rule="evenodd"/>
+                    </svg>
+                    기본 정보
+                </h2>
+                <p class="text-sm text-secondary mt-1">기본적인 계정 정보를 관리합니다.</p>
+            </div>
+            
+            <div class="p-6 space-y-6">
+                <div class="form-group">
+                    <label for="username" class="form-label">사용자명</label>
+                    <input type="text" id="username" name="username" 
+                           value="{{ current_user.username }}" 
+                           class="form-input" readonly>
+                    <p class="form-help">사용자명은 변경할 수 없습니다.</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="email" class="form-label">이메일</label>
+                    <input type="email" id="email" name="email" 
+                           value="{{ current_user.email or '' }}" 
+                           class="form-input" 
+                           placeholder="선택사항">
+                    <p class="form-help">알림 및 계정 복구에 사용됩니다.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 웹훅 토큰 섹션 -->
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-accent" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 2a2 2 0 00-2 2v2a2 2 0 104 0V4a2 2 0 00-2-2zM5 8a5 5 0 0110 0v3a3 3 0 012 2.83V15a3 3 0 01-3 3H6a3 3 0 01-3-3v-1.17A3 3 0 015 11V8z" clip-rule="evenodd"/>
+                    </svg>
+                    웹훅 토큰 관리
+                </h2>
+                <p class="text-sm text-secondary mt-1">외부 시스템(TradingView 등)에서 웹훅 호출 시 사용자 식별에 사용됩니다. 유출 시 즉시 재발행하세요.</p>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="form-group">
+                    <label class="form-label">현재 웹훅 토큰</label>
+                    <div class="flex space-x-2 items-center">
+                        <input id="webhookToken" type="password" class="form-input flex-1" value="{{ current_user.webhook_token or '' }}" readonly>
+                        <button type="button" onclick="toggleWebhookVisibility()" class="btn btn-secondary btn-sm">표시/숨김</button>
+                        <button type="submit" name="action" value="regenerate_webhook_token" class="btn btn-warning btn-sm">
+                            재발행
+                        </button>
+                    </div>
+                    <p class="form-help">토큰은 재발행 시 이전 토큰이 즉시 무효화됩니다.</p>
+                </div>
+                <div class="text-xs text-muted">
+                    웹훅 요청에는 다음과 같이 토큰을 포함해야 합니다: <code>{"token": "&lt;your_token&gt;", ...}</code>
+                </div>
+            </div>
+        </div>
+
+        <!-- 텔레그램 설정 섹션 -->
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-info" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                    </svg>
+                    텔레그램 알림 설정
+                </h2>
+                <p class="text-sm text-secondary mt-1">거래 알림과 시스템 상태를 텔레그램으로 받아보세요.</p>
+            </div>
+            
+            <div class="p-6 space-y-6">
+                <div class="form-group">
+                    <label for="telegram_bot_token" class="form-label">텔레그램 봇 토큰</label>
+                    <input type="password" id="telegram_bot_token" name="telegram_bot_token" 
+                           value="{{ current_user.telegram_bot_token or '' }}" 
+                           class="form-input" 
+                           placeholder="예: 123456789:AAE...xyz">
+                    <div class="form-help space-y-2">
+                        <p><strong>전략 및 성과 알림을 받으려면 개인 텔레그램 봇 토큰이 필요합니다.</strong></p>
+                        <ol class="list-decimal list-inside space-y-1 text-sm text-muted">
+                            <li>텔레그램에서 @BotFather를 검색하여 대화를 시작합니다</li>
+                            <li>/newbot 명령어로 새 봇을 생성합니다</li>
+                            <li>봇 이름과 사용자명을 설정합니다</li>
+                            <li>생성된 봇 토큰을 복사하여 위 필드에 입력합니다</li>
+                        </ol>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="telegram_id" class="form-label">텔레그램 Chat ID</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="telegram_id" name="telegram_id" 
+                               value="{{ current_user.telegram_id or '' }}" 
+                               class="form-input flex-1" 
+                               placeholder="예: 123456789">
+                        <button type="button" id="testTelegramBtn" 
+                                onclick="testTelegramConnection()"
+                                class="btn btn-info btn-sm"
+                                disabled>
+                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            테스트
+                        </button>
+                    </div>
+                    <div class="form-help space-y-2">
+                        <p><strong>전략 및 성과 알림을 받기 위해 반드시 입력해야 합니다.</strong></p>
+                        <ol class="list-decimal list-inside space-y-1 text-sm text-muted">
+                            <li>텔레그램에서 @userinfobot을 검색하여 대화를 시작합니다</li>
+                            <li>/start 명령어를 보냅니다</li>
+                            <li>봇이 보내준 "Id" 숫자를 복사하여 위 필드에 입력합니다</li>
+                        </ol>
+                        <div class="mt-2 p-3 bg-info-light rounded-md">
+                            <p class="text-sm text-info"><strong>중요:</strong> 봇 토큰과 Chat ID를 모두 입력해야 테스트 및 알림 수신이 가능합니다.</p>
+                        </div>
+                        
+                        <!-- 텔레그램 설정 상태 표시 -->
+                        <div id="telegramConfigStatus" class="mt-3">
+                            {% if current_user.telegram_bot_token and current_user.telegram_id %}
+                            <div class="flex items-center p-3 bg-success-light rounded-md">
+                                <svg class="w-5 h-5 mr-2 text-success" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                <div>
+                                    <p class="text-sm font-medium text-success">텔레그램 알림 활성화됨</p>
+                                    <p class="text-xs text-success-dark">전략 및 성과 알림을 개인 텔레그램으로 받을 수 있습니다.</p>
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="flex items-center p-3 bg-warning-light rounded-md">
+                                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                </svg>
+                                <div>
+                                    <p class="text-sm font-medium text-warning">텔레그램 알림 비활성화됨</p>
+                                    <p class="text-xs text-warning-dark">봇 토큰과 Chat ID를 모두 입력해야 다음 기능을 사용할 수 있습니다:</p>
+                                    <ul class="text-xs text-warning-dark mt-1 ml-4 list-disc">
+                                        <li>거래 진입/청산 알림</li>
+                                        <li>포지션 상태 변경 알림</li>
+                                        <li>수익/손실 알림</li>
+                                        <li>전략 성과 보고서</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 텔레그램 연결 상태 -->
+                <div id="telegramStatus" class="hidden">
+                    <div class="alert alert-info">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                            </svg>
+                            <span id="telegramStatusMessage">텔레그램 연결을 테스트하세요.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 비밀번호 변경 섹션 -->
+        <div class="card">
+            <div class="px-6 py-4 border-b border-color">
+                <h2 class="text-xl font-semibold text-primary flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z" clip-rule="evenodd"/>
+                    </svg>
+                    비밀번호 변경
+                </h2>
+                <p class="text-sm text-secondary mt-1">보안을 위해 정기적으로 비밀번호를 변경하세요. (선택사항)</p>
+            </div>
+            
+            <div class="p-6 space-y-6">
+                <div class="form-group">
+                    <label for="current_password" class="form-label">현재 비밀번호</label>
+                    <input type="password" id="current_password" name="current_password" 
+                           class="form-input" 
+                           placeholder="비밀번호를 변경하려면 입력하세요">
+                </div>
+                
+                <div class="form-group">
+                    <label for="new_password" class="form-label">새 비밀번호</label>
+                    <input type="password" id="new_password" name="new_password" 
+                           class="form-input" 
+                           placeholder="최소 6자 이상">
+                </div>
+                
+                <div class="form-group">
+                    <label for="confirm_password" class="form-label">새 비밀번호 확인</label>
+                    <input type="password" id="confirm_password" name="confirm_password" 
+                           class="form-input" 
+                           placeholder="새 비밀번호를 다시 입력하세요">
+                </div>
+            </div>
+        </div>
+
+        <!-- 저장 버튼 -->
+        <div class="flex justify-end space-x-2">
+            <a href="{{ url_for('main.dashboard') }}" class="btn btn-secondary">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+                취소
+            </a>
+            <button type="submit" class="btn btn-primary">
+                <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                저장
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- 토스트 컨테이너 -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<script>
+// Toast 알림 기능은 전역 toast.js를 사용합니다 (base.html에서 로드됨)
+// showToast(message, type, duration) 함수는 전역으로 사용 가능합니다
+
+// CSRF 토큰
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+}
+
+// 텔레그램 연결 테스트
+function testTelegramConnection() {
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
+    const testBtn = document.getElementById('testTelegramBtn');
+    const statusDiv = document.getElementById('telegramStatus');
+    const statusMessage = document.getElementById('telegramStatusMessage');
+    
+    if (!telegramId || !telegramBotToken) {
+        showToast('텔레그램 봇 토큰과 Chat ID를 모두 입력하세요.', 'error');
+        return;
+    }
+    
+    // 버튼 비활성화 및 로딩 상태
+    testBtn.disabled = true;
+    testBtn.innerHTML = '<div class="loading-spinner"></div>테스트 중...';
+    
+    fetch('/auth/profile/test-telegram', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
+        body: JSON.stringify({
+            telegram_id: telegramId,
+            telegram_bot_token: telegramBotToken
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        statusDiv.classList.remove('hidden');
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>✅ 텔레그램 연결 성공! 테스트 메시지를 확인하세요.</span>
+                    </div>
+                </div>
+            `;
+            showToast('텔레그램 테스트 메시지가 전송되었습니다!', 'success');
+        } else {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>❌ ${data.message}</span>
+                    </div>
+                </div>
+            `;
+            showToast(`텔레그램 연결 실패: ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = `
+            <div class="alert alert-error">
+                <div class="flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>❌ 연결 테스트 중 오류가 발생했습니다.</span>
+                </div>
+            </div>
+        `;
+        showToast('연결 테스트 중 오류가 발생했습니다.', 'error');
+    })
+    .finally(() => {
+        // 버튼 상태 복원
+        testBtn.disabled = false;
+        testBtn.innerHTML = '테스트';
+    });
+}
+
+// 텔레그램 설정 변경 시 테스트 버튼 활성화/비활성화 및 상태 표시 업데이트
+function updateTelegramTestButton() {
+    const testBtn = document.getElementById('testTelegramBtn');
+    const statusDiv = document.getElementById('telegramStatus');
+    const configStatusDiv = document.getElementById('telegramConfigStatus');
+    const telegramId = document.getElementById('telegram_id').value.trim();
+    const telegramBotToken = document.getElementById('telegram_bot_token').value.trim();
+    
+    // 봇 토큰과 Chat ID 모두 있어야 테스트 가능
+    if (telegramId && telegramBotToken) {
+        testBtn.disabled = false;
+        // 설정 완료 상태 표시
+        configStatusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-success-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-success" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-success">텔레그램 알림 활성화 준비됨</p>
+                    <p class="text-xs text-success-dark">저장하면 전략 및 성과 알림을 개인 텔레그램으로 받을 수 있습니다.</p>
+                </div>
+            </div>
+        `;
+    } else {
+        testBtn.disabled = true;
+        statusDiv.classList.add('hidden');
+        // 설정 미완료 상태 표시
+        configStatusDiv.innerHTML = `
+            <div class="flex items-center p-3 bg-warning-light rounded-md">
+                <svg class="w-5 h-5 mr-2 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-warning">텔레그램 알림 비활성화됨</p>
+                    <p class="text-xs text-warning-dark">봇 토큰과 Chat ID를 모두 입력해야 다음 기능을 사용할 수 있습니다:</p>
+                    <ul class="text-xs text-warning-dark mt-1 ml-4 list-disc">
+                        <li>거래 진입/청산 알림</li>
+                        <li>포지션 상태 변경 알림</li>
+                        <li>수익/손실 알림</li>
+                        <li>전략 성과 보고서</li>
+                    </ul>
+                </div>
+            </div>
+        `;
+    }
+}
+
+// 텔레그램 ID와 봇 토큰 입력 시 테스트 버튼 상태 업데이트
+document.getElementById('telegram_id').addEventListener('input', updateTelegramTestButton);
+document.getElementById('telegram_bot_token').addEventListener('input', updateTelegramTestButton);
+
+// 페이지 로드 시 초기 상태 설정
+document.addEventListener('DOMContentLoaded', function() {
+    updateTelegramTestButton();
+});
+
+// 웹훅 토큰 표시/숨김 토글
+function toggleWebhookVisibility() {
+    const input = document.getElementById('webhookToken');
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+</script>
+{% endblock %}

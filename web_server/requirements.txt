@@ -1,0 +1,19 @@
+Flask==2.3.3
+Flask-Login==0.6.3
+Flask-SQLAlchemy==3.1.1
+Flask-WTF==1.2.1
+WTForms==3.1.1
+Werkzeug==2.3.7
+# ccxt==4.1.64 # 제거됨 - Native 구현만 사용
+APScheduler==3.10.4
+python-telegram-bot==20.7
+python-dotenv==1.0.0
+bcrypt==4.1.2
+requests==2.31.0
+numpy==1.24.3
+aiohttp==3.8.6
+psycopg2-binary==2.9.9
+cryptography==41.0.7
+PyJWT==2.8.0  # Upbit JWT 인증
+websockets==12.0  # WebSocket 실시간 체결 감지
+psutil==5.9.6  # 메모리 사용량 모니터링
