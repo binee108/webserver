@@ -83,7 +83,7 @@ class TradingSystemCLI:
         setup_cmd = SetupCommand(self.printer, self.env, self.docker, self.root_dir)
 
         # ListCommand
-        list_cmd = ListCommand(self.printer, self.docker)
+        list_cmd = ListCommand(self.printer, self.docker, self.env)
 
         return {
             'start': start_cmd,
