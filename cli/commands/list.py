@@ -125,40 +125,34 @@ class ListCommand(BaseCommand):
             print(f"{project:<40} {port_info:<25} {colors.RED}오류{colors.RESET:<24} -")
 
     def _get_port_info(self, project: str) -> str:
-        """프로젝트의 호스트 포트 정보 가져오기 (Issue #4)
+        """프로젝트의 호스트 포트 정보 가져오기 (Issue #5)
 
-        메인 프로젝트는 고정 포트를 반환하고, 워크트리는 .env.local에서
-        동적으로 할당된 호스트 포트를 읽어 반환합니다.
+        메인 프로젝트와 워크트리 모두 .env.local에서 동적으로 할당된
+        호스트 포트를 읽어 반환합니다.
 
         @FEAT:dynamic-port-allocation @COMP:util @TYPE:helper
-        @CHANGE: Issue #4 - ls 명령어가 워크트리의 실제 호스트 포트 표시
+        @CHANGE: Issue #5 - ls 명령어가 메인 프로젝트의 실제 호스트 포트 표시
 
         Args:
             project (str): Docker Compose 프로젝트명
                 - "webserver" → 메인 프로젝트
-                - "webserver_FEATURENAME" → 워크트리 (FEATURENAME은 워크트리명)
+                - "webserver_FEATURENAME" → 워크트리
 
         Returns:
-            str: 호스트 포트 정보 (예: "(443, 5001, 5432)")
-                - 메인 프로젝트: 고정 포트 (443, 5001, 5432)
-                - 워크트리: .env.local에서 읽은 동적 포트
+            str: 호스트 포트 정보
+                - .env.local 존재: "(5087, 5518, 4516)" (동적 할당 포트)
+                - .env.local 없음: "N/A" (정보 없음 명시)
 
         Side Effects:
-            - 워크트리만: .env.local 파일 읽기 (EnvHelper 사용)
-            - 파일 없으면 기본값(443, 5001, 5432) 사용 (graceful fallback)
+            - .env.local 파일 읽기 (EnvHelper 사용)
+            - 파일 없으면 경고 메시지 출력 (stderr)
 
         Note:
-            docker-compose.yml의 포트 매핑: "${APP_PORT:-5001}:5001"
-            - 좌측 ${APP_PORT}: 호스트 포트 (.env.local에서 읽음)
-            - 우측 5001: 컨테이너 내부 포트 (고정)
-            - 메인: 호스트 = 컨테이너 (443:443, 5001:5001, 5432:5432)
-            - 워크트리: 호스트 ≠ 컨테이너 (예: 4431:443, 5002:5001, 5433:5432)
+            메인 프로젝트도 포트 충돌 시 동적 할당된 포트를 .env.local에 저장하므로,
+            워크트리와 동일한 로직으로 처리합니다. .env.local이 없으면 잘못된 기본값
+            대신 "N/A"를 반환하여 정확한 정보 전달을 우선합니다.
         """
-        # 메인 프로젝트: 고정 포트 반환 (호스트 = 컨테이너 포트 동일)
-        if project == "webserver":
-            return "(443, 5001, 5432)"
-
-        # 워크트리: .env.local에서 호스트 외부 포트 읽기
+        # 메인/워크트리 모두 동일 로직: .env.local에서 호스트 포트 읽기
         root_dir = self._get_project_root_dir(project)
         env_dict = self.env_helper.load_local_env(root_dir)
 
@@ -169,8 +163,14 @@ class ListCommand(BaseCommand):
             postgres_port = env_dict.get("POSTGRES_PORT", "5432")
             return f"({https_port}, {app_port}, {postgres_port})"
 
-        # .env.local 없으면 기본값 (폴백)
-        return "(443, 5001, 5432)"
+        # .env.local 없으면 경고 메시지 출력 + N/A 반환
+        import sys
+        print(
+            "⚠️  경고: .env.local 파일을 찾을 수 없습니다.\n"
+            "정확한 포트 정보는 'python run.py start' 명령어 출력을 확인하세요.",
+            file=sys.stderr
+        )
+        return "N/A"
 
     def _get_project_root_dir(self, project: str) -> Path:
         """프로젝트명에서 루트 디렉토리 경로 추론 (워크트리 인식)

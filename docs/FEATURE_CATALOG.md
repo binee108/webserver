@@ -19,6 +19,34 @@
 
 ## Recent Updates
 
+### 2025-10-25: Dynamic Port Allocation - Main Project Support (Issue #5)
+**영향 범위**: `dynamic-port-allocation`
+**파일**: `cli/commands/list.py` (Lines 127-173)
+
+**문제 해결**: ls 명령어가 메인 프로젝트의 실제 호스트 포트 표시 안 함
+- **변경 전**: 메인 프로젝트만 하드코딩된 기본값 사용
+- **변경 후**: 모든 프로젝트(메인/워크트리) .env.local에서 동적 포트 읽기
+- **동작**:
+  - .env.local 존재 → "(5087, 5518, 4516)" 형식 반환
+  - .env.local 없음 → stderr 경고 + "N/A" 반환
+- **효과**: 메인 프로젝트 포트 충돌 시 정확한 정보 표시
+
+**태그**: `@FEAT:dynamic-port-allocation @COMP:util @TYPE:helper`
+
+**검색**:
+```bash
+# Issue #5 수정 코드
+grep -n "@CHANGE: Issue #5" web_server/cli/commands/list.py
+grep -n "_get_port_info" web_server/cli/commands/list.py
+```
+
+**원리**:
+- Docstring (Lines 128-154): Issue #5 명시 + 동작 설명
+- `_get_port_info()` (Lines 127-173): 메인/워크트리 동일 로직
+- `_get_project_root_dir()` (Lines 175+): 워크트리 자동 감지
+
+---
+
 ### 2025-10-23: Worktree Service Conflict Detection & Auto-Resolution (Updated)
 **영향 범위**: `worktree-conflict-resolution`
 **파일**:
