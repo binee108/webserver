@@ -585,3 +585,83 @@ class EventEmitter:
             logger.debug(f'Batch aggregation: {len(summaries)} order types')
         else:
             logger.debug('No successful orders - batch SSE skipped')
+
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:core
+    def emit_order_cancelled_or_expired_event(
+        self,
+        open_order: OpenOrder,
+        status: str
+    ) -> None:
+        """취소/만료 주문 SSE 이벤트 발송
+
+        ⚠️ CRITICAL: 반드시 OpenOrder 삭제 **전**에 호출되어야 합니다.
+        삭제 후에는 데이터 접근 불가.
+
+        Args:
+            open_order: OpenOrder 객체 (삭제 전 데이터)
+            status: 'CANCELED' or 'EXPIRED'
+
+        Raises:
+            ValueError: status가 유효하지 않은 경우
+        """
+        if status not in ['CANCELED', 'CANCELLED', 'EXPIRED']:
+            raise ValueError(f"Invalid status: {status}")
+
+        try:
+            from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
+
+            # OpenOrder에서 필요 데이터 추출 (삭제 전이므로 안전)
+            strategy_account = open_order.strategy_account
+            if not strategy_account or not strategy_account.strategy:
+                logger.warning(f"전략 정보 없음 - order_id={open_order.exchange_order_id}")
+                return
+
+            strategy = strategy_account.strategy
+            account = strategy_account.account
+
+            if not account:
+                logger.warning(f"계좌 정보 없음 - order_id={open_order.exchange_order_id}")
+                return
+
+            # 이벤트 타입 결정
+            event_type = 'order_cancelled' if status in ['CANCELED', 'CANCELLED'] else 'order_expired'
+
+            # 표시 가격 추출 (주문 타입별 로직)
+            display_price = 0.0
+            if open_order.order_type in ['LIMIT', 'STOP_LIMIT']:
+                display_price = float(open_order.price) if open_order.price else 0.0
+            elif open_order.order_type == 'STOP_MARKET':
+                display_price = float(open_order.stop_price) if open_order.stop_price else 0.0
+            # MARKET 주문은 0.0 유지
+
+            # OrderEvent 생성
+            order_event = OrderEvent(
+                event_type=event_type,
+                order_id=open_order.exchange_order_id,
+                symbol=open_order.symbol,
+                strategy_id=strategy.id,
+                user_id=strategy.user_id,
+                side=open_order.side.upper(),
+                quantity=float(open_order.quantity),
+                price=display_price,
+                status=status,
+                timestamp=datetime.utcnow().isoformat(),
+                order_type=open_order.order_type,
+                stop_price=float(open_order.stop_price) if open_order.stop_price else None,
+                account={
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
+            )
+
+            # SSE 이벤트 발송
+            event_service.emit_order_event(order_event)
+            logger.info(f"✅ {event_type} 이벤트 발송 완료 - order_id={open_order.exchange_order_id}, strategy={strategy.id}")
+
+        except Exception as exc:
+            logger.error(
+                f"❌ {status} 이벤트 발송 실패 - order_id={open_order.exchange_order_id}, error={exc}",
+                exc_info=True
+            )
