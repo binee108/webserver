@@ -723,6 +723,25 @@ class TradingCore:
 
         logger.info(f"거래 신호 처리 완료 - 성공: {len(successful_trades)}, 실패: {len(failed_trades)}")
 
+        # 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
+        # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
+        if len(successful_trades) > 0 and self.service.event_emitter:
+            # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
+            # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
+            # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
+            batch_results = [
+                result for result in results
+                if result.get('success') and result.get('order_type') and result.get('event_type')
+            ]
+
+            # 배치 SSE 발송 (메타데이터가 있는 경우만)
+            if batch_results:
+                self.service.event_emitter.emit_order_batch_update(
+                    user_id=strategy.user_id,
+                    strategy_id=strategy.id,
+                    batch_results=batch_results
+                )
+
         # 표준 응답 포맷 (process_cancel_all_orders와 동일한 구조)
         return {
             'action': side.lower(),  # 'buy' or 'sell'

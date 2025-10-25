@@ -94,6 +94,34 @@ Individual toast notifications for single order events (order_created, order_fil
 
 ---
 
+## PendingOrder Filtering (UX Improvement)
+
+**문제**: 단일 지정가 주문 시 1초 내에 3개의 토스트가 발생하여 사용자 경험 저하
+1. PendingOrder 생성 토스트
+2. PendingOrder 삭제 토스트
+3. OpenOrder(NEW) 생성 토스트
+
+**해결**: OpenOrder 생성 시에만 1개 토스트 표시
+
+### 구현 방식
+
+`handleOrderUpdate()` 메서드에서 `data.source` 필드를 기준으로 필터링:
+
+- `data.source === 'pending_order'` → 토스트 표시 안 함 (내부 큐 상태)
+- `data.source === 'open_order'` → 토스트 표시 (거래소 주문)
+
+### 적용 대상
+
+- `order_created`: OpenOrder 생성 시에만 토스트
+- `order_cancelled`: OpenOrder 취소 시에만 토스트
+- `order_filled`: OpenOrder 체결 시에만 토스트
+
+### 배치 주문 영향
+
+배치 주문 토스트(`handleBatchOrderUpdate()`)는 별도 로직으로 영향 없음.
+
+---
+
 *Last Updated: 2025-10-25*
 *Status: Active*
-*Phase: Phase 1 - Implementation Complete*
+*Phase: Phase 1 - PendingOrder Filtering Complete*

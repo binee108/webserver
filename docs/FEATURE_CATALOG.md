@@ -19,6 +19,31 @@
 
 ## Recent Updates
 
+### 2025-10-25: Toast UX Improvement - Single Order Batch SSE (Phase 1-2 완료)
+**영향 범위**: `toast-ux-improvement`
+**파일**:
+- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 219-220, 229-230, 972-998)
+- `web_server/app/services/trading/core.py` (Lines 726-743)
+
+**기능 설명**: 단일 주문과 배치 주문의 Toast 알림 통일
+- **Phase 1** (완료): PendingOrder 토스트 필터링 + 배치 포맷 적용
+  - 토스트 3개 → 0개 (필터링)
+  - 포맷 통일: "📦 LIMIT 주문 생성 1건"
+- **Phase 2** (완료): 단일 주문도 배치 SSE 발송
+  - LIMIT/STOP 주문: order_batch_update SSE 발송
+  - MARKET 주문: 미발송 (메타데이터 부재)
+
+**태그**: `@FEAT:toast-ux-improvement @COMP:service,route @TYPE:integration @DEPS:webhook-order,event-sse`
+
+**검색**:
+```bash
+grep -r "@FEAT:toast-ux-improvement" --include="*.py" --include="*.js"
+```
+
+**문서**: `docs/features/toast-ux-improvement.md`
+
+---
+
 ### 2025-10-25: Dynamic Port Allocation - Main Project Support (Issue #5)
 **영향 범위**: `dynamic-port-allocation`
 **파일**: `cli/commands/list.py` (Lines 127-173)
@@ -838,7 +863,7 @@ grep -n "OrderBatchEvent\|emit_order_batch\|handleBatchOrderUpdate" web_server/a
 ---
 
 ### individual-toast
-**설명**: 개별 주문 이벤트에 대한 개별 토스트 알림 (배치 알림과 분리)
+**설명**: 개별 주문 이벤트에 대한 개별 토스트 알림 (배치 알림과 분리), PendingOrder 필터링으로 3개 토스트 → 1개로 개선
 
 **태그**: `@FEAT:individual-toast @COMP:integration @TYPE:core`
 
@@ -849,9 +874,14 @@ grep -n "OrderBatchEvent\|emit_order_batch\|handleBatchOrderUpdate" web_server/a
 
 **상태**: Active
 
+**Recent Updates**:
+- (2025-10-25) PendingOrder 필터링 추가: 단일 주문 시 3개 토스트 → 1개로 개선
+- 필터링 조건: `data.source === 'open_order'`로 OpenOrder만 토스트 표시
+
 **검색**:
 ```bash
 grep -r "@FEAT:individual-toast" --include="*.js"
+grep -n "data.source === 'open_order'" web_server/app/static/js/positions/realtime-openorders.js
 ```
 
 ---
