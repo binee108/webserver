@@ -928,13 +928,13 @@ class OrderStatus:
 # @FEAT:order-limits @COMP:validation @TYPE:config
 # 주문 제한 관련 상수
 MAX_ORDERS_PER_SYMBOL_SIDE = 10  # 심볼당 side별 전체 제한 (LIMIT + STOP 합계)
-MAX_ORDERS_PER_SYMBOL_TYPE_SIDE = 5  # 심볼당 타입 그룹별 side별 제한
+MAX_ORDERS_PER_SYMBOL_TYPE_SIDE = 2  # 심볼당 타입 그룹별 side별 제한
 
 # 주문 타입 그룹 분류
 # Purpose: 심볼당 타입 그룹별 주문 제한 관리 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE 적용)
-# - LIMIT 그룹: 일반 지정가 주문 (심볼당 side별 최대 5개)
-# - STOP 그룹: 스톱 주문 (심볼당 side별 최대 5개)
-# 예시: BTC/USDT buy 방향 - LIMIT 5개 + STOP 5개 = 총 10개 허용
+# - LIMIT 그룹: 일반 지정가 주문 (심볼당 side별 최대 2개)
+# - STOP 그룹: 스톱 주문 (심볼당 side별 최대 2개)
+# 예시: BTC/USDT buy 방향 - LIMIT 2개 + STOP 2개 = 총 4개 허용
 ORDER_TYPE_GROUPS = {
     "LIMIT": ["LIMIT", "LIMIT_MAKER"],
     "STOP": ["STOP", "STOP_LIMIT", "STOP_MARKET"]
