@@ -2,12 +2,13 @@
 
 @FEAT:cli-migration @COMP:util @TYPE:helper
 """
+import json
 import os
 import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 
 class DockerHelper:
@@ -491,6 +492,147 @@ class DockerHelper:
         except Exception as e:
             self.printer.print_status(f"DB 복사 실패: {e}", "error")
             return False
+
+    def get_container_ports(self, project_name: str) -> Optional[Dict[str, Optional[str]]]:
+        """프로젝트의 Docker 컨테이너 포트 조회
+
+        Docker ps 명령으로 nginx, app, postgres 컨테이너의
+        호스트 포트 매핑을 조회합니다.
+
+        @FEAT:dynamic-port-allocation @COMP:util @TYPE:helper
+        @CHANGE: Docker API 전용 포트 조회 (단일 소스 원칙)
+
+        Args:
+            project_name (str): Docker Compose 프로젝트명
+                - "webserver" → 메인 프로젝트
+                - "webserver_feature-name" → 워크트리
+
+        Returns:
+            dict: 포트 정보 또는 None (https/app/postgres 키)
+                - 성공: {"https": "5087", "app": "5059", "postgres": "5490"}
+                - 일부 실패: {"https": None, "app": "5059", "postgres": "5490"}
+                - 완전 실패: None
+
+        Security:
+            - 컨테이너명 화이트리스트 검증 (webserver* 패턴만)
+            - subprocess.run with list args (shell=False)
+            - Timeout 5초
+            - JSON 파싱 안전성
+
+        Example:
+            >>> helper.get_container_ports("webserver")
+            {"https": "8443", "app": "8001", "postgres": "5490"}
+
+            >>> helper.get_container_ports("webserver_feature-test")
+            {"https": "5087", "app": "5059", "postgres": "5490"}
+        """
+        # 1. 컨테이너명 화이트리스트 검증
+        if not project_name.startswith("webserver"):
+            return None
+
+        # 2. 컨테이너 베이스명: Docker Compose는 프로젝트명을 그대로 사용
+        container_base = project_name
+
+        containers = {
+            "nginx": f"{container_base}-nginx-1",
+            "app": f"{container_base}-app-1",
+            "postgres": f"{container_base}-postgres-1"
+        }
+
+        # 3. 각 컨테이너 포트 조회
+        ports = {}
+        for service, container_name in containers.items():
+            try:
+                # docker ps --format json --filter name={container_name}
+                result = subprocess.run(
+                    ['docker', 'ps', '--format', 'json', '--filter', f'name={container_name}'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False  # Graceful degradation 허용 (컨테이너 미실행)
+                )
+
+                if not result.stdout.strip():
+                    # 컨테이너가 실행 중이 아님
+                    ports[service] = None
+                    continue
+
+                # JSON 파싱
+                container_info = json.loads(result.stdout.strip())
+
+                # 4. 포트 매핑 파싱
+                # nginx: 443/tcp 포트의 호스트 매핑
+                # app: 5001/tcp 포트의 호스트 매핑
+                # postgres: 5432/tcp 포트의 호스트 매핑
+                port_mappings = container_info.get('Ports', '')
+
+                if service == "nginx":
+                    host_port = self._extract_host_port(port_mappings, '443/tcp')
+                elif service == "app":
+                    host_port = self._extract_host_port(port_mappings, '5001/tcp')
+                elif service == "postgres":
+                    host_port = self._extract_host_port(port_mappings, '5432/tcp')
+                else:
+                    host_port = None
+
+                ports[service] = host_port
+
+            except subprocess.TimeoutExpired:
+                ports[service] = None
+            except json.JSONDecodeError:
+                ports[service] = None
+            except subprocess.CalledProcessError:
+                ports[service] = None
+            except Exception:
+                ports[service] = None
+
+        # 5. 모든 포트가 None이면 None 반환
+        if all(v is None for v in ports.values()):
+            return None
+
+        # 6. nginx → https 키 변환 (계획서 line 204-211 참조)
+        if "nginx" not in ports or ports["nginx"] is None:
+            https_port = None
+        else:
+            https_port = ports["nginx"]
+
+        return {
+            "https": https_port,
+            "app": ports.get("app"),
+            "postgres": ports.get("postgres")
+        }
+
+    def _extract_host_port(self, port_mappings: str, container_port: str) -> Optional[str]:
+        """포트 매핑 문자열에서 호스트 포트 추출
+
+        Args:
+            port_mappings (str): Docker ps의 Ports 필드
+                예: "0.0.0.0:5059->5001/tcp, 0.0.0.0:5087->443/tcp"
+            container_port (str): 찾을 컨테이너 포트
+                예: "5001/tcp", "443/tcp", "5432/tcp"
+
+        Returns:
+            str: 호스트 포트 (예: "5059") 또는 None
+        """
+        if not port_mappings:
+            return None
+
+        # 포트 매핑은 쉼표로 구분됨
+        mappings = port_mappings.split(', ')
+
+        for mapping in mappings:
+            # 형식: "0.0.0.0:5059->5001/tcp"
+            if f'->{container_port}' in mapping:
+                # "0.0.0.0:5059" 추출
+                try:
+                    host_part = mapping.split('->')[0].strip()
+                    # "5059" 추출
+                    host_port = host_part.split(':')[-1]
+                    return host_port
+                except (IndexError, ValueError):
+                    return None
+
+        return None
 
     def get_services_to_start(self) -> List[str]:
         """환경 모드에 따라 시작할 서비스 목록 반환
