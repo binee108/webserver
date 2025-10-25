@@ -8,7 +8,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trader -d trading_system"]
@@ -73,7 +73,6 @@ services:
       start_period: 10s
 
 volumes:
-  postgres_data:
   nginx_logs:
 
 networks:
