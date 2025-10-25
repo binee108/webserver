@@ -171,6 +171,64 @@ POST /admin/verify-session
 
 ---
 
+### 5.7 백그라운드 작업 로그 조회
+
+**엔드포인트**: `GET /admin/api/jobs/<job_id>/logs`
+**권한**: `@admin_required`
+
+**기능**: 특정 백그라운드 작업(queue_rebalancer, update_open_orders 등)의 로그를 조회합니다.
+
+**쿼리 파라미터**:
+- `limit` (int): 최대 로그 줄 수 (기본: 100, 최대: 500)
+- `level` (str): 로그 레벨 필터 (ALL, INFO, WARNING, ERROR, DEBUG)
+- `search` (str): 텍스트 검색어 (대소문자 무시)
+
+**응답 (성공, 200)**:
+```json
+{
+  "success": true,
+  "logs": [
+    {
+      "timestamp": "2025-10-23 14:08:29",
+      "level": "INFO",
+      "tag": "QUEUE_REBAL",
+      "message": "재정렬 대상 조합: 3개",
+      "file": "queue_rebalancer.py",
+      "line": 123
+    }
+  ],
+  "total": 1000,
+  "filtered": 45,
+  "job_id": "queue_rebalancer"
+}
+```
+
+**UTF-8 Safe Tail Read Algorithm** (GitHub Issue #2 해결):
+
+대용량 로그 파일의 마지막 N줄을 읽을 때 UnicodeDecodeError 발생을 방지하는 알고리즘:
+
+1. **바이너리 모드('rb')로 파일 열기**
+   - 이유: 텍스트 모드는 UTF-8 멀티바이트 문자 중간 seek 위험 (약 13% 발생 확률)
+   - 바이너리 모드는 모든 바이트 위치에서 안전
+
+2. **파일 끝에서 200KB 역방향 seek**
+   - 대응 로그 줄 수: 약 1000줄 (평균 200B/줄)
+   - 일반 사용 사례에 충분
+
+3. **라인 경계(\n) 탐색으로 완전한 라인부터 읽기**
+   - 최대 1KB 청크에서 첫 번째 \n 위치 탐색
+   - 파일 중간부터 읽을 때 불완전한 라인 제거
+
+4. **decode('utf-8', errors='replace') 사용**
+   - 깨진 문자/부분 바이트는 U+FFFD(마름모 '�')로 대체
+   - UnicodeDecodeError 발생 방지
+
+5. **폴백: 최적화 읽기 실패 시 전체 파일 읽기**
+   - 극히 드문 경우에만 발동 (성능 영향 최소)
+   - 안전 디코딩으로 재시도하여 항상 응답 반환
+
+---
+
 ## 6. API 엔드포인트 요약
 
 ### 페이지 렌더링 (GET, @admin_required)

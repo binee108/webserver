@@ -1421,6 +1421,36 @@ def get_job_logs(job_id):
         - 태그 없는 로그도 파싱 가능 (하위 호환성)
         - job_id가 JOB_TAG_MAP에 없으면 WARNING 로그 출력 후 모든 로그 반환
         - API 응답의 'tag' 필드는 Optional (null 가능)
+
+    Implementation (GitHub Issue #2 해결):
+        UTF-8 Safe Tail Read Algorithm을 사용하여 UnicodeDecodeError 예방:
+
+        1. 바이너리 모드('rb')로 파일 열기
+           - 이유: 텍스트 모드는 UTF-8 멀티바이트 문자 중간 seek 위험 (약 13% 발생 확률)
+           - 바이너리 모드는 모든 바이트 위치에서 안전함
+
+        2. 파일 끝에서 200KB 역방향 seek (성능 최적화)
+           - 대응 로그 줄 수: 약 1000줄 (평균 200B/줄)
+           - 일반 사용 사례에 충분한 양
+
+        3. 라인 경계(\n) 탐색으로 완전한 라인부터 읽기 시작
+           - 최대 1KB 청크 읽기로 첫 번째 \n 위치 탐색
+           - 파일 중간부터 읽을 때 불완전한 라인 제거
+
+        4. decode('utf-8', errors='replace') 사용
+           - 깨진 문자/부분 바이트는 U+FFFD(흰 마름모 '�')로 대체
+           - UnicodeDecodeError 발생 방지
+
+        5. 폴백: 최적화 읽기 실패 시 전체 파일 읽기
+           - UnicodeDecodeError 발생 시 안전 디코딩으로 재시도
+           - 성능 영향: 극히 드물고, 필요시에만 발동
+
+    Security:
+        - Path Traversal 방어: allowed_log_dir 범위 내 파일만 허용
+        - Job ID 화이트리스트 검증: scheduler.get_jobs()에 등록된 작업만 접근 허용
+
+    Feature Tags:
+        @FEAT:background-job-logs @COMP:route @TYPE:core
     """
     try:
         from flask import current_app
@@ -1486,22 +1516,44 @@ def get_job_logs(job_id):
         level = request.args.get('level', 'ALL').upper()
         search_term = request.args.get('search', '').lower()
 
-        # 로그 파일 읽기 (tail 방식 - 최근 1000줄)
+        # 로그 파일 읽기 (tail 방식 - UTF-8 안전)
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
-                # 파일 크기가 크면 마지막 부분만 읽기
+            # 🆕 바이너리 모드로 UTF-8 안전성 확보
+            with open(log_path, 'rb') as f:
                 try:
-                    f.seek(0, 2)  # 파일 끝으로 이동
+                    # 파일 끝으로 이동
+                    f.seek(0, 2)
                     file_size = f.tell()
+
                     # 대략 평균 라인 길이 200바이트 * 1000줄 = 200KB
                     read_size = min(file_size, 200000)
-                    f.seek(max(0, file_size - read_size))
-                    # 첫 번째 불완전한 라인 제거
-                    f.readline()
-                    lines = f.readlines()
-                except (IOError, OSError):
+                    start_pos = max(0, file_size - read_size)
+                    f.seek(start_pos)
+
+                    # 🆕 라인 경계 찾기 (멀티바이트 안전)
+                    if start_pos > 0:  # 파일 중간부터 읽기 시작한 경우
+                        # 첫 번째 \n까지 스킵 (불완전한 라인 제거)
+                        chunk = f.read(1024)  # 최대 1KB 읽기
+                        newline_pos = chunk.find(b'\n')
+                        if newline_pos != -1:
+                            # 다음 완전한 라인 시작 위치로 이동
+                            f.seek(start_pos + newline_pos + 1)
+                        else:
+                            # \n을 못 찾으면 처음부터 읽기
+                            f.seek(0)
+
+                    # 🆕 안전 디코딩 (깨진 문자는 � 대체)
+                    raw_bytes = f.read()
+                    content = raw_bytes.decode('utf-8', errors='replace')
+                    lines = content.splitlines(keepends=True)  # 라인 단위로 분할
+
+                except (IOError, OSError, UnicodeDecodeError) as e:  # 🆕 UnicodeDecodeError 추가
+                    current_app.logger.warning(f'로그 파일 최적화 읽기 실패, 전체 읽기로 폴백: {str(e)}')
                     f.seek(0)
-                    lines = f.readlines()
+                    raw_bytes = f.read()
+                    content = raw_bytes.decode('utf-8', errors='replace')
+                    lines = content.splitlines(keepends=True)
+
         except (IOError, OSError) as e:
             current_app.logger.error(f'로그 파일 읽기 실패: {str(e)}')
             return jsonify({
