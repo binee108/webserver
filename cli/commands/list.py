@@ -125,33 +125,52 @@ class ListCommand(BaseCommand):
             print(f"{project:<40} {port_info:<25} {colors.RED}오류{colors.RESET:<24} -")
 
     def _get_port_info(self, project: str) -> str:
-        """프로젝트의 포트 정보 가져오기
+        """프로젝트의 호스트 포트 정보 가져오기 (Issue #4)
+
+        메인 프로젝트는 고정 포트를 반환하고, 워크트리는 .env.local에서
+        동적으로 할당된 호스트 포트를 읽어 반환합니다.
 
         @FEAT:dynamic-port-allocation @COMP:util @TYPE:helper
+        @CHANGE: Issue #4 - ls 명령어가 워크트리의 실제 호스트 포트 표시
 
         Args:
-            project (str): 프로젝트명 (예: "webserver", "webserver_test-feature")
+            project (str): Docker Compose 프로젝트명
+                - "webserver" → 메인 프로젝트
+                - "webserver_FEATURENAME" → 워크트리 (FEATURENAME은 워크트리명)
 
         Returns:
-            str: 포맷팅된 포트 정보 (예: "(443, 5001, 5432)")
+            str: 호스트 포트 정보 (예: "(443, 5001, 5432)")
+                - 메인 프로젝트: 고정 포트 (443, 5001, 5432)
+                - 워크트리: .env.local에서 읽은 동적 포트
 
         Side Effects:
-            - .env.local 파일 읽기 (Phase 1 EnvHelper 통합)
-            - 파일 없을 경우 기본값(443, 5001, 5432) 사용 (graceful degradation)
-        """
-        # 프로젝트명에서 워크트리 경로 추론
-        root_dir = self._get_project_root_dir(project)
+            - 워크트리만: .env.local 파일 읽기 (EnvHelper 사용)
+            - 파일 없으면 기본값(443, 5001, 5432) 사용 (graceful fallback)
 
-        # .env.local 파일에서 포트 정보 로드 (Phase 1에서 구현된 메서드)
-        # 파일 부재 시 빈 딕셔너리 반환 → 기본값 사용 (graceful degradation)
+        Note:
+            docker-compose.yml의 포트 매핑: "${APP_PORT:-5001}:5001"
+            - 좌측 ${APP_PORT}: 호스트 포트 (.env.local에서 읽음)
+            - 우측 5001: 컨테이너 내부 포트 (고정)
+            - 메인: 호스트 = 컨테이너 (443:443, 5001:5001, 5432:5432)
+            - 워크트리: 호스트 ≠ 컨테이너 (예: 4431:443, 5002:5001, 5433:5432)
+        """
+        # 메인 프로젝트: 고정 포트 반환 (호스트 = 컨테이너 포트 동일)
+        if project == "webserver":
+            return "(443, 5001, 5432)"
+
+        # 워크트리: .env.local에서 호스트 외부 포트 읽기
+        root_dir = self._get_project_root_dir(project)
         env_dict = self.env_helper.load_local_env(root_dir)
 
-        # 포트 추출 (없으면 기본값)
-        https_port = env_dict.get("HTTPS_PORT", "443")
-        app_port = env_dict.get("APP_PORT", "5001")
-        postgres_port = env_dict.get("POSTGRES_PORT", "5432")
+        if env_dict:
+            # .env.local의 HTTPS_PORT, APP_PORT, POSTGRES_PORT는 이미 호스트 포트
+            https_port = env_dict.get("HTTPS_PORT", "443")
+            app_port = env_dict.get("APP_PORT", "5001")
+            postgres_port = env_dict.get("POSTGRES_PORT", "5432")
+            return f"({https_port}, {app_port}, {postgres_port})"
 
-        return f"({https_port}, {app_port}, {postgres_port})"
+        # .env.local 없으면 기본값 (폴백)
+        return "(443, 5001, 5432)"
 
     def _get_project_root_dir(self, project: str) -> Path:
         """프로젝트명에서 루트 디렉토리 경로 추론 (워크트리 인식)
@@ -196,7 +215,7 @@ class ListCommand(BaseCommand):
             return main_root
 
         if project.startswith("webserver_"):
-            worktree_name = project.removeprefix("webserver_")
+            worktree_name = project[10:]  # len("webserver_") = 10
             return main_root / ".worktree" / worktree_name
 
         # 알 수 없는 프로젝트명은 현재 디렉토리 반환
