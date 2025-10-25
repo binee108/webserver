@@ -18,6 +18,7 @@ from app import db
 from app.models import OpenOrder, PendingOrder, StrategyAccount, Account
 from app.constants import ExchangeLimits, OrderType, ORDER_TYPE_GROUPS, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
 from app.services.utils import to_decimal
+from app.services.exchange import exchange_service
 
 logger = logging.getLogger(__name__)
 
@@ -734,8 +735,10 @@ class OrderQueueManager:
                     # Step 2: Execute batch API (1 call for 5 orders = 80% reduction)
                     # Why batch size 5: Binance limit (Bybit supports 10 but we unify to 5)
                     # Upbit fallback: No batch API, uses individual execution
+                    # @FIX: Issue #3 - Use global singleton exchange_service (matches core.py:19 pattern)
+                    # Fixed AttributeError: 'TradingCore' object has no attribute 'exchange_service'
                     try:
-                        batch_result = self.service.exchange_service.create_batch_orders(
+                        batch_result = exchange_service.create_batch_orders(
                             account=account,
                             orders=exchange_orders,  # All 5 orders at once
                             market_type=market_type.lower(),
