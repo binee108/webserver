@@ -22,8 +22,15 @@
                     <p>트레이딩 전략을 효율적으로 생성, 수정하고 자본을 배분하세요.</p>
                 </div>
             </div>
+            <!-- @FEAT:capital-management @COMP:ui @TYPE:core -->
             <div class="header-actions">
-                <button onclick="openAddStrategyModal()" 
+                <!-- Capital reallocation button moved from tab area to header for improved UX -->
+                <button onclick="triggerCapitalReallocation(event)"
+                        class="btn btn-warning">
+                    <i class="fas fa-sync-alt"></i>
+                    전략 자본 재할당
+                </button>
+                <button onclick="openAddStrategyModal()"
                         class="btn btn-primary">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -53,15 +60,6 @@
         <button id="tab-my" class="btn btn-secondary btn-sm" onclick="switchTab('my')">내 전략</button>
         <button id="tab-subscribed" class="btn btn-secondary btn-sm" onclick="switchTab('subscribed')">구독 전략</button>
         <button id="tab-discover" class="btn btn-secondary btn-sm" onclick="switchTab('discover')">공개 전략 탐색</button>
-    </div>
-
-    <!-- 전략 자본 재할당 -->
-    <div class="mb-6">
-        <button onclick="triggerCapitalReallocation(event)"
-                class="w-full bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-lg px-6 py-3 hover:shadow-xl hover:from-purple-600 hover:to-purple-700 transition-all duration-200 flex items-center justify-center space-x-2 font-semibold">
-            <i class="fas fa-sync-alt"></i>
-            <span>⚠️ 전략 자본 재할당 (강제)</span>
-        </button>
     </div>
 
     <!-- 전략 목록 섹션: 내 전략 (서버 렌더 기본) -->
