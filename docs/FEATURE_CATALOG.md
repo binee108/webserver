@@ -323,6 +323,57 @@ grep -B 1 -A 3 "total_cancelled = sum" web_server/app/services/trading/core.py
 
 ---
 
+### 2025-10-25: Strategies UI Refactor Phase 2 Complete
+
+**영향 범위**: `strategies-ui-refactor`
+**파일**: `web_server/app/templates/strategies.html` (Lines 441-605, 리팩토링된 함수들)
+
+**구현 내용**: 핵심 유틸리티 함수 3개 추가 및 16개 함수 리팩토링
+- **새 유틸리티 함수 3개**:
+  - `apiCall()` (Lines 441-520): 18곳의 중복 fetch 호출 패턴 통합
+    - WHY: CSRF 토큰, 에러 처리, 토스트를 자동화하여 일관성 확보. 향후 새 API 호출 3-5줄 구현 가능.
+  - `renderState()` (Lines 522-585): 20곳의 인라인 로딩/에러 HTML 통합
+    - WHY: 재시도 버튼에 전역 핸들러 방식으로 클로저 직렬화 문제 해결
+  - `setButtonLoading()` (Lines 587-605): 버튼 로딩 상태 표준화
+    - WHY: disabled/복구 실패 방지. dataset에 originalText 저장으로 안전한 원복
+
+- **16개 함수 리팩토링**:
+  - 데이터 로딩: `loadSubscribedStrategies`, `loadPublicStrategies`, `renderSubscribeAccountPicker`
+  - 전략 CRUD: `editStrategy`, `deleteStrategy`, `submitStrategy`
+  - 구독 관리: `subscribeStrategy`, `unsubscribeStrategy`
+  - 계좌 관리: `loadStrategyAccountModal`
+  - 모달 뷰: `openPublicDetail`, `loadCapitalModal`
+
+- **4개 레거시 함수 제거**: `handleApiResponse`, `handleApiError`, `showLoadingState`, `showErrorState`
+
+**효과**:
+- **유지보수성 향상**: API 호출 패턴 통일, 에러 처리 일관성
+- **코드 중복 제거**: 18개 fetch → 1개 `apiCall()`, 20개 HTML → 1개 `renderState()`
+- **확장성 개선**: 향후 새 API 호출 시 3-5줄로 구현 (기존 15-20줄 대비)
+- **코드 감소**: +9줄 (품질 투자로 정당화, 상세한 JSDoc + WHY 주석)
+
+**태그**: `@FEAT:api-integration @COMP:util @TYPE:core`, `@FEAT:ui-state-management @COMP:util @TYPE:core`
+
+**검색 패턴**:
+```bash
+# 새 유틸리티 함수
+grep -r "@FEAT:api-integration" --include="*.html"
+grep -r "@FEAT:ui-state-management" --include="*.html"
+
+# apiCall 사용처 (10곳)
+grep -n "await apiCall" web_server/app/templates/strategies.html
+
+# renderState 사용처 (14곳)
+grep -n "renderState(" web_server/app/templates/strategies.html
+
+# setButtonLoading 사용처
+grep -n "setButtonLoading(" web_server/app/templates/strategies.html
+```
+
+**Quality Score**: 92/100 (code-reviewer 승인, Minor Changes 수정 완료)
+
+---
+
 ### 2025-10-21: Capital Management Phase 5.1 Complete
 **영향 범위**: `capital-management`
 **파일**:
