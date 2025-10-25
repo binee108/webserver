@@ -253,3 +253,5 @@ test_*.py
 # Temporary test directory
 .test/
 
+# Postgres data
+postgres_data/
