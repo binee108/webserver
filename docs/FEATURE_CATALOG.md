@@ -837,6 +837,25 @@ grep -n "OrderBatchEvent\|emit_order_batch\|handleBatchOrderUpdate" web_server/a
 
 ---
 
+### individual-toast
+**설명**: 개별 주문 이벤트에 대한 개별 토스트 알림 (배치 알림과 분리)
+
+**태그**: `@FEAT:individual-toast @COMP:integration @TYPE:core`
+
+**주요 파일**:
+- `web_server/app/static/js/positions/realtime-openorders.js` - handleOrderUpdate(), showOrderNotification()
+
+**관련 기능**: `batch-sse`, `open-orders-sorting`
+
+**상태**: Active
+
+**검색**:
+```bash
+grep -r "@FEAT:individual-toast" --include="*.js"
+```
+
+---
+
 ### 9. strategy-management
 **설명**: 전략 CRUD, 계좌 연결, 공개 전략 구독, 권한 관리, 웹훅 토큰 검증
 **태그**: `@FEAT:strategy-management`

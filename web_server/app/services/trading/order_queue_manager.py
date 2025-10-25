@@ -830,12 +830,23 @@ class OrderQueueManager:
                             failed_count += 1
                         else:
                             # SUCCESS PATH
-                            order_data = result_item
+                            # Extract 'order' field from batch result (batch API wraps order data)
+                            order_data = result_item.get('order', result_item)
+
+                            # Normalize field name: Batch API uses 'id' internally, but we need 'order_id'
+                            if 'order_id' not in order_data:
+                                if 'id' in order_data:
+                                    order_data['order_id'] = order_data['id']
+                                else:
+                                    logger.error(f"    ❌ Batch API response missing both 'id' and 'order_id': {result_item}")
+                                    failed_count += 1
+                                    continue
 
                             logger.info(f"    ✅ 주문 성공: PendingOrder {pending_order.id} → OpenOrder")
+                            logger.debug(f"    🔍 order_data: order_id={order_data.get('order_id')}, status={order_data.get('status')}, order_type={order_data.get('order_type')}")
 
                             # Create OpenOrder record
-                            self.service.order_manager.create_open_order_record(
+                            create_result = self.service.order_manager.create_open_order_record(
                                 strategy_account=strategy_account,
                                 order_result=order_data,
                                 symbol=pending_order.symbol,
@@ -845,9 +856,42 @@ class OrderQueueManager:
                                 price=pending_order.price,
                                 stop_price=pending_order.stop_price
                             )
+                            logger.debug(f"    🔍 create_open_order_record 결과: {create_result}")
 
-                            # Emit SSE event
-                            self._emit_pending_order_sse(account_id, symbol)
+                            # Emit OpenOrder created SSE event (if order was saved to DB)
+                            if create_result.get('success') and pending_order.strategy_account:
+                                strategy = pending_order.strategy_account.strategy
+                                if strategy and self.service and hasattr(self.service, 'event_emitter'):
+                                    try:
+                                        # Ensure account_id is in order_data for SSE emission
+                                        if 'account_id' not in order_data:
+                                            order_data['account_id'] = account.id
+
+                                        self.service.event_emitter.emit_order_events_smart(
+                                            strategy=strategy,
+                                            symbol=pending_order.symbol,
+                                            side=pending_order.side,
+                                            quantity=pending_order.quantity,
+                                            order_result=order_data
+                                        )
+                                        logger.info(f"    📡 OpenOrder SSE 이벤트 발송 완료: {pending_order.symbol}")
+                                    except Exception as sse_error:
+                                        logger.warning(f"    ⚠️ OpenOrder SSE 발송 실패 (비치명적): {sse_error}")
+
+                            # @FEAT:webhook-order @FEAT:event-sse @COMP:service @TYPE:helper
+                            # 배치 실행 성공 후 PendingOrder 삭제 + SSE 발송
+                            # PendingOrder 삭제 SSE 이벤트 발송 (배치 실행 성공 - 삭제 전)
+                            if pending_order.strategy_account and pending_order.strategy_account.strategy:
+                                user_id = pending_order.strategy_account.strategy.user_id
+                                if self.service and hasattr(self.service, 'event_emitter'):
+                                    try:
+                                        self.service.event_emitter.emit_pending_order_event(
+                                            event_type='order_cancelled',
+                                            pending_order=pending_order,
+                                            user_id=user_id
+                                        )
+                                    except Exception as sse_error:
+                                        logger.warning(f"⚠️ SSE 발송 실패 (비치명적): {sse_error}")
 
                             # Delete PendingOrder
                             db.session.delete(pending_order)
