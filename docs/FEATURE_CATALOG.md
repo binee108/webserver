@@ -19,6 +19,39 @@
 
 ## Recent Updates
 
+### 2025-10-26: Strategy Subscription Safety - Public→Private Transition (Phase 1)
+**영향 범위**: `strategy-subscription-safety`
+**파일**:
+- `web_server/app/routes/strategies.py` (Lines 264-420)
+
+**기능 설명**: 공개→비공개 전환 시 구독자 포지션/주문 강제 청산
+- **Phase 1** (완료): 전략 소유자가 공개→비공개로 변경 시 모든 구독자의:
+  1. 미체결 주문 취소 (`cancel_all_orders_by_user()`)
+  2. 활성 포지션 청산 (`close_position_by_id()`)
+  3. SSE 연결 종료 (`event_service.disconnect_client()`)
+  4. 실패 내역 추적 (`failed_cleanups` 배열)
+  5. 텔레그램 알림 구조 (TODO)
+
+- **Race Condition 방지**: `is_active=False` → `flush()` 순서로 웹훅 차단
+- **Best-Effort 방식**: 일부 실패 허용, 로그 기록 (WARNING/INFO)
+
+**태그**: `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core`
+
+**검색**:
+```bash
+grep -r "@FEAT:strategy-subscription-safety" --include="*.py"
+```
+
+**문서**: `docs/features/strategy-subscription-safety.md`
+
+**향후 Phase**:
+- Phase 2: 구독 해제 상태 조회 API
+- Phase 3: 구독 해제 UI 경고 메시지
+- Phase 4: 구독 해제 백엔드 강제 청산
+- Phase 5: 웹훅 실행 시 `is_active` 재확인
+
+---
+
 ### 2025-10-26: Webhook Token Copy Button (UX Enhancement)
 **영향 범위**: `webhook-token`
 **파일**:

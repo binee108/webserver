@@ -6,10 +6,12 @@
 """
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
+from sqlalchemy.orm import joinedload
 from app import db
-from app.models import Strategy, Account, StrategyAccount, StrategyCapital
+from app.models import Strategy, Account, StrategyAccount, StrategyCapital, StrategyPosition, OpenOrder
 from app.services.analytics import analytics_service as capital_service
 from app.services.strategy_service import strategy_service, StrategyError
+from app.services.trading import trading_service
 from app.constants import MarketType
 from app.utils.response_formatter import (
     create_success_response,
@@ -259,32 +261,163 @@ def update_strategy(strategy_id):
                 )
             strategy.group_name = data["group_name"]
 
+        # @FEAT:strategy-subscription-safety @COMP:route @TYPE:core
         # is_public 수정 (소유자만)
         if "is_public" in data:
             new_public = bool(data["is_public"])
-            # 공개 -> 비공개로 바뀌는 경우, 소유자 외 구독 연결 비활성화
+
+            # 공개 -> 비공개로 바뀌는 경우
             if strategy.is_public and not new_public:
-                # Phase 4: SSE 강제 종료 (비활성화되는 구독자들)
                 from app.services.event_service import event_service
+
+                # ✅ Phase 1: 전체 데이터 미리 로드 (N+1 쿼리 최적화)
+                strategy = Strategy.query.options(
+                    joinedload(Strategy.strategy_accounts)
+                    .joinedload(StrategyAccount.strategy_positions),
+                    joinedload(Strategy.strategy_accounts)
+                    .joinedload(StrategyAccount.account)
+                ).filter_by(id=strategy_id).first()
+
                 deactivated = 0
                 total_sse_cleaned = 0
+                failed_cleanups = []
 
                 for sa in strategy.strategy_accounts:
                     if sa.account.user_id != current_user.id and sa.is_active:
-                        sa.is_active = False
-                        deactivated += 1
+                        try:
+                            # ✅ 1. 먼저 비활성화 (웹훅 차단) - Race Condition 방지
+                            sa.is_active = False
+                            db.session.flush()  # DB 즉시 반영
 
-                        # 구독자의 SSE 연결 종료
-                        cleaned = event_service.disconnect_client(
-                            sa.account.user_id,
-                            strategy_id,
-                            reason='permission_revoked'
-                        )
-                        total_sse_cleaned += cleaned
+                            # ✅ 2. 미체결 주문 취소
+                            cancel_result = trading_service.order_manager.cancel_all_orders_by_user(
+                                user_id=sa.account.user_id,
+                                strategy_id=strategy_id,
+                                account_id=sa.account.id
+                            )
 
-                current_app.logger.info(
-                    f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화, SSE {total_sse_cleaned}개 종료"
-                )
+                            # 취소 실패 추적
+                            if cancel_result.get('failed_orders'):
+                                for failed in cancel_result['failed_orders']:
+                                    failed_cleanups.append({
+                                        'account': sa.account.name,
+                                        'type': 'order_cancellation',
+                                        'symbol': failed.get('symbol'),
+                                        'order_id': failed.get('order_id'),
+                                        'reason': failed.get('error')
+                                    })
+
+                            # ✅ 3. 남은 OpenOrder 확인 (방어적 검증)
+                            remaining_orders = OpenOrder.query.filter_by(
+                                strategy_account_id=sa.id
+                            ).filter(OpenOrder.status.in_(['OPEN', 'PARTIALLY_FILLED', 'NEW'])).all()
+
+                            if remaining_orders:
+                                current_app.logger.error(
+                                    f"주문 취소 후에도 OpenOrder {len(remaining_orders)}개 남음: "
+                                    f"strategy_account_id={sa.id}"
+                                )
+
+                                for order in remaining_orders:
+                                    failed_cleanups.append({
+                                        'account': sa.account.name,
+                                        'type': 'remaining_order',
+                                        'symbol': order.symbol,
+                                        'order_id': order.exchange_order_id,
+                                        'quantity': str(order.quantity)
+                                    })
+
+                            # ✅ 4. 활성 포지션 청산
+                            positions = [pos for pos in sa.strategy_positions if pos.quantity != 0]
+
+                            for position in positions:
+                                try:
+                                    close_result = trading_service.position_manager.close_position_by_id(
+                                        position_id=position.id,
+                                        user_id=sa.account.user_id
+                                    )
+
+                                    if not close_result.get('success'):
+                                        failed_cleanups.append({
+                                            'account': sa.account.name,
+                                            'type': 'position_close',
+                                            'symbol': position.symbol,
+                                            'quantity': str(position.quantity),
+                                            'reason': close_result.get('error', 'Unknown error')
+                                        })
+                                except Exception as e:
+                                    current_app.logger.error(f"포지션 청산 오류: {e}", exc_info=True)
+                                    failed_cleanups.append({
+                                        'account': sa.account.name,
+                                        'type': 'position_close_exception',
+                                        'symbol': position.symbol,
+                                        'reason': str(e)
+                                    })
+
+                            # ✅ 5. SSE 연결 종료
+                            cleaned = event_service.disconnect_client(
+                                sa.account.user_id,
+                                strategy_id,
+                                reason='permission_revoked'
+                            )
+                            total_sse_cleaned += cleaned
+                            deactivated += 1
+
+                        except Exception as e:
+                            current_app.logger.error(f"구독자 정리 오류 (account={sa.account.name}): {e}", exc_info=True)
+                            failed_cleanups.append({
+                                'account': sa.account.name,
+                                'type': 'cleanup_exception',
+                                'reason': str(e)
+                            })
+
+                # ✅ 6. 실패 시 텔레그램 알림 (Best-Effort)
+                # TODO: 텔레그램 서비스 구현 후 활성화
+                # if failed_cleanups:
+                #     try:
+                #         from app.services.telegram_service import send_message_to_user
+                #
+                #         # 실패한 계좌 수 (중복 제거)
+                #         failed_accounts = set(f['account'] for f in failed_cleanups)
+                #
+                #         message = (
+                #             f"⚠️ 전략 비공개 전환 완료 (일부 실패)\n\n"
+                #             f"전략: {strategy.name}\n"
+                #             f"청산 실패 계좌: {len(failed_accounts)}개\n\n"
+                #             f"실패 내역:\n"
+                #         )
+                #
+                #         for failure in failed_cleanups:
+                #             message += f"- {failure['account']}: {failure['type']}\n"
+                #             if 'symbol' in failure:
+                #                 message += f"  심볼: {failure['symbol']}\n"
+                #             if 'reason' in failure:
+                #                 message += f"  오류: {failure['reason']}\n"
+                #
+                #         message += "\n관리자가 수동으로 해당 계좌의 포지션을 확인하고 청산해야 합니다."
+                #
+                #         send_message_to_user(
+                #             user_id=current_user.id,
+                #             message=message
+                #         )
+                #
+                #     except Exception as e:
+                #         current_app.logger.error(f"텔레그램 알림 발송 실패: {e}")
+                #         # 알림 실패해도 계속 진행
+
+                # 로그 기록
+                if failed_cleanups:
+                    current_app.logger.warning(
+                        f"공개 전략 비공개 전환 (일부 실패): 구독 연결 {deactivated}개 비활성화, "
+                        f"SSE {total_sse_cleaned}개 종료, 실패 {len(failed_cleanups)}건\n"
+                        f"실패 상세: {failed_cleanups}"
+                    )
+                else:
+                    current_app.logger.info(
+                        f"공개 전략 비공개 전환: 구독 연결 {deactivated}개 비활성화, "
+                        f"SSE {total_sse_cleaned}개 종료, 실패 {len(failed_cleanups)}건"
+                    )
+
             strategy.is_public = new_public
 
         # 계좌 연결 정보 업데이트
