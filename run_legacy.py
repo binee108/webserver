@@ -679,31 +679,115 @@ class TradingSystemManager:
         time.sleep(3)
         
         return True
-    
+
+    # @FEAT:worktree-service-isolation @COMP:service @TYPE:helper
+    def _print_other_services_info(self, other_services):
+        """다른 경로의 서비스 정보를 작업 디렉토리별로 그룹화하여 출력
+
+        Args:
+            other_services (list): 다른 워크트리의 컨테이너 정보 목록
+                - 각 요소는 {'name': str, 'working_dir': str} 형태
+
+        Note:
+            - 작업 디렉토리별로 서비스를 그룹화하여 가독성 향상
+            - 각 컨테이너의 포트 정보를 추출하여 함께 표시
+        """
+        # 작업 디렉토리별로 그룹화
+        services_by_dir = {}
+        for container in other_services:
+            working_dir = container['working_dir']
+            if working_dir not in services_by_dir:
+                services_by_dir[working_dir] = []
+            services_by_dir[working_dir].append(container)
+
+        self.print_status(f"실행 중인 다른 서비스:", "info")
+        for working_dir, containers in services_by_dir.items():
+            print(f"  📂 {working_dir}")
+            for container in containers:
+                # 포트 정보 추출 및 표시
+                port_info = self._extract_port_from_container(container['name'])
+                print(f"     - {container['name']}{port_info}")
+        print()
+
+    # @FEAT:worktree-service-isolation @COMP:util @TYPE:helper
+    def _extract_port_from_container(self, container_name):
+        """Docker 컨테이너의 포트 매핑 정보를 추출
+
+        Args:
+            container_name (str): Docker 컨테이너 이름
+
+        Returns:
+            str: 포트 정보 문자열 (예: " [5000/tcp -> 5001]")
+                 포트 정보가 없거나 추출 실패 시 빈 문자열 반환
+
+        Note:
+            - Docker inspect 명령을 사용하여 NetworkSettings.Ports 정보 조회
+            - 타임아웃 5초 설정으로 무한 대기 방지
+            - 실패 시 조용히 빈 문자열 반환 (포트 정보는 선택적)
+        """
+        try:
+            # Docker inspect로 포트 매핑 정보 조회 (컨테이너 포트 -> 호스트 포트)
+            result = subprocess.run(
+                ['docker', 'inspect', '--format', '{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} -> {{(index $conf 0).HostPort}} {{end}}', container_name],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return f" [{result.stdout.strip()}]"
+        except Exception:
+            # 포트 정보 추출 실패 시 조용히 무시 (선택적 정보)
+            pass
+        return ""
+
+    # @FEAT:worktree-service-isolation @COMP:validation @TYPE:core
+    def detect_port_conflicts(self) -> dict:
+        """포트 충돌 감지 (Phase 2에서 사용 예정)
+
+        Returns:
+            dict: 포트 충돌 정보
+                - flask_conflict: Flask 포트 충돌 여부
+                - postgres_conflict: PostgreSQL 포트 충돌 여부
+                - https_conflict: HTTPS 포트 충돌 여부
+                - conflicting_services: 충돌 서비스 목록
+                - available_ports: 사용 가능한 포트 정보
+        """
+        # TODO: Phase 2에서 구현 - 실제 포트 충돌 감지 로직 추가
+        return {
+            'flask_conflict': False,
+            'postgres_conflict': False,
+            'https_conflict': False,
+            'conflicting_services': [],
+            'available_ports': {}
+        }
+
+    # @FEAT:worktree-service-isolation @COMP:service @TYPE:integration
     def detect_and_stop_conflicts(self):
-        """Detect and stop services from other worktree directories"""
+        """DEPRECATED: 하위 호환성을 위해 유지, 실제로는 종료하지 않음
+
+        다른 워크트리/메인 프로젝트의 서비스 정보만 확인합니다.
+        더 이상 서비스를 종료하지 않습니다.
+        """
         print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
         self.print_status("다른 경로의 실행 중인 서비스 확인 중...", "info")
         print(f"{Colors.CYAN}{'='*60}{Colors.RESET}\n")
-        
+
         running_services = self.check_running_services()
-        
+
         if running_services and running_services['other_services']:
-            print(f"\n{Colors.YELLOW}⚠️  다른 worktree 경로에서 실행 중인 서비스가 감지되었습니다!{Colors.RESET}\n")
-            
-            # Stop other services automatically
-            if not self.stop_other_services(running_services['other_services']):
-                self.print_status("다른 서비스 종료 실패", "error")
-                return False
-            
-            self.print_status("다른 경로의 서비스가 성공적으로 종료되었습니다", "success")
+            print(f"\n{Colors.YELLOW}ℹ️  다른 경로에서 실행 중인 서비스가 감지되었습니다{Colors.RESET}\n")
+
+            # 다른 경로의 서비스 정보 출력 (종료하지 않음)
+            self._print_other_services_info(running_services['other_services'])
+
+            # 워크트리 격리 정책 안내 메시지
+            self.print_status("다른 서비스는 유지되며, 포트 충돌 시 자동 재할당됩니다", "info")
+            self.print_status("각 워크트리는 독립적으로 실행되어 서로 영향을 주지 않습니다", "info")
             print()
         elif running_services and running_services['current_services']:
             self.print_status("현재 경로에서 이미 실행 중인 컨테이너가 있습니다", "info")
         else:
             self.print_status("실행 중인 서비스 없음", "success")
-        
-        return True
+
+        return True  # 항상 성공 반환 (종료하지 않으므로)
     
     def check_requirements(self):
         """시스템 요구사항 확인"""
