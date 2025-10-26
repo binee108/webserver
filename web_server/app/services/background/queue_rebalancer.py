@@ -151,7 +151,11 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
             # 2-3. 합집합 (Set으로 중복 제거)
             all_pairs: Set[Tuple[int, str]] = set(open_order_pairs) | set(pending_order_pairs)
 
-            # 디버깅: 중복 검증 (DEBUG 레벨)
+            if not all_pairs:
+                # 재정렬할 주문이 없으면 조용히 종료 (로그 스팸 방지 - Pattern 1: Early Return)
+                return
+
+            # 디버깅: 중복 검증 (대상이 있을 때만 DEBUG 레벨)
             logger.debug(format_background_log(
                 BackgroundJobTag.QUEUE_REBAL,
                 f"🔍 재정렬 대상 조합 - "
@@ -160,20 +164,15 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
                 f"합집합: {len(all_pairs)}개"
             ))
 
-            if all_pairs:
+            logger.debug(format_background_log(
+                BackgroundJobTag.QUEUE_REBAL,
+                f"🔍 재정렬 대상 상세:"
+            ))
+            for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
                 logger.debug(format_background_log(
                     BackgroundJobTag.QUEUE_REBAL,
-                    f"🔍 재정렬 대상 상세:"
+                    f"  [{idx}] Account {account_id}: {symbol}"
                 ))
-                for idx, (account_id, symbol) in enumerate(sorted(all_pairs), 1):
-                    logger.debug(format_background_log(
-                        BackgroundJobTag.QUEUE_REBAL,
-                        f"  [{idx}] Account {account_id}: {symbol}"
-                    ))
-
-            if not all_pairs:
-                # 재정렬할 주문이 없으면 조용히 종료 (로그 스팸 방지)
-                return
 
             # Step 3: 대기열 적체 모니터링 (재정렬 전 체크)
             large_queues = []
