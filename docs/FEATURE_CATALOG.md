@@ -55,8 +55,9 @@ grep -r "@FEAT:webhook-token" --include="*.html" --include="*.css"
 - **Phase 1** (완료): PendingOrder 토스트 필터링 + 배치 포맷 적용
   - 토스트 3개 → 0개 (필터링)
   - 포맷 통일: "📦 LIMIT 주문 생성 1건"
-- **Phase 2** (완료): 단일 주문도 배치 SSE 발송
-  - LIMIT/STOP 주문: order_batch_update SSE 발송
+- **Phase 2** (완료): 다중 계좌 주문에 배치 SSE 발송
+  - LIMIT/STOP 주문: 성공한 계좌가 2개 이상일 때 order_batch_update SSE 발송
+  - 단일 계좌 주문: 개별 SSE 사용 (기존 로직 유지)
   - MARKET 주문: 미발송 (메타데이터 부재)
 
 **태그**: `@FEAT:toast-ux-improvement @COMP:service,route @TYPE:integration @DEPS:webhook-order,event-sse`

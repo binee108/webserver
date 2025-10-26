@@ -43,7 +43,7 @@ PendingOrder(내부 큐)의 토스트 필터링 및 OpenOrder(거래소 주문) 
 ## Phase 2: Backend Batch SSE for Single Orders (완료)
 
 ### 목표
-단일 주문(`process_trading_signal()`)도 배치 주문과 동일하게 `emit_order_batch_update()` SSE를 발송하여 토스트 1개 표시
+다중 계좌 주문의 경우 `emit_order_batch_update()` SSE를 발송하여 토스트 1개 표시 (단일 계좌는 개별 SSE로 충분)
 
 ### 구현 내용
 
@@ -51,9 +51,12 @@ PendingOrder(내부 큐)의 토스트 필터링 및 OpenOrder(거래소 주문) 
 
 **추가 코드** (Line 726-743):
 ```python
-# 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
+# 성공한 고유 계정 수 계산
+successful_account_ids = set(r.get('account_id') for r in successful_trades if r.get('account_id'))
+
+# 🆕 Phase 2: 배치 SSE는 다중 계좌 주문에만 적용 (단일 계좌는 개별 SSE로 충분)
 # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
-if len(successful_trades) > 0 and self.service.event_emitter:
+if len(successful_account_ids) > 1 and self.service.event_emitter:
     # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
     # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
     # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
@@ -79,8 +82,9 @@ if len(successful_trades) > 0 and self.service.event_emitter:
 - 필터링 결과: 메타데이터가 있는 항목만 배치 SSE 발송
 
 **효과**:
-- 단일 LIMIT/STOP 주문: order_batch_update SSE 발송 → 토스트 1개 표시
-- 단일 MARKET 주문: 배치 SSE 미발송 (기존 로직 유지)
+- 다중 계좌 LIMIT/STOP 주문: order_batch_update SSE 발송 → 토스트 1개 표시
+- 단일 계좌 주문: 개별 SSE 사용 (기존 로직 유지)
+- 단일 MARKET 주문: 배치 SSE 미발송 (메타데이터 부재)
 - 배치 주문: 기존 동작 유지 (회귀 방지)
 
 ---
@@ -104,15 +108,19 @@ order_batch_update SSE 발송
 프론트엔드 showOrderNotification() → 토스트 1개
 ```
 
-### 단일 주문 (Phase 2 개선)
+### 다중 계좌 주문 (Phase 2 개선)
 ```
 웹훅 (직접 파라미터)
   ↓
 process_trading_signal()
   ↓
-_execute_trades_parallel()
+_execute_trades_parallel() (2개 이상 계좌)
   ↓
 results 수집 (메타데이터: order_type, event_type)
+  ↓
+successful_account_ids 계산 (고유 성공 계좌 수)
+  ↓
+len(successful_account_ids) > 1 확인
   ↓
 emit_order_batch_update() [Line 726-743] ← 🆕 Phase 2
   ↓
@@ -159,8 +167,9 @@ batch_results = [
 
 | 시나리오 | 기대 동작 | 상태 |
 |---------|---------|------|
-| 단일 LIMIT 주문 | order_batch_update SSE 1건 + 토스트 "📦 LIMIT 주문 생성 1건" | ✅ |
-| 단일 STOP 주문 | order_batch_update SSE 1건 + 토스트 "📦 STOP 주문 생성 1건" | ✅ |
+| 다중 계좌 LIMIT 주문 (2개) | order_batch_update SSE 1건 + 토스트 "📦 LIMIT 주문 생성 2건" | ✅ |
+| 다중 계좌 STOP 주문 (3개) | order_batch_update SSE 1건 + 토스트 "📦 STOP 주문 생성 3건" | ✅ |
+| 단일 계좌 LIMIT 주문 | 개별 SSE 사용 (배치 SSE 미발송) | ✅ |
 | 단일 MARKET 주문 | 배치 SSE 미발송 (기존 로직) | ✅ |
 | 배치 주문 (2개 LIMIT) | order_batch_update SSE 1건 + 토스트 "📦 LIMIT 주문 생성 2건" | ✅ |
 

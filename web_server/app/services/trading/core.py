@@ -723,9 +723,12 @@ class TradingCore:
 
         logger.info(f"거래 신호 처리 완료 - 성공: {len(successful_trades)}, 실패: {len(failed_trades)}")
 
-        # 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
+        # 성공한 고유 계정 수 계산
+        successful_account_ids = set(r.get('account_id') for r in successful_trades if r.get('account_id'))
+
+        # 🆕 Phase 2: 배치 SSE는 다중 계좌 주문에만 적용 (단일 계좌는 개별 SSE로 충분)
         # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
-        if len(successful_trades) > 0 and self.service.event_emitter:
+        if len(successful_account_ids) > 1 and self.service.event_emitter:
             # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
             # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
             # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
