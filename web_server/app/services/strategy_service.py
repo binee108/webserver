@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload, joinedload  # eager loading을 위한 import 추가
 
 from app import db
-from app.models import Strategy, Account, StrategyAccount, StrategyCapital
+from app.models import Strategy, Account, StrategyAccount, StrategyCapital, OpenOrder
 from app.services.analytics import analytics_service
 from app.constants import MarketType
 from app.exchanges.metadata import ExchangeMetadata, MarketType as ExchangeMarketType
@@ -774,8 +774,31 @@ class StrategyService:
             raise StrategyError(f'전략-계좌 설정 업데이트 실패: {str(e)}')
 
     # @FEAT:strategy-management @COMP:service @TYPE:core
-    def unsubscribe_from_strategy(self, strategy_id: int, user_id: int, account_id: int) -> bool:
-        """공개 전략 구독 해제"""
+    # @FEAT:strategy-subscription-safety @COMP:service @TYPE:core
+    def unsubscribe_from_strategy(self, strategy_id: int, user_id: int, account_id: int, force: bool = False) -> bool:
+        """공개 전략 구독 해제
+
+        Args:
+            strategy_id: 전략 ID
+            user_id: 사용자 ID
+            account_id: 계좌 ID
+            force: True일 경우 활성 포지션/주문 강제 청산 후 해제 (default: False)
+
+        Returns:
+            성공 여부 (bool)
+
+        Examples:
+            # Backward compatible: 활성 포지션 있으면 에러
+            unsubscribe_from_strategy(123, 456, 789, force=False)
+
+            # Phase 4: 강제 청산 후 해제
+            unsubscribe_from_strategy(123, 456, 789, force=True)
+
+        Raises:
+            StrategyError: 연결된 계좌를 찾을 수 없습니다.
+            StrategyError: 권한이 없습니다.
+            StrategyError: 활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. (force=False only)
+        """
         try:
             strategy_account = StrategyAccount.query.filter_by(
                 strategy_id=strategy_id,
@@ -788,37 +811,154 @@ class StrategyService:
             if strategy_account.account.user_id != user_id:
                 raise StrategyError('권한이 없습니다.')
 
-            # 활성 포지션 확인
-            if hasattr(strategy_account, 'strategy_positions') and strategy_account.strategy_positions:
-                active_positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
-                if active_positions:
-                    raise StrategyError('활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.')
-
             account_name = strategy_account.account.name
             affected_user_id = strategy_account.account.user_id
             # 세션 분리/삭제 후 lazy load 방지를 위해 미리 참조값 보관
             strategy_name = strategy_account.strategy.name if hasattr(strategy_account, 'strategy') and strategy_account.strategy else '알수없음'
 
-            # Phase 4: 구독 해제 전 SSE 클라이언트 정리
-            from app.services.event_service import event_service
-            cleaned = event_service.disconnect_client(
-                affected_user_id,
-                strategy_id,
-                reason='permission_revoked'
-            )
-            if cleaned > 0:
-                logger.info(
-                    f"구독 해제 - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+            # force=False: 기존 동작 (활성 포지션 있으면 에러)
+            if not force:
+                # 활성 포지션 확인
+                if hasattr(strategy_account, 'strategy_positions') and strategy_account.strategy_positions:
+                    active_positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
+                    if active_positions:
+                        raise StrategyError('활성 포지션이 있는 계좌는 연결 해제할 수 없습니다. 먼저 모든 포지션을 청산하세요.')
+
+                # Phase 4: 구독 해제 전 SSE 클라이언트 정리
+                from app.services.event_service import event_service
+                cleaned = event_service.disconnect_client(
+                    affected_user_id,
+                    strategy_id,
+                    reason='permission_revoked'
+                )
+                if cleaned > 0:
+                    logger.info(
+                        f"구독 해제 - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+                    )
+
+                self.session.delete(strategy_account)
+                self.session.commit()
+
+                # 남은 전략들로 자본 재배분
+                analytics_service.auto_allocate_capital_for_account(account_id)
+
+                logger.info(f'공개 전략 구독 해제: 전략 {strategy_name} - 계좌 {account_name}')
+                return True
+
+            # force=True: Phase 1 cleanup 패턴 적용
+            else:
+                # 필요한 서비스 import
+                from app.services.trading_service import trading_service
+                from app.services.event_service import event_service
+
+                failed_cleanups = []
+
+                # 1️⃣ Race condition 방지 - 먼저 비활성화 (웹훅 차단)
+                strategy_account.is_active = False
+                self.session.flush()  # DB 즉시 반영
+
+                # 2️⃣ 주문 취소 (3-stage verification)
+                cancel_result = trading_service.order_manager.cancel_all_orders_by_user(
+                    user_id=affected_user_id,
+                    strategy_id=strategy_id,
+                    account_id=account_id
                 )
 
-            self.session.delete(strategy_account)
-            self.session.commit()
+                # 취소 실패 추적
+                if cancel_result.get('failed_orders'):
+                    for failed in cancel_result['failed_orders']:
+                        failed_cleanups.append({
+                            'type': 'order_cancellation',
+                            'symbol': failed.get('symbol'),
+                            'order_id': failed.get('order_id'),
+                            'reason': failed.get('error')
+                        })
 
-            # 남은 전략들로 자본 재배분
-            analytics_service.auto_allocate_capital_for_account(account_id)
+                # 3️⃣ Defensive verification - 남은 주문 확인
+                remaining_orders = OpenOrder.query.filter_by(
+                    strategy_account_id=strategy_account.id
+                ).filter(OpenOrder.status.in_(['OPEN', 'PARTIALLY_FILLED', 'NEW'])).all()
 
-            logger.info(f'공개 전략 구독 해제: 전략 {strategy_name} - 계좌 {account_name}')
-            return True
+                if remaining_orders:
+                    logger.error(
+                        f"주문 취소 후에도 OpenOrder {len(remaining_orders)}개 남음: "
+                        f"strategy_account_id={strategy_account.id}"
+                    )
+
+                    for order in remaining_orders:
+                        failed_cleanups.append({
+                            'type': 'remaining_order',
+                            'symbol': order.symbol,
+                            'order_id': order.exchange_order_id,
+                            'quantity': str(order.quantity)
+                        })
+
+                # 4️⃣ 포지션 청산
+                if hasattr(strategy_account, 'strategy_positions') and strategy_account.strategy_positions:
+                    positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
+
+                    for position in positions:
+                        try:
+                            close_result = trading_service.position_manager.close_position_by_id(
+                                position_id=position.id,
+                                user_id=affected_user_id
+                            )
+
+                            if not close_result.get('success'):
+                                failed_cleanups.append({
+                                    'type': 'position_close',
+                                    'symbol': position.symbol,
+                                    'quantity': str(position.quantity),
+                                    'reason': close_result.get('error', 'Unknown error')
+                                })
+                        except Exception as e:
+                            logger.error(f"포지션 청산 오류: {e}", exc_info=True)
+                            failed_cleanups.append({
+                                'type': 'position_close_exception',
+                                'symbol': position.symbol,
+                                'quantity': str(position.quantity),
+                                'reason': str(e)
+                            })
+
+                # 5️⃣ SSE 연결 해제
+                cleaned = event_service.disconnect_client(
+                    affected_user_id,
+                    strategy_id,
+                    reason='permission_revoked'
+                )
+                if cleaned > 0:
+                    logger.info(
+                        f"구독 해제 (force) - 사용자 {affected_user_id} SSE {cleaned}개 종료"
+                    )
+
+                # 6️⃣ 실패 항목 로깅 (TODO: 텔레그램 알림)
+                if failed_cleanups:
+                    logger.warning(
+                        f"[strategy_id={strategy_id}] 구독 해제 중 {len(failed_cleanups)}개 항목 정리 실패: {failed_cleanups}"
+                    )
+                    # TODO: 텔레그램 서비스 구현 후 활성화
+                    # from app.services.telegram_service import send_message_to_user
+                    # message = f"⚠️ 전략 '{strategy_name}' 구독 해제 중 일부 실패\n\n"
+                    # message += f"계좌: {account_name}\n"
+                    # message += f"실패 항목: {len(failed_cleanups)}개\n\n"
+                    # for failure in failed_cleanups:
+                    #     message += f"- {failure['type']}: {failure.get('symbol', 'N/A')}\n"
+                    #     if 'reason' in failure:
+                    #         message += f"  오류: {failure['reason']}\n"
+                    # send_message_to_user(user_id=user_id, message=message)
+
+                # 7️⃣ DB에서 제거
+                self.session.delete(strategy_account)
+                self.session.commit()
+
+                # 남은 전략들로 자본 재배분
+                analytics_service.auto_allocate_capital_for_account(account_id)
+
+                logger.info(
+                    f'공개 전략 구독 해제 (force): 전략 {strategy_name} - 계좌 {account_name}, '
+                    f'실패 {len(failed_cleanups)}건'
+                )
+                return True
 
         except StrategyError:
             self.session.rollback()
