@@ -188,17 +188,77 @@ async function subscribeStrategy(strategyId, accountId) {
     }
 }
 
+// @FEAT:strategy-subscription-safety @COMP:frontend @TYPE:validation
+/**
+ * 전략 구독 해제
+ *
+ * Phase 3: 구독 해제 전 활성 포지션/주문 상태를 조회하여 경고 메시지 표시
+ * - Phase 2 API 통합: GET /api/strategies/{id}/subscribe/{account_id}/status
+ * - 슬리피지 위험 경고 (시장가 청산)
+ * - 심볼 목록 표시 (5개 초과 시 "외 N개"로 잘림)
+ * - 빈 상태 시 긍정적 메시지 표시
+ *
+ * @param {number} strategyId - 전략 ID
+ * @param {number} accountId - 계좌 ID
+ * @returns {Promise<void>}
+ */
 async function unsubscribeStrategy(strategyId, accountId) {
-    if (!confirm('이 전략에서 해당 계좌의 구독을 해제하시겠습니까? 활성 포지션이 있으면 해제할 수 없습니다.')) {
-        return;
-    }
-
     try {
-        await apiCall(`/api/strategies/${strategyId}/subscribe/${accountId}`, { method: 'DELETE' });
+        // Step 1: Get subscription status from Phase 2 API
+        const statusResponse = await apiCall(
+            `/api/strategies/${strategyId}/subscribe/${accountId}/status`
+        );
+
+        const { active_positions, open_orders, symbols, is_active } = statusResponse.data;
+
+        // Step 2: Build detailed warning message
+        let warningMessage = '';
+
+        if (active_positions > 0 || open_orders > 0) {
+            warningMessage = '⚠️ 구독 해제 시 다음 작업이 수행됩니다:\n\n';
+
+            if (active_positions > 0) {
+                // ✅ Priority 1-2: Slippage warning with explanation
+                warningMessage += `📊 활성 포지션 ${active_positions}개 강제 청산 (시장가)\n`;
+                warningMessage += `   ⚡ 슬리피지 발생 가능 (시장가 청산으로 예상 가격과 실제 체결가가 다를 수 있음)\n\n`;
+            }
+
+            if (open_orders > 0) {
+                warningMessage += `📝 미체결 주문 ${open_orders}개 취소\n\n`;
+            }
+
+            if (symbols && symbols.length > 0) {
+                // ✅ Priority 1-1: Symbol list truncation (max 5 symbols)
+                const symbolsDisplay = symbols.length > 5
+                    ? symbols.slice(0, 5).join(', ') + ` 외 ${symbols.length - 5}개`
+                    : symbols.join(', ');
+                warningMessage += `🎯 영향받는 심볼: ${symbolsDisplay}\n\n`;
+            }
+
+            warningMessage += '계속하시겠습니까?';
+        } else {
+            // ✅ Priority 1-3: Improved empty state message
+            warningMessage = '현재 활성화된 포지션/주문이 없습니다.\n구독을 해제하시겠습니까?';
+        }
+
+        // Step 3: Show confirmation dialog
+        if (!confirm(warningMessage)) {
+            return;
+        }
+
+        // Step 4: Call backend with force=true
+        // ✅ Priority 2-3: force=true will be handled in Phase 4
+        await apiCall(
+            `/api/strategies/${strategyId}/subscribe/${accountId}?force=true`,
+            { method: 'DELETE' }
+        );
+
         showToast('구독이 해제되었습니다.', 'success');
         loadSubscribedStrategies();
+
     } catch (error) {
-        // apiCall이 자동으로 에러 토스트 표시
+        // Error handled by apiCall
+        // Status query failure aborts unsubscribe (safe failure)
     }
 }
 
