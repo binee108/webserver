@@ -382,6 +382,50 @@ def create_app(config_name=None):
     return app
 
 # @FEAT:scheduler-persistence @COMP:config @TYPE:infrastructure
+# 전역 Flask 앱 인스턴스 참조 (APScheduler 배경 작업용)
+_flask_app = None
+
+# @FEAT:scheduler-persistence @COMP:config @TYPE:infrastructure
+def set_flask_app(app):
+    """
+    Flask 앱 인스턴스를 전역 변수에 설정
+
+    APScheduler 배경 작업 함수들이 pickle 직렬화 가능하도록
+    Flask 앱 객체를 전역 참조로 관리합니다.
+
+    Args:
+        app: Flask application instance
+
+    Notes:
+        - 애플리케이션 초기화 시 1회만 호출
+        - SQLAlchemyJobStore 사용 시 필수 (pickle 호환성)
+    """
+    global _flask_app
+    _flask_app = app
+
+# @FEAT:scheduler-persistence @COMP:config @TYPE:infrastructure
+def get_flask_app():
+    """
+    전역 Flask 앱 인스턴스 조회
+
+    Returns:
+        Flask application instance
+
+    Raises:
+        RuntimeError: Flask app이 초기화되지 않은 경우
+
+    Notes:
+        - 모든 배경 작업 함수에서 호출
+        - set_flask_app() 호출 후에만 사용 가능
+    """
+    if _flask_app is None:
+        raise RuntimeError(
+            "Flask app not initialized. "
+            "Call set_flask_app(app) before using background jobs."
+        )
+    return _flask_app
+
+# @FEAT:scheduler-persistence @COMP:config @TYPE:infrastructure
 def init_scheduler(app):
     """
     APScheduler 초기화 및 백그라운드 작업 등록
@@ -424,7 +468,10 @@ def init_scheduler(app):
             db_uri_safe = f"{parsed_uri.scheme}://{parsed_uri.hostname}:{parsed_uri.port}/{parsed_uri.path.strip('/')}"
             app.logger.info(f'APScheduler: SQLAlchemyJobStore 초기화 성공 (DB: {db_uri_safe})')
         except Exception as e:
-            app.logger.error(f'APScheduler: SQLAlchemyJobStore 초기화 실패 - {str(e)}')
+            app.logger.error(
+                f'APScheduler: SQLAlchemyJobStore 초기화 실패 - {str(e)}',
+                exc_info=True
+            )
             raise
         executors = {
             'default': ThreadPoolExecutor(20)
@@ -461,7 +508,7 @@ def init_scheduler(app):
         def force_update_orders():
             """주문 상태 강제 업데이트"""
             try:
-                update_open_orders_with_context(app)
+                update_open_orders()
                 return True
             except Exception as e:
                 app.logger.error(f'주문 상태 강제 업데이트 실패: {str(e)}')
@@ -470,7 +517,7 @@ def init_scheduler(app):
         def force_calculate_pnl():
             """미실현 손익 강제 계산"""
             try:
-                calculate_unrealized_pnl_with_context(app)
+                calculate_unrealized_pnl()
                 return True
             except Exception as e:
                 app.logger.error(f'미실현 손익 강제 계산 실패: {str(e)}')
@@ -518,10 +565,39 @@ def init_scheduler(app):
             app.logger.debug(f'텔레그램 시작 알림 전송 실패: {str(e)}')
 
     except Exception as e:
-        app.logger.error(f'APScheduler 초기화 실패: {str(e)}')
+        app.logger.error(
+            f'APScheduler 초기화 실패: {str(e)}',
+            exc_info=True
+        )
+
+# @FEAT:scheduler-persistence @COMP:job @TYPE:helper
+def refresh_symbol_validator():
+    """
+    SymbolValidator 갱신 작업 (APScheduler용 모듈 레벨 wrapper)
+
+    Phase 2: SQLAlchemyJobStore pickle 직렬화 호환성을 위한 wrapper 함수
+    SymbolValidator.refresh_symbols()는 바운드 메서드이며,
+    클래스가 threading.RLock()을 포함하므로 pickle 불가능.
+    모듈 레벨 함수로 간접 호출하여 pickle 호환성 확보.
+
+    Notes:
+        - 바운드 메서드는 객체 인스턴스 전체를 포함하므로 pickle 불가능
+        - 모듈 레벨 함수는 pickle 가능 (다른 14개 배경 작업과 동일 패턴)
+    """
+    from app.services.symbol_validator import symbol_validator
+    symbol_validator.refresh_symbols()
 
 def register_background_jobs(app):
-    """백그라운드 작업 등록"""
+    """
+    백그라운드 작업 등록
+
+    Phase 2: SQLAlchemyJobStore 호환성을 위해 모든 배경 작업 함수를
+    pickle 직렬화 가능하도록 리팩토링했습니다.
+    Flask 앱 객체를 전역 참조로 관리하여 각 함수가 독립적으로 app에 접근할 수 있습니다.
+    """
+
+    # Flask 앱 전역 설정 (pickle 직렬화 호환성을 위한 배경 작업 함수 지원)
+    set_flask_app(app)
 
     # Flask 요청 컨텍스트 정리 (이벤트 루프는 애플리케이션 종료 시까지 유지)
     @app.teardown_appcontext
@@ -546,13 +622,13 @@ def register_background_jobs(app):
         app.logger.info('🔄 Flask reloader 프로세스에서는 초기 캐시 웜업을 건너뜁니다')
     else:
         try:
-            warm_up_precision_cache_with_context(app)
+            warm_up_precision_cache()
             app.logger.info('✅ 애플리케이션 시작 시 Precision 캐시 웜업 완료')
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 Precision 캐시 웜업 실패: {str(e)}')
 
         try:
-            warm_up_market_caches_with_context(app)
+            warm_up_market_caches()
             app.logger.info('✅ 애플리케이션 시작 시 캐시 웜업 완료')
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 캐시 웜업 실패: {str(e)}')
@@ -560,15 +636,14 @@ def register_background_jobs(app):
         # ✅ NEW: MarketInfo warmup (Phase 1)
         # @FEAT:precision-system @COMP:service @TYPE:integration
         try:
-            warm_up_market_info_with_context()
+            warm_up_market_info()
             app.logger.info('✅ 애플리케이션 시작 시 MarketInfo 웜업 완료')
         except Exception as e:
             app.logger.error(f'❌ 애플리케이션 시작 시 MarketInfo 웜업 실패: {str(e)}')
 
     # 🆕 Precision 캐시 주기적 업데이트 (하루 1회, 새벽 3시 7분 - 소수 시간대)
     scheduler.add_job(
-        func=update_precision_cache_with_context,
-        args=[app],
+        func=update_precision_cache,
         trigger="cron",
         hour=3,
         minute=7,
@@ -579,10 +654,9 @@ def register_background_jobs(app):
     )
 
     # 🆕 Symbol Validator 갱신 (매시 15분 - 소수 시간대)
-    from app.services.symbol_validator import symbol_validator
+    # Phase 2: pickle 호환성을 위해 모듈 레벨 wrapper 함수 사용
     scheduler.add_job(
-        func=symbol_validator.refresh_symbols_with_context,
-        args=[app],
+        func=refresh_symbol_validator,
         trigger="cron",
         minute=15,
         id='symbol_validator_refresh',
@@ -600,8 +674,7 @@ def register_background_jobs(app):
     # - SymbolValidator 15분 갱신과 겹치지 않도록 설계
     # - 5분 TTL보다 짧아 캐시 만료 전 선행 갱신 보장
     scheduler.add_job(
-        func=refresh_market_info_with_context,
-        args=(app,),
+        func=refresh_market_info,
         trigger='interval',
         seconds=317,  # 5분 17초 (소수 주기)
         id='refresh_market_info',
@@ -613,8 +686,7 @@ def register_background_jobs(app):
 
     # 🆕 가격 캐시 업데이트 (31초마다, 소수 주기로 정각 집중 트래픽 회피)
     scheduler.add_job(
-        func=update_price_cache_with_context,
-        args=[app],
+        func=update_price_cache,
         trigger="interval",
         seconds=31,
         id='update_price_cache',
@@ -624,8 +696,7 @@ def register_background_jobs(app):
     )
     # 미체결 주문 상태 업데이트 (29초마다 - 소수 주기)
     scheduler.add_job(
-        func=update_open_orders_with_context,
-        args=[app],
+        func=update_open_orders,
         trigger="interval",
         seconds=29,
         id='update_open_orders',
@@ -636,8 +707,7 @@ def register_background_jobs(app):
 
     # 미실현 손익 계산 (307초마다 ≈ 5분 7초 - 소수 주기)
     scheduler.add_job(
-        func=calculate_unrealized_pnl_with_context,
-        args=[app],
+        func=calculate_unrealized_pnl,
         trigger="interval",
         seconds=307,
         id='calculate_unrealized_pnl',
@@ -648,8 +718,7 @@ def register_background_jobs(app):
 
     # 일일 요약 전송 (매일 저녁 9시 3분 - 소수 시간대)
     scheduler.add_job(
-        func=send_daily_summary_with_context,
-        args=[app],
+        func=send_daily_summary,
         trigger="cron",
         hour=21,
         minute=3,
@@ -661,8 +730,7 @@ def register_background_jobs(app):
 
     # Phase 3.4: 일일 성과 계산 (매일 00:00:13 - 소수 시간대)
     scheduler.add_job(
-        func=calculate_daily_performance_with_context,
-        args=[app],
+        func=calculate_daily_performance,
         trigger="cron",
         hour=0,
         minute=0,
@@ -680,8 +748,7 @@ def register_background_jobs(app):
     # - Phase 1의 이중 임계값 조건으로 불필요한 재할당 방지
     # - 5분 TTL 캐싱으로 거래소 API 부하 70% 감소
     scheduler.add_job(
-        func=auto_rebalance_all_accounts_with_context,
-        args=[app],
+        func=auto_rebalance_all_accounts,
         trigger="interval",
         seconds=660,
         id='auto_rebalance_accounts',
@@ -694,8 +761,7 @@ def register_background_jobs(app):
 
     # Phase 4.3: 증권 OAuth 토큰 자동 갱신 (6시간마다)
     scheduler.add_job(
-        func=refresh_securities_tokens_with_context,
-        args=[app],
+        func=refresh_securities_tokens,
         trigger="interval",
         hours=6,
         id='securities_token_refresh',
@@ -705,10 +771,9 @@ def register_background_jobs(app):
     )
 
     # Order Queue System: 대기열 재정렬 (1초마다)
-    from app.services.background.queue_rebalancer import rebalance_all_symbols_with_context
+    from app.services.background.queue_rebalancer import rebalance_all_symbols
     scheduler.add_job(
-        func=rebalance_all_symbols_with_context,
-        args=[app],
+        func=rebalance_all_symbols,
         trigger="interval",
         seconds=1,
         id='rebalance_order_queue',
@@ -719,8 +784,7 @@ def register_background_jobs(app):
 
     # Phase 2: 오래된 처리 잠금 해제 (60초마다)
     scheduler.add_job(
-        func=release_stale_order_locks_with_context,
-        args=[app],
+        func=release_stale_order_locks,
         trigger="interval",
         seconds=60,
         id='release_stale_order_locks',
@@ -731,8 +795,7 @@ def register_background_jobs(app):
 
     # Phase 4: WebSocket 연결 상태 모니터링 (1분마다)
     scheduler.add_job(
-        func=check_websocket_health_with_context,
-        args=[app],
+        func=check_websocket_health,
         trigger="interval",
         minutes=1,
         id='check_websocket_health',
@@ -744,7 +807,7 @@ def register_background_jobs(app):
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
 
 # @FEAT:background-log-tagging @COMP:app-init @TYPE:warmup
-def warm_up_market_info_with_context():
+def warm_up_market_info():
     """
     Flask app context 내에서 MarketInfo warmup 실행
 
@@ -798,19 +861,15 @@ def warm_up_market_info_with_context():
         # 실패해도 서버 시작은 계속
 
 # @FEAT:background-log-tagging @COMP:app-init @TYPE:background-refresh
-def refresh_market_info_with_context(app):
+def refresh_market_info():
     """
     Flask app context 내에서 MarketInfo 백그라운드 갱신 실행
-
-    Args:
-        app: Flask application instance (스케줄러에서 전달)
 
     스케줄러에 의해 주기적으로 호출되며(317초 간격), 모든 거래소의
     MarketInfo를 갱신하여 최신 상태 유지.
 
     Note:
-        - 스케줄러가 별도 스레드에서 호출하므로 app 파라미터 필수
-        - current_app 프록시 사용 불가 (thread-local 컨텍스트 없음)
+        - 스케줄러가 별도 스레드에서 호출
         - 317초(5분 17초) 주기로 실행 (소수 시간대, 정각 트래픽 회피)
         - API 기반 거래소만 갱신 (Binance, Bybit)
         - 고정 규칙 거래소는 건너뜀 (Upbit, Bithumb)
@@ -823,6 +882,7 @@ def refresh_market_info_with_context(app):
     Returns:
         None
     """
+    app = get_flask_app()
     from app.services.exchange import ExchangeService
 
     try:
@@ -843,8 +903,9 @@ def refresh_market_info_with_context(app):
         ))
 
 @tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
-def warm_up_precision_cache_with_context(app):
+def warm_up_precision_cache():
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 웜업"""
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.exchange import exchange_service
@@ -862,8 +923,9 @@ def warm_up_precision_cache_with_context(app):
             app.logger.error(f'❌ Precision 캐시 웜업 실패: {str(e)}')
 
 @tag_background_logger(BackgroundJobTag.PRECISION_CACHE)
-def update_precision_cache_with_context(app):
+def update_precision_cache():
     """🆕 애플리케이션 컨텍스트 내에서 Precision 캐시 주기적 업데이트"""
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.exchange import exchange_service
@@ -1012,8 +1074,9 @@ def _refresh_price_cache(app, *, source: str = 'scheduler') -> dict:
     return stats
 
 
-def warm_up_market_caches_with_context(app):
+def warm_up_market_caches():
     """애플리케이션 초기 구동 시 캐시를 일괄 웜업"""
+    app = get_flask_app()
     with app.app_context():
         try:
             stats = _refresh_price_cache(app, source='startup')
@@ -1023,8 +1086,9 @@ def warm_up_market_caches_with_context(app):
 
 
 @tag_background_logger(BackgroundJobTag.PRICE_CACHE)
-def update_price_cache_with_context(app):
+def update_price_cache():
     """주기적으로 가격 캐시를 갱신"""
+    app = get_flask_app()
     with app.app_context():
         try:
             stats = _refresh_price_cache(app, source='scheduler')
@@ -1033,8 +1097,9 @@ def update_price_cache_with_context(app):
             app.logger.error(f'❌ 가격 캐시 업데이트 실패: {str(e)}')
 
 @tag_background_logger(BackgroundJobTag.ORDER_UPDATE)
-def update_open_orders_with_context(app):
+def update_open_orders():
     """Flask 앱 컨텍스트 내에서 미체결 주문 상태 업데이트"""
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.trading import trading_service as order_service
@@ -1053,8 +1118,9 @@ def update_open_orders_with_context(app):
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
 @tag_background_logger(BackgroundJobTag.PNL_CALC)
-def calculate_unrealized_pnl_with_context(app):
+def calculate_unrealized_pnl():
     """Flask 앱 컨텍스트 내에서 미실현 손익 계산"""
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.trading import trading_service as position_service
@@ -1073,8 +1139,9 @@ def calculate_unrealized_pnl_with_context(app):
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
 @tag_background_logger(BackgroundJobTag.DAILY_SUMMARY)
-def send_daily_summary_with_context(app):
+def send_daily_summary():
     """Flask 앱 컨텍스트 내에서 일일 요약 보고서 전송"""
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.analytics import analytics_service
@@ -1108,7 +1175,7 @@ def send_daily_summary_with_context(app):
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
 @tag_background_logger(BackgroundJobTag.AUTO_REBAL)
-def auto_rebalance_all_accounts_with_context(app):
+def auto_rebalance_all_accounts():
     """
     Phase 2: Flask 앱 컨텍스트 내에서 자동 리밸런싱 실행
 
@@ -1116,6 +1183,7 @@ def auto_rebalance_all_accounts_with_context(app):
     조건 충족 시 자동으로 자본 재배분을 실행합니다.
     660초(11분)마다 실행됩니다 (하루 약 130회).
     """
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.capital_service import capital_allocation_service
@@ -1184,13 +1252,14 @@ def auto_rebalance_all_accounts_with_context(app):
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
 @tag_background_logger(BackgroundJobTag.PERF_CALC)
-def calculate_daily_performance_with_context(app):
+def calculate_daily_performance():
     """
     Phase 3.4: Flask 앱 컨텍스트 내에서 일일 성과 계산
 
     모든 활성 전략에 대해 전날의 성과를 계산하고 DB에 저장합니다.
     매일 자정 30초 후 실행되어 전날(어제) 데이터를 처리합니다.
     """
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.performance_tracking import performance_tracking_service
@@ -1250,13 +1319,14 @@ def calculate_daily_performance_with_context(app):
                 pass  # 텔레그램 알림 실패는 조용히 무시
 
 @tag_background_logger(BackgroundJobTag.LOCK_RELEASE)
-def release_stale_order_locks_with_context(app):
+def release_stale_order_locks():
     """
     Phase 2: Flask 앱 컨텍스트 내에서 오래된 처리 잠금 해제
 
     5분 이상 처리 중인 주문의 잠금을 해제하여 프로세스 크래시 시 복구합니다.
     60초마다 실행됩니다.
     """
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.trading import trading_service
@@ -1265,13 +1335,14 @@ def release_stale_order_locks_with_context(app):
             app.logger.error(f"❌ 오래된 처리 잠금 해제 실패: {str(e)}")
 
 @tag_background_logger(BackgroundJobTag.WS_HEALTH)
-def check_websocket_health_with_context(app):
+def check_websocket_health():
     """
     Phase 4: Flask 앱 컨텍스트 내에서 WebSocket 연결 상태 모니터링
 
     활성 계정의 WebSocket 연결 상태를 확인하고,
     연결이 끊어진 계정은 자동으로 재연결합니다.
     """
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.services.trading import trading_service
@@ -1313,7 +1384,7 @@ def check_websocket_health_with_context(app):
         except Exception as e:
             app.logger.error(f"❌ WebSocket 상태 모니터링 실패: {str(e)}")
 
-def refresh_securities_tokens_with_context(app):
+def refresh_securities_tokens():
     """
     Phase 4.3: Flask 앱 컨텍스트 내에서 증권 OAuth 토큰 자동 갱신
 
@@ -1325,6 +1396,7 @@ def refresh_securities_tokens_with_context(app):
       * 토큰 유효기간: 24시간
       * 갱신 주기: 6시간
     """
+    app = get_flask_app()
     with app.app_context():
         try:
             from app.jobs.securities_token_refresh import SecuritiesTokenRefreshJob
