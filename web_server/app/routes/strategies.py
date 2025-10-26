@@ -481,6 +481,116 @@ def update_strategy(strategy_id):
         current_app.logger.error(f"전략 수정 오류: {str(e)}")
         return exception_to_error_response(e)
 
+# @FEAT:strategy-subscription-safety @COMP:route @TYPE:core
+@bp.route('/strategies/<int:strategy_id>/subscribe/<int:account_id>/status', methods=['GET'])
+@login_required
+def get_subscription_status(strategy_id: int, account_id: int):
+    """
+    구독 상태 조회 API
+
+    구독 해제 전 프론트엔드에서 경고 메시지를 표시하기 위한 상태 정보를 반환합니다.
+
+    Args:
+        strategy_id: 전략 ID
+        account_id: 계좌 ID
+
+    Returns:
+        JSON: {
+            success: true,
+            data: {
+                active_positions: int,  # quantity != 0인 포지션 개수
+                open_orders: int,       # 미체결 주문 개수
+                symbols: list,          # 영향받는 심볼 목록 (정렬)
+                is_active: bool         # 구독 활성 상태
+            }
+        }
+
+    Errors:
+        403: 계좌 소유자가 아님 (접근 권한 없음)
+        404: 구독 정보를 찾을 수 없음
+        500: 서버 오류
+
+    Example:
+        GET /api/strategies/123/subscribe/456/status
+
+        Response:
+        {
+            "success": true,
+            "data": {
+                "active_positions": 2,
+                "open_orders": 3,
+                "symbols": ["BTC/USDT", "ETH/USDT"],
+                "is_active": true
+            }
+        }
+    """
+    try:
+        # Step 1: Account 소유권 먼저 확인 (보안: 가벼운 쿼리로 권한 검증)
+        account = Account.query.filter_by(id=account_id).first()
+        if not account or account.user_id != current_user.id:
+            # 보안: 계좌 없음과 권한 없음을 구분하지 않음 (정보 은닉)
+            return create_error_response(
+                error_code=ErrorCode.ACCESS_DENIED,
+                message='접근 권한이 없습니다.'
+            )
+
+        # Step 2: 권한 확인 후 StrategyAccount 조회 (성능: 권한 없는 요청은 expensive loading 전에 차단)
+        strategy_account = StrategyAccount.query.options(
+            joinedload(StrategyAccount.strategy_positions)
+            # Note: account는 이미 조회했으므로 joinedload 불필요
+        ).filter_by(
+            strategy_id=strategy_id,
+            account_id=account_id
+        ).first()
+
+        if not strategy_account:
+            return create_error_response(
+                error_code=ErrorCode.RESOURCE_NOT_FOUND,
+                message='구독 정보를 찾을 수 없습니다.'
+            )
+
+        # Step 3: 활성 포지션 필터링 (quantity != 0만)
+        active_positions = [pos for pos in strategy_account.strategy_positions if pos.quantity != 0]
+
+        # Step 4: 미체결 주문 조회
+        # OpenOrder 가능 상태: OPEN, PARTIALLY_FILLED, NEW, CANCELLED, FILLED
+        # 미체결로 간주: OPEN, PARTIALLY_FILLED, NEW
+        open_orders = OpenOrder.query.filter_by(
+            strategy_account_id=strategy_account.id
+        ).filter(OpenOrder.status.in_(['OPEN', 'PARTIALLY_FILLED', 'NEW'])).all()
+
+        # Step 5: 심볼 목록 추출 (중복 제거, 정렬)
+        symbols = set()
+        for pos in active_positions:
+            symbols.add(pos.symbol)
+        for order in open_orders:
+            symbols.add(order.symbol)
+        symbols = sorted(list(symbols))
+
+        # Step 6: 디버그 로깅 (선택사항)
+        current_app.logger.debug(
+            f"구독 상태 조회 완료 - strategy_id={strategy_id}, account_id={account_id}, "
+            f"활성_포지션={len(active_positions)}, 미체결_주문={len(open_orders)}"
+        )
+
+        # Step 7: 응답 반환
+        return create_success_response(data={
+            'active_positions': len(active_positions),
+            'open_orders': len(open_orders),
+            'symbols': symbols,
+            'is_active': strategy_account.is_active
+        })
+
+    except Exception as e:
+        current_app.logger.error(
+            f"구독 상태 조회 오류 - strategy_id={strategy_id}, account_id={account_id}: {e}",
+            exc_info=True
+        )
+        return create_error_response(
+            error_code=ErrorCode.INTERNAL_SERVER_ERROR,
+            message='구독 상태 조회 중 오류가 발생했습니다.'
+        )
+
 # @FEAT:strategy-management @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/toggle', methods=['POST'])
 @login_required

@@ -19,33 +19,42 @@
 
 ## Recent Updates
 
-### 2025-10-26: Strategy Subscription Safety - Public→Private Transition (Phase 1)
+### 2025-10-26: Strategy Subscription Safety - Public→Private Transition & Status Query (Phase 1-2)
 **영향 범위**: `strategy-subscription-safety`
 **파일**:
-- `web_server/app/routes/strategies.py` (Lines 264-420)
+- `web_server/app/routes/strategies.py` (Lines 264-420, 484-592)
 
-**기능 설명**: 공개→비공개 전환 시 구독자 포지션/주문 강제 청산
+**기능 설명**: 공개→비공개 전환 시 구독자 정리 + 구독 상태 조회 API
 - **Phase 1** (완료): 전략 소유자가 공개→비공개로 변경 시 모든 구독자의:
   1. 미체결 주문 취소 (`cancel_all_orders_by_user()`)
   2. 활성 포지션 청산 (`close_position_by_id()`)
   3. SSE 연결 종료 (`event_service.disconnect_client()`)
   4. 실패 내역 추적 (`failed_cleanups` 배열)
   5. 텔레그램 알림 구조 (TODO)
+  - **Race Condition 방지**: `is_active=False` → `flush()` 순서로 웹훅 차단
+  - **Best-Effort 방식**: 일부 실패 허용, 로그 기록 (WARNING/INFO)
 
-- **Race Condition 방지**: `is_active=False` → `flush()` 순서로 웹훅 차단
-- **Best-Effort 방식**: 일부 실패 허용, 로그 기록 (WARNING/INFO)
+- **Phase 2** (완료): 구독 해제 전 상태 조회 API
+  - **엔드포인트**: `GET /api/strategies/<strategy_id>/subscribe/<account_id>/status`
+  - **반환 데이터**: `{active_positions: int, open_orders: int, symbols: list, is_active: bool}`
+  - **보안**: Account 소유권 먼저 확인하여 타인 정보 탐색 차단
+  - **성능**: N+1 쿼리 방지 (joinedload 사용)
+  - **에러 처리**: 403 ACCESS_DENIED (권한 없음), 404 RESOURCE_NOT_FOUND (구독 미존재)
 
 **태그**: `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core`
 
 **검색**:
 ```bash
+# 전체 기능 검색
 grep -r "@FEAT:strategy-subscription-safety" --include="*.py"
+
+# Phase 2 API만 검색
+grep -n "def get_subscription_status" web_server/app/routes/strategies.py
 ```
 
 **문서**: `docs/features/strategy-subscription-safety.md`
 
 **향후 Phase**:
-- Phase 2: 구독 해제 상태 조회 API
 - Phase 3: 구독 해제 UI 경고 메시지
 - Phase 4: 구독 해제 백엔드 강제 청산
 - Phase 5: 웹훅 실행 시 `is_active` 재확인
