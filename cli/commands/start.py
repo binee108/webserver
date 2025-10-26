@@ -177,10 +177,13 @@ class StartCommand(BaseCommand):
             return 1
 
     def _detect_and_stop_conflicts(self) -> bool:
-        """다른 경로에서 실행 중인 서비스 감지 및 중지
+        """DEPRECATED: 하위 호환성을 위해 유지, 실제로는 종료하지 않음
+
+        다른 워크트리/메인 프로젝트의 서비스 정보만 확인합니다.
+        더 이상 서비스를 종료하지 않습니다.
 
         Returns:
-            bool: 성공 시 True
+            bool: 항상 True 반환 (하위 호환성 보장)
         """
         # 다른 경로의 webserver 프로젝트 감지
         try:
@@ -202,23 +205,19 @@ class StartCommand(BaseCommand):
 
                 if other_projects:
                     self.printer.print_status(
-                        f"다른 경로에서 실행 중인 프로젝트 발견: {', '.join(other_projects)}",
-                        "warning"
+                        f"다른 경로에서 실행 중인 서비스 발견: {', '.join(other_projects)}",
+                        "info"
                     )
 
-                    # 자동으로 중지
-                    for project in other_projects:
-                        self.printer.print_status(f"{project} 프로젝트 중지 중...", "info")
-                        try:
-                            subprocess.run(
-                                self.docker.compose_cmd + ['-p', project, 'down'],
-                                capture_output=True,
-                                timeout=30
-                            )
-                        except Exception:
-                            pass
-
-                    time.sleep(3)  # 컨테이너 정리 대기
+                    # 정보만 출력 (종료하지 않음)
+                    self.printer.print_status(
+                        "다른 서비스는 유지되며, 포트 충돌 시 자동 재할당됩니다",
+                        "info"
+                    )
+                    self.printer.print_status(
+                        "각 워크트리는 독립적으로 실행되어 서로 영향을 주지 않습니다",
+                        "info"
+                    )
 
             return True
         except Exception:
