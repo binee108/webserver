@@ -604,6 +604,68 @@ function setButtonLoading(button, isLoading, loadingText = '처리 중...') {
     }
 }
 
+// @FEAT:modal-management @COMP:util @TYPE:core
+// WHY: 7곳의 중복 모달 열기 패턴을 1개 함수로 통합하여 유지보수성 향상.
+//      백드롭, ESC 키, overflow 제어를 자동화하여 일관성 확보.
+//      onOpen 콜백으로 모달별 초기화 로직 분리.
+/**
+ * 모달을 열고 백드롭/ESC 키 이벤트를 설정합니다.
+ * @param {string} modalId - 열 모달의 DOM ID
+ * @param {Object} [options={}] - 옵션 객체
+ * @param {Function} [options.onOpen] - 모달 열린 후 실행할 콜백 (modal 요소를 인자로 받음)
+ * @param {boolean} [options.preventBackdropClose=false] - 백드롭 클릭으로 닫기 방지
+ * @example
+ * openModal('strategyModal', { onOpen: () => resetForm() })
+ * @returns {HTMLElement|null} 열린 모달 요소, 실패 시 null
+ */
+async function openModal(modalId, options = {}) {
+    const { onOpen = null, preventBackdropClose = false } = options;
+
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+        console.error(`[openModal] Modal not found: ${modalId}`);
+        return null;
+    }
+
+    // preventBackdropClose 설정 저장
+    if (preventBackdropClose) {
+        modal.dataset.preventBackdropClose = 'true';
+    } else {
+        delete modal.dataset.preventBackdropClose;
+    }
+
+    // 모달 표시
+    modal.classList.remove('hidden');
+
+    // onOpen 콜백 실행
+    if (onOpen) {
+        await onOpen(modal);
+    }
+
+    return modal;
+}
+
+// @FEAT:modal-management @COMP:util @TYPE:core
+// WHY: 3곳의 중복 모달 닫기 패턴을 1개 함수로 통합.
+//      일관된 숨김 처리 및 dataset 정리.
+/**
+ * 모달을 닫습니다.
+ * @param {string} modalId - 닫을 모달의 DOM ID
+ * @returns {boolean} 성공 시 true, 실패 시 false
+ */
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+        console.error(`[closeModal] Modal not found: ${modalId}`);
+        return false;
+    }
+
+    modal.classList.add('hidden');
+    delete modal.dataset.preventBackdropClose;
+
+    return true;
+}
+
 // @FEAT:futures-validation @COMP:route @TYPE:integration
 // NOTE: 이 함수는 apiCall()을 사용하지 않음
 // WHY: 초기화 실패 시 console.warn만 표시하므로 사용자 토스트 불필요.
@@ -851,10 +913,11 @@ function renderPublicStrategy(s) {
     </div>`;
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openSubscribeModal(strategyId) {
-    // 기존 계좌 연결 모달을 재사용
-    document.getElementById('accountModal').classList.remove('hidden');
-    renderSubscribeAccountPicker(strategyId);
+    openModal('accountModal', {
+        onOpen: () => renderSubscribeAccountPicker(strategyId)
+    });
 }
 
 async function renderSubscribeAccountPicker(strategyId) {
@@ -1047,49 +1110,58 @@ async function unsubscribeStrategy(strategyId, accountId) {
     }
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 async function openPublicDetail(strategyId) {
-    const modal = document.getElementById('accountModal');
     const modalContent = document.getElementById('accountModalContent');
-    modal.classList.remove('hidden');
-    renderState(modalContent, 'loading');
 
-    try {
-        const data = await apiCall(`/api/strategies/public/${strategyId}`, { autoErrorToast: false });
-        const s = data.strategy;
+    await openModal('accountModal', {
+        onOpen: async () => {
+            renderState(modalContent, 'loading');
 
-        if (!s) {
-            throw new Error('전략 정보를 찾을 수 없습니다.');
+            try {
+                const data = await apiCall(`/api/strategies/public/${strategyId}`, { autoErrorToast: false });
+                const s = data.strategy;
+
+                if (!s) {
+                    throw new Error('전략 정보를 찾을 수 없습니다.');
+                }
+
+                modalContent.innerHTML = `
+                    <div class="space-y-4">
+                        <div>
+                            <div class="text-lg font-semibold text-primary">${s.name}</div>
+                            <div class="text-sm text-muted">${s.description || ''}</div>
+                            <div class="text-xs text-secondary mt-1">마켓: ${s.market_type.toUpperCase()}</div>
+                        </div>
+                        <div class="flex justify-end space-x-2">
+                            <button class="btn btn-secondary" onclick="renderSubscribeAccountPicker(${s.id})">계좌 선택하여 구독</button>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                renderState(modalContent, 'error', {
+                    message: error.message,
+                    onRetry: () => openPublicDetail(strategyId)
+                });
+            }
         }
-
-        modalContent.innerHTML = `
-            <div class="space-y-4">
-                <div>
-                    <div class="text-lg font-semibold text-primary">${s.name}</div>
-                    <div class="text-sm text-muted">${s.description || ''}</div>
-                    <div class="text-xs text-secondary mt-1">마켓: ${s.market_type.toUpperCase()}</div>
-                </div>
-                <div class="flex justify-end space-x-2">
-                    <button class="btn btn-secondary" onclick="renderSubscribeAccountPicker(${s.id})">계좌 선택하여 구독</button>
-                </div>
-            </div>
-        `;
-    } catch (error) {
-        renderState(modalContent, 'error', {
-            message: error.message,
-            onRetry: () => openPublicDetail(strategyId)
-        });
-    }
+    });
 }
 // 전략 관련 함수들
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openAddStrategyModal() {
-    document.getElementById('strategyModalTitle').textContent = '전략 추가';
-    document.getElementById('strategyForm').reset();
-    document.getElementById('strategyId').value = '';
-    document.getElementById('strategyModal').classList.remove('hidden');
+    openModal('strategyModal', {
+        onOpen: () => {
+            document.getElementById('strategyModalTitle').textContent = '전략 추가';
+            document.getElementById('strategyForm').reset();
+            document.getElementById('strategyId').value = '';
+        }
+    });
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function closeStrategyModal() {
-    document.getElementById('strategyModal').classList.add('hidden');
+    closeModal('strategyModal');
 }
 
 async function editStrategy(strategyId) {
@@ -1164,13 +1236,16 @@ async function submitStrategy(event) {
     }
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openAccountModal(strategyId) {
-    document.getElementById('accountModal').classList.remove('hidden');
-    loadStrategyAccountModal(strategyId);
+    openModal('accountModal', {
+        onOpen: () => loadStrategyAccountModal(strategyId)
+    });
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function closeAccountModal() {
-    document.getElementById('accountModal').classList.add('hidden');
+    closeModal('accountModal');
 }
 
 async function loadStrategyAccountModal(strategyId) {
@@ -1475,13 +1550,16 @@ function disconnectAccount(strategyId, accountId) {
     }
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openCapitalModal(strategyId) {
-    document.getElementById('capitalModal').classList.remove('hidden');
-    loadCapitalModal(strategyId);
+    openModal('capitalModal', {
+        onOpen: () => loadCapitalModal(strategyId)
+    });
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function closeCapitalModal() {
-    document.getElementById('capitalModal').classList.add('hidden');
+    closeModal('capitalModal');
 }
 
 async function loadCapitalModal(strategyId) {
@@ -1684,21 +1762,33 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // 모달 외부 클릭 시 닫기
-    document.querySelectorAll('.modal-overlay').forEach(modal => {
-        modal.addEventListener('click', function(e) {
-            if (e.target === this) {
-                this.classList.add('hidden');
+    // @FEAT:modal-management @COMP:util @TYPE:core
+    // WHY: 이벤트 위임 패턴으로 메모리 효율성 개선 (querySelectorAll 루프 제거).
+    //      preventBackdropClose dataset 지원으로 특수 케이스 처리.
+    //      ESC 키는 최상위 모달만 닫도록 개선 (모달 중첩 시).
+
+    // 백드롭 클릭으로 모달 닫기 (이벤트 위임)
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay') && !e.target.classList.contains('hidden')) {
+            // preventBackdropClose 체크
+            if (e.target.dataset.preventBackdropClose !== 'true') {
+                e.target.classList.add('hidden');
+                delete e.target.dataset.preventBackdropClose;
             }
-        });
+        }
     });
-    
-    // ESC 키로 모달 닫기
-    document.addEventListener('keydown', function(e) {
+
+    // ESC 키로 최상위 모달 닫기
+    document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            document.querySelectorAll('.modal-overlay').forEach(modal => {
-                modal.classList.add('hidden');
-            });
+            const visibleModals = document.querySelectorAll('.modal-overlay:not(.hidden)');
+            if (visibleModals.length > 0) {
+                const topModal = visibleModals[visibleModals.length - 1]; // 최상위 모달
+                if (topModal.dataset.preventBackdropClose !== 'true') {
+                    topModal.classList.add('hidden');
+                    delete topModal.dataset.preventBackdropClose;
+                }
+            }
         }
     });
 });
