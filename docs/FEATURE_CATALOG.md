@@ -1523,6 +1523,106 @@ grep -n "_select_top_orders" web_server/app/services/trading/order_queue_manager
 
 ---
 
-*Last Updated: 2025-10-21*
-*Recent Changes: Phase 3 - 국내 거래소 KRW → USDT 변환 with Graceful Degradation*
+### Phase 4: Strategy Rendering Consolidation (2025-10-26 완료)
+
+**개요**: strategies.html에서 중복된 렌더링 로직(배지, 메트릭, 계좌)을 8개 함수로 통합하여 유지보수성 향상
+
+#### 변경 사항
+
+**Stage A: 배지 생성 함수 (3개)**
+- `renderStatusBadge(isActive)` (Line 444) - 활성/비활성 배지
+  - 활성: 초록색 "Active", 비활성: 회색 "Inactive"
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+- `renderMarketTypeBadge(marketType)` (Line 462) - 선물/현물 배지
+  - 입력 정규화: `.toUpperCase()` 처리
+  - "FUTURES" → "선물", "SPOT" → "현물"
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+- `renderPublicBadge(isPublic)` (Line 492) - 공개/비공개 배지
+  - 공개: 파란색 "Public", 비공개: 회색 "Private"
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+**Stage B: 메트릭 렌더링 (2개 + 1 상수)**
+- `METRIC_ICONS` (Line 504) - 상수: SVG 아이콘 경로
+  - accounts: 사람 아이콘 SVG path
+  - positions: 포지션 아이콘 SVG path
+  - @FEAT:strategy-rendering @COMP:util @TYPE:config
+
+- `renderMetricItem(iconPath, value, label)` (Line 520) - 메트릭 아이템 (아이콘+값+라벨)
+  - 아이콘 + 우측정렬 값 + 라벨 패턴
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+**Stage C: 계좌 아이템 렌더링 (1개)**
+- `renderAccountItem(account, options)` (Line 558) - 계좌 아이템 HTML 생성
+  - Options: `showActions` (true: 버튼표시), `strategyId`, `showInactiveTag`
+  - 계좌명 + 잔액 + 선택적 액션 버튼
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+**Stage D: 전략 카드 부분 통합 (2개)**
+- `renderStrategyBadges(strategy)` (Line 614) - Stage A 3개 함수 조합
+  - renderStatusBadge, renderMarketTypeBadge, renderPublicBadge 호출
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+- `renderStrategyMetrics(strategy)` (Line 640) - Stage B 함수 활용
+  - METRIC_ICONS + renderMetricItem 활용
+  - @FEAT:strategy-rendering @COMP:util @TYPE:core
+
+#### 마이그레이션 완료
+
+**renderSubscribedStrategy() 함수 (Line 990)**
+- Line 1001: `renderStrategyBadges(s)` 호출 (배지 인라인 HTML 제거)
+- Line 1020: `renderStrategyMetrics(s)` 호출 (메트릭 인라인 SVG 제거)
+- Line 1040: `renderAccountItem(a, {...})` 호출 (계좌 인라인 HTML 제거)
+- 결과: ~40줄 인라인 코드 제거, 재사용성 향상
+
+#### 효과
+
+| 항목 | 개선사항 |
+|------|---------|
+| **유지보수성** | 배지/메트릭/계좌 렌더링 로직 중앙화 |
+| **코드 중복** | 40줄 인라인 HTML 제거 |
+| **확장성** | Phase 5 (Jinja2 → JS 마이그레이션) 준비 완료 |
+| **추상화 레벨** | 원시 함수 → 조합 함수 → 조립 함수 (3-tier) |
+| **Quality Score** | 92/100 (Code Review) |
+
+#### 파일 변경
+- **파일**: `web_server/app/templates/strategies.html`
+  - 기존: 1,870 lines (Phase 3 후)
+  - 최종: 2,046 lines (Phase 4)
+  - 순증가: +176 lines (8개 함수 + JSDoc + 주석)
+
+#### 검색 패턴
+
+```bash
+# 모든 렌더링 함수 찾기
+grep -r "@FEAT:strategy-rendering" --include="*.html"
+
+# renderStatusBadge 호출처 (renderStrategyBadges 내부만)
+grep -n "renderStatusBadge(" web_server/app/templates/strategies.html | grep -v "function renderStatusBadge" | grep -v "^\s*\*"
+
+# renderStrategyBadges 호출처 (renderSubscribedStrategy에서만)
+grep -n "renderStrategyBadges(" web_server/app/templates/strategies.html | grep -v "function renderStrategyBadges"
+
+# renderAccountItem 호출처 (renderSubscribedStrategy.map에서만)
+grep -n "renderAccountItem(" web_server/app/templates/strategies.html | grep -v "function renderAccountItem" | grep -v "^\s*\*"
+
+# 3-tier 추상화 계층 확인
+grep -n "function render" web_server/app/templates/strategies.html | grep -E "renderStatusBadge|renderMarketTypeBadge|renderPublicBadge|renderMetricItem|renderAccountItem|renderStrategyBadges|renderStrategyMetrics"
+```
+
+#### Phase 1-4 비교 요약
+
+| Phase | 점수 | 주요 개선 | 코드 증가 |
+|-------|------|----------|----------|
+| Phase 1 | 89/100 | 버튼 재배치 | +22 lines |
+| Phase 2 | 92/100 | API/상태 관리 통합 | +9 lines |
+| Phase 3 | 93/100 | 모달 관리 통합 | +90 lines |
+| **Phase 4** | **92/100** | **렌더링 함수 통합** | **+176 lines** |
+| **누적** | **91.5** | **완전 리팩토링** | **+297 lines** |
+
+---
+
+*Last Updated: 2025-10-26*
+*Recent Changes: Phase 4 - Strategy Rendering Consolidation (배지/메트릭/계좌 통합)*
 
