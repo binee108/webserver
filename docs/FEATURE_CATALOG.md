@@ -67,8 +67,7 @@ grep -n "_get_port_info" web_server/cli/commands/list.py
 
 **원리**:
 - Docstring (Lines 128-154): Issue #5 명시 + 동작 설명
-- `_get_port_info()` (Lines 127-173): 메인/워크트리 동일 로직
-- `_get_project_root_dir()` (Lines 175+): 워크트리 자동 감지
+- `_get_port_info()` (Lines 127-173): 메인/워크트리 동일 로직 (Docker API 전용)
 
 ---
 
