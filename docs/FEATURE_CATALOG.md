@@ -32,6 +32,7 @@
 ### 💰 Position & Capital
 - **position-tracking** - 포지션 관리, 평균가 계산, 손익 추적 [`@COMP:service`] → [docs](features/position-tracking.md)
 - **capital-management** - 자본 배분, 재할당, 수량 계산 [`@COMP:service,route`] → [docs](features/capital-management.md)
+  - **마켓별 잔고 조회** (`_get_cached_daily_balance`) - 캐시된 일일 잔고를 마켓 타입별로 조회 | `@FEAT:analytics` `@FEAT:capital-management` `@COMP:service` `@TYPE:helper` | Lines 1480-1522 | Issue #7 선물 전략 잔고 할당 버그 수정
 
 ### 🔌 Exchange Integration
 - **exchange-integration** - 거래소 통합 레이어 (Binance, Upbit, Bybit, Bithumb, KIS) [`@COMP:exchange`] → [docs](features/exchange-integration.md)

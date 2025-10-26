@@ -1477,8 +1477,25 @@ class AnalyticsService:
         return market_totals
 
     # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:helper
-    def _get_cached_daily_balance(self, account_id: int) -> Optional[float]:
-        """가장 최근 저장된 일일 요약에서 총 잔고를 가져온다"""
+    def _get_cached_daily_balance(self, account_id: int, market_type: Optional[str] = None) -> Optional[float]:
+        """
+        Get the most recent cached daily balance for an account.
+
+        Args:
+            account_id: Account ID
+            market_type: Optional market type (MarketType.SPOT_LOWER, MarketType.FUTURES_LOWER)
+                        - MarketType.SPOT_LOWER: Returns spot_balance
+                        - MarketType.FUTURES_LOWER: Returns futures_balance
+                        - None: Returns ending_balance (default, backward compatible)
+
+        Returns:
+            Balance amount (0.0 if NULL) or None if no data available
+
+        Examples:
+            >>> _get_cached_daily_balance(1, MarketType.SPOT_LOWER)      # Returns spot_balance
+            >>> _get_cached_daily_balance(1, MarketType.FUTURES_LOWER)   # Returns futures_balance
+            >>> _get_cached_daily_balance(1)                             # Returns ending_balance (기존 동작)
+        """
         summary = (
             DailyAccountSummary.query
             .filter_by(account_id=account_id)
@@ -1489,8 +1506,20 @@ class AnalyticsService:
         if not summary:
             return None
 
-        latest_balance = summary.ending_balance or summary.starting_balance or 0.0
-        return float(latest_balance) if latest_balance else None
+        # 마켓 타입별 잔고 반환
+        if market_type == MarketType.SPOT_LOWER:
+            balance = summary.spot_balance or 0.0
+            logger.debug(f"계좌 {account_id}: 캐시된 현물 잔고 ${balance:.2f}")
+            return balance
+        elif market_type == MarketType.FUTURES_LOWER:
+            balance = summary.futures_balance or 0.0
+            logger.debug(f"계좌 {account_id}: 캐시된 선물 잔고 ${balance:.2f}")
+            return balance
+        else:
+            # market_type=None (기본값) - 하위 호환성
+            balance = summary.ending_balance or summary.starting_balance or 0.0
+            logger.debug(f"계좌 {account_id}: 캐시된 전체 잔고 ${balance:.2f}")
+            return balance
 
     # @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
     def auto_allocate_capital_for_account(self, account_id: int) -> bool:
