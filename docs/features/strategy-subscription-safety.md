@@ -344,9 +344,94 @@ unsubscribeStrategy(strategyId, accountId);
 
 ---
 
-## Phase 4-5 (향후 작업)
+## Phase 4: Backend Forced Liquidation on Unsubscribe
 
-- **Phase 4**: 구독 해제 백엔드 강제 청산
+**Status**: ✅ Complete
+**Files**:
+- `web_server/app/services/strategy_service.py:778-949`
+- `web_server/app/routes/strategies.py:149-183`
+
+### 개요
+
+구독 해제 시 `force=true` 파라미터를 사용하여 활성 포지션과 미체결 주문을 자동으로 청산/취소합니다.
+Phase 1의 7단계 cleanup 패턴을 재사용하여 일관성과 안정성을 보장합니다.
+
+### API 명세
+
+**호출**: `DELETE /api/strategies/{id}/subscribe/{account_id}?force=true`
+
+**Query Parameters**:
+- `force` (bool): `true`일 경우 활성 포지션/주문 강제 청산 후 해제 (default: false)
+
+### 7단계 Cleanup 프로세스
+
+(Phase 1과 동일한 패턴, 단일 StrategyAccount 대상)
+
+1. **Race condition 방지** - `is_active=False` + `flush()` (웹훅 차단)
+2. **주문 취소** - 3-stage verification
+3. **Defensive verification** - 남은 주문 확인
+4. **포지션 청산** - 시장가 강제 청산
+5. **SSE 연결 해제** - `disconnect_client()` 호출
+6. **실패 항목 로깅** - (TODO: 텔레그램 알림)
+7. **DB에서 제거** - `StrategyAccount` 삭제
+
+### Backward Compatibility
+
+**`force=false` (기본값)**: 기존 동작 유지
+- 활성 포지션 있으면 StrategyError 발생
+- 안전한 구독 해제만 허용
+
+**`force=true`**: Phase 4 신규 기능
+- 활성 포지션 강제 청산
+- Best-effort 방식 (일부 실패해도 계속 진행)
+
+### 구현 세부사항
+
+**파일**: `web_server/app/services/strategy_service.py:836-949`
+**태그**: `@FEAT:strategy-subscription-safety @COMP:service @TYPE:core`
+
+**핵심 로직**:
+- Line 807-834: force=false 경로 (기존 동작)
+- Line 836-949: force=true 경로 (Phase 1 패턴)
+- Line 844-846: Race condition 방지
+- Line 849-883: 주문 취소 + defensive verification
+- Line 884-910: 포지션 청산 (best-effort)
+- Line 912-920: SSE 연결 해제
+- Line 923-936: 실패 추적 및 로깅
+
+### 테스트 시나리오
+
+**Scenario 1: force=false + 활성 포지션 있음**
+- 요청: `DELETE /api/strategies/1/subscribe/123`
+- 결과: StrategyError "활성 포지션이 있는 계좌는 연결 해제할 수 없습니다."
+
+**Scenario 2: force=false + 포지션 없음**
+- 요청: `DELETE /api/strategies/1/subscribe/123`
+- 결과: 정상 해제
+
+**Scenario 3: force=true + 활성 포지션 있음**
+- 요청: `DELETE /api/strategies/1/subscribe/123?force=true`
+- 결과: 주문 취소 → 포지션 청산 → 정상 해제
+- 로그: "공개 전략 구독 해제 (force): ... 실패 0건"
+
+**Scenario 4: force=true + 일부 청산 실패**
+- 요청: `DELETE /api/strategies/1/subscribe/123?force=true`
+- 결과: Best-effort로 나머지 진행, 실패 로깅
+- 로그: WARNING "[strategy_id=X] 구독 해제 중 N개 항목 정리 실패"
+
+### Phase 1 패턴 재사용
+
+**참조**: `routes/strategies.py:264-430` (make_private_confirm)
+**차이점**:
+- Phase 1: 다중 StrategyAccount 루프
+- Phase 4: 단일 StrategyAccount 처리
+
+**공통점**: 7단계 cleanup 프로세스 동일
+
+---
+
+## 향후 Phase
+
 - **Phase 5**: 웹훅 실행 시 `is_active` 재확인
 
 ## 관련 링크

@@ -145,12 +145,22 @@ def subscribe_strategy(strategy_id):
         return exception_to_error_response(e)
 
 # @FEAT:strategy-management @COMP:route @TYPE:core
+# @FEAT:strategy-subscription-safety @COMP:route @TYPE:core
 @bp.route('/strategies/<int:strategy_id>/subscribe/<int:account_id>', methods=['DELETE'])
 @login_required
 def unsubscribe_strategy(strategy_id, account_id):
-    """공개 전략 구독 해제(내 계좌 연결 해제)"""
+    """공개 전략 구독 해제(내 계좌 연결 해제)
+
+    Query Parameters:
+        force (bool): true일 경우 활성 포지션/주문 강제 청산 후 해제
+    """
     try:
-        success = strategy_service.unsubscribe_from_strategy(strategy_id, current_user.id, account_id)
+        # 쿼리 파라미터에서 force 추출
+        force = request.args.get('force', 'false').lower() == 'true'
+
+        success = strategy_service.unsubscribe_from_strategy(
+            strategy_id, current_user.id, account_id, force=force
+        )
         if not success:
             return create_error_response(
                 error_code=ErrorCode.BUSINESS_LOGIC_ERROR,

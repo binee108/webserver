@@ -19,13 +19,14 @@
 
 ## Recent Updates
 
-### 2025-10-26: Strategy Subscription Safety - Public→Private Transition, Status Query & Warning UI (Phase 1-3)
+### 2025-10-26: Strategy Subscription Safety - Public→Private Transition, Status Query, Warning UI & Forced Liquidation (Phase 1-4)
 **영향 범위**: `strategy-subscription-safety`
 **파일**:
-- `web_server/app/routes/strategies.py` (Lines 264-420, 484-592)
+- `web_server/app/routes/strategies.py` (Lines 264-420, 484-592, 149-183)
+- `web_server/app/services/strategy_service.py` (Lines 778-949)
 - `web_server/app/templates/strategies.html` (Lines 1275-1345)
 
-**기능 설명**: 공개→비공개 전환 시 구독자 정리 + 구독 상태 조회 + 구독 해제 경고 UI
+**기능 설명**: 공개→비공개 전환 시 구독자 정리 + 구독 상태 조회 + 구독 해제 경고 UI + 강제 청산
 - **Phase 1** (완료): 전략 소유자가 공개→비공개로 변경 시 모든 구독자의:
   1. 미체결 주문 취소 | 활성 포지션 청산 | SSE 연결 종료
   2. Race Condition 방지: `is_active=False` → `flush()` 순서로 웹훅 차단
@@ -41,8 +42,13 @@
   - 기능: Phase 2 API 호출 → 경고 메시지 표시 → 사용자 확인 → 구독 해제
   - 개선: 심볼 목록 잘림 (5개 초과 시 "외 N개"), 슬리피지 경고 명확화, 빈 상태 메시지 개선
 
+- **Phase 4** (완료): 구독 해제 백엔드 강제 청산
+  - 엔드포인트: `DELETE /api/strategies/<id>/subscribe/<account_id>?force=true`
+  - 기능: `force=true` 시 Phase 1 패턴 재사용하여 단일 계좌 강제 청산
+  - Backward Compatibility: `force=false` (기본값) 시 기존 동작 유지 (에러 반환)
+
 **태그**:
-- Backend: `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core` (Phases 1-2)
+- Backend: `@FEAT:strategy-subscription-safety @COMP:route,service @TYPE:core` (Phases 1-2, 4)
 - Frontend: `@FEAT:strategy-subscription-safety @COMP:frontend @TYPE:validation` (Phase 3)
 
 **검색**:
@@ -50,14 +56,16 @@
 # 전체 기능
 grep -r "@FEAT:strategy-subscription-safety" --include="*.py" --include="*.html"
 
-# 프론트엔드만
+# 백엔드 (Phases 1-2, 4)
+grep -r "@FEAT:strategy-subscription-safety" --include="*.py" | grep "@COMP:route\|@COMP:service"
+
+# 프론트엔드 (Phase 3)
 grep -r "@FEAT:strategy-subscription-safety" --include="*.html" | grep "@COMP:frontend"
 ```
 
 **문서**: `docs/features/strategy-subscription-safety.md`
 
 **향후 Phase**:
-- Phase 4: 구독 해제 백엔드 강제 청산
 - Phase 5: 웹훅 실행 시 `is_active` 재확인
 
 ---
