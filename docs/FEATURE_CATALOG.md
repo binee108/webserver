@@ -19,6 +19,49 @@
 
 ## Recent Updates
 
+### 2025-10-26: Strategies.js 모듈화 구조 (Phase 1 완료)
+
+**목표**: strategies.js (1,625줄)을 기능별 모듈 파일로 분리하여 유지보수성 향상
+
+**Phase 1 구현 상태**:
+- ✅ 폴더 구조 생성: `web_server/app/static/js/strategies/`
+- ✅ 핵심 파일 3개 분리:
+  1. `strategies-core.js` (26줄) - Exchange helpers, CSRF token, constants
+  2. `strategies-rendering.js` (215줄) - 7개 렌더링 함수
+  3. `strategies-api.js` (226줄) - API 통합, 상태 관리, Exchange metadata
+
+**파일별 역할**:
+
+#### strategies-core.js
+- **Feature Tag**: `@FEAT:strategy-management @COMP:util @TYPE:core`
+- **의존성**: 없음 (독립)
+- **주요 함수**: `isExchangeDomestic()`, `getCurrencySymbol()`, `getCSRFToken()`
+- **상수**: `METRIC_ICONS` (accounts, positions SVG)
+- **사용처**: strategies-rendering.js, strategies-api.js
+- **Known Tag Inconsistency**: `METRIC_ICONS` 상수는 `@FEAT:strategy-rendering` 태그 사용 (렌더링 함수에서 소비), 파일 헤더는 `@FEAT:strategy-management` 태그 사용 (core 유틸리티). 이중 태깅으로 grep 검색성 향상.
+
+#### strategies-rendering.js
+- **Feature Tag**: `@FEAT:strategy-rendering @COMP:util @TYPE:core`
+- **의존성**: strategies-core.js (getCurrencySymbol, METRIC_ICONS)
+- **주요 함수**: `renderStatusBadge()`, `renderMarketTypeBadge()`, `renderPublicBadge()`, `renderMetricItem()`, `renderAccountItem()`, `renderStrategyBadges()`, `renderStrategyMetrics()`
+- **사용처**: Phase 3 비즈니스 로직 파일들
+
+#### strategies-api.js
+- **Feature Tag**: `@FEAT:api-integration @COMP:util @TYPE:core`
+- **의존성**: strategies-core.js (getCSRFToken)
+- **주요 함수**: `apiCall()`, `renderState()`, `setButtonLoading()`, `getPayload()`, `getErrorMessage()`, `handleApiResponse()`
+- **IIFE**: Exchange metadata 초기화 (`window.EXCHANGE_METADATA`)
+- **사용처**: 모든 비즈니스 로직 파일
+
+**다음 Phase 예정**: Phase 2 Modal/UI, Phase 3 비즈니스 로직 5개 파일 분리
+
+**검색 명령**:
+```bash
+grep -r "@FEAT:strategy-management\|@FEAT:strategy-rendering\|@FEAT:api-integration" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+---
+
 ### 2025-10-26: Webhook Token Copy Button (UX Enhancement)
 **영향 범위**: `webhook-token`
 **파일**:
