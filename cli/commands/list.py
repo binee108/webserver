@@ -4,7 +4,6 @@
 @FEAT:dynamic-port-allocation @COMP:route @TYPE:core
 """
 import subprocess
-from pathlib import Path
 from typing import List
 
 from .base import BaseCommand
@@ -150,55 +149,6 @@ class ListCommand(BaseCommand):
         postgres_port = ports.get("postgres") or "N/A"
 
         return f"({https_port}, {app_port}, {postgres_port})"
-
-    def _get_project_root_dir(self, project: str) -> Path:
-        """프로젝트명에서 루트 디렉토리 경로 추론 (워크트리 인식)
-
-        현재 경로가 워크트리 내부인지 자동 감지하여 메인 루트를 정확히 파악합니다.
-
-        @FEAT:dynamic-port-allocation @COMP:util @TYPE:helper
-
-        Args:
-            project (str): Docker Compose 프로젝트명 (예: "webserver", "webserver_dynamic-port-allocation")
-
-        Returns:
-            Path: 프로젝트 루트 디렉토리 절대 경로
-
-        Examples:
-            >>> # 메인 프로젝트에서 실행
-            >>> _get_project_root_dir("webserver")
-            PosixPath('/Users/binee/Desktop/quant/webserver')
-
-            >>> # 워크트리 내부에서 실행
-            >>> _get_project_root_dir("webserver_dynamic-port-allocation")
-            PosixPath('/Users/binee/Desktop/quant/webserver/.worktree/dynamic-port-allocation')
-        """
-        cwd = Path.cwd()
-
-        # 현재 경로가 워크트리 내부인지 확인
-        if ".worktree" in cwd.parts:
-            # 메인 프로젝트 루트: .worktree 이전까지의 경로
-            try:
-                parts = cwd.parts
-                worktree_idx = parts.index(".worktree")
-                main_root = Path(*parts[:worktree_idx])
-            except (ValueError, IndexError):
-                # .worktree를 찾지 못하면 현재 디렉토리 사용 (폴백)
-                main_root = cwd
-        else:
-            # 메인 프로젝트에서 실행 중
-            main_root = cwd
-
-        # 프로젝트명별 경로 계산 (항상 메인 루트 기준)
-        if project == "webserver":
-            return main_root
-
-        if project.startswith("webserver_"):
-            worktree_name = project[10:]  # len("webserver_") = 10
-            return main_root / ".worktree" / worktree_name
-
-        # 알 수 없는 프로젝트명은 현재 디렉토리 반환
-        return cwd
 
     def _print_footer(self):
         """표 푸터 및 사용 가이드 출력"""
