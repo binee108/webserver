@@ -22,8 +22,15 @@
                     <p>트레이딩 전략을 효율적으로 생성, 수정하고 자본을 배분하세요.</p>
                 </div>
             </div>
+            <!-- @FEAT:capital-management @COMP:ui @TYPE:core -->
             <div class="header-actions">
-                <button onclick="openAddStrategyModal()" 
+                <!-- Capital reallocation button moved from tab area to header for improved UX -->
+                <button onclick="triggerCapitalReallocation(event)"
+                        class="btn btn-warning">
+                    <i class="fas fa-sync-alt"></i>
+                    전략 자본 재할당
+                </button>
+                <button onclick="openAddStrategyModal()"
                         class="btn btn-primary">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -53,15 +60,6 @@
         <button id="tab-my" class="btn btn-secondary btn-sm" onclick="switchTab('my')">내 전략</button>
         <button id="tab-subscribed" class="btn btn-secondary btn-sm" onclick="switchTab('subscribed')">구독 전략</button>
         <button id="tab-discover" class="btn btn-secondary btn-sm" onclick="switchTab('discover')">공개 전략 탐색</button>
-    </div>
-
-    <!-- 전략 자본 재할당 -->
-    <div class="mb-6">
-        <button onclick="triggerCapitalReallocation(event)"
-                class="w-full bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-lg px-6 py-3 hover:shadow-xl hover:from-purple-600 hover:to-purple-700 transition-all duration-200 flex items-center justify-center space-x-2 font-semibold">
-            <i class="fas fa-sync-alt"></i>
-            <span>⚠️ 전략 자본 재할당 (강제)</span>
-        </button>
     </div>
 
     <!-- 전략 목록 섹션: 내 전략 (서버 렌더 기본) -->
@@ -438,7 +436,240 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 }
 
+// === Integrated API & State Rendering Functions ===
+
+// @FEAT:api-integration @COMP:util @TYPE:core
+// WHY: 18곳의 중복 fetch 호출 패턴을 1개 함수로 통합하여 유지보수성 향상.
+//      CSRF 토큰, 에러 처리, 토스트 표시를 자동화하여 일관성 확보.
+//      향후 새 API 호출 추가 시 3-5줄로 구현 가능 (기존 15-20줄 대비).
+/**
+ * 통합 API 호출 함수
+ * @param {string} url - API 엔드포인트 URL
+ * @param {Object} options - 옵션
+ * @param {string} [options.method='GET'] - HTTP 메서드
+ * @param {Object} [options.body] - 요청 바디 (자동으로 JSON.stringify)
+ * @param {Object} [options.headers] - 추가 헤더
+ * @param {Function} [options.onError] - 커스텀 에러 핸들러
+ * @param {boolean} [options.autoErrorToast=true] - 자동 에러 토스트 표시 여부
+ * @param {boolean} [options.throwOnFailure=true] - data.success === false일 때 에러로 간주 여부
+ * @returns {Promise<Object>} API 응답 데이터 (data.data || data.payload || {})
+ */
+async function apiCall(url, options = {}) {
+    const {
+        method = 'GET',
+        body = null,
+        headers = {},
+        onError = null,
+        autoErrorToast = true,
+        throwOnFailure = true
+    } = options;
+
+    try {
+        // 1. fetch 옵션 구성
+        const fetchOptions = {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken(),
+                ...headers
+            }
+        };
+
+        if (body && method !== 'GET') {
+            fetchOptions.body = JSON.stringify(body);
+        }
+
+        // 2. API 호출
+        const response = await fetch(url, fetchOptions);
+        const data = await response.json();
+
+        // 3. 응답 검증
+        if (!response.ok) {
+            const error = new Error(getErrorMessage(data, 'API 요청 실패'));
+            error.status = response.status;
+            error.responseData = data;
+            throw error;
+        }
+
+        // 4. data.success === false 체크 (옵션에 따라)
+        if (data.success === false && throwOnFailure) {
+            const error = new Error(getErrorMessage(data, '요청 처리 중 오류가 발생했습니다.'));
+            error.responseData = data;
+            throw error;
+        }
+
+        // 5. 데이터 추출 (기존 getPayload 로직 유지)
+        return getPayload(data);
+
+    } catch (error) {
+        // 6. 에러 처리
+        console.error('API call error:', error);
+
+        // 커스텀 에러 핸들러
+        if (onError) {
+            onError(error);
+        }
+
+        // 자동 에러 토스트
+        if (autoErrorToast) {
+            showToast(error.message || 'API 요청 중 오류가 발생했습니다.', 'error');
+        }
+
+        throw error;
+    }
+}
+
+// @FEAT:ui-state-management @COMP:util @TYPE:core
+// WHY: 20곳의 인라인 로딩/에러 HTML을 1개 함수로 통합하여 UI 일관성 확보.
+//      재시도 버튼에 전역 핸들러 방식 사용으로 클로저 직렬화 문제 해결.
+/**
+ * 통합 상태 렌더링 함수
+ * @param {HTMLElement} element - 렌더링 대상 요소
+ * @param {string} state - 상태 ('loading', 'error', 'empty', 'success')
+ * @param {Object} options - 옵션
+ * @param {string} [options.message] - 메시지 (error, empty 상태에서 사용)
+ * @param {Function} [options.onRetry] - 재시도 함수 (error 상태에서 사용)
+ * @param {string} [options.emptyIcon='inbox'] - 빈 데이터 아이콘 (empty 상태)
+ */
+function renderState(element, state, options = {}) {
+    const { message = '', onRetry = null, emptyIcon = 'inbox' } = options;
+
+    let html = '';
+
+    switch (state) {
+        case 'loading':
+            html = `
+                <div class="flex justify-center items-center py-12">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                </div>
+            `;
+            break;
+
+        case 'error':
+            // 전역 핸들러 방식으로 재시도 버튼 구현
+            const retryId = onRetry ? `retry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` : null;
+            if (onRetry) {
+                window._retryHandlers = window._retryHandlers || {};
+                window._retryHandlers[retryId] = onRetry;
+            }
+            const retryButton = retryId ? `
+                <button class="btn btn-primary btn-sm mt-4" onclick="window._retryHandlers['${retryId}']()">
+                    <i class="fas fa-redo mr-2"></i>다시 시도
+                </button>
+            ` : '';
+
+            html = `
+                <div class="flex flex-col items-center justify-center py-12 text-gray-500">
+                    <i class="fas fa-exclamation-circle text-5xl mb-4 text-red-500"></i>
+                    <p class="text-lg">${message || '데이터를 불러오는 중 오류가 발생했습니다.'}</p>
+                    ${retryButton}
+                </div>
+            `;
+            break;
+
+        case 'empty':
+            html = `
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                    <i class="fas fa-${emptyIcon} text-5xl mb-4"></i>
+                    <p class="text-lg">${message || '데이터가 없습니다.'}</p>
+                </div>
+            `;
+            break;
+
+        default:
+            console.warn('Unknown state:', state);
+            return;
+    }
+
+    element.innerHTML = html;
+}
+
+// @FEAT:ui-state-management @COMP:util @TYPE:helper
+// WHY: 3곳의 버튼 로딩 상태 관리를 표준화하여 disabled/복구 실패 방지.
+//      originalText를 dataset에 저장하여 복구 시 안전하게 원복.
+/**
+ * 버튼 로딩 상태 토글
+ * @param {HTMLButtonElement} button - 버튼 요소
+ * @param {boolean} isLoading - 로딩 상태
+ * @param {string} [loadingText='처리 중...'] - 로딩 시 표시할 텍스트
+ */
+function setButtonLoading(button, isLoading, loadingText = '처리 중...') {
+    if (isLoading) {
+        button.disabled = true;
+        button.dataset.originalText = button.innerHTML;
+        button.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${loadingText}`;
+    } else {
+        button.disabled = false;
+        button.innerHTML = button.dataset.originalText || button.innerHTML;
+    }
+}
+
+// @FEAT:modal-management @COMP:util @TYPE:core
+// WHY: 7곳의 중복 모달 열기 패턴을 1개 함수로 통합하여 유지보수성 향상.
+//      백드롭, ESC 키, overflow 제어를 자동화하여 일관성 확보.
+//      onOpen 콜백으로 모달별 초기화 로직 분리.
+/**
+ * 모달을 열고 백드롭/ESC 키 이벤트를 설정합니다.
+ * @param {string} modalId - 열 모달의 DOM ID
+ * @param {Object} [options={}] - 옵션 객체
+ * @param {Function} [options.onOpen] - 모달 열린 후 실행할 콜백 (modal 요소를 인자로 받음)
+ * @param {boolean} [options.preventBackdropClose=false] - 백드롭 클릭으로 닫기 방지
+ * @example
+ * openModal('strategyModal', { onOpen: () => resetForm() })
+ * @returns {HTMLElement|null} 열린 모달 요소, 실패 시 null
+ */
+async function openModal(modalId, options = {}) {
+    const { onOpen = null, preventBackdropClose = false } = options;
+
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+        console.error(`[openModal] Modal not found: ${modalId}`);
+        return null;
+    }
+
+    // preventBackdropClose 설정 저장
+    if (preventBackdropClose) {
+        modal.dataset.preventBackdropClose = 'true';
+    } else {
+        delete modal.dataset.preventBackdropClose;
+    }
+
+    // 모달 표시
+    modal.classList.remove('hidden');
+
+    // onOpen 콜백 실행
+    if (onOpen) {
+        await onOpen(modal);
+    }
+
+    return modal;
+}
+
+// @FEAT:modal-management @COMP:util @TYPE:core
+// WHY: 3곳의 중복 모달 닫기 패턴을 1개 함수로 통합.
+//      일관된 숨김 처리 및 dataset 정리.
+/**
+ * 모달을 닫습니다.
+ * @param {string} modalId - 닫을 모달의 DOM ID
+ * @returns {boolean} 성공 시 true, 실패 시 false
+ */
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+        console.error(`[closeModal] Modal not found: ${modalId}`);
+        return false;
+    }
+
+    modal.classList.add('hidden');
+    delete modal.dataset.preventBackdropClose;
+
+    return true;
+}
+
 // @FEAT:futures-validation @COMP:route @TYPE:integration
+// NOTE: 이 함수는 apiCall()을 사용하지 않음
+// WHY: 초기화 실패 시 console.warn만 표시하므로 사용자 토스트 불필요.
+//      페이지 로드 시 1회 실행되는 비차단 초기화 로직.
 // 거래소 메타데이터 로드 (페이지 로드 시 1회)
 (async function loadExchangeMetadata() {
     try {
@@ -470,21 +701,7 @@ window.strategies = [
     {% endfor %}
 ];
 
-// API 응답 처리 유틸리티 함수들
-function handleApiResponse(response) {
-    if (!response.ok) {
-        throw new Error(`API 호출 실패: ${response.status} ${response.statusText}`);
-    }
-    return response.json();
-}
-
-function handleApiError(error, operation) {
-    console.error(`${operation} 실패:`, error);
-    const message = error.message || `${operation} 중 오류가 발생했습니다.`;
-    showToast(message, 'error');
-    return null;
-}
-
+// API 응답 처리 유틸리티 함수들 (새 통합 함수: apiCall, renderState, setButtonLoading 사용)
 function getPayload(responseJson) {
     if (!responseJson || typeof responseJson !== 'object') {
         return {};
@@ -508,38 +725,6 @@ function getErrorMessage(responseJson, fallback = '알 수 없는 오류가 발�
     return responseJson.message || fallback;
 }
 
-function showLoadingState(element, message = '로딩 중...') {
-    element.innerHTML = `
-        <div class="loading-container">
-            <div class="loading-spinner"></div>
-            <div class="loading-text">${message}</div>
-        </div>
-    `;
-}
-
-function showErrorState(element, message, retryFunction = null) {
-    const retryButton = retryFunction ? `
-        <button onclick="${retryFunction}" class="btn btn-primary btn-sm">
-            다시 시도
-        </button>
-    ` : '';
-    
-    element.innerHTML = `
-        <div class="text-center py-8">
-            <div class="text-error mb-4">
-                <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                </svg>
-                <p class="text-lg font-medium">오류 발생</p>
-            </div>
-            <p class="text-muted mb-4">${message}</p>
-            ${retryButton}
-        </div>
-    `;
-}
-
-
-
 function switchTab(tab) {
     const sections = {
         my: document.getElementById('section-my'),
@@ -557,26 +742,29 @@ function switchTab(tab) {
     }
 }
 
-function loadSubscribedStrategies() {
-    fetch('/api/strategies/accessibles', { headers: { 'X-CSRFToken': getCSRFToken() }})
-        .then(handleApiResponse)
-        .then(data => {
-            const container = document.getElementById('subscribed-strategies');
-            if (!data.success) {
-                container.innerHTML = `<div class="text-error">${getErrorMessage(data, '구독 전략을 불러오지 못했습니다.')}</div>`;
-                return;
-            }
-            const payload = getPayload(data);
-            const items = (payload.strategies || []).filter(s => s.ownership === 'subscriber');
-            if (items.length === 0) {
-                container.innerHTML = '<div class="text-muted">구독 중인 전략이 없습니다.</div>';
-                return;
-            }
-            container.innerHTML = items.map(renderSubscribedStrategy).join('');
-        })
-        .catch(() => {
-            document.getElementById('subscribed-strategies').innerHTML = '<div class="text-error">오류가 발생했습니다.</div>';
+async function loadSubscribedStrategies() {
+    const container = document.getElementById('subscribed-strategies');
+    renderState(container, 'loading');
+
+    try {
+        const data = await apiCall('/api/strategies/accessibles');
+        const items = (data.strategies || []).filter(s => s.ownership === 'subscriber');
+
+        if (items.length === 0) {
+            renderState(container, 'empty', {
+                message: '구독 중인 전략이 없습니다.',
+                emptyIcon: 'chart-line'
+            });
+            return;
+        }
+
+        container.innerHTML = items.map(renderSubscribedStrategy).join('');
+    } catch (error) {
+        renderState(container, 'error', {
+            message: error.message,
+            onRetry: loadSubscribedStrategies
         });
+    }
 }
 
 function renderSubscribedStrategy(s) {
@@ -684,26 +872,29 @@ function renderSubscribedStrategy(s) {
     </div>`;
 }
 
-function loadPublicStrategies() {
-    fetch('/api/strategies/public', { headers: { 'X-CSRFToken': getCSRFToken() }})
-        .then(handleApiResponse)
-        .then(data => {
-            const container = document.getElementById('public-strategies');
-            if (!data.success) {
-                container.innerHTML = `<div class="text-error">${getErrorMessage(data, '공개 전략을 불러오지 못했습니다.')}</div>`;
-                return;
-            }
-            const payload = getPayload(data);
-            const items = payload.strategies || [];
-            if (items.length === 0) {
-                container.innerHTML = '<div class="text-muted">공개된 전략이 없습니다.</div>';
-                return;
-            }
-            container.innerHTML = items.map(renderPublicStrategy).join('');
-        })
-        .catch(() => {
-            document.getElementById('public-strategies').innerHTML = '<div class="text-error">오류가 발생했습니다.</div>';
+async function loadPublicStrategies() {
+    const container = document.getElementById('public-strategies');
+    renderState(container, 'loading');
+
+    try {
+        const data = await apiCall('/api/strategies/public');
+        const items = data.strategies || [];
+
+        if (items.length === 0) {
+            renderState(container, 'empty', {
+                message: '공개된 전략이 없습니다.',
+                emptyIcon: 'globe'
+            });
+            return;
+        }
+
+        container.innerHTML = items.map(renderPublicStrategy).join('');
+    } catch (error) {
+        renderState(container, 'error', {
+            message: error.message,
+            onRetry: loadPublicStrategies
         });
+    }
 }
 
 function renderPublicStrategy(s) {
@@ -722,28 +913,20 @@ function renderPublicStrategy(s) {
     </div>`;
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openSubscribeModal(strategyId) {
-    // 기존 계좌 연결 모달을 재사용
-    document.getElementById('accountModal').classList.remove('hidden');
-    renderSubscribeAccountPicker(strategyId);
+    openModal('accountModal', {
+        onOpen: () => renderSubscribeAccountPicker(strategyId)
+    });
 }
 
-function renderSubscribeAccountPicker(strategyId) {
+async function renderSubscribeAccountPicker(strategyId) {
     const modalContent = document.getElementById('accountModalContent');
-    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
-    
-    // 내 계좌 목록만 불러옴
-    fetch('/api/accounts', { headers: { 'X-CSRFToken': getCSRFToken() }})
-      .then(handleApiResponse)
-      .then(data => {
-        console.log('계좌 목록 로드 결과:', data);
+    renderState(modalContent, 'loading');
 
-        if (!data.success) {
-          throw new Error(getErrorMessage(data, '계좌 목록을 불러올 수 없습니다.'));
-        }
+    try {
+        const accounts = await apiCall('/api/accounts', { autoErrorToast: false });
 
-        const payload = getPayload(data);
-        const accounts = payload.accounts || [];
         let html = `
         <div class="space-y-6">
           <div class="bg-info bg-opacity-10 border border-info rounded-lg p-4">
@@ -755,49 +938,38 @@ function renderSubscribeAccountPicker(strategyId) {
                 </div>
             </div>
           </div>`;
-        if (accounts.length === 0) {
-           html += '<div class="text-center py-8 text-muted">등록된 계좌가 없습니다.</div>';
+
+        const accountList = accounts.accounts || [];
+        if (accountList.length === 0) {
+            html += '<div class="text-center py-8 text-muted">등록된 계좌가 없습니다.</div>';
         } else {
-          accounts.forEach(acc => {
-            html += `
-            <div class="card-inner">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-3">
-                    <div class="w-8 h-8 bg-accent bg-opacity-20 rounded-full flex items-center justify-center">
-                        <span class="text-sm font-bold text-accent">${acc.exchange.toUpperCase().charAt(0)}</span>
+            accountList.forEach(acc => {
+                html += `
+                <div class="card-inner">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 bg-accent bg-opacity-20 rounded-full flex items-center justify-center">
+                            <span class="text-sm font-bold text-accent">${acc.exchange.toUpperCase().charAt(0)}</span>
+                        </div>
+                        <div>
+                            <div class="font-medium text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
+                            <div class="text-xs text-muted">내 계좌</div>
+                        </div>
                     </div>
-                    <div>
-                        <div class="font-medium text-primary">${acc.exchange.toUpperCase()} - ${acc.name}</div>
-                        <div class="text-xs text-muted">내 계좌</div>
-                    </div>
-                </div>
-                <button class="btn btn-primary btn-sm" onclick="openSubscribeSettings(${strategyId}, ${acc.id}, '${acc.exchange.toUpperCase()} - ${acc.name}')">구독 설정</button>
-              </div>
-            </div>`;
-          });
+                    <button class="btn btn-primary btn-sm" onclick="openSubscribeSettings(${strategyId}, ${acc.id}, '${acc.exchange.toUpperCase()} - ${acc.name}')">구독 설정</button>
+                  </div>
+                </div>`;
+            });
         }
         html += '</div>';
         modalContent.innerHTML = html;
-      })
-      .catch(error => {
-        console.error('계좌 목록 로드 실패:', error);
-        const errorMessage = error.message || '계좌 목록을 불러오는 중 오류가 발생했습니다.';
-        modalContent.innerHTML = `
-          <div class="text-center py-8">
-            <div class="text-error mb-4">
-              <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-              </svg>
-              <p class="text-lg font-medium">계좌 로드 실패</p>
-            </div>
-            <p class="text-muted mb-4">${errorMessage}</p>
-            <button onclick="renderSubscribeAccountPicker(${strategyId})" class="btn btn-primary btn-sm">
-              다시 시도
-            </button>
-          </div>
-        `;
-        showToast('계좌 로드 실패: ' + errorMessage, 'error');
-      });
+    } catch (error) {
+        renderState(modalContent, 'error', {
+            message: error.message,
+            onRetry: () => renderSubscribeAccountPicker(strategyId)
+        });
+        showToast(error.message, 'error');
+    }
 }
 
 function openSubscribeSettings(strategyId, accountId, accountLabel) {
@@ -882,8 +1054,8 @@ function submitSubscribeSettings(event, strategyId, accountId) {
     .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
 }
 
-function subscribeStrategy(strategyId, accountId) {
-    // 입력값 수집 및 간단 검증
+async function subscribeStrategy(strategyId, accountId) {
+    // 입력값 수집 및 검증
     const weightEl = document.getElementById(`weight-${accountId}`);
     const leverageEl = document.getElementById(`leverage-${accountId}`);
     const maxSymbolsEl = document.getElementById(`maxsymbols-${accountId}`);
@@ -910,165 +1082,133 @@ function subscribeStrategy(strategyId, accountId) {
         }
         body.max_symbols = ms;
     }
-    fetch(`/api/strategies/${strategyId}/subscribe`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        },
-        body: JSON.stringify(body)
-    })
-    .then(handleApiResponse)
-    .then(data => {
-        if (data.success) {
-            const payload = getPayload(data);
-            showToast('구독이 완료되었습니다.', 'success');
-            closeAccountModal();
-            // 갱신
-            loadSubscribedStrategies();
-        } else {
-            showToast('구독 실패: ' + getErrorMessage(data), 'error');
-        }
-    })
-    .catch(err => showToast('구독 중 오류: ' + err.message, 'error'));
-}
 
-function unsubscribeStrategy(strategyId, accountId) {
-    if (!confirm('이 전략에서 해당 계좌의 구독을 해제하시겠습니까? 활성 포지션이 있으면 해제할 수 없습니다.')) return;
-    fetch(`/api/strategies/${strategyId}/subscribe/${accountId}`, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        }
-    })
-    .then(handleApiResponse)
-    .then(data => {
-        if (data.success) {
-            showToast('구독이 해제되었습니다.', 'success');
-            loadSubscribedStrategies();
-        } else {
-            showToast('구독 해제 실패: ' + getErrorMessage(data), 'error');
-        }
-    })
-    .catch(err => showToast('구독 해제 중 오류: ' + err.message, 'error'));
-}
-
-function openPublicDetail(strategyId) {
-    const modal = document.getElementById('accountModal');
-    modal.classList.remove('hidden');
-    const modalContent = document.getElementById('accountModalContent');
-    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
-    fetch(`/api/strategies/public/${strategyId}`, { headers: { 'X-CSRFToken': getCSRFToken() }})
-      .then(handleApiResponse)
-      .then(data => {
-        if (!data.success) {
-            modalContent.innerHTML = `<div class="text-center py-8 text-error">${getErrorMessage(data, '전략 정보를 불러오지 못했습니다.')}</div>`;
-            return;
-        }
-        const payload = getPayload(data);
-        const s = payload.strategy;
-        if (!s) {
-            modalContent.innerHTML = '<div class="text-center py-8 text-error">전략 정보를 찾을 수 없습니다.</div>';
-            return;
-        }
-        modalContent.innerHTML = `
-            <div class="space-y-4">
-                <div>
-                    <div class="text-lg font-semibold text-primary">${s.name}</div>
-                    <div class="text-sm text-muted">${s.description || ''}</div>
-                    <div class="text-xs text-secondary mt-1">마켓: ${s.market_type.toUpperCase()}</div>
-                </div>
-                <div class="flex justify-end space-x-2">
-                    <button class="btn btn-secondary" onclick="renderSubscribeAccountPicker(${s.id})">계좌 선택하여 구독</button>
-                </div>
-            </div>
-        `;
-      })
-      .catch(() => {
-        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다.</div>';
-      });
-}
-// 전략 관련 함수들
-function openAddStrategyModal() {
-    document.getElementById('strategyModalTitle').textContent = '전략 추가';
-    document.getElementById('strategyForm').reset();
-    document.getElementById('strategyId').value = '';
-    document.getElementById('strategyModal').classList.remove('hidden');
-}
-
-function closeStrategyModal() {
-    document.getElementById('strategyModal').classList.add('hidden');
-}
-
-function editStrategy(strategyId) {
-    // 전략 정보 로드
-    fetch(`/api/strategies/${strategyId}`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        }
-    })
-    .then(handleApiResponse)
-    .then(data => {
-        if (data.success) {
-            const payload = getPayload(data);
-            const strategy = payload.strategy;
-            if (!strategy) {
-                throw new Error('전략 데이터를 찾을 수 없습니다.');
-            }
-            
-            document.getElementById('strategyModalTitle').textContent = '전략 수정';
-            document.getElementById('strategyId').value = strategy.id;
-            document.getElementById('name').value = strategy.name || '';
-            document.getElementById('description').value = strategy.description || '';
-            document.getElementById('group_name').value = strategy.group_name || '';
-            document.getElementById('market_type').value = strategy.market_type ? strategy.market_type.toLowerCase() : '';
-            document.getElementById('is_active').checked = strategy.is_active || false;
-            document.getElementById('is_public').checked = strategy.is_public || false;
-            
-            document.getElementById('strategyModal').classList.remove('hidden');
-        } else {
-            throw new Error(getErrorMessage(data, '전략 정보를 불러오지 못했습니다.'));
-        }
-    })
-    .catch(error => {
-        showToast('전략 정보를 불러오는 중 오류가 발생했습니다: ' + error.message, 'error');
-    });
-}
-
-function deleteStrategy(strategyId) {
-    if (confirm('정말로 이 전략을 삭제하시겠습니까? 연결된 계좌와 포지션이 있는 경우 삭제할 수 없습니다.')) {
-        fetch(`/api/strategies/${strategyId}`, {
-            method: 'DELETE',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCSRFToken()
-            }
-        })
-        .then(handleApiResponse)
-        .then(data => {
-            if (data.success) {
-                showToast('전략이 성공적으로 삭제되었습니다.', 'success');
-                setTimeout(() => location.reload(), 1500);
-            } else {
-                showToast('전략 삭제 실패: ' + getErrorMessage(data), 'error');
-            }
-        })
-        .catch(error => {
-            showToast('전략 삭제 중 오류가 발생했습니다: ' + error.message, 'error');
+    try {
+        await apiCall(`/api/strategies/${strategyId}/subscribe`, {
+            method: 'POST',
+            body
         });
+        showToast('구독이 완료되었습니다.', 'success');
+        closeAccountModal();
+        loadSubscribedStrategies();
+    } catch (error) {
+        // apiCall이 자동으로 에러 토스트 표시
     }
 }
 
-function submitStrategy(event) {
+async function unsubscribeStrategy(strategyId, accountId) {
+    if (!confirm('이 전략에서 해당 계좌의 구독을 해제하시겠습니까? 활성 포지션이 있으면 해제할 수 없습니다.')) {
+        return;
+    }
+
+    try {
+        await apiCall(`/api/strategies/${strategyId}/subscribe/${accountId}`, { method: 'DELETE' });
+        showToast('구독이 해제되었습니다.', 'success');
+        loadSubscribedStrategies();
+    } catch (error) {
+        // apiCall이 자동으로 에러 토스트 표시
+    }
+}
+
+// @FEAT:modal-management @COMP:route @TYPE:helper
+async function openPublicDetail(strategyId) {
+    const modalContent = document.getElementById('accountModalContent');
+
+    await openModal('accountModal', {
+        onOpen: async () => {
+            renderState(modalContent, 'loading');
+
+            try {
+                const data = await apiCall(`/api/strategies/public/${strategyId}`, { autoErrorToast: false });
+                const s = data.strategy;
+
+                if (!s) {
+                    throw new Error('전략 정보를 찾을 수 없습니다.');
+                }
+
+                modalContent.innerHTML = `
+                    <div class="space-y-4">
+                        <div>
+                            <div class="text-lg font-semibold text-primary">${s.name}</div>
+                            <div class="text-sm text-muted">${s.description || ''}</div>
+                            <div class="text-xs text-secondary mt-1">마켓: ${s.market_type.toUpperCase()}</div>
+                        </div>
+                        <div class="flex justify-end space-x-2">
+                            <button class="btn btn-secondary" onclick="renderSubscribeAccountPicker(${s.id})">계좌 선택하여 구독</button>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                renderState(modalContent, 'error', {
+                    message: error.message,
+                    onRetry: () => openPublicDetail(strategyId)
+                });
+            }
+        }
+    });
+}
+// 전략 관련 함수들
+// @FEAT:modal-management @COMP:route @TYPE:helper
+function openAddStrategyModal() {
+    openModal('strategyModal', {
+        onOpen: () => {
+            document.getElementById('strategyModalTitle').textContent = '전략 추가';
+            document.getElementById('strategyForm').reset();
+            document.getElementById('strategyId').value = '';
+        }
+    });
+}
+
+// @FEAT:modal-management @COMP:route @TYPE:helper
+function closeStrategyModal() {
+    closeModal('strategyModal');
+}
+
+async function editStrategy(strategyId) {
+    try {
+        const data = await apiCall(`/api/strategies/${strategyId}`, { autoErrorToast: false });
+        const strategy = data.strategy;
+
+        if (!strategy) {
+            throw new Error('전략 데이터를 찾을 수 없습니다.');
+        }
+
+        document.getElementById('strategyModalTitle').textContent = '전략 수정';
+        document.getElementById('strategyId').value = strategy.id;
+        document.getElementById('name').value = strategy.name || '';
+        document.getElementById('description').value = strategy.description || '';
+        document.getElementById('group_name').value = strategy.group_name || '';
+        document.getElementById('market_type').value = strategy.market_type ? strategy.market_type.toLowerCase() : '';
+        document.getElementById('is_active').checked = strategy.is_active || false;
+        document.getElementById('is_public').checked = strategy.is_public || false;
+
+        document.getElementById('strategyModal').classList.remove('hidden');
+    } catch (error) {
+        showToast('전략 정보를 불러오는 중 오류가 발생했습니다: ' + error.message, 'error');
+    }
+}
+
+async function deleteStrategy(strategyId) {
+    if (!confirm('정말로 이 전략을 삭제하시겠습니까? 연결된 계좌와 포지션이 있는 경우 삭제할 수 없습니다.')) {
+        return;
+    }
+
+    try {
+        await apiCall(`/api/strategies/${strategyId}`, { method: 'DELETE' });
+        showToast('전략이 성공적으로 삭제되었습니다.', 'success');
+        setTimeout(() => location.reload(), 1500);
+    } catch (error) {
+        // apiCall이 자동으로 에러 토스트 표시
+    }
+}
+
+async function submitStrategy(event) {
     event.preventDefault();
-    
+
     const form = document.getElementById('strategyForm');
     const formData = new FormData(form);
     const strategyId = document.getElementById('strategyId').value;
-    
+
     const data = {
         name: formData.get('name'),
         description: formData.get('description'),
@@ -1077,97 +1217,58 @@ function submitStrategy(event) {
         is_active: formData.get('is_active') === 'on',
         is_public: formData.get('is_public') === 'on'
     };
-    
+
     const url = strategyId ? `/api/strategies/${strategyId}` : '/api/strategies';
     const method = strategyId ? 'PUT' : 'POST';
-    
     const submitButton = form.querySelector('button[type="submit"]');
-    const originalText = submitButton.innerHTML;
-    submitButton.disabled = true;
-    submitButton.innerHTML = '<div class="loading-spinner"></div>저장 중...';
-    
-    fetch(url, {
-        method: method,
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCSRFToken()
-        },
-        body: JSON.stringify(data)
-    })
-    .then(handleApiResponse)
-    .then(data => {
-        if (data.success) {
-            showToast(strategyId ? '전략이 성공적으로 수정되었습니다.' : '전략이 성공적으로 생성되었습니다.', 'success');
-            closeStrategyModal();
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast('저장 실패: ' + getErrorMessage(data), 'error');
-        }
-    })
-    .catch(error => {
-        showToast('저장 중 오류가 발생했습니다: ' + error.message, 'error');
-    })
-    .finally(() => {
-        submitButton.disabled = false;
-        submitButton.innerHTML = originalText;
-    });
+
+    setButtonLoading(submitButton, true, '저장 중...');
+
+    try {
+        await apiCall(url, { method, body: data });
+        showToast(strategyId ? '전략이 성공적으로 수정되었습니다.' : '전략이 성공적으로 생성되었습니다.', 'success');
+        closeStrategyModal();
+        setTimeout(() => location.reload(), 1500);
+    } catch (error) {
+        // apiCall이 자동으로 에러 토스트 표시
+    } finally {
+        setButtonLoading(submitButton, false);
+    }
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openAccountModal(strategyId) {
-    document.getElementById('accountModal').classList.remove('hidden');
-    loadStrategyAccountModal(strategyId);
-}
-
-function closeAccountModal() {
-    document.getElementById('accountModal').classList.add('hidden');
-}
-
-function loadStrategyAccountModal(strategyId) {
-    const modalContent = document.getElementById('accountModalContent');
-    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
-    
-    // 사용자의 모든 계좌와 전략의 연결된 계좌 정보 조회
-    Promise.all([
-        fetch('/api/accounts', {
-            headers: { 'X-CSRFToken': getCSRFToken() }
-        }).then(handleApiResponse),
-        fetch(`/api/strategies/${strategyId}/accounts`, {
-            headers: { 'X-CSRFToken': getCSRFToken() }
-        }).then(handleApiResponse)
-    ])
-    .then(([accountsResult, strategyAccountsResult]) => {
-        console.log('계좌 정보 로드 결과:', { accountsResult, strategyAccountsResult });
-        
-        if (!accountsResult.success) {
-            throw new Error(`계좌 정보 조회 오류: ${getErrorMessage(accountsResult)}`);
-        }
-        if (!strategyAccountsResult.success) {
-            throw new Error(`전략 계좌 정보 조회 오류: ${getErrorMessage(strategyAccountsResult)}`);
-        }
-        
-        const allAccounts = getPayload(accountsResult).accounts || [];
-        const linkedAccounts = getPayload(strategyAccountsResult).accounts || [];
-        renderAccountModal(strategyId, allAccounts, linkedAccounts);
-    })
-    .catch(error => {
-        console.error('계좌 정보 로드 실패:', error);
-        const errorMessage = error.message || '계좌 정보를 불러오는 중 오류가 발생했습니다.';
-        modalContent.innerHTML = `
-            <div class="text-center py-8">
-                <div class="text-error mb-4">
-                    <svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                    </svg>
-                    <p class="text-lg font-medium">데이터 로드 실패</p>
-                </div>
-                <p class="text-muted mb-4">${errorMessage}</p>
-                <button onclick="loadStrategyAccountModal(${strategyId})" class="btn btn-primary btn-sm">
-                    다시 시도
-                </button>
-            </div>
-        `;
-        showToast('계좌 정보 로드 실패: ' + errorMessage, 'error');
+    openModal('accountModal', {
+        onOpen: () => loadStrategyAccountModal(strategyId)
     });
+}
+
+// @FEAT:modal-management @COMP:route @TYPE:helper
+function closeAccountModal() {
+    closeModal('accountModal');
+}
+
+async function loadStrategyAccountModal(strategyId) {
+    const modalContent = document.getElementById('accountModalContent');
+    renderState(modalContent, 'loading');
+
+    try {
+        // 사용자의 모든 계좌와 전략의 연결된 계좌 정보 조회
+        const [accountsResult, strategyAccountsResult] = await Promise.all([
+            apiCall('/api/accounts', { autoErrorToast: false }),
+            apiCall(`/api/strategies/${strategyId}/accounts`, { autoErrorToast: false })
+        ]);
+
+        const allAccounts = accountsResult.accounts || [];
+        const linkedAccounts = strategyAccountsResult.accounts || [];
+        renderAccountModal(strategyId, allAccounts, linkedAccounts);
+    } catch (error) {
+        renderState(modalContent, 'error', {
+            message: error.message,
+            onRetry: () => loadStrategyAccountModal(strategyId)
+        });
+        showToast(error.message, 'error');
+    }
 }
 
 function renderAccountModal(strategyId, allAccounts, connectedAccounts) {
@@ -1449,34 +1550,31 @@ function disconnectAccount(strategyId, accountId) {
     }
 }
 
+// @FEAT:modal-management @COMP:route @TYPE:helper
 function openCapitalModal(strategyId) {
-    document.getElementById('capitalModal').classList.remove('hidden');
-    loadCapitalModal(strategyId);
-}
-
-function closeCapitalModal() {
-    document.getElementById('capitalModal').classList.add('hidden');
-}
-
-function loadCapitalModal(strategyId) {
-    const modalContent = document.getElementById('capitalModalContent');
-    modalContent.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><div class="loading-text">로딩 중...</div></div>';
-    
-    fetch(`/api/strategies/${strategyId}/accounts`, {
-        headers: { 'X-CSRFToken': getCSRFToken() }
-    })
-    .then(handleApiResponse)
-    .then(data => {
-        if (data.success) {
-            const payload = getPayload(data);
-            renderCapitalModal(strategyId, payload.accounts || []);
-        } else {
-            modalContent.innerHTML = `<div class="text-center py-8 text-error">${getErrorMessage(data, '데이터를 불러오는데 실패했습니다.')}</div>`;
-        }
-    })
-    .catch(error => {
-        modalContent.innerHTML = '<div class="text-center py-8 text-error">오류가 발생했습니다: ' + error.message + '</div>';
+    openModal('capitalModal', {
+        onOpen: () => loadCapitalModal(strategyId)
     });
+}
+
+// @FEAT:modal-management @COMP:route @TYPE:helper
+function closeCapitalModal() {
+    closeModal('capitalModal');
+}
+
+async function loadCapitalModal(strategyId) {
+    const modalContent = document.getElementById('capitalModalContent');
+    renderState(modalContent, 'loading');
+
+    try {
+        const data = await apiCall(`/api/strategies/${strategyId}/accounts`, { autoErrorToast: false });
+        renderCapitalModal(strategyId, data.accounts || []);
+    } catch (error) {
+        renderState(modalContent, 'error', {
+            message: error.message,
+            onRetry: () => loadCapitalModal(strategyId)
+        });
+    }
 }
 
 function renderCapitalModal(strategyId, accounts) {
@@ -1664,21 +1762,33 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // 모달 외부 클릭 시 닫기
-    document.querySelectorAll('.modal-overlay').forEach(modal => {
-        modal.addEventListener('click', function(e) {
-            if (e.target === this) {
-                this.classList.add('hidden');
+    // @FEAT:modal-management @COMP:util @TYPE:core
+    // WHY: 이벤트 위임 패턴으로 메모리 효율성 개선 (querySelectorAll 루프 제거).
+    //      preventBackdropClose dataset 지원으로 특수 케이스 처리.
+    //      ESC 키는 최상위 모달만 닫도록 개선 (모달 중첩 시).
+
+    // 백드롭 클릭으로 모달 닫기 (이벤트 위임)
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay') && !e.target.classList.contains('hidden')) {
+            // preventBackdropClose 체크
+            if (e.target.dataset.preventBackdropClose !== 'true') {
+                e.target.classList.add('hidden');
+                delete e.target.dataset.preventBackdropClose;
             }
-        });
+        }
     });
-    
-    // ESC 키로 모달 닫기
-    document.addEventListener('keydown', function(e) {
+
+    // ESC 키로 최상위 모달 닫기
+    document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            document.querySelectorAll('.modal-overlay').forEach(modal => {
-                modal.classList.add('hidden');
-            });
+            const visibleModals = document.querySelectorAll('.modal-overlay:not(.hidden)');
+            if (visibleModals.length > 0) {
+                const topModal = visibleModals[visibleModals.length - 1]; // 최상위 모달
+                if (topModal.dataset.preventBackdropClose !== 'true') {
+                    topModal.classList.add('hidden');
+                    delete topModal.dataset.preventBackdropClose;
+                }
+            }
         }
     });
 });
