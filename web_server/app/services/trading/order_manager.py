@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -865,8 +866,16 @@ class OrderManager:
         quantity: Decimal,
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
+        webhook_received_at: Optional[datetime] = None  # ✅ Infinite Loop Fix: 웹훅 수신 시각 보존
     ) -> Dict[str, Any]:
-        """Persist an open order if the exchange reports it as outstanding."""
+        """Persist an open order if the exchange reports it as outstanding.
+
+        Infinite Loop Fix (2025-10-26):
+            - webhook_received_at 파라미터 추가로 원본 웹훅 수신 시각 보존
+            - PendingOrder → OpenOrder 전환 시 타임스탬프 손실 방지
+            - 정렬 순서 안정성 보장을 위한 필수 필드
+            - See Migration: 20251026_add_webhook_received_at
+        """
         from app.constants import OrderStatus
 
         try:
@@ -888,6 +897,7 @@ class OrderManager:
                 logger.error("exchange_order_id가 없어서 OpenOrder 생성 불가")
                 return {'success': False, 'error': 'missing_order_id'}
 
+            # @FEAT:order-tracking @COMP:service @TYPE:core
             open_order = OpenOrder(
                 strategy_account_id=strategy_account.id,
                 exchange_order_id=str(exchange_order_id),
@@ -900,6 +910,7 @@ class OrderManager:
                 filled_quantity=float(order_result.get('filled_quantity', 0)),
                 status=order_status,
                 market_type=strategy_account.strategy.market_type or 'SPOT',
+                webhook_received_at=webhook_received_at  # ✅ 웹훅 수신 시각
             )
 
             db.session.add(open_order)
