@@ -51,6 +51,7 @@
 
 ### 📊 Strategy & Analytics
 - **strategy-management** - 전략 CRUD, 계좌 연결, 공개 전략 구독 [`@COMP:service,route`] → [docs](features/strategy-management.md)
+- **strategy-subscription-safety** - 구독/해제 보안 강화, 강제 청산, Race Condition 방지 (Phase 1-5) [`@COMP:service,route`] → [docs](features/strategy-subscription-safety.md)
 - **analytics** - 거래 성과 분석, ROI/승률 계산, 일별 성과 집계 [`@COMP:service`] → [docs](features/analytics.md)
 - **account-management** - 계좌 관리, KRW→USDT 변환 [`@COMP:service,route`] → [docs](features/account-management.md)
 
@@ -79,6 +80,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/strategies.py, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition 방지 |
 | 2025-10-26 | Strategies UI Refactoring | ✅ Phase 1-4 | strategies.html (+286) | 8개 렌더링 함수, 3-tier 아키텍처 |
 | 2025-10-26 | Webhook Token Copy | ✅ Complete | profile.html, components.css | 클립보드 복사 버튼 추가 |
 | 2025-10-25 | Toast UX Improvement | ✅ Phase 1-2 | realtime-openorders.js, core.py | 단일/배치 Toast 통일 |
@@ -135,7 +137,7 @@
 - **Position & Capital** (2): position-tracking, capital-management
 - **Exchange** (5): exchange-integration, upbit-integration, price-cache, symbol-validation, futures-validation
 - **UI & Real-time** (6): toast-system, toast-ux-improvement, event-sse, batch-sse, individual-toast, open-orders-sorting
-- **Strategy & Analytics** (3): strategy-management, analytics, account-management
+- **Strategy & Analytics** (4): strategy-management, strategy-subscription-safety, analytics, account-management
 - **Background Jobs** (3): background-scheduler, background-log-tagging, batch-parallel-processing
 - **Infrastructure** (4): worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
 - **Notifications** (2): telegram-notification, admin-panel
