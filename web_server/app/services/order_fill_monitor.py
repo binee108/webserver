@@ -3,7 +3,7 @@
 
 WebSocket 이벤트 수신 → REST API 확인 → DB 업데이트 → 재정렬 트리거
 
-@FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:integration
+@FEAT:order-tracking @FEAT:trade-execution @FEAT:event-sse @COMP:service @TYPE:integration
 """
 
 import asyncio
@@ -330,20 +330,61 @@ class OrderFillMonitor:
             'order_type': order_info.get('order_type') or open_order.order_type
         }
 
-    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:core
+    # @FEAT:order-tracking @FEAT:limit-order @FEAT:event-sse @COMP:service @TYPE:core
     def _finalize_order_update(self, open_order: OpenOrder, status: str, order_info: dict):
-        """
-        Step 3: OpenOrder 업데이트 또는 삭제
+        """Step 3: OpenOrder 업데이트 또는 삭제
 
-        - PARTIALLY_FILLED: 업데이트 후 계속 모니터링
-        - FILLED/CANCELED/EXPIRED: 삭제
+        주문 상태에 따라 OpenOrder를 업데이트하거나 삭제합니다.
+        CANCELED/CANCELLED/EXPIRED 상태의 경우 삭제 전 SSE 이벤트를 발송합니다.
+
+        Args:
+            open_order: 처리할 OpenOrder 객체
+            status: 주문 상태 ('PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED')
+            order_info: 거래소 API 응답 데이터
+
+        처리 로직:
+            - PARTIALLY_FILLED: 수량 업데이트 후 계속 모니터링
+            - CANCELED/CANCELLED/EXPIRED: SSE 이벤트 발송 → DB 삭제
+            - FILLED: DB 삭제 (이벤트는 다른 경로에서 발송)
+            - 기타: 방어적 로깅 후 삭제
+
+        SSE 이벤트:
+            - 이벤트 발송은 db.session.delete() **전**에 수행 (타이밍 critical)
+            - 이벤트 실패 시에도 DB 삭제는 정상 진행 (에러 격리)
+            - Phase 1의 EventEmitter.emit_order_cancelled_or_expired_event() 사용
         """
         if status == 'PARTIALLY_FILLED':
             open_order.status = status
             open_order.filled_quantity = float(order_info.get('filled_quantity', 0))
             open_order.is_processing = False  # 계속 모니터링
             db.session.flush()
-        elif status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
+        elif status in ['CANCELED', 'CANCELLED', 'EXPIRED']:
+            # ⚠️ CRITICAL: SSE 이벤트 발송은 db.session.delete() **전**에 수행
+            # 이유: 삭제 후에는 open_order 데이터 접근 불가능 (Phase 1 EventEmitter 제약사항)
+            try:
+                # Lazy import (순환 참조 방지, Line 134-135 패턴 재사용)
+                from app.services.trading import trading_service
+                event_emitter = trading_service.event_emitter
+
+                # SSE 이벤트 발송 (삭제 전이므로 OpenOrder 데이터 접근 가능)
+                event_emitter.emit_order_cancelled_or_expired_event(open_order, status)
+            except Exception as e:
+                # 이벤트 발송 실패는 로그만 남기고 계속 진행 (DB 트랜잭션 보호)
+                logger.error(
+                    f"❌ {status} 이벤트 발송 실패 - order_id={open_order.exchange_order_id}, error={e}",
+                    exc_info=True
+                )
+
+            # OpenOrder 삭제
+            db.session.delete(open_order)
+            logger.info(f"🗑️ OpenOrder 삭제 완료 - order_id={open_order.exchange_order_id}, status={status}")
+        elif status == 'FILLED':
+            # FILLED는 기존 로직 유지 (다른 경로에서 이미 이벤트 발송됨)
+            db.session.delete(open_order)
+            logger.info(f"🗑️ OpenOrder 삭제 완료 - order_id={open_order.exchange_order_id}, status={status}")
+        else:
+            # 예상치 못한 상태 (방어적 프로그래밍)
+            logger.warning(f"⚠️ 예상치 못한 주문 상태 - status={status}, order_id={open_order.exchange_order_id}")
             db.session.delete(open_order)
 
     # @FEAT:order-tracking @COMP:service @TYPE:core
