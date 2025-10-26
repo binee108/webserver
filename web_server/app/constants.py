@@ -964,6 +964,7 @@ class BackgroundJobTag:
     DAILY_SUMMARY = "[DAILY_SUMMARY]"        # 일일 요약 전송 (매일 09:00)
     PERF_CALC = "[PERF_CALC]"                # 일일 성과 계산 (매일 09:05)
     AUTO_REBAL = "[AUTO_REBAL]"              # 자동 리밸런싱 (매시 17분)
+    BALANCE_SYNC = "[BALANCE_SYNC]"          # 계좌 잔고 자동 동기화 (59초 주기)
     TOKEN_REFRESH = "[TOKEN_REFRESH]"        # 증권 OAuth 토큰 갱신 (매시 정각)
     QUEUE_REBAL = "[QUEUE_REBAL]"            # 대기열 재정렬 (1초 주기)
     LOCK_RELEASE = "[LOCK_RELEASE]"          # 오래된 처리 잠금 해제 (5분 주기)
@@ -995,6 +996,7 @@ JOB_TAG_MAP = {
     'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,             # Line 623
     'calculate_daily_performance': BackgroundJobTag.PERF_CALC,        # Line 637
     'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,       # Line 668
+    'sync_account_balances': BackgroundJobTag.BALANCE_SYNC,              # Line 819 (app/__init__.py)
 }
 
 
