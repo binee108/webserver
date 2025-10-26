@@ -1765,5 +1765,102 @@ grep -r "@FEAT:strategy-management.*@COMP:ui" web_server/app/static/js/strategie
 - 6개 파일 생성
 - 의존성 트리: core → rendering → api, ui → modal (독립)
 
-**다음 Phase 예정**: Phase 3 - 비즈니스 로직 파일 분리 (5개 파일)
+#### Phase 3: 비즈니스 로직 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-data.js` (134줄) - 전략 데이터 로딩 및 렌더링
+- `strategies-subscription.js` (241줄) - 전략 구독 관리
+- `strategies-crud.js` (78줄) - 전략 생성/수정/삭제
+- `strategies-accounts.js` (315줄) - 계좌 연결 관리
+- `strategies-capital.js` (186줄) - 자본 재분배 관리
+
+**파일별 역할**:
+
+**strategies-data.js**
+- **Feature Tag**: `@FEAT:strategy-data @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState), `strategies-rendering.js` (renderStatusBadge, renderMarketTypeBadge, renderStrategyBadges, renderStrategyMetrics, renderAccountItem), `strategies-core.js` (getCurrencySymbol)
+- **주요 함수** (4개):
+  1. `loadSubscribedStrategies()` - 구독 전략 목록 로딩 및 UI 렌더링
+  2. `renderSubscribedStrategy(strategy)` - 구독 전략 카드 렌더링 (배지, 메트릭, 계좌 정보)
+  3. `loadPublicStrategies()` - 공개 전략 목록 로딩 및 UI 렌더링
+  4. `renderPublicStrategy(strategy)` - 공개 전략 카드 렌더링 (public 배지 포함)
+- **핵심 기능**: 구독/공개 전략 데이터 로딩 및 카드 UI 생성
+
+**strategies-subscription.js**
+- **Feature Tag**: `@FEAT:strategy-subscription @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState, handleApiResponse, getPayload, getErrorMessage), `strategies-modal.js` (openModal, closeAccountModal), `strategies-core.js` (getCSRFToken)
+- **주요 함수** (7개):
+  1. `openSubscribeModal(strategyId)` - 구독 모달 열기 및 계좌 선택 UI 렌더링
+  2. `renderSubscribeAccountPicker(strategyId)` - 계좌 선택 UI 렌더링 (선물 전용 전략 검증)
+  3. `openSubscribeSettings(strategyId, accountId, accountLabel)` - 구독 설정 폼 표시
+  4. `submitSubscribeSettings(event, strategyId, accountId)` - 구독 설정 제출 (CSRF 보호)
+  5. `subscribeStrategy(strategyId, accountId)` - 전략 구독 API 호출
+  6. `unsubscribeStrategy(strategyId, accountId)` - 전략 구독 해지 (확인 프롬프트)
+  7. `openPublicDetail(strategyId)` - 공개 전략 상세 모달 열기
+- **핵심 기능**: 전략 구독/구독해지 워크플로우, 선물 계좌 검증
+
+**strategies-crud.js**
+- **Feature Tag**: `@FEAT:strategy-crud @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, setButtonLoading), `strategies-modal.js` (closeStrategyModal)
+- **주요 함수** (3개):
+  1. `editStrategy(strategyId)` - 전략 편집 폼 로딩 및 필드 채우기
+  2. `deleteStrategy(strategyId)` - 전략 삭제 (확인 프롬프트)
+  3. `submitStrategy(event)` - 전략 생성/수정 폼 제출 (CSRF 보호)
+- **핵심 기능**: 전략 CRUD 작업 (Create, Update, Delete)
+
+**strategies-accounts.js**
+- **Feature Tag**: `@FEAT:strategy-accounts @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState, setButtonLoading, handleApiResponse, getPayload, getErrorMessage), `strategies-modal.js` (openModal, closeAccountModal), `strategies-core.js` (getCSRFToken), `strategies-ui.js` (updateStrategyCard)
+- **주요 함수** (8개):
+  1. `openAccountModal(strategyId, mode)` - 계좌 관리 모달 열기
+  2. `loadStrategyAccountModal(strategyId, mode)` - 계좌 모달 데이터 로딩 및 렌더링
+  3. `renderAccountModal(strategyId, allAccounts, connectedAccounts)` - 계좌 목록 렌더링 (연결/미연결 구분)
+  4. `connectAccount(strategyId, accountId, event)` - 계좌 연결 (선물 계좌 검증 포함)
+  5. `editConnection(strategyId, accountId)` - 연결 설정 편집 폼 표시
+  6. `showConnectionForm(strategyId, accountId, mode, existingData)` - 연결 폼 렌더링 (신규/편집 공용)
+  7. `submitConnection(event, strategyId, accountId, mode)` - 연결 설정 제출 (CSRF 보호)
+  8. `disconnectAccount(strategyId, accountId)` - 계좌 연결 해제 (확인 프롬프트)
+- **핵심 기능**: 전략-계좌 연결 관리, 선물 계좌 검증, 커스텀 설정 폼
+
+**strategies-capital.js**
+- **Feature Tag**: `@FEAT:strategy-capital @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState), `strategies-modal.js` (openModal, closeCapitalModal), `strategies-core.js` (getCSRFToken)
+- **주요 함수** (4개):
+  1. `openCapitalModal(strategyId)` - 자본 재분배 모달 열기
+  2. `loadCapitalModal(strategyId)` - 자본 모달 데이터 로딩 및 렌더링
+  3. `renderCapitalModal(strategyId, accounts)` - 자본 현황 렌더링 (비율, 총액 표시)
+  4. `triggerCapitalReallocation(event)` - 자본 재분배 실행 (force=true, CSRF 보호)
+- **핵심 기능**: 연결된 계좌 간 자본 재분배 관리
+
+**Phase 3 통계**:
+- 총 954줄 분리
+- 함수 보존율: 100% (26/26 함수)
+- 의존성 문서화: 완료 (함수 레벨까지)
+- 특수 기능: 선물 계좌 검증 로직 (`@FEAT:futures-validation`)
+
+**검색 명령**:
+```bash
+# 전략 데이터 관련 코드 검색
+grep -r "@FEAT:strategy-data" web_server/app/static/js/strategies/ --include="*.js"
+
+# 구독 관리 코드 검색
+grep -r "@FEAT:strategy-subscription" web_server/app/static/js/strategies/ --include="*.js"
+
+# CRUD 작업 코드 검색
+grep -r "@FEAT:strategy-crud" web_server/app/static/js/strategies/ --include="*.js"
+
+# 계좌 관리 코드 검색
+grep -r "@FEAT:strategy-accounts" web_server/app/static/js/strategies/ --include="*.js"
+
+# 자본 관리 코드 검색
+grep -r "@FEAT:strategy-capital" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+**누적 통계 (Phase 1-3)**:
+- 총 1,586줄 분리 (원본 1,625줄 대비 97.6%)
+- 11개 파일 생성 (core, rendering, api, modal, ui, data, subscription, crud, accounts, capital)
+- 계획 대비: -6줄 (-0.6%, 목표 달성)
+- 의존성 트리: core → rendering → api → data/subscription/crud/accounts/capital
+
+**다음 Phase 예정**: Phase 4 - 이벤트 리스너 및 HTML 수정 (11개 script 순차 로딩)
 
