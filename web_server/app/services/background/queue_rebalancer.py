@@ -22,7 +22,7 @@ _last_status_log = 0
 
 
 # @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core
-def rebalance_all_symbols_with_context(app: Flask) -> None:
+def rebalance_all_symbols() -> None:
     """Flask app context에서 모든 심볼의 대기열 재정렬
 
     처리 단계:
@@ -35,9 +35,6 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
     4. 에러 처리 및 로깅
     5. 대기열 적체 모니터링 및 알림
 
-    Args:
-        app: Flask 애플리케이션 인스턴스 (app context 제공)
-
     Returns:
         None (로그만 기록)
 
@@ -46,7 +43,12 @@ def rebalance_all_symbols_with_context(app: Flask) -> None:
         - max_instances=1로 동시 실행 방지 (APScheduler 설정에 의해 thread-safe)
         - 모듈 변수 _last_status_log는 max_instances=1 설정에 의존하여 thread-safe
         - 에러 발생 시에도 스케줄러 중단 방지
+        - SQLAlchemyJobStore 호환성을 위해 pickle 직렬화 가능한 구조
+          (전역 앱 참조 패턴 사용)
     """
+    from app import get_flask_app
+    app = get_flask_app()
+
     with app.app_context():
         try:
             from app import db

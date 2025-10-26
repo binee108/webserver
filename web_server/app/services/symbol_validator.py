@@ -54,8 +54,10 @@ class SymbolValidator:
         logger.info("✅ Symbol Validator 초기화 완료")
 
     # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:integration
-    def refresh_symbols_with_context(self, app):
+    def refresh_symbols(self):
         """Flask app context와 함께 Symbol 정보 갱신 (APScheduler용)"""
+        from app import get_flask_app
+        app = get_flask_app()
         with app.app_context():
             self._refresh_all_symbols()
 
