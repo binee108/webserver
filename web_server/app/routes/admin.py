@@ -1136,7 +1136,7 @@ def get_queue_status():
     """
     try:
         from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
-        from app.constants import ExchangeLimits
+        from app.constants import MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
         from sqlalchemy import distinct, func
 
         # 활성 계정 조회
@@ -1202,12 +1202,14 @@ def get_queue_status():
                     symbol=symbol
                 ).count()
 
-                # 제한 계산
-                limits = ExchangeLimits.calculate_symbol_limit(
-                    exchange=account.exchange,
-                    market_type=market_type,
-                    symbol=symbol
-                )
+                # 고정 제한 (거래소 구분 없음)
+                # LIMIT BUY 2개, LIMIT SELL 2개, STOP BUY 2개, STOP SELL 2개 = 총 8개
+                limits = {
+                    'max_orders': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 4,  # 8개
+                    'max_orders_per_side': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 2,  # 4개
+                    'max_stop_orders': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 2,  # 4개
+                    'max_stop_orders_per_side': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE  # 2개
+                }
 
                 account_data['symbols'].append({
                     'symbol': symbol,

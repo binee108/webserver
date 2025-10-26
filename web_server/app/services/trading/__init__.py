@@ -19,7 +19,6 @@ from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
-from .exchange_limit_tracker import ExchangeLimitTracker
 from .order_queue_manager import OrderQueueManager
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,6 @@ class TradingService:
         self.order_manager = OrderManager(service=self)
         self.core = TradingCore(service=self)
         self.event_emitter = EventEmitter(service=self)
-        self.exchange_limit_tracker = ExchangeLimitTracker  # classmethod만 있는 유틸리티 클래스
         self.order_queue_manager = OrderQueueManager(service=self)
 
         # WebSocket 관리자 (앱 초기화 시 설정됨)

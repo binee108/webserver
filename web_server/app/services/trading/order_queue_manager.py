@@ -16,7 +16,7 @@ from datetime import datetime
 
 from app import db
 from app.models import OpenOrder, PendingOrder, StrategyAccount, Account
-from app.constants import ExchangeLimits, OrderType, ORDER_TYPE_GROUPS, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
+from app.constants import OrderType, ORDER_TYPE_GROUPS, MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
 from app.services.utils import to_decimal
 from app.services.exchange import exchange_service
 
@@ -306,11 +306,10 @@ class OrderQueueManager:
         ✅ v3: 타입 그룹별 4-way 분리 (Phase 2 - 2025-10-16)
 
         처리 단계:
-        1. 제한 계산 (ExchangeLimits.calculate_symbol_limit)
-        2. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
-        3. 타입 그룹별 + Side별 4-way 분리 (LIMIT/STOP × BUY/SELL 독립 버킷)
-        4. 각 버킷별 상위 5개 선택 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE=5)
-        5. Sync:
+        1. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
+        2. 타입 그룹별 + Side별 4-way 분리 (LIMIT/STOP × BUY/SELL 독립 버킷)
+        3. 각 버킷별 상위 2개 선택 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE=2)
+        4. Sync:
            - 하위로 밀린 거래소 주문 → 취소 + 대기열 이동
            - 상위로 올라온 대기열 주문 → 거래소 실행
 
@@ -353,27 +352,13 @@ class OrderQueueManager:
                         'error': f'계정을 찾을 수 없습니다 (ID: {account_id})'
                     }
 
-                # market_type 결정 (Strategy에서 추론)
-                strategy_account = StrategyAccount.query.filter_by(account_id=account_id).first()
-                if not strategy_account or not strategy_account.strategy:
-                    logger.warning(f"계정 {account_id}에 연결된 전략이 없음, SPOT 기본값 사용")
-                    market_type = 'SPOT'
-                else:
-                    market_type = strategy_account.strategy.market_type or 'SPOT'
-
-                # 거래소별 제한 계산
-                limits = ExchangeLimits.calculate_symbol_limit(
-                    exchange=account.exchange,
-                    market_type=market_type,
-                    symbol=symbol
-                )
-
-                max_orders = limits['max_orders']
-                max_stop_orders = limits['max_stop_orders']
+                # 단일 상수 기반 제한 (거래소 구분 없음)
+                max_orders_per_type_side = MAX_ORDERS_PER_SYMBOL_TYPE_SIDE  # 2개
 
                 logger.info(
                     f"🔄 재정렬 시작 - 계정: {account_id}, 심볼: {symbol}, "
-                    f"제한: {max_orders}개 (STOP: {max_stop_orders}개)"
+                    f"타입별 Side당 제한: {max_orders_per_type_side}개 "
+                    f"(LIMIT BUY/SELL 각 2개, STOP BUY/SELL 각 2개)"
                 )
 
                 # Step 2: 현재 주문 조회 (DB) - N+1 문제 방지를 위해 joinedload 사용
@@ -471,7 +456,7 @@ class OrderQueueManager:
                     f"STOP(buy:{len(stop_buy_orders)}, sell:{len(stop_sell_orders)})"
                 )
 
-                # Step 4: 각 버킷별 상위 5개 선택 (타입 그룹별 독립 할당)
+                # Step 4: 각 버킷별 상위 2개 선택 (타입 그룹별 독립 할당)
 
                 # 각 버킷 정렬 (정렬 키: priority ASC, sort_price DESC, created_at ASC)
                 limit_buy_orders.sort(key=lambda x: (
@@ -528,8 +513,8 @@ class OrderQueueManager:
                 if selected_stop_buy or selected_stop_sell:
                     logger.debug(
                         f"🔍 STOP 정렬 - "
-                        f"BUY top5 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_buy[:5]]}, "
-                        f"SELL top5 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_sell[:5]]}"
+                        f"BUY top2 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_buy[:2]]}, "
+                        f"SELL top2 stop_price: {[float(o['db_record'].stop_price) if o['db_record'].stop_price else None for o in selected_stop_sell[:2]]}"
                     )
 
                 # 통합 (Step 5에서 사용)
@@ -675,6 +660,10 @@ class OrderQueueManager:
         from collections import defaultdict
         orders_by_account = defaultdict(list)
 
+        # Fix: 카운터 변수 초기화 누락 수정 (NameError 방지)
+        success_count = 0
+        failed_count = 0
+
         for pending_order in pending_orders:
             # Bug Fix: Prevent AttributeError if strategy_account is None
             if not pending_order.strategy_account:
@@ -688,9 +677,6 @@ class OrderQueueManager:
             orders_by_account[account_id].append(pending_order)
 
         logger.info(f"📦 배치 처리 시작 - {len(orders_by_account)}개 계좌, {len(pending_orders)}개 주문")
-
-        success_count = 0
-        failed_count = 0
 
         # Step 2: Process each account independently (exception isolation)
         for account_id, account_orders in orders_by_account.items():

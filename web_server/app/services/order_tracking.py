@@ -9,14 +9,20 @@ from decimal import Decimal
 import logging
 import json
 import uuid
+import time
 from app import db
 from app.models import (
     OrderTrackingSession, TradeExecution, TrackingLog,
     OpenOrder, Trade, StrategyAccount, Account
 )
 from app.constants import OrderStatus
+from app.services.utils import to_decimal
 
 logger = logging.getLogger(__name__)
+
+# API Retry 설정 (주문 손실 방지)
+MAX_API_RETRIES = 3
+RETRY_DELAY_SEC = 0.5
 
 
 # @FEAT:order-tracking @COMP:service @TYPE:core
@@ -297,16 +303,29 @@ class OrderTrackingService:
                 try:
                     logger.info(f"Processing {market_type} market with {len(market_strategy_accounts)} strategy accounts")
 
-                    # 거래소에서 미체결 주문 조회
-                    result = exchange_service.get_open_orders(account, market_type=market_type)
+                    # 거래소에서 미체결 주문 조회 (재시도 로직)
+                    exchange_orders = []
+                    result = None
+                    for attempt in range(MAX_API_RETRIES):
+                        result = exchange_service.get_open_orders(account, market_type=market_type)
+                        if result.get('success'):
+                            exchange_orders = result.get('orders', [])
+                            if attempt > 0:
+                                logger.info(f"✅ API 재시도 성공 (시도: {attempt + 1}/{MAX_API_RETRIES})")
+                            break
+
+                        error_msg = result.get('error', 'Unknown error')
+                        logger.warning(f"⚠️ API 호출 실패 (시도: {attempt + 1}/{MAX_API_RETRIES}): {error_msg}")
+
+                        if attempt < MAX_API_RETRIES - 1:
+                            time.sleep(RETRY_DELAY_SEC)
 
                     if not result.get('success'):
                         error_msg = result.get('error', 'Unknown error')
-                        logger.error(f"Failed to fetch {market_type} orders: {error_msg}")
+                        logger.error(f"❌ API 재시도 모두 실패 ({MAX_API_RETRIES}회): {error_msg}")
                         all_errors.append(f"{market_type}: {error_msg}")
                         continue
 
-                    exchange_orders = result.get('orders', [])
                     logger.info(f"Fetched {len(exchange_orders)} orders from {market_type} market")
 
                     # Phase 3: 체결 내역 조회 추가
@@ -473,17 +492,51 @@ class OrderTrackingService:
                                     db_order,
                                     recent_trades
                                 )
-                            elif db_order.filled_quantity > 0:
-                                # 부분 체결 후 취소로 추정
-                                db_order.status = OrderStatus.CANCELLED
-                                logger.info(f"Order {db_order.exchange_order_id} partially filled then cancelled")
                             else:
-                                # 취소됨
-                                db_order.status = OrderStatus.CANCELLED
+                                # CANCELLED 처리 전 거래소 재확인 (일시적 API 오류 방지)
+                                reconfirmed = False
+                                if hasattr(exchange_service, 'fetch_order'):
+                                    recheck_result = exchange_service.fetch_order(
+                                        account=account,
+                                        order_id=db_order.exchange_order_id,
+                                        symbol=db_order.symbol,
+                                        market_type=market_type
+                                    )
 
-                            db_order.updated_at = datetime.utcnow()
-                            total_closed += 1
-                            logger.debug(f"Closed order {db_order.exchange_order_id}: {db_order.status}")
+                                    if recheck_result and recheck_result.get('success'):
+                                        fetched_order = recheck_result.get('order', {})
+                                        fetched_status = fetched_order.get('status')
+
+                                        if fetched_status and fetched_status in OrderStatus.get_open_statuses():
+                                            # 실제로는 활성 상태 → 복원
+                                            logger.warning(
+                                                f"⚠️ 누락된 주문이 거래소에서 활성 상태로 확인됨 - 복원: "
+                                                f"{db_order.exchange_order_id} → {fetched_status}"
+                                            )
+                                            db_order.status = fetched_status
+                                            # 수량 업데이트
+                                            if 'filled' in fetched_order:
+                                                db_order.filled_quantity = to_decimal(fetched_order.get('filled'), Decimal('0'))
+                                            total_updated += 1
+                                            reconfirmed = True
+                                            processed_order_ids.add(db_order.exchange_order_id)  # Fix: 거래소 재확인된 주문 중복 처리 방지
+
+                                if not reconfirmed:
+                                    # 재확인 실패 또는 실제 취소 → CANCELLED 처리
+                                    if db_order.filled_quantity > 0:
+                                        # 부분 체결 후 취소로 추정
+                                        db_order.status = OrderStatus.CANCELLED
+                                        logger.info(f"Order {db_order.exchange_order_id} partially filled then cancelled")
+                                    else:
+                                        # 완전 취소
+                                        db_order.status = OrderStatus.CANCELLED
+                                        logger.info(f"Order {db_order.exchange_order_id} cancelled (not found on exchange)")
+
+                                    db_order.updated_at = datetime.utcnow()
+                                    total_closed += 1
+
+                            if db_order.status in OrderStatus.get_closed_statuses():
+                                logger.debug(f"Closed order {db_order.exchange_order_id}: {db_order.status}")
 
                     # 이 마켓의 결과 저장
                     market_results[market_type] = {
@@ -538,17 +591,49 @@ class OrderTrackingService:
                 ).all()
 
                 deleted_count = 0
+                restored_count = 0
                 for order in closed_orders:
                     try:
+                        # CANCELLED 주문은 거래소 재확인 (일시적 API 오류 방지)
+                        if order.status == OrderStatus.CANCELLED and order.exchange_order_id:
+                            # 전략 계좌에서 market_type 추출
+                            strategy_account = order.strategy_account
+                            market_type = 'SPOT'
+                            if strategy_account and strategy_account.strategy:
+                                market_type = strategy_account.strategy.market_type or 'SPOT'
+
+                            # 거래소에서 실제 상태 확인
+                            if hasattr(exchange_service, 'fetch_order'):
+                                recheck_result = exchange_service.fetch_order(
+                                    account=account,
+                                    order_id=order.exchange_order_id,
+                                    symbol=order.symbol,
+                                    market_type=market_type
+                                )
+
+                                if recheck_result and recheck_result.get('success'):
+                                    fetched_status = recheck_result.get('order', {}).get('status')
+                                    if fetched_status and fetched_status in OrderStatus.get_open_statuses():
+                                        # 실제로는 활성 상태 → 상태 복원
+                                        logger.warning(
+                                            f"⚠️ CANCELLED 주문이 거래소에서 활성 상태로 확인됨 - 복원: "
+                                            f"{order.exchange_order_id} ({order.status} → {fetched_status})"
+                                        )
+                                        order.status = fetched_status
+                                        restored_count += 1
+                                        continue  # 삭제하지 않음
+
                         logger.info(f"🗑️ OpenOrder 정리: {order.exchange_order_id} (상태: {order.status})")
                         db.session.delete(order)
                         deleted_count += 1
                     except Exception as e:
                         logger.warning(f"Failed to delete closed order {order.exchange_order_id}: {e}")
 
-                if deleted_count > 0:
+                if deleted_count > 0 or restored_count > 0:
                     db.session.commit()
-                    logger.info(f"✅ {deleted_count}개의 완료된 주문이 정리되었습니다")
+                    logger.info(
+                        f"✅ 주문 정리 완료 - 삭제: {deleted_count}개, 복원: {restored_count}개"
+                    )
 
             except Exception as e:
                 logger.error(f"Error cleaning up closed orders: {e}")
