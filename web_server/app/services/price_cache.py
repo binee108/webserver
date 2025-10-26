@@ -182,7 +182,6 @@ class PriceCache:
         cache_key = self._get_cache_key(symbol, exchange, market_type)
 
         with self._lock:
-            old_price = self._cache.get(cache_key, {}).get('price')
             self._cache[cache_key] = {
                 'price': float(price),
                 'timestamp': time.time(),
@@ -191,10 +190,6 @@ class PriceCache:
                 'symbol': symbol
             }
             self._update_counts[cache_key] += 1
-
-            if old_price != float(price):
-                logger.debug(f"📊 가격 업데이트: {symbol} = {price} "
-                           f"(이전: {old_price})")
 
     # @FEAT:price-cache @COMP:service @TYPE:core
     def update_batch_prices(self, symbols: list,
