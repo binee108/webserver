@@ -1862,5 +1862,125 @@ grep -r "@FEAT:strategy-capital" web_server/app/static/js/strategies/ --include=
 - 계획 대비: -6줄 (-0.6%, 목표 달성)
 - 의존성 트리: core → rendering → api → data/subscription/crud/accounts/capital
 
-**다음 Phase 예정**: Phase 4 - 이벤트 리스너 및 HTML 수정 (11개 script 순차 로딩)
+---
+
+#### Phase 4: Events + HTML Modification (2025-10-26 완료)
+
+**목적**: 이벤트 리스너 분리 및 HTML 템플릿 모듈화 완료
+
+**Phase 4 통계**:
+- 파일 수: 1개 (strategies-events.js)
+- 총 라인 수: 89 lines
+- HTML 수정: strategies.html (11개 script 태그)
+
+**구현 파일**:
+
+**strategies-events.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:ui @TYPE:core`
+- **의존성**: strategies-core.js (getCSRFToken), strategies-rendering.js (renderStatusBadge), strategies-api.js (handleApiResponse, getPayload, getErrorMessage), strategies-modal.js, strategies-ui.js, strategies-data.js, strategies-subscription.js, strategies-crud.js, strategies-accounts.js, strategies-capital.js
+- **주요 기능** (3개):
+  1. **Strategy Toggle Events** (lines 10-58):
+     - 전략 활성화/비활성화 스위치 이벤트 핸들러
+     - API 호출 후 상태 배지 UI 업데이트
+     - 실패 시 토글 상태 자동 롤백
+     - CSRF 토큰 보호
+  2. **Modal Backdrop Click** (lines 66-74):
+     - 이벤트 위임 패턴으로 메모리 효율성 개선
+     - `preventBackdropClose` dataset 지원으로 특수 모달 보호
+     - 외부 클릭 시 모달 자동 닫기
+  3. **ESC Key Modal Close** (lines 76-89):
+     - ESC 키로 최상위 모달만 닫기 (다중 모달 스택 지원)
+     - `preventBackdropClose` dataset 체크로 특수 모달 제외
+
+- **핵심 패턴**:
+  - 이벤트 위임 (event delegation) - querySelector 루프 제거
+  - CSRF 보호 - API 호출 시 토큰 검증
+  - 상태 롤백 - 실패 시 UI 복구
+
+**HTML Template Modularization**
+- **파일**: `web_server/app/templates/strategies.html`
+- **수정 범위**: lines 437-454 (11개 script 태그)
+- **Script 로딩 순서** (의존성 기반):
+  1. Core utilities: `strategies-core.js`, `strategies-rendering.js`, `strategies-api.js`
+  2. UI management: `strategies-modal.js`, `strategies-ui.js`
+  3. Business logic: `strategies-data.js`, `strategies-subscription.js`, `strategies-crud.js`, `strategies-accounts.js`, `strategies-capital.js`
+  4. Event listeners: `strategies-events.js` (반드시 마지막, 모든 함수 참조)
+
+- **Jinja2 템플릿 보존**:
+  - `window.strategies` 배열 (lines 419-435) - 서버 사이드 렌더링 데이터
+  - Flask `url_for()` 함수 사용 - 정적 파일 경로 동적 생성
+  - 선택적 `BACKGROUND_LOG_LEVEL` 환경 변수 (로그 레벨 제어)
+
+**모듈화 완성도**:
+- Phase 1-4 누적: 11개 파일, 1,675줄
+- 원본 대비: 103.1% (1,675 / 1,625줄) - 문서화 주석 추가로 약간 증가
+- 모듈화 완료: 100% ✅
+
+**검색 명령**:
+```bash
+# 이벤트 관련 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:ui" web_server/app/static/js/strategies/ --include="*.js"
+
+# 모달 관리 코드 검색
+grep -r "@FEAT:modal-management" web_server/app/static/js/strategies/ --include="*.js"
+
+# 모든 strategies 모듈 검색
+grep -r "@FEAT:strategy-" web_server/app/static/js/strategies/ --include="*.js" | head -20
+```
+
+---
+
+## 전체 모듈화 통계 (Phase 1-4)
+
+- **총 Phase 수**: 4
+- **총 파일 수**: 11개
+- **총 라인 수**: 1,675 lines
+- **원본 파일**: 1,625 lines (strategies.js)
+- **증가율**: +3.1% (주석 및 문서화 추가)
+- **모듈화 완료**: 100% ✅
+
+**Phase별 기여도**:
+- Phase 1 (Core utilities): 467 lines (27.9%)
+- Phase 2 (UI management): 165 lines (9.9%)
+- Phase 3 (Business logic): 954 lines (57.0%)
+- Phase 4 (Events): 89 lines (5.3%)
+
+**의존성 그래프 (최종)**:
+```
+Level 0 (독립):
+  ├─ strategies-core.js (26줄)
+  └─ strategies-modal.js (88줄)
+
+Level 1 (Core 의존):
+  ├─ strategies-rendering.js (215줄, core 의존)
+  └─ strategies-api.js (226줄, core 의존)
+
+Level 2 (Level 0-1 의존):
+  ├─ strategies-ui.js (77줄)
+  ├─ strategies-data.js (134줄)
+  ├─ strategies-subscription.js (241줄)
+  ├─ strategies-crud.js (78줄)
+  └─ strategies-capital.js (186줄)
+
+Level 3 (계좌 관리):
+  └─ strategies-accounts.js (315줄, 모든 Level 0-2 의존)
+
+Level 4 (이벤트, 최상위):
+  └─ strategies-events.js (90줄, 모든 파일 의존)
+```
+
+**파일 목록**:
+1. strategies-core.js (26 lines) - Exchange helpers, constants
+2. strategies-modal.js (88 lines) - Modal management, DOM manipulation
+3. strategies-rendering.js (215 lines) - Rendering utilities (depends: core)
+4. strategies-api.js (226 lines) - API integration, state management (depends: core)
+5. strategies-ui.js (77 lines) - UI updates (depends: modal, rendering)
+6. strategies-data.js (134 lines) - Data loading (depends: api, rendering)
+7. strategies-subscription.js (241 lines) - Subscription workflow (depends: api, modal)
+8. strategies-crud.js (78 lines) - Create/Update/Delete operations (depends: api, modal)
+9. strategies-capital.js (186 lines) - Capital reallocation (depends: api, modal)
+10. strategies-accounts.js (315 lines) - Account management (depends: all Level 0-2)
+11. strategies-events.js (90 lines) - Event listeners (depends: all files)
+
+**다음 Phase 예정**: Phase 4 완료 - 모듈화 100% 달성
 
