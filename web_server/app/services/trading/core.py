@@ -155,6 +155,17 @@ class TradingCore:
                         f"수량: {quantity}, price: {price}, stop_price: {stop_price}"
                     )
 
+                    # @FEAT:order-tracking @COMP:service @TYPE:core
+                    # Infinite Loop Fix (2025-10-26):
+                    # Extract webhook_received_at from timing_context
+                    # - Preserves original webhook reception time
+                    # - Prevents timestamp loss during PendingOrder → OpenOrder transitions
+                    # - See Migration: 20251026_add_webhook_received_at
+                    webhook_received_at = None
+                    if timing_context and 'webhook_received_at' in timing_context:
+                        ts = timing_context['webhook_received_at']
+                        webhook_received_at = ts if isinstance(ts, datetime) else datetime.fromtimestamp(ts)
+
                     enqueue_result = self.service.order_queue_manager.enqueue(
                         strategy_account_id=strategy_account.id,
                         symbol=symbol,
@@ -165,7 +176,8 @@ class TradingCore:
                         stop_price=stop_price,
                         market_type=strategy_market_type,
                         reason='WEBHOOK_ORDER',
-                        commit=True
+                        commit=True,
+                        webhook_received_at=webhook_received_at  # ✅ 웹훅 수신 시각 전달
                     )
 
                     if not enqueue_result.get('success'):

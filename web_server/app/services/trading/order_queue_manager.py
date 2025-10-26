@@ -70,12 +70,19 @@ class OrderQueueManager:
         stop_price: Optional[Decimal] = None,
         market_type: str = 'FUTURES',
         reason: str = 'QUEUE_LIMIT',
-        commit: bool = True  # ✅ v2: 트랜잭션 제어 (조건 2)
+        commit: bool = True,  # ✅ v2: 트랜잭션 제어 (조건 2)
+        webhook_received_at: Optional[datetime] = None  # ✅ Infinite Loop Fix: 웹훅 수신 시각 보존
     ) -> Dict[str, Any]:
         """대기열에 주문 추가 (Order List SSE 발송, Toast SSE는 Batch 통합)
 
         PendingOrder 생성 시 Order List SSE를 발송하여 열린 주문 테이블을 실시간 업데이트합니다.
         Toast 알림은 웹훅 응답 시 order_type별 집계 Batch SSE로 발송됩니다.
+
+        Infinite Loop Fix (2025-10-26):
+            - webhook_received_at 파라미터 추가로 원본 웹훅 수신 시각 보존
+            - PendingOrder → OpenOrder 전환 시 타임스탬프 손실 방지
+            - 동일 시각 주문의 정렬 순서 안정성 보장
+            - See Migration: 20251026_add_webhook_received_at
 
         **Transaction Safety**:
         - SSE는 DB 커밋 완료 후에만 발송됩니다 (commit=True 시).
@@ -150,7 +157,8 @@ class OrderQueueManager:
             # 정렬용 가격 계산
             sort_price = self._calculate_sort_price(order_type, side, price, stop_price)
 
-            # PendingOrder 레코드 생성
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # PendingOrder 레코드 생성 (webhook_received_at 포함)
             pending_order = PendingOrder(
                 account_id=account.id,
                 strategy_account_id=strategy_account_id,
@@ -163,7 +171,8 @@ class OrderQueueManager:
                 priority=priority,
                 sort_price=float(sort_price) if sort_price else None,
                 market_type=market_type,
-                reason=reason
+                reason=reason,
+                webhook_received_at=webhook_received_at or datetime.utcnow()  # ✅ 웹훅 수신 시각
             )
 
             db.session.add(pending_order)
@@ -304,6 +313,13 @@ class OrderQueueManager:
         ✅ v2: threading.Lock으로 동시성 보호 (조건 4)
         ✅ v2.2: Side별 분리 정렬 (Phase 2.2)
         ✅ v3: 타입 그룹별 4-way 분리 (Phase 2 - 2025-10-16)
+        ✅ v4: webhook_received_at 정렬 키 사용 (Infinite Loop Fix - 2025-10-26)
+
+        Infinite Loop Fix (2025-10-26):
+            - 정렬 키 변경: created_at → webhook_received_at (+ DB ID tie-breaker)
+            - PendingOrder ↔ OpenOrder 전환 시 타임스탬프 안정성 보장
+            - 동일 시각 주문의 정렬 순서 결정성 확보
+            - See Migration: 20251026_add_webhook_received_at
 
         처리 단계:
         1. OpenOrder 조회 (DB) + PendingOrder 조회 (DB)
@@ -405,7 +421,8 @@ class OrderQueueManager:
                             return group_name
                     return None  # MARKET 등
 
-                # Active 주문 4-way 분리
+                # @FEAT:order-tracking @COMP:service @TYPE:core
+                # Active 주문 4-way 분리 (webhook_received_at 포함)
                 for order in active_orders:
                     order_dict = {
                         'source': 'active',
@@ -413,6 +430,7 @@ class OrderQueueManager:
                         'priority': OrderType.get_priority(order.order_type),
                         'sort_price': self._get_order_sort_price(order),
                         'created_at': order.created_at,
+                        'webhook_received_at': order.webhook_received_at  # ✅ 웹훅 수신 시각
                     }
 
                     type_group = get_order_type_group(order.order_type)
@@ -428,7 +446,8 @@ class OrderQueueManager:
                         stop_sell_orders.append(order_dict)
                     # MARKET 등은 무시 (재정렬 대상 아님)
 
-                # Pending 주문 4-way 분리 (동일 로직)
+                # @FEAT:order-tracking @COMP:service @TYPE:core
+                # Pending 주문 4-way 분리 (webhook_received_at 포함)
                 for order in pending_orders:
                     order_dict = {
                         'source': 'pending',
@@ -436,6 +455,7 @@ class OrderQueueManager:
                         'priority': order.priority,
                         'sort_price': Decimal(str(order.sort_price)) if order.sort_price else None,
                         'created_at': order.created_at,
+                        'webhook_received_at': order.webhook_received_at  # ✅ 웹훅 수신 시각
                     }
 
                     type_group = get_order_type_group(order.order_type)
@@ -458,18 +478,22 @@ class OrderQueueManager:
 
                 # Step 4: 각 버킷별 상위 2개 선택 (타입 그룹별 독립 할당)
 
-                # 각 버킷 정렬 (정렬 키: priority ASC, sort_price DESC, created_at ASC)
+                # @FEAT:order-tracking @COMP:service @TYPE:core
+                # 각 버킷 정렬 (정렬 키: priority ASC, sort_price DESC, webhook_received_at ASC, DB ID ASC)
                 limit_buy_orders.sort(key=lambda x: (
                     x['priority'],
                     -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
-                    x['created_at']
+                    x['webhook_received_at'] or x['created_at'],  # ✅ 웹훅 수신 시각 우선
+                    x['db_record'].id  # ✅ Tie-breaker
                 ))
                 limit_sell_orders.sort(key=lambda x: (
                     x['priority'],
                     -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),
-                    x['created_at']
+                    x['webhook_received_at'] or x['created_at'],  # ✅ 웹훅 수신 시각 우선
+                    x['db_record'].id  # ✅ Tie-breaker
                 ))
 
+                # @FEAT:order-tracking @COMP:service @TYPE:core
                 # STOP 주문 정렬 로직:
                 # - STOP_BUY: 낮은 stop_price 우선 (121000 → 125000)
                 #   → sort_price = -stop_price 저장 (-121000, -125000)
@@ -477,14 +501,16 @@ class OrderQueueManager:
                 # - STOP_SELL: 높은 stop_price 우선 (130000 → 125000)
                 #   → sort_price = stop_price 저장 (130000, 125000)
                 #   → -(sort_price) ASC 정렬 = -130000, -125000 (높은 절댓값 먼저 = 130000 우선)
-                # - LIMIT 주문: priority → price → created_at (Lines 420-429)
+                # - LIMIT 주문: priority → price → webhook_received_at → id
                 stop_buy_orders.sort(key=lambda x: (
                     -(x['sort_price'] if x['sort_price'] else Decimal('-inf')),  # DESC: -121000 먼저
-                    x['created_at']
+                    x['webhook_received_at'] or x['created_at'],  # ✅ 웹훅 수신 시각 우선
+                    x['db_record'].id  # ✅ Tie-breaker
                 ))
                 stop_sell_orders.sort(key=lambda x: (
                     -(x['sort_price'] if x['sort_price'] else Decimal('inf')),  # DESC: 130000 먼저
-                    x['created_at']
+                    x['webhook_received_at'] or x['created_at'],  # ✅ 웹훅 수신 시각 우선
+                    x['db_record'].id  # ✅ Tie-breaker
                 ))
 
                 # 각 버킷별 상위 5개 선택
@@ -625,6 +651,12 @@ class OrderQueueManager:
 
         @FEAT:webhook-batch-queue @COMP:service @TYPE:core
         Phase 2: Rebalancer integration with multi-account support
+
+        Infinite Loop Fix (2025-10-26):
+            - PendingOrder의 webhook_received_at을 OpenOrder로 전달
+            - create_open_order_record 호출 시 webhook_received_at 파라미터 추가
+            - 타임스탬프 손실 없이 주문 상태 전환 보장
+            - See Migration: 20251026_add_webhook_received_at
 
         Architecture:
             1. Group by account_id → independent processing (exception isolation)
@@ -831,7 +863,8 @@ class OrderQueueManager:
                             logger.info(f"    ✅ 주문 성공: PendingOrder {pending_order.id} → OpenOrder")
                             logger.debug(f"    🔍 order_data: order_id={order_data.get('order_id')}, status={order_data.get('status')}, order_type={order_data.get('order_type')}")
 
-                            # Create OpenOrder record
+                            # @FEAT:order-tracking @COMP:service @TYPE:core
+                            # Create OpenOrder record (PendingOrder의 webhook_received_at 전달)
                             create_result = self.service.order_manager.create_open_order_record(
                                 strategy_account=strategy_account,
                                 order_result=order_data,
@@ -840,7 +873,8 @@ class OrderQueueManager:
                                 order_type=pending_order.order_type,
                                 quantity=pending_order.quantity,
                                 price=pending_order.price,
-                                stop_price=pending_order.stop_price
+                                stop_price=pending_order.stop_price,
+                                webhook_received_at=pending_order.webhook_received_at  # ✅ 웹훅 수신 시각 전달
                             )
                             logger.debug(f"    🔍 create_open_order_record 결과: {create_result}")
 
@@ -1023,6 +1057,11 @@ class OrderQueueManager:
     def _move_to_pending(self, open_order: OpenOrder) -> bool:
         """거래소 주문 → 대기열 이동
 
+        Infinite Loop Fix (2025-10-26):
+            - OpenOrder의 webhook_received_at 보존하여 PendingOrder로 전달
+            - 재정렬 시 타임스탬프 손실 방지
+            - See Migration: 20251026_add_webhook_received_at
+
         Args:
             open_order: 취소할 OpenOrder
 
@@ -1044,7 +1083,10 @@ class OrderQueueManager:
                 )
                 return False
 
-            # 2. 대기열에 추가
+            # @FEAT:order-tracking @COMP:service @TYPE:core
+            # 2. 대기열에 추가 (OpenOrder의 webhook_received_at 보존)
+            webhook_received_at = open_order.webhook_received_at or open_order.created_at
+
             enqueue_result = self.enqueue(
                 strategy_account_id=open_order.strategy_account_id,
                 symbol=open_order.symbol,
@@ -1054,7 +1096,9 @@ class OrderQueueManager:
                 price=Decimal(str(open_order.price)) if open_order.price else None,
                 stop_price=Decimal(str(open_order.stop_price)) if open_order.stop_price else None,
                 market_type=open_order.market_type,
-                reason='REBALANCED_OUT'
+                reason='REBALANCED_OUT',
+                webhook_received_at=webhook_received_at,  # ✅ 웹훅 수신 시각 보존
+                commit=False  # 트랜잭션 제어
             )
 
             if not enqueue_result.get('success'):

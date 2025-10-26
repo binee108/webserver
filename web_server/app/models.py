@@ -367,6 +367,11 @@ class OpenOrder(db.Model):
     filled_quantity = db.Column(db.Float, default=0.0, nullable=False)  # 체결된 수량
     status = db.Column(db.String(20), nullable=False)  # OPEN, PARTIALLY_FILLED, CANCELLED, FILLED
     market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
+
+    # @FEAT:order-tracking @COMP:model @TYPE:core
+    # Webhook 수신 시각 - 정렬 및 순서 보장용
+    webhook_received_at = db.Column(db.DateTime, nullable=True)  # PendingOrder 외 경로에서도 생성 가능
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -784,6 +789,11 @@ class PendingOrder(db.Model):
     market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
     reason = db.Column(db.String(50), nullable=False, default='QUEUE_LIMIT')  # 대기열 진입 사유
     retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수
+
+    # @FEAT:order-tracking @COMP:model @TYPE:core
+    # Webhook 수신 시각 - 정렬 및 순서 보장용 (NOT NULL)
+    webhook_received_at = db.Column(db.DateTime, nullable=False)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
