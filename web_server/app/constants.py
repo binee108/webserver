@@ -996,7 +996,7 @@ JOB_TAG_MAP = {
     'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,             # Line 623
     'calculate_daily_performance': BackgroundJobTag.PERF_CALC,        # Line 637
     'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,       # Line 668
-    'sync_account_balances': BackgroundJobTag.BALANCE_SYNC,              # Line TBD (app/__init__.py)
+    'sync_account_balances': BackgroundJobTag.BALANCE_SYNC,              # Line 819 (app/__init__.py)
 }
 
 

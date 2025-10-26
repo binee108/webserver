@@ -804,6 +804,25 @@ def register_background_jobs(app):
         max_instances=1
     )
 
+    # 🆕 계좌 잔고 자동 동기화 (59초마다)
+    # @FEAT:account-management @COMP:job @TYPE:core
+    # WHY: 약 1분 간격으로 모든 활성 계좌의 잔고를 최신화
+    # - 59초 선택 근거:
+    #   1. Prime number → 정각 트래픽 피크 회피
+    #   2. 60초 작업(release_stale_order_locks)과 충돌 방지
+    #   3. 29초, 31초 작업과 정렬 최소화 (GCD = 1)
+    #   4. DailyAccountSummary 실시간성 유지 (1분 이내)
+    scheduler.add_job(
+        func=sync_account_balances,
+        trigger="interval",
+        seconds=59,
+        id='sync_account_balances',
+        name='Sync Account Balances',
+        replace_existing=True,
+        max_instances=1
+    )
+    app.logger.info("✅ 계좌 잔고 동기화 스케줄러 등록 완료 (59초 간격)")
+
     app.logger.info(f'백그라운드 작업 등록 완료 - {len(scheduler.get_jobs())}개 작업')
 
 # @FEAT:background-log-tagging @COMP:app-init @TYPE:warmup
