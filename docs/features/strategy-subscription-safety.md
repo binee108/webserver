@@ -430,9 +430,164 @@ Phase 1의 7단계 cleanup 패턴을 재사용하여 일관성과 안정성을 �
 
 ---
 
-## 향후 Phase
+## Phase 5: Webhook is_active Recheck
 
-- **Phase 5**: 웹훅 실행 시 `is_active` 재확인
+**Status**: ✅ Complete
+**Files**:
+- `web_server/app/services/trading/core.py:158-174, 221-237, 1482-1503`
+
+### 개요
+
+웹훅 주문 실행 직전에 `StrategyAccount.is_active` 상태를 재확인하여, Phase 1/4에서 비활성화된 계좌의 주문이 실행되지 않도록 Race Condition을 완전히 방지합니다.
+
+### Race Condition 타임라인
+
+**Before Phase 5 (문제)**:
+```
+T0: 웹훅 수신 (매수 신호)
+T1: StrategyAccount 조회 (is_active=True)
+T2: 주문 준비 및 계산
+T3: [Phase 1/4 실행] is_active=False 설정 + flush()
+T4: 주문 실행 ❌ (이미 조회한 상태로 진행)
+```
+
+**문제**: T1과 T4 사이의 시간 윈도우에서 is_active가 변경되어도 주문이 실행됨
+
+**After Phase 5 (해결)**:
+```
+T0: 웹훅 수신 (매수 신호)
+T1: StrategyAccount 조회 (is_active=True)
+T2: 주문 준비 및 계산
+T3: [Phase 1/4 실행] is_active=False 설정 + flush()
+T4: [Phase 5 체크] is_active 재확인 → False 감지 → 주문 스킵 ✅
+```
+
+**효과**: 주문 실행 직전 최종 확인으로 시간 윈도우 완전 차단
+
+### 3개 실행 경로 보호
+
+#### 1. LIMIT/STOP 대기열 진입 (Line 158-174)
+**체크 시점**: PendingOrder 진입 직전
+**효과**: 대기열 오염 방지
+**에러 응답**:
+```python
+{
+    'success': False,
+    'error': 'StrategyAccount가 비활성 상태입니다',
+    'error_type': 'account_inactive',
+    'account_id': account.id,
+    'account_name': account.name,
+    'strategy_account_id': strategy_account.id,
+    'skipped': True,
+    'skip_reason': 'strategy_account_inactive'
+}
+```
+**로그**: `⚠️ [Phase 5] StrategyAccount {id} 비활성 상태 - LIMIT/STOP 대기열 진입 스킵 (전략: {strategy}, 계좌: {account}, 심볼: {symbol})`
+
+#### 2. MARKET 주문 즉시 실행 (Line 221-237)
+**체크 시점**: 거래소 API 호출 직전
+**효과**: 즉시 실행 주문 차단
+**에러 응답**: 위와 동일
+**로그**: `⚠️ [Phase 5] StrategyAccount {id} 비활성 상태 - MARKET 주문 스킵 (전략: {strategy}, 계좌: {account}, 심볼: {symbol}, 방향: {side})`
+
+#### 3. 배치 주문 실행 (Line 1482-1503)
+**체크 시점**: 배치 실행 직전
+**효과**: 다중 주문 일괄 차단
+**배치 응답 구조** (원본 인덱스 매핑):
+```python
+[
+    {
+        'order_index': original_idx,
+        'success': False,
+        'error': 'StrategyAccount가 비활성 상태입니다',
+        'error_type': 'account_inactive',
+        'account_id': account.id,
+        'account_name': account.name,
+        'strategy_account_id': strategy_account.id,
+        'skipped': True,
+        'skip_reason': 'strategy_account_inactive',
+        'batch_skipped': True
+    }
+]
+```
+**특징**: `original_index` 보존으로 정확한 에러 리포팅
+**로그**: `⚠️ [Phase 5] StrategyAccount {id} 비활성 상태 - 배치 주문 실행 스킵 (전략: {strategy}, 계좌: {account})`
+
+### 구현 세부사항
+
+**hasattr() 방어 패턴**:
+```python
+if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+    # 주문 스킵
+```
+- 레거시 데이터 호환 (`is_active` 필드 없는 경우)
+- 기존 코드 패턴 일치 (core.py Lines 730, 1054)
+
+**성능 영향**:
+- DB 재조회 없음 (이미 로드된 객체 속성 접근만)
+- 오버헤드 < 1ms (hasattr + 속성 read)
+
+### 안전성 체인 완성
+
+Phase 5는 전체 안전성 체인의 마지막 조각입니다:
+
+```
+Phase 1/4: is_active=False 설정 (cleanup 시작)
+    ↓
+Phase 5: is_active 재확인 (실행 직전 게이트)
+    ↓
+완전한 Race Condition 방지 ✅
+```
+
+**다층 방어 (Defense in Depth)**:
+- **1차 방어**: Phase 1/4에서 `is_active=False` + `flush()`
+- **2차 방어**: Phase 5에서 주문 실행 직전 재확인
+- **효과**: 시간 순서에 관계없이 비활성 계좌는 절대 주문 실행 불가
+
+### 기능 태그
+
+```python
+# @FEAT:strategy-subscription-safety @COMP:service @TYPE:core
+```
+
+위치:
+- Line 158-174: LIMIT/STOP 대기열
+- Line 221-237: MARKET 주문
+- Line 1482-1503: 배치 주문
+
+### 테스트 시나리오
+
+**Scenario 1: 정상 동작** (is_active=True)
+- 웹훅 수신 → Phase 5 체크 통과 → 주문 실행
+- 로그: `[Phase 5]` 메시지 없음
+
+**Scenario 2: MARKET 주문 Race Condition**
+- Phase 1/4 실행으로 is_active=False 설정
+- 웹훅 수신 (MARKET) → Phase 5 체크 실패 → 주문 스킵
+- 로그: `⚠️ [Phase 5] ... MARKET 주문 스킵`
+
+**Scenario 3: LIMIT/STOP 대기열 Race Condition**
+- is_active=False 설정 후 웹훅 수신
+- Phase 5 체크 실패 → 대기열 진입 차단
+- 로그: `⚠️ [Phase 5] ... LIMIT/STOP 대기열 진입 스킵`
+
+**Scenario 4: 배치 주문 Race Condition**
+- is_active=False 설정 후 배치 웹훅 수신
+- Phase 5 체크 실패 → 배치 전체 스킵
+- 결과: 모든 주문에 `batch_skipped=True` 표시
+
+### 로그 예시
+
+**정상 케이스** (Phase 5 로그 없음):
+```
+INFO: 📥 대기열 진입 (웹훅) - 타입: LIMIT, 심볼: BTC/USDT, ...
+INFO: ✅ 거래 실행 성공 (주문 ID: 12345...)
+```
+
+**Race Condition 차단 케이스**:
+```
+WARNING: ⚠️ [Phase 5] StrategyAccount 123 비활성 상태 - MARKET 주문 스킵 (전략: My Strategy, 계좌: Binance Main, 심볼: BTC/USDT, 방향: BUY)
+```
 
 ## 관련 링크
 

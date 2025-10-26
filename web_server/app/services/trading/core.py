@@ -155,6 +155,24 @@ class TradingCore:
                         f"수량: {quantity}, price: {price}, stop_price: {stop_price}"
                     )
 
+                    # 🆕 Phase 5: 대기열 진입 직전 is_active 재확인 (Race Condition 방지)
+                    if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+                        logger.warning(
+                            f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
+                            f"LIMIT/STOP 대기열 진입 스킵 (전략: {strategy.group_name}, "
+                            f"계좌: {account.name}, 심볼: {symbol})"
+                        )
+                        return {
+                            'success': False,
+                            'error': 'StrategyAccount가 비활성 상태입니다',
+                            'error_type': 'account_inactive',
+                            'account_id': account.id,
+                            'account_name': account.name,
+                            'strategy_account_id': strategy_account.id,
+                            'skipped': True,
+                            'skip_reason': 'strategy_account_inactive'
+                        }
+
                     enqueue_result = self.service.order_queue_manager.enqueue(
                         strategy_account_id=strategy_account.id,
                         symbol=symbol,
@@ -200,6 +218,24 @@ class TradingCore:
                     }
 
             # MARKET/CANCEL 주문: 기존대로 즉시 거래소 제출
+            # 🆕 Phase 5: 주문 실행 직전 is_active 재확인 (Race Condition 방지)
+            if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+                logger.warning(
+                    f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
+                    f"MARKET 주문 스킵 (전략: {strategy.group_name}, 계좌: {account.name}, "
+                    f"심볼: {symbol}, 방향: {side})"
+                )
+                return {
+                    'success': False,
+                    'error': 'StrategyAccount가 비활성 상태입니다',
+                    'error_type': 'account_inactive',
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'strategy_account_id': strategy_account.id,
+                    'skipped': True,
+                    'skip_reason': 'strategy_account_inactive'
+                }
+
             order_result = self._execute_exchange_order(
                 account=account,
                 symbol=symbol,
@@ -1435,12 +1471,36 @@ class TradingCore:
         from app.models import PendingOrder
 
         account = account_data['account']
+        strategy_account = account_data['strategy_account']
         exchange_orders = account_data['orders']
         results = []
 
         logger.info(
             f"📦 계좌 {account.name} 배치 주문 실행: {len(exchange_orders)}건"
         )
+
+        # 🆕 Phase 5: 배치 실행 직전 is_active 재확인 (Race Condition 방지)
+        if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+            logger.warning(
+                f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
+                f"배치 주문 실행 스킵 (전략: {strategy.group_name}, 계좌: {account.name})"
+            )
+            # 배치 전체 스킵 (원본 인덱스 매핑)
+            for order in exchange_orders:
+                original_idx = order.get('original_index', 0)
+                results.append({
+                    'order_index': original_idx,
+                    'success': False,
+                    'error': 'StrategyAccount가 비활성 상태입니다',
+                    'error_type': 'account_inactive',
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'strategy_account_id': strategy_account.id,
+                    'skipped': True,
+                    'skip_reason': 'strategy_account_inactive',
+                    'batch_skipped': True
+                })
+            return results
 
         # @FEAT:webhook-batch-queue @COMP:service @TYPE:core
         # Phase 1: Separate orders by type (intelligent routing)
