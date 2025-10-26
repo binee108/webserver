@@ -19,6 +19,32 @@
 
 ## Recent Updates
 
+### 2025-10-26: Webhook Token Copy Button (UX Enhancement)
+**영향 범위**: `webhook-token`
+**파일**:
+- `web_server/app/templates/auth/profile.html` (Lines 80-86, 414-464)
+- `web_server/app/static/css/components.css` (Lines 761-765)
+
+**기능 설명**: auth/profile 페이지 웹훅 토큰 관리 섹션에 클립보드 복사 버튼 추가
+- **UI 개선**: 복사 버튼 추가 ([복사] [표시/숨김] [재발행] 순서)
+- **클립보드 통합**: Clipboard API로 토큰 복사
+- **사용자 피드백**:
+  - 성공 시: 토스트 알림 + 2초간 체크 아이콘 표시
+  - 실패 시: 에러 토스트 알림 (권한 거부, 토큰 없음 등)
+- **접근성**: `aria-label` 지원으로 스크린 리더 접근성 제공
+- **스타일**: `.btn-info` 클래스 정의 추가 (기존 누락 해결)
+
+**태그**: `@FEAT:webhook-token @COMP:ui-helper,style @TYPE:helper,config`
+
+**검색**:
+```bash
+grep -r "@FEAT:webhook-token" --include="*.html" --include="*.css"
+```
+
+**의존성**: Clipboard API (브라우저 네이티브, 97%+ 지원)
+
+---
+
 ### 2025-10-25: Toast UX Improvement - Single Order Batch SSE (Phase 1-2 완료)
 **영향 범위**: `toast-ux-improvement`
 **파일**:
