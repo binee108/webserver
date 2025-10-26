@@ -232,9 +232,120 @@ curl -X GET "http://localhost:8000/api/strategies/123/subscribe/456/status" \
 4. 경고 메시지: "활성 포지션 {N}개, 미체결 주문 {M}개({symbols})가 있습니다."
 5. 사용자 최종 확인 후 구독 해제 진행
 
-## Phase 3-5 (향후 작업)
+## Phase 3: 프론트엔드 경고 메시지 UI
 
-- **Phase 3**: 구독 해제 UI 경고 메시지
+**Status**: ✅ Complete
+**Files**: `web_server/app/templates/strategies.html:1275-1347`
+
+### 개요
+
+전략 구독 해제 전 사용자에게 활성 포지션 및 미체결 주문 현황을 경고 메시지로 표시하여 실수로 인한 포지션 청산을 방지합니다.
+
+### 구현 상세
+
+#### 수정된 함수
+
+**File**: `web_server/app/templates/strategies.html`
+**Function**: `async function unsubscribeStrategy(strategyId, accountId)` (Lines 1275-1347)
+**Tag**: `@FEAT:strategy-subscription-safety @COMP:frontend @TYPE:validation`
+
+#### 작동 흐름
+
+1. **상태 조회** (Phase 2 API 호출)
+   ```javascript
+   GET /api/strategies/${strategyId}/subscribe/${accountId}/status
+   ```
+   - 응답: `{active_positions, open_orders, symbols, is_active}`
+
+2. **경고 메시지 생성**
+   - **포지션/주문 있음**: 상세 정보 + 슬리피지 경고
+   - **포지션/주문 없음**: 긍정적 빈 상태 메시지
+
+3. **사용자 확인**
+   - 브라우저 `confirm()` 다이얼로그로 경고 표시
+   - 취소 시 구독 해제 중단
+
+4. **구독 해제 실행**
+   ```javascript
+   DELETE /api/strategies/${strategyId}/subscribe/${accountId}?force=true
+   ```
+   - `force=true`: Phase 4에서 백엔드 강제 청산 처리 예정
+
+#### 경고 메시지 예시
+
+**활성 포지션/주문이 있는 경우:**
+```
+⚠️ 구독 해제 시 다음 작업이 수행됩니다:
+
+📊 활성 포지션 3개 강제 청산 (시장가)
+   ⚡ 슬리피지 발생 가능 (시장가 청산으로 예상 가격과 실제 체결가가 다를 수 있음)
+
+📝 미체결 주문 2개 취소
+
+🎯 영향받는 심볼: BTC/USDT, ETH/USDT, BNB/USDT 외 2개
+
+계속하시겠습니까?
+```
+
+**포지션/주문이 없는 경우:**
+```
+현재 활성화된 포지션/주문이 없습니다.
+구독을 해제하시겠습니까?
+```
+
+#### plan-reviewer 개선사항 반영
+
+1. **심볼 목록 잘림 방지** (Priority 1-1)
+   - 5개 초과 시 "외 N개"로 표시 (Lines 1315-1318)
+   - `confirm()` 창 오버플로우 방지
+
+2. **슬리피지 경고 명확화** (Priority 1-2)
+   - 괄호로 설명 추가: "(시장가 청산으로 예상 가격과 실제 체결가가 다를 수 있음)" (Lines 1305-1307)
+   - 비전문가도 이해 가능
+
+3. **빈 상태 메시지 개선** (Priority 1-3)
+   - "정리할 항목 없음" → "현재 활성화된 포지션/주문이 없습니다" (Lines 1324-1325)
+   - 긍정적 프레이밍으로 사용자 혼란 방지
+
+### 에러 처리
+
+- **상태 조회 실패**: 구독 해제 중단 (safe failure)
+  - `apiCall()`이 자동으로 에러 토스트 표시
+  - 블라인드 삭제 방지
+
+- **구독 해제 실패**: 에러 토스트 표시, UI 업데이트 안 함
+  - `loadSubscribedStrategies()` 호출 안 됨 (성공 시에만 호출)
+
+### 의존성
+
+- **Phase 2 API**: `GET /api/strategies/{id}/subscribe/{account_id}/status` (완료)
+- **기존 헬퍼 함수**:
+  - `apiCall()` - API 호출 및 에러 처리
+  - `showToast()` - 알림 표시
+  - `loadSubscribedStrategies()` - UI 새로고침
+
+### 사용 예시
+
+```javascript
+// 사용자가 구독 해제 버튼 클릭
+unsubscribeStrategy(strategyId, accountId);
+
+// 1. Phase 2 API 호출하여 상태 조회
+// 2. 경고 메시지 표시 (포지션 N개, 주문 N개)
+// 3. 사용자 확인 후 DELETE 요청
+// 4. 성공 시 UI 새로고침
+```
+
+### 검색 태그
+
+- `@FEAT:strategy-subscription-safety` - 전체 기능
+- `@COMP:frontend` - 프론트엔드 컴포넌트
+- `@TYPE:validation` - 사용자 확인/검증
+
+---
+
+## Phase 4-5 (향후 작업)
+
 - **Phase 4**: 구독 해제 백엔드 강제 청산
 - **Phase 5**: 웹훅 실행 시 `is_active` 재확인
 

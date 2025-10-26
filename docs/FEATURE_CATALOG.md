@@ -19,43 +19,44 @@
 
 ## Recent Updates
 
-### 2025-10-26: Strategy Subscription Safety - Public→Private Transition & Status Query (Phase 1-2)
+### 2025-10-26: Strategy Subscription Safety - Public→Private Transition, Status Query & Warning UI (Phase 1-3)
 **영향 범위**: `strategy-subscription-safety`
 **파일**:
 - `web_server/app/routes/strategies.py` (Lines 264-420, 484-592)
+- `web_server/app/templates/strategies.html` (Lines 1275-1345)
 
-**기능 설명**: 공개→비공개 전환 시 구독자 정리 + 구독 상태 조회 API
+**기능 설명**: 공개→비공개 전환 시 구독자 정리 + 구독 상태 조회 + 구독 해제 경고 UI
 - **Phase 1** (완료): 전략 소유자가 공개→비공개로 변경 시 모든 구독자의:
-  1. 미체결 주문 취소 (`cancel_all_orders_by_user()`)
-  2. 활성 포지션 청산 (`close_position_by_id()`)
-  3. SSE 연결 종료 (`event_service.disconnect_client()`)
-  4. 실패 내역 추적 (`failed_cleanups` 배열)
-  5. 텔레그램 알림 구조 (TODO)
-  - **Race Condition 방지**: `is_active=False` → `flush()` 순서로 웹훅 차단
-  - **Best-Effort 방식**: 일부 실패 허용, 로그 기록 (WARNING/INFO)
+  1. 미체결 주문 취소 | 활성 포지션 청산 | SSE 연결 종료
+  2. Race Condition 방지: `is_active=False` → `flush()` 순서로 웹훅 차단
+  3. Best-Effort 방식: 일부 실패 허용, `failed_cleanups` 추적
 
 - **Phase 2** (완료): 구독 해제 전 상태 조회 API
-  - **엔드포인트**: `GET /api/strategies/<strategy_id>/subscribe/<account_id>/status`
-  - **반환 데이터**: `{active_positions: int, open_orders: int, symbols: list, is_active: bool}`
-  - **보안**: Account 소유권 먼저 확인하여 타인 정보 탐색 차단
-  - **성능**: N+1 쿼리 방지 (joinedload 사용)
-  - **에러 처리**: 403 ACCESS_DENIED (권한 없음), 404 RESOURCE_NOT_FOUND (구독 미존재)
+  - 엔드포인트: `GET /api/strategies/<strategy_id>/subscribe/<account_id>/status`
+  - 반환: `{active_positions, open_orders, symbols, is_active}`
+  - 보안: Account 소유권 먼저 확인, N+1 쿼리 방지
 
-**태그**: `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core`
+- **Phase 3** (완료): 프론트엔드 경고 메시지 UI
+  - 함수: `unsubscribeStrategy()` (Lines 1275-1345)
+  - 기능: Phase 2 API 호출 → 경고 메시지 표시 → 사용자 확인 → 구독 해제
+  - 개선: 심볼 목록 잘림 (5개 초과 시 "외 N개"), 슬리피지 경고 명확화, 빈 상태 메시지 개선
+
+**태그**:
+- Backend: `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core` (Phases 1-2)
+- Frontend: `@FEAT:strategy-subscription-safety @COMP:frontend @TYPE:validation` (Phase 3)
 
 **검색**:
 ```bash
-# 전체 기능 검색
-grep -r "@FEAT:strategy-subscription-safety" --include="*.py"
+# 전체 기능
+grep -r "@FEAT:strategy-subscription-safety" --include="*.py" --include="*.html"
 
-# Phase 2 API만 검색
-grep -n "def get_subscription_status" web_server/app/routes/strategies.py
+# 프론트엔드만
+grep -r "@FEAT:strategy-subscription-safety" --include="*.html" | grep "@COMP:frontend"
 ```
 
 **문서**: `docs/features/strategy-subscription-safety.md`
 
 **향후 Phase**:
-- Phase 3: 구독 해제 UI 경고 메시지
 - Phase 4: 구독 해제 백엔드 강제 청산
 - Phase 5: 웹훅 실행 시 `is_active` 재확인
 
