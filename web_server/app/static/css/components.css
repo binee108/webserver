@@ -758,6 +758,14 @@
     color: white;
 }
 
+/* @FEAT:webhook-token @COMP:style @TYPE:config
+   Info button style - used for webhook token copy button.
+   Blue background with white text for secondary actions. */
+.btn-info {
+    background-color: var(--info);
+    color: white;
+}
+
 .btn-error {
     background-color: var(--error);
     color: white;
