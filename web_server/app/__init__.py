@@ -1424,3 +1424,75 @@ def refresh_securities_tokens():
                     )
             except Exception:
                 pass  # 텔레그램 알림 실패는 조용히 무시
+
+# @FEAT:account-management @COMP:job @TYPE:core
+@tag_background_logger(BackgroundJobTag.BALANCE_SYNC)
+def sync_account_balances():
+    """
+    Flask 앱 컨텍스트 내에서 모든 활성 계좌의 잔고를 동기화
+
+    약 1분(59초) 간격으로 실행되어 모든 활성 계좌의 잔고를
+    거래소 API에서 조회하여 DailyAccountSummary 테이블에 저장합니다.
+    계좌당 2개 API 호출 (SPOT + FUTURES 마켓별 조회)이 발생합니다.
+
+    동작 방식:
+    1. 모든 활성 계좌 조회 (is_active=True)
+    2. 각 계좌별로 security_service._collect_account_balances() 호출
+    3. 실패한 계좌는 로그만 기록하고 다음 계좌 처리 계속 (격리)
+
+    로깅:
+    - DEBUG: 개별 계좌 처리 완료 (정상 동작)
+    - INFO: 전체 요약 (성공/실패 개수)
+    - ERROR: 개별 계좌 처리 실패
+
+    Notes:
+    - 백그라운드 로깅 가이드라인 Pattern 3 (변경사항 기반) 적용
+    - Early return 패턴 사용 (활성 계좌 없으면 조용히 종료)
+    - 개별 계좌 격리로 한 계좌 실패가 다른 계좌에 영향 없음
+    """
+    app = get_flask_app()
+    with app.app_context():
+        try:
+            from app.models import Account
+            from app.services.security import security_service
+
+            # 모든 활성 계좌 조회
+            active_accounts = Account.query.filter_by(is_active=True).all()
+
+            # Early return: 활성 계좌 없으면 조용히 종료 (Pattern 1)
+            if not active_accounts:
+                return
+
+            success_count = 0
+            fail_count = 0
+
+            # 각 계좌별 잔고 동기화 (개별 격리)
+            for account in active_accounts:
+                try:
+                    # 기존 인프라 재사용 (security_service)
+                    security_service._collect_account_balances(account, persist=True)
+                    db.session.commit()
+
+                    # DEBUG 레벨: 정상 동작 (고빈도 작업)
+                    app.logger.debug(
+                        f'계좌 {account.id} ({account.name}) 잔고 동기화 완료'
+                    )
+                    success_count += 1
+
+                except Exception as e:
+                    db.session.rollback()
+                    # ERROR 레벨: 실패만 기록
+                    app.logger.error(
+                        f'계좌 {account.id} ({account.name}) 잔고 동기화 실패: {e}'
+                    )
+                    fail_count += 1
+                    # 다음 계좌 처리 계속 (격리)
+
+            # 변경사항 기반 INFO (Pattern 3)
+            if success_count > 0 or fail_count > 0:
+                app.logger.info(
+                    f'✅ 잔고 동기화 완료 - 성공: {success_count}개, 실패: {fail_count}개'
+                )
+
+        except Exception as e:
+            app.logger.error(f'잔고 동기화 작업 실패: {e}')
