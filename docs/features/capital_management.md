@@ -142,6 +142,157 @@ total_balance = analytics_service._get_cached_daily_balance(account_id=1)
 
 ---
 
+## Phase 3: 통합 테스트 (Integration Testing & Documentation)
+
+### 테스트 목표
+
+Issue #7 수정이 실제 환경에서 정상 작동하는지 검증
+
+### 테스트 시나리오
+
+#### Scenario 1: 선물 전략만 (Issue #7 재현)
+
+**조건**:
+```
+DailyAccountSummary:
+- ending_balance: $15,369 (현물 + 선물)
+- spot_balance: $10,369
+- futures_balance: $5,000
+
+전략:
+- test_futures (market_type: FUTURES, weight: 1.0)
+
+실시간 조회: 실패 (폴백 사용)
+```
+
+**기대값**:
+- `StrategyCapital.allocated_capital = $5,000` (선물 잔고만)
+- 로그: "계좌 X: 실시간 선물 잔고 조회 실패, 캐시 사용 ($5000.00)"
+
+**검증 결과**: PASS
+- 선물 전략이 `futures_balance` ($5,000)만 할당받음
+- Issue #7 버그(이전: $15,369) 수정 완료
+
+#### Scenario 2: 현물 전략만
+
+**조건**:
+```
+전략:
+- test_spot (market_type: SPOT, weight: 1.0)
+
+실시간 조회: 실패 (폴백 사용)
+```
+
+**기대값**:
+- `StrategyCapital.allocated_capital = $10,369` (현물 잔고만)
+
+**검증 결과**: PASS
+- 현물 전략이 `spot_balance` ($10,369)만 할당받음
+
+#### Scenario 3: 혼합 전략 (현물 + 선물)
+
+**조건**:
+```
+전략:
+- test_spot_mixed (market_type: SPOT, weight: 0.5)
+- test_futures_mixed (market_type: FUTURES, weight: 0.5)
+
+실시간 조회: 실패 (폴백 사용)
+```
+
+**기대값**:
+- 현물 전략: `allocated_capital = $10,369`
+- 선물 전략: `allocated_capital = $5,000`
+
+**검증 결과**: PASS
+- 각 전략이 해당 마켓의 잔고만 할당받음
+- 마켓별 독립적인 할당 확인
+
+### 코드 검증
+
+#### Phase 1: 마켓 타입별 잔고 조회 (Lines 1480-1522)
+
+```python
+def _get_cached_daily_balance(self, account_id: int, market_type: Optional[str] = None):
+    # market_type 파라미터로 마켓별 개별 조회 가능
+    if market_type == MarketType.SPOT_LOWER:
+        return spot_balance
+    elif market_type == MarketType.FUTURES_LOWER:
+        return futures_balance
+    else:
+        return ending_balance  # 하위 호환성
+```
+
+**검증**: ✅ 마켓별 필드 분리 구현 완료
+
+#### Phase 2: 폴백 로직 개선 (Lines 1582-1613)
+
+```python
+# 실시간 조회 실패 시 마켓별 캐시 조회
+if futures_strategies:
+    futures_cached = self._get_cached_daily_balance(account.id, MarketType.FUTURES_LOWER)
+    # futures_balance만 조회 (NOT ending_balance)
+
+if spot_strategies:
+    spot_cached = self._get_cached_daily_balance(account.id, MarketType.SPOT_LOWER)
+    # spot_balance만 조회
+```
+
+**검증**: ✅ 마켓별 개별 조회 폴백 구현 완료
+
+#### Phase 2: 마켓별 자본 할당 (Lines 1615-1628)
+
+```python
+# 각 마켓 타입별로 자본 할당 처리
+spot_total = total_by_market.get(MarketType.SPOT_LOWER)
+if spot_strategies and spot_total is not None:
+    self._allocate_capital_by_market_type(account, spot_strategies, MarketType.SPOT_LOWER, spot_total)
+
+futures_total = total_by_market.get(MarketType.FUTURES_LOWER)
+if futures_strategies and futures_total is not None:
+    self._allocate_capital_by_market_type(account, futures_strategies, MarketType.FUTURES_LOWER, futures_total)
+```
+
+**검증**: ✅ 마켓별 자본 할당 로직 구현 완료
+
+### 통합 테스트 파일
+
+**위치**: `.test/issue_7_code_verification_report.md`
+
+테스트 코드:
+- `.test/issue_7_integration_test.py` - 단위 테스트 (DB 직접 접근)
+- `.test/issue_7_integration_test_api.py` - API 기반 테스트
+- `.test/issue_7_api_test.sh` - 셀 스크립트 테스트
+
+### 검증 방법
+
+```bash
+# 1. 서비스 재시작
+cd .worktree/issue-7-market-balance-fix
+python run.py restart
+
+# 2. 통합 테스트 실행
+python .test/issue_7_integration_test.py
+
+# 3. 로그 확인
+grep "실시간 선물 잔고 조회 실패, 캐시 사용" web_server/logs/app.log
+```
+
+### 검증 결과 요약
+
+| Scenario | Status | 설명 |
+|----------|--------|------|
+| 1. 선물만 | ✅ PASS | futures_balance ($5,000) 할당 |
+| 2. 현물만 | ✅ PASS | spot_balance ($10,369) 할당 |
+| 3. 혼합 | ✅ PASS | 마켓별 개별 할당 |
+| 하위 호환성 | ✅ PASS | market_type=None 지원 |
+| 로깅 | ✅ PASS | 적절한 로그 메시지 |
+| 에러 처리 | ✅ PASS | 견고한 예외 처리 |
+
+**최종**: Issue #7 수정 완료 및 통합 테스트 통과
+
+---
+
 ## 관련 기능
 
 - **Analytics**: 거래 성과 분석, ROI/승률 계산
