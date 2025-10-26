@@ -1669,3 +1669,101 @@ grep -n "function render" web_server/app/templates/strategies.html | grep -E "re
 *Last Updated: 2025-10-26*
 *Recent Changes: Phase 4 - Strategy Rendering Consolidation (배지/메트릭/계좌 통합)*
 
+
+
+### strategies-js-modularization
+**Tags:** `@FEAT:strategy-management`
+**Components:** core, rendering, api, modal, ui
+**Files:** `web_server/app/static/js/strategies/strategies-*.js` (6 files)
+**Dependencies:** None (완전 독립)
+
+#### Overview
+strategies.html의 1300줄 단일 파일 JavaScript를 관심사별로 6개 파일로 분리하여 유지보수성 향상.
+
+#### Phase 1: Core 기능 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-core.js` (26줄) - 유틸리티 함수 및 상수
+- `strategies-rendering.js` (215줄) - 렌더링 함수 (배지, 메트릭, 계좌)
+- `strategies-api.js` (226줄) - API 통신 및 CRUD 작업
+
+**파일별 역할**:
+
+**strategies-core.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:util @TYPE:core`
+- **주요 함수**: `getCurrencySymbol(exchange)` - 거래소별 통화 기호 반환
+
+**strategies-rendering.js**
+- **Feature Tag**: `@FEAT:strategy-rendering @COMP:util @TYPE:core`
+- **의존성**: `strategies-core.js` (getCurrencySymbol)
+- **주요 함수** (7개): renderStatusBadge, renderMarketTypeBadge, renderPublicBadge, renderMetricItem, renderAccountItem, renderStrategyBadges, renderStrategyMetrics
+
+**strategies-api.js**
+- **Feature Tag**: `@FEAT:api-integration @COMP:util @TYPE:core`
+- **의존성**: `strategies-rendering.js` (renderStrategyBadges, renderStrategyMetrics, renderAccountItem)
+- **주요 함수** (10개): loadMyStrategies, loadSubscribedStrategies, loadPublicStrategies, saveStrategy, deleteStrategy, updatePublicStatus, subscribeStrategy, unsubscribeStrategy, updateAccountSettings, updateCapitalSettings
+
+**Phase 1 통계**:
+- 총 467줄 분리
+- 함수 보존율: 100%
+- 의존성 문서화: 완료
+
+#### Phase 2: Modal 및 UI 관리 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-modal.js` (88줄) - 모달 관리 (열기, 닫기)
+- `strategies-ui.js` (77줄) - UI 상태 관리 (탭 전환, 카드 업데이트)
+
+**파일별 역할**:
+
+**strategies-modal.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:modal @TYPE:core`
+- **의존성**: None (완전 독립)
+- **주요 함수** (6개):
+  1. `openModal(modalId, options)` - 범용 모달 열기 (백드롭, ESC 키 자동 설정)
+  2. `closeModal(modalId)` - 범용 모달 닫기 (백드롭, overflow 복원)
+  3. `openAddStrategyModal()` - 전략 추가 모달 열기
+  4. `closeStrategyModal()` - 전략 모달 닫기
+  5. `closeAccountModal()` - 계좌 모달 닫기
+  6. `closeCapitalModal()` - 자본 모달 닫기
+- **WHY 주석**: 7곳의 중복 모달 패턴을 1개 함수로 통합하여 유지보수성 향상
+
+**strategies-ui.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:ui @TYPE:core`
+- **의존성**: `strategies-core.js` (getCurrencySymbol), `strategies-rendering.js` (renderStatusBadge, renderMarketTypeBadge, etc.)
+- **주요 함수** (2개):
+  1. `switchTab(tab)` - 탭 전환 및 데이터 로딩 관리 (my, subscribed, discover)
+  2. `updateStrategyCard(strategy)` - 전략 카드 업데이트 (계좌 정보, 요약 정보)
+- **핵심 기능**: Tab 기반 UI 상태 관리, 전략 카드 동적 업데이트
+
+**Phase 2 통계**:
+- 총 165줄 분리
+- 함수 보존율: 100% (8/8 함수)
+- WHY 주석: strategies-modal.js (2개 - 모달 통합 패턴 설명)
+- 의존성 문서화: 완료
+
+**검색 명령**:
+```bash
+# Core utilities 검색
+grep -r "@FEAT:strategy-management.*@COMP:util" web_server/app/static/js/strategies/ --include="*.js"
+
+# Rendering utilities 검색
+grep -r "@FEAT:strategy-rendering" web_server/app/static/js/strategies/ --include="*.js"
+
+# API integration 검색
+grep -r "@FEAT:api-integration" web_server/app/static/js/strategies/ --include="*.js"
+
+# Modal 관리 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:modal" web_server/app/static/js/strategies/ --include="*.js"
+
+# UI 관리 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:ui" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+**누적 통계**:
+- Phase 1-2 총 632줄 분리
+- 6개 파일 생성
+- 의존성 트리: core → rendering → api, ui → modal (독립)
+
+**다음 Phase 예정**: Phase 3 - 비즈니스 로직 파일 분리 (5개 파일)
+
