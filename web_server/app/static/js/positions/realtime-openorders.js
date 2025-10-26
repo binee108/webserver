@@ -1121,12 +1121,8 @@ class RealtimeOpenOrdersManager {
             const data = await response.json();
             
             if (data.success) {
-                const successCount = data.cancelled_orders ? data.cancelled_orders.length : 0;
-                const failedCount = data.failed_orders ? data.failed_orders.length : 0;
-                
-                if (window.showToast) {
-                    window.showToast(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`, 'success');
-                }
+                // @FEAT:toast-ux-improvement @COMP:route @TYPE:integration
+                // 토스트 제거: SSE 이벤트에서 자동으로 표시됨
                 // Orders will be removed via SSE events
             } else {
                 if (window.showToast) {

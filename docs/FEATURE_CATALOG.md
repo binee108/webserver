@@ -45,26 +45,34 @@ grep -r "@FEAT:webhook-token" --include="*.html" --include="*.css"
 
 ---
 
-### 2025-10-25: Toast UX Improvement - Single Order Batch SSE (Phase 1-2 완료)
+### 2025-10-26: Toast UX Improvement - Frontend Toast Removal & Backend Batch SSE (Phase 1-2 완료)
 **영향 범위**: `toast-ux-improvement`
 **파일**:
-- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 219-220, 229-230, 972-998)
-- `web_server/app/services/trading/core.py` (Lines 726-743)
+- `web_server/app/static/js/positions/realtime-openorders.js` (Lines 219-220, 229-230, 972-998, **1123-1130**)
+- `web_server/app/services/trading/core.py` (Lines 726-743, 841-842)
 
-**기능 설명**: 단일 주문과 배치 주문의 Toast 알림 통일
-- **Phase 1** (완료): PendingOrder 토스트 필터링 + 배치 포맷 적용
+**기능 설명**: 단일 주문과 배치 주문의 Toast 알림 통일 및 중복 토스트 제거
+- **Phase 1** (2025-10-25 완료): PendingOrder 토스트 필터링 + 배치 포맷 적용
   - 토스트 3개 → 0개 (필터링)
   - 포맷 통일: "📦 LIMIT 주문 생성 1건"
-- **Phase 2** (완료): 다중 계좌 주문에 배치 SSE 발송
-  - LIMIT/STOP 주문: 성공한 계좌가 2개 이상일 때 order_batch_update SSE 발송
-  - 단일 계좌 주문: 개별 SSE 사용 (기존 로직 유지)
-  - MARKET 주문: 미발송 (메타데이터 부재)
+- **Phase 2** (2025-10-26 완료):
+  - **Backend**: 다중 계좌 주문에 배치 SSE 발송
+    - LIMIT/STOP 주문: 성공한 계좌가 2개 이상일 때 order_batch_update SSE 발송
+    - 단일 계좌 주문: 개별 SSE 사용 (기존 로직 유지)
+    - MARKET 주문: 미발송 (메타데이터 부재)
+  - **Frontend**: API 응답 성공 토스트 제거
+    - "모든 주문 취소" 버튼: API 응답 토스트 제거 (Line 1127-1129)
+    - SSE 이벤트 토스트만 사용 (중복 제거)
 
 **태그**: `@FEAT:toast-ux-improvement @COMP:service,route @TYPE:integration @DEPS:webhook-order,event-sse`
 
 **검색**:
 ```bash
+# 전체 기능
 grep -r "@FEAT:toast-ux-improvement" --include="*.py" --include="*.js"
+
+# Phase 2 Frontend 변경
+grep -n "토스트 제거: SSE" web_server/app/static/js/positions/realtime-openorders.js
 ```
 
 **문서**: `docs/features/toast-ux-improvement.md`
