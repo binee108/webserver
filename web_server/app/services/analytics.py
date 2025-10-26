@@ -1580,22 +1580,35 @@ class AnalyticsService:
                 logger.debug('SKIP_EXCHANGE_TEST 설정으로 실시간 잔고 조회를 건너뜀 (account_id=%s)', account.id)
 
             if not total_by_market:
-                cached_total = self._get_cached_daily_balance(account.id)
-                if cached_total:
-                    if spot_strategies and not futures_strategies:
-                        total_by_market[MarketType.SPOT_LOWER] = cached_total
-                    elif futures_strategies and not spot_strategies:
-                        total_by_market[MarketType.FUTURES_LOWER] = cached_total
-                    else:
-                        # 양쪽 마켓 모두 사용할 경우에는 절반씩 임시 분배
-                        total_by_market[MarketType.SPOT_LOWER] = cached_total / 2
-                        total_by_market[MarketType.FUTURES_LOWER] = cached_total / 2
+                # @FEAT:capital-management @COMP:service @TYPE:core
+                # 실시간 잔고 조회 실패 시 DailyAccountSummary 캐시에서 마켓별 개별 조회
+                # Issue #7 수정: 전체 잔고(ending_balance) 대신 spot_balance, futures_balance 개별 사용
+                any_cached = False
+
+                if spot_strategies:
+                    # 현물 전략이 있으면 현물 캐시 조회 (spot_balance)
+                    spot_cached = self._get_cached_daily_balance(account.id, MarketType.SPOT_LOWER)
+                    if spot_cached is not None:
+                        total_by_market[MarketType.SPOT_LOWER] = spot_cached
+                        any_cached = True
                         logger.warning(
-                            '계좌 %s에 대한 시장별 잔고를 찾을 수 없어 총 잔고를 균등 분배했습니다. (총 %.2f)',
-                            account.name,
-                            cached_total
+                            '계좌 %s: 실시간 현물 잔고 조회 실패, 캐시 사용 ($%.2f)',
+                            account.name, spot_cached
                         )
-                else:
+
+                if futures_strategies:
+                    # 선물 전략이 있으면 선물 캐시 조회 (futures_balance)
+                    futures_cached = self._get_cached_daily_balance(account.id, MarketType.FUTURES_LOWER)
+                    if futures_cached is not None:
+                        total_by_market[MarketType.FUTURES_LOWER] = futures_cached
+                        any_cached = True
+                        logger.warning(
+                            '계좌 %s: 실시간 선물 잔고 조회 실패, 캐시 사용 ($%.2f)',
+                            account.name, futures_cached
+                        )
+
+                if not any_cached:
+                    # 어떤 캐시도 없으면 자본 할당 건너뜀 (정보 부족)
                     logger.warning('계좌 %s에 대해 사용 가능한 잔고 정보를 찾을 수 없어 자본 할당을 건너뜀', account.name)
                     return False
 

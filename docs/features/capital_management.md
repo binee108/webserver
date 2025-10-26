@@ -64,11 +64,37 @@ total_balance = analytics_service._get_cached_daily_balance(account_id=1)
 
 ### 폴백 로직
 
-**잔고 필드 우선순위**:
+실시간 잔고 조회 실패 시 캐시된 잔고를 사용합니다.
+
+**우선순위**:
+1. 실시간 거래소 잔고 조회 (1순위)
+2. `DailyAccountSummary` 캐시 조회 (2순위, 마켓별)
+3. 자본 할당 건너뜀 (캐시도 없을 경우)
+
+**마켓별 폴백** (Issue #7 수정):
+- **현물 전략**: `spot_balance` 캐시 사용
+- **선물 전략**: `futures_balance` 캐시 사용
+- **혼합 전략**: 각 마켓별로 개별 캐시 사용
+
+**중요**: 전체 잔고(`ending_balance`)를 마켓 구분 없이 사용하지 않습니다. 각 마켓 타입의 전략은 해당 마켓의 잔고만 할당받습니다.
+
+**예시**:
+```python
+# 실시간 조회 실패 시
+# 현물 전략 → spot_balance ($10,369)
+# 선물 전략 → futures_balance ($5,000)
+# ❌ 선물 전략 → ending_balance ($15,369) - 이전 버그
+```
+
+**잔고 필드 우선순위** (캐시 내부):
 1. 지정된 마켓 타입의 잔고 (`spot_balance` / `futures_balance`)
 2. 전체 잔고 (`ending_balance`)
 3. 시작 잔고 (`starting_balance`, 방어적 폴백)
 4. `0.0` (최종 폴백 - NULL 처리)
+
+**로그**:
+- WARNING: "계좌 X: 실시간 현물 잔고 조회 실패, 캐시 사용 ($X.XX)"
+- WARNING: "계좌 X: 실시간 선물 잔고 조회 실패, 캐시 사용 ($X.XX)"
 
 ### 로깅
 
