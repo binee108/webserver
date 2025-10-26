@@ -486,7 +486,18 @@ class TradingSystemManager:
             self.https_port = find_available_port(443, 452) if os.getenv('FLASK_ENV') == 'production' else None
 
             if not self.flask_port or not self.postgres_port:
-                raise RuntimeError("사용 가능한 포트를 찾을 수 없습니다. (Flask: 5001-5010, PostgreSQL: 5432-5441)")
+                # 현재 사용 중인 포트 정보 제공
+                flask_msg = f"Flask 포트 범위(5001-5010): {'할당 실패' if not self.flask_port else '사용 가능'}"
+                postgres_msg = f"PostgreSQL 포트 범위(5432-5441): {'할당 실패' if not self.postgres_port else '사용 가능'}"
+                raise RuntimeError(
+                    f"사용 가능한 포트를 찾을 수 없습니다.\n"
+                    f"  - {flask_msg}\n"
+                    f"  - {postgres_msg}\n"
+                    f"해결 방법:\n"
+                    f"  1. 'docker ps'로 실행 중인 워크트리 확인\n"
+                    f"  2. 사용하지 않는 워크트리 종료: python run.py stop\n"
+                    f"  3. 포트 범위 확장 필요 시 문의"
+                )
 
             # Docker Compose 프로젝트 이름 설정
             self.compose_project_name = f"webserver-{self.worktree_env['name']}"
