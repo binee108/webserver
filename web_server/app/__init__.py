@@ -381,18 +381,51 @@ def create_app(config_name=None):
 
     return app
 
+# @FEAT:scheduler-persistence @COMP:config @TYPE:infrastructure
 def init_scheduler(app):
-    """APScheduler 초기화 및 백그라운드 작업 등록"""
+    """
+    APScheduler 초기화 및 백그라운드 작업 등록
+
+    SQLAlchemyJobStore 사용으로 재시작 시에도 백그라운드 작업 메타데이터 유지
+    (MemoryJobStore 대체: 재시작 시 작업 손실 방지)
+
+    JobStore:
+        - SQLAlchemyJobStore: PostgreSQL 영구 저장
+        - 테이블: apscheduler_jobs (자동 생성/복원)
+
+    Args:
+        app: Flask application instance
+
+    Raises:
+        Exception: SQLAlchemyJobStore 초기화 실패 시
+            - DB 연결 오류
+            - 테이블 생성 권한 부족
+
+    Logs:
+        - INFO: 초기화 성공 (DB 호스트/포트/DB명, 비밀번호 제외)
+        - ERROR: 초기화 실패 (상세 에러)
+    """
     if scheduler.running:
         return
 
     try:
-        # APScheduler 설정 (메모리 기반 jobstore 사용)
-        from apscheduler.jobstores.memory import MemoryJobStore
+        # APScheduler 설정 (DB 기반 jobstore 사용)
+        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+        from urllib.parse import urlparse
 
-        jobstores = {
-            'default': MemoryJobStore()
-        }
+        try:
+            jobstores = {
+                'default': SQLAlchemyJobStore(url=app.config['SQLALCHEMY_DATABASE_URI'])
+            }
+            # 보안: DB URI에서 비밀번호 제거
+            # urlparse로 프로토콜/호스트/포트/DB명만 추출
+            # 예: postgresql://localhost:5432/trading_system
+            parsed_uri = urlparse(app.config['SQLALCHEMY_DATABASE_URI'])
+            db_uri_safe = f"{parsed_uri.scheme}://{parsed_uri.hostname}:{parsed_uri.port}/{parsed_uri.path.strip('/')}"
+            app.logger.info(f'APScheduler: SQLAlchemyJobStore 초기화 성공 (DB: {db_uri_safe})')
+        except Exception as e:
+            app.logger.error(f'APScheduler: SQLAlchemyJobStore 초기화 실패 - {str(e)}')
+            raise
         executors = {
             'default': ThreadPoolExecutor(20)
         }
