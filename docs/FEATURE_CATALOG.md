@@ -55,6 +55,49 @@ grep -n "토스트 제거: SSE" web_server/app/static/js/positions/realtime-open
 
 ---
 
+### 2025-10-26: Strategies.js 모듈화 구조 (Phase 1-4 완료)
+
+**목표**: strategies.js (1,625줄)을 기능별 모듈 파일로 분리하여 유지보수성 향상
+
+**전체 구현 상태**:
+- ✅ Phase 1: Core utilities (3개 파일, 467 lines)
+- ✅ Phase 2: Modal & UI (2개 파일, 165 lines)
+- ✅ Phase 3: Business Logic (5개 파일, 954 lines)
+- ✅ Phase 4: Events + HTML (1개 파일, 89 lines)
+- ✅ **총 11개 파일, 1,675 lines (+3.1%)**
+
+**파일별 역할**:
+
+#### strategies-core.js
+- **Feature Tag**: `@FEAT:strategy-management @COMP:util @TYPE:core`
+- **의존성**: 없음 (독립)
+- **주요 함수**: `isExchangeDomestic()`, `getCurrencySymbol()`, `getCSRFToken()`
+- **상수**: `METRIC_ICONS` (accounts, positions SVG)
+- **사용처**: strategies-rendering.js, strategies-api.js
+- **Known Tag Inconsistency**: `METRIC_ICONS` 상수는 `@FEAT:strategy-rendering` 태그 사용 (렌더링 함수에서 소비), 파일 헤더는 `@FEAT:strategy-management` 태그 사용 (core 유틸리티). 이중 태깅으로 grep 검색성 향상.
+
+#### strategies-rendering.js
+- **Feature Tag**: `@FEAT:strategy-rendering @COMP:util @TYPE:core`
+- **의존성**: strategies-core.js (getCurrencySymbol, METRIC_ICONS)
+- **주요 함수**: `renderStatusBadge()`, `renderMarketTypeBadge()`, `renderPublicBadge()`, `renderMetricItem()`, `renderAccountItem()`, `renderStrategyBadges()`, `renderStrategyMetrics()`
+- **사용처**: Phase 3 비즈니스 로직 파일들
+
+#### strategies-api.js
+- **Feature Tag**: `@FEAT:api-integration @COMP:util @TYPE:core`
+- **의존성**: strategies-core.js (getCSRFToken)
+- **주요 함수**: `apiCall()`, `renderState()`, `setButtonLoading()`, `getPayload()`, `getErrorMessage()`, `handleApiResponse()`
+- **IIFE**: Exchange metadata 초기화 (`window.EXCHANGE_METADATA`)
+- **사용처**: 모든 비즈니스 로직 파일
+
+**모듈화 완료**: 100% ✅
+
+**검색 명령**:
+```bash
+grep -r "@FEAT:strategy-management\|@FEAT:strategy-rendering\|@FEAT:api-integration" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+---
+
 ### 2025-10-26: Webhook Token Copy Button (UX Enhancement)
 **영향 범위**: `webhook-token`
 **파일**:
@@ -703,6 +746,327 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
+<<<<<<< HEAD
 *Last Updated: 2025-10-26*  
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*  
 *Total Lines: ~400 (목표 준수)*
+=======
+*Last Updated: 2025-10-26*
+*Recent Changes: Phase 4 - Strategy Rendering Consolidation (배지/메트릭/계좌 통합)*
+
+
+
+### strategies-js-modularization
+**Tags:** `@FEAT:strategy-management`
+**Components:** core, rendering, api, modal, ui
+**Files:** `web_server/app/static/js/strategies/strategies-*.js` (6 files)
+**Dependencies:** None (완전 독립)
+
+#### Overview
+strategies.html의 1300줄 단일 파일 JavaScript를 관심사별로 6개 파일로 분리하여 유지보수성 향상.
+
+#### Phase 1: Core 기능 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-core.js` (26줄) - 유틸리티 함수 및 상수
+- `strategies-rendering.js` (215줄) - 렌더링 함수 (배지, 메트릭, 계좌)
+- `strategies-api.js` (226줄) - API 통신 및 CRUD 작업
+
+**파일별 역할**:
+
+**strategies-core.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:util @TYPE:core`
+- **주요 함수**: `getCurrencySymbol(exchange)` - 거래소별 통화 기호 반환
+
+**strategies-rendering.js**
+- **Feature Tag**: `@FEAT:strategy-rendering @COMP:util @TYPE:core`
+- **의존성**: `strategies-core.js` (getCurrencySymbol)
+- **주요 함수** (7개): renderStatusBadge, renderMarketTypeBadge, renderPublicBadge, renderMetricItem, renderAccountItem, renderStrategyBadges, renderStrategyMetrics
+
+**strategies-api.js**
+- **Feature Tag**: `@FEAT:api-integration @COMP:util @TYPE:core`
+- **의존성**: `strategies-rendering.js` (renderStrategyBadges, renderStrategyMetrics, renderAccountItem)
+- **주요 함수** (10개): loadMyStrategies, loadSubscribedStrategies, loadPublicStrategies, saveStrategy, deleteStrategy, updatePublicStatus, subscribeStrategy, unsubscribeStrategy, updateAccountSettings, updateCapitalSettings
+
+**Phase 1 통계**:
+- 총 467줄 분리
+- 함수 보존율: 100%
+- 의존성 문서화: 완료
+
+#### Phase 2: Modal 및 UI 관리 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-modal.js` (88줄) - 모달 관리 (열기, 닫기)
+- `strategies-ui.js` (77줄) - UI 상태 관리 (탭 전환, 카드 업데이트)
+
+**파일별 역할**:
+
+**strategies-modal.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:modal @TYPE:core`
+- **의존성**: None (완전 독립)
+- **주요 함수** (6개):
+  1. `openModal(modalId, options)` - 범용 모달 열기 (백드롭, ESC 키 자동 설정)
+  2. `closeModal(modalId)` - 범용 모달 닫기 (백드롭, overflow 복원)
+  3. `openAddStrategyModal()` - 전략 추가 모달 열기
+  4. `closeStrategyModal()` - 전략 모달 닫기
+  5. `closeAccountModal()` - 계좌 모달 닫기
+  6. `closeCapitalModal()` - 자본 모달 닫기
+- **WHY 주석**: 7곳의 중복 모달 패턴을 1개 함수로 통합하여 유지보수성 향상
+
+**strategies-ui.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:ui @TYPE:core`
+- **의존성**: `strategies-core.js` (getCurrencySymbol), `strategies-rendering.js` (renderStatusBadge, renderMarketTypeBadge, etc.)
+- **주요 함수** (2개):
+  1. `switchTab(tab)` - 탭 전환 및 데이터 로딩 관리 (my, subscribed, discover)
+  2. `updateStrategyCard(strategy)` - 전략 카드 업데이트 (계좌 정보, 요약 정보)
+- **핵심 기능**: Tab 기반 UI 상태 관리, 전략 카드 동적 업데이트
+
+**Phase 2 통계**:
+- 총 165줄 분리
+- 함수 보존율: 100% (8/8 함수)
+- WHY 주석: strategies-modal.js (2개 - 모달 통합 패턴 설명)
+- 의존성 문서화: 완료
+
+**검색 명령**:
+```bash
+# Core utilities 검색
+grep -r "@FEAT:strategy-management.*@COMP:util" web_server/app/static/js/strategies/ --include="*.js"
+
+# Rendering utilities 검색
+grep -r "@FEAT:strategy-rendering" web_server/app/static/js/strategies/ --include="*.js"
+
+# API integration 검색
+grep -r "@FEAT:api-integration" web_server/app/static/js/strategies/ --include="*.js"
+
+# Modal 관리 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:modal" web_server/app/static/js/strategies/ --include="*.js"
+
+# UI 관리 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:ui" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+**누적 통계**:
+- Phase 1-2 총 632줄 분리
+- 6개 파일 생성
+- 의존성 트리: core → rendering → api, ui → modal (독립)
+
+#### Phase 3: 비즈니스 로직 파일 분리 (2025-10-26 완료)
+
+**구현 파일**:
+- `strategies-data.js` (134줄) - 전략 데이터 로딩 및 렌더링
+- `strategies-subscription.js` (241줄) - 전략 구독 관리
+- `strategies-crud.js` (78줄) - 전략 생성/수정/삭제
+- `strategies-accounts.js` (315줄) - 계좌 연결 관리
+- `strategies-capital.js` (186줄) - 자본 재분배 관리
+
+**파일별 역할**:
+
+**strategies-data.js**
+- **Feature Tag**: `@FEAT:strategy-data @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState), `strategies-rendering.js` (renderStatusBadge, renderMarketTypeBadge, renderStrategyBadges, renderStrategyMetrics, renderAccountItem), `strategies-core.js` (getCurrencySymbol)
+- **주요 함수** (4개):
+  1. `loadSubscribedStrategies()` - 구독 전략 목록 로딩 및 UI 렌더링
+  2. `renderSubscribedStrategy(strategy)` - 구독 전략 카드 렌더링 (배지, 메트릭, 계좌 정보)
+  3. `loadPublicStrategies()` - 공개 전략 목록 로딩 및 UI 렌더링
+  4. `renderPublicStrategy(strategy)` - 공개 전략 카드 렌더링 (public 배지 포함)
+- **핵심 기능**: 구독/공개 전략 데이터 로딩 및 카드 UI 생성
+
+**strategies-subscription.js**
+- **Feature Tag**: `@FEAT:strategy-subscription @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState, handleApiResponse, getPayload, getErrorMessage), `strategies-modal.js` (openModal, closeAccountModal), `strategies-core.js` (getCSRFToken)
+- **주요 함수** (7개):
+  1. `openSubscribeModal(strategyId)` - 구독 모달 열기 및 계좌 선택 UI 렌더링
+  2. `renderSubscribeAccountPicker(strategyId)` - 계좌 선택 UI 렌더링 (선물 전용 전략 검증)
+  3. `openSubscribeSettings(strategyId, accountId, accountLabel)` - 구독 설정 폼 표시
+  4. `submitSubscribeSettings(event, strategyId, accountId)` - 구독 설정 제출 (CSRF 보호)
+  5. `subscribeStrategy(strategyId, accountId)` - 전략 구독 API 호출
+  6. `unsubscribeStrategy(strategyId, accountId)` - 전략 구독 해지 (확인 프롬프트)
+  7. `openPublicDetail(strategyId)` - 공개 전략 상세 모달 열기
+- **핵심 기능**: 전략 구독/구독해지 워크플로우, 선물 계좌 검증
+
+**strategies-crud.js**
+- **Feature Tag**: `@FEAT:strategy-crud @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, setButtonLoading), `strategies-modal.js` (closeStrategyModal)
+- **주요 함수** (3개):
+  1. `editStrategy(strategyId)` - 전략 편집 폼 로딩 및 필드 채우기
+  2. `deleteStrategy(strategyId)` - 전략 삭제 (확인 프롬프트)
+  3. `submitStrategy(event)` - 전략 생성/수정 폼 제출 (CSRF 보호)
+- **핵심 기능**: 전략 CRUD 작업 (Create, Update, Delete)
+
+**strategies-accounts.js**
+- **Feature Tag**: `@FEAT:strategy-accounts @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState, setButtonLoading, handleApiResponse, getPayload, getErrorMessage), `strategies-modal.js` (openModal, closeAccountModal), `strategies-core.js` (getCSRFToken), `strategies-ui.js` (updateStrategyCard)
+- **주요 함수** (8개):
+  1. `openAccountModal(strategyId, mode)` - 계좌 관리 모달 열기
+  2. `loadStrategyAccountModal(strategyId, mode)` - 계좌 모달 데이터 로딩 및 렌더링
+  3. `renderAccountModal(strategyId, allAccounts, connectedAccounts)` - 계좌 목록 렌더링 (연결/미연결 구분)
+  4. `connectAccount(strategyId, accountId, event)` - 계좌 연결 (선물 계좌 검증 포함)
+  5. `editConnection(strategyId, accountId)` - 연결 설정 편집 폼 표시
+  6. `showConnectionForm(strategyId, accountId, mode, existingData)` - 연결 폼 렌더링 (신규/편집 공용)
+  7. `submitConnection(event, strategyId, accountId, mode)` - 연결 설정 제출 (CSRF 보호)
+  8. `disconnectAccount(strategyId, accountId)` - 계좌 연결 해제 (확인 프롬프트)
+- **핵심 기능**: 전략-계좌 연결 관리, 선물 계좌 검증, 커스텀 설정 폼
+
+**strategies-capital.js**
+- **Feature Tag**: `@FEAT:strategy-capital @COMP:service @TYPE:core`
+- **의존성**: `strategies-api.js` (apiCall, renderState), `strategies-modal.js` (openModal, closeCapitalModal), `strategies-core.js` (getCSRFToken)
+- **주요 함수** (4개):
+  1. `openCapitalModal(strategyId)` - 자본 재분배 모달 열기
+  2. `loadCapitalModal(strategyId)` - 자본 모달 데이터 로딩 및 렌더링
+  3. `renderCapitalModal(strategyId, accounts)` - 자본 현황 렌더링 (비율, 총액 표시)
+  4. `triggerCapitalReallocation(event)` - 자본 재분배 실행 (force=true, CSRF 보호)
+- **핵심 기능**: 연결된 계좌 간 자본 재분배 관리
+
+**Phase 3 통계**:
+- 총 954줄 분리
+- 함수 보존율: 100% (26/26 함수)
+- 의존성 문서화: 완료 (함수 레벨까지)
+- 특수 기능: 선물 계좌 검증 로직 (`@FEAT:futures-validation`)
+
+**검색 명령**:
+```bash
+# 전략 데이터 관련 코드 검색
+grep -r "@FEAT:strategy-data" web_server/app/static/js/strategies/ --include="*.js"
+
+# 구독 관리 코드 검색
+grep -r "@FEAT:strategy-subscription" web_server/app/static/js/strategies/ --include="*.js"
+
+# CRUD 작업 코드 검색
+grep -r "@FEAT:strategy-crud" web_server/app/static/js/strategies/ --include="*.js"
+
+# 계좌 관리 코드 검색
+grep -r "@FEAT:strategy-accounts" web_server/app/static/js/strategies/ --include="*.js"
+
+# 자본 관리 코드 검색
+grep -r "@FEAT:strategy-capital" web_server/app/static/js/strategies/ --include="*.js"
+```
+
+**누적 통계 (Phase 1-3)**:
+- 총 1,586줄 분리 (원본 1,625줄 대비 97.6%)
+- 11개 파일 생성 (core, rendering, api, modal, ui, data, subscription, crud, accounts, capital)
+- 계획 대비: -6줄 (-0.6%, 목표 달성)
+- 의존성 트리: core → rendering → api → data/subscription/crud/accounts/capital
+
+---
+
+#### Phase 4: Events + HTML Modification (2025-10-26 완료)
+
+**목적**: 이벤트 리스너 분리 및 HTML 템플릿 모듈화 완료
+
+**Phase 4 통계**:
+- 파일 수: 1개 (strategies-events.js)
+- 총 라인 수: 89 lines
+- HTML 수정: strategies.html (11개 script 태그)
+
+**구현 파일**:
+
+**strategies-events.js**
+- **Feature Tag**: `@FEAT:strategy-management @COMP:ui @TYPE:core`
+- **의존성**: strategies-core.js (getCSRFToken), strategies-rendering.js (renderStatusBadge), strategies-api.js (handleApiResponse, getPayload, getErrorMessage), strategies-modal.js, strategies-ui.js, strategies-data.js, strategies-subscription.js, strategies-crud.js, strategies-accounts.js, strategies-capital.js
+- **주요 기능** (3개):
+  1. **Strategy Toggle Events** (lines 10-58):
+     - 전략 활성화/비활성화 스위치 이벤트 핸들러
+     - API 호출 후 상태 배지 UI 업데이트
+     - 실패 시 토글 상태 자동 롤백
+     - CSRF 토큰 보호
+  2. **Modal Backdrop Click** (lines 66-74):
+     - 이벤트 위임 패턴으로 메모리 효율성 개선
+     - `preventBackdropClose` dataset 지원으로 특수 모달 보호
+     - 외부 클릭 시 모달 자동 닫기
+  3. **ESC Key Modal Close** (lines 76-89):
+     - ESC 키로 최상위 모달만 닫기 (다중 모달 스택 지원)
+     - `preventBackdropClose` dataset 체크로 특수 모달 제외
+
+- **핵심 패턴**:
+  - 이벤트 위임 (event delegation) - querySelector 루프 제거
+  - CSRF 보호 - API 호출 시 토큰 검증
+  - 상태 롤백 - 실패 시 UI 복구
+
+**HTML Template Modularization**
+- **파일**: `web_server/app/templates/strategies.html`
+- **수정 범위**: lines 437-454 (11개 script 태그)
+- **Script 로딩 순서** (의존성 기반):
+  1. Core utilities: `strategies-core.js`, `strategies-rendering.js`, `strategies-api.js`
+  2. UI management: `strategies-modal.js`, `strategies-ui.js`
+  3. Business logic: `strategies-data.js`, `strategies-subscription.js`, `strategies-crud.js`, `strategies-accounts.js`, `strategies-capital.js`
+  4. Event listeners: `strategies-events.js` (반드시 마지막, 모든 함수 참조)
+
+- **Jinja2 템플릿 보존**:
+  - `window.strategies` 배열 (lines 419-435) - 서버 사이드 렌더링 데이터
+  - Flask `url_for()` 함수 사용 - 정적 파일 경로 동적 생성
+  - 선택적 `BACKGROUND_LOG_LEVEL` 환경 변수 (로그 레벨 제어)
+
+**모듈화 완성도**:
+- Phase 1-4 누적: 11개 파일, 1,675줄
+- 원본 대비: 103.1% (1,675 / 1,625줄) - 문서화 주석 추가로 약간 증가
+- 모듈화 완료: 100% ✅
+
+**검색 명령**:
+```bash
+# 이벤트 관련 코드 검색
+grep -r "@FEAT:strategy-management.*@COMP:ui" web_server/app/static/js/strategies/ --include="*.js"
+
+# 모달 관리 코드 검색
+grep -r "@FEAT:modal-management" web_server/app/static/js/strategies/ --include="*.js"
+
+# 모든 strategies 모듈 검색
+grep -r "@FEAT:strategy-" web_server/app/static/js/strategies/ --include="*.js" | head -20
+```
+
+---
+
+## 전체 모듈화 통계 (Phase 1-4)
+
+- **총 Phase 수**: 4
+- **총 파일 수**: 11개
+- **총 라인 수**: 1,675 lines
+- **원본 파일**: 1,625 lines (strategies.js)
+- **증가율**: +3.1% (주석 및 문서화 추가)
+- **모듈화 완료**: 100% ✅
+
+**Phase별 기여도**:
+- Phase 1 (Core utilities): 467 lines (27.9%)
+- Phase 2 (UI management): 165 lines (9.9%)
+- Phase 3 (Business logic): 954 lines (57.0%)
+- Phase 4 (Events): 89 lines (5.3%)
+
+**의존성 그래프 (최종)**:
+```
+Level 0 (독립):
+  ├─ strategies-core.js (26줄)
+  └─ strategies-modal.js (88줄)
+
+Level 1 (Core 의존):
+  ├─ strategies-rendering.js (215줄, core 의존)
+  └─ strategies-api.js (226줄, core 의존)
+
+Level 2 (Level 0-1 의존):
+  ├─ strategies-ui.js (77줄)
+  ├─ strategies-data.js (134줄)
+  ├─ strategies-subscription.js (241줄)
+  ├─ strategies-crud.js (78줄)
+  └─ strategies-capital.js (186줄)
+
+Level 3 (계좌 관리):
+  └─ strategies-accounts.js (315줄, 모든 Level 0-2 의존)
+
+Level 4 (이벤트, 최상위):
+  └─ strategies-events.js (90줄, 모든 파일 의존)
+```
+
+**파일 목록**:
+1. strategies-core.js (26 lines) - Exchange helpers, constants
+2. strategies-modal.js (88 lines) - Modal management, DOM manipulation
+3. strategies-rendering.js (215 lines) - Rendering utilities (depends: core)
+4. strategies-api.js (226 lines) - API integration, state management (depends: core)
+5. strategies-ui.js (77 lines) - UI updates (depends: modal, rendering)
+6. strategies-data.js (134 lines) - Data loading (depends: api, rendering)
+7. strategies-subscription.js (241 lines) - Subscription workflow (depends: api, modal)
+8. strategies-crud.js (78 lines) - Create/Update/Delete operations (depends: api, modal)
+9. strategies-capital.js (186 lines) - Capital reallocation (depends: api, modal)
+10. strategies-accounts.js (315 lines) - Account management (depends: all Level 0-2)
+11. strategies-events.js (90 lines) - Event listeners (depends: all files)
+
+**다음 Phase 예정**: Phase 4 완료 - 모듈화 100% 달성
+
+>>>>>>> feature/strategies-js-modularization
