@@ -306,6 +306,24 @@ class OrderQueueManager:
         logger.warning(f"정렬 가격 계산 불가능한 주문 타입: {order_type}")
         return None
 
+    # @FEAT:order-queue @COMP:service @TYPE:helper
+    def _get_lock(self, account_id: int, symbol: str):
+        """심볼별 Lock 반환 (CANCEL_ALL과 재정렬이 공유)
+
+        Args:
+            account_id: 계정 ID
+            symbol: 심볼 (예: 'BTC/USDT')
+
+        Returns:
+            threading.Lock: 해당 심볼의 Lock
+        """
+        import threading
+        lock_key = (account_id, symbol)
+        with self._locks_lock:
+            if lock_key not in self._rebalance_locks:
+                self._rebalance_locks[lock_key] = threading.Lock()
+            return self._rebalance_locks[lock_key]
+
     # @FEAT:order-queue @COMP:service @TYPE:core
     def rebalance_symbol(self, account_id: int, symbol: str, commit: bool = True) -> Dict[str, Any]:
         """심볼별 동적 재정렬 (핵심 알고리즘)
@@ -345,13 +363,8 @@ class OrderQueueManager:
                 'duration_ms': float
             }
         """
-        # ✅ v2: 심볼별 Lock 획득 (조건 4)
-        import threading
-        lock_key = (account_id, symbol)
-        with self._locks_lock:
-            if lock_key not in self._rebalance_locks:
-                self._rebalance_locks[lock_key] = threading.Lock()
-            lock = self._rebalance_locks[lock_key]
+        # ✅ v2: 심볼별 Lock 획득 (조건 4) - Issue #9: 헬퍼 메서드 사용
+        lock = self._get_lock(account_id, symbol)
 
         with lock:
             # 기존 재정렬 로직 (보호됨)
