@@ -914,3 +914,67 @@ class OrderFillEvent(db.Model):
 
     def __repr__(self):
         return f'<OrderFillEvent order={self.exchange_order_id} status={self.status} qty={self.filled_quantity}>'
+
+
+# ============================================
+# Phase 1: 즉시 주문 실행 시스템 (Immediate Order Execution)
+# ============================================
+
+class FailedOrder(db.Model):
+    """실패한 주문 기록 테이블
+
+    @FEAT:immediate-order-execution @COMP:model @TYPE:core
+
+    거래소 API 호출 실패로 즉시 실행되지 못한 주문을 기록합니다.
+    배치 주문 처리 시 우선순위에 따라 재시도됩니다.
+
+    상태:
+    - pending_retry: 재시도 대기 중
+    - removed: 제거됨 (사용자 요청 또는 최대 재시도 초과)
+    """
+    __tablename__ = 'failed_orders'
+
+    # 식별자
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+
+    # 주문 정보
+    symbol = db.Column(db.String(20), nullable=False)
+    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
+    order_type = db.Column(db.String(20), nullable=False)  # MARKET, LIMIT, STOP_LIMIT, STOP_MARKET
+    quantity = db.Column(db.Numeric(20, 8), nullable=False)
+    price = db.Column(db.Numeric(20, 8), nullable=True)  # LIMIT 가격
+    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # STOP 가격
+    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
+
+    # 실패 정보
+    reason = db.Column(db.String(100), nullable=False)  # 실패 이유 (간결한 요약)
+    exchange_error = db.Column(db.Text, nullable=True)  # 거래소 응답 원문 (API 키 마스킹 필수)
+    # ⚠️ Phase 2: FailedOrderManager에서 저장 시 민감 정보(API-KEY, Secret) 마스킹 처리 예정
+    # 예: "API-KEY: abc123def456..." → "API-KEY: ***" (로그 추적 가능하면서 보안 강화)
+    order_params = db.Column(db.JSON, nullable=False)  # 재시도용 전체 파라미터
+    # Symbol, side, quantity, price, stop_price, market_type 등 포함
+    # Phase 2: 최대 크기 제한 검토 필요 (권장 2KB 이하, 과도한 정보 저장 방지)
+
+    # 재시도 관리
+    status = db.Column(db.String(20), default='pending_retry', nullable=False)  # pending_retry, removed
+    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수 기록
+    # Phase 2: 최대 재시도 횟수 제한 예정 (권장 5회 이상 실패 시 automatic removal)
+
+    # 메타데이터
+    webhook_id = db.Column(db.String(100), nullable=True)  # 웹훅 추적용 ID
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # 관계 설정
+    strategy_account = db.relationship('StrategyAccount', backref='failed_orders')
+
+    # 인덱스 최적화
+    __table_args__ = (
+        db.Index('idx_failed_strategy_symbol', 'strategy_account_id', 'symbol'),
+        db.Index('idx_failed_status', 'status', 'created_at'),
+        db.Index('idx_failed_retry', 'retry_count'),
+    )
+
+    def __repr__(self):
+        return f'<FailedOrder {self.symbol} {self.side} {self.order_type} status={self.status} retry={self.retry_count}>'
