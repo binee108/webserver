@@ -128,8 +128,36 @@ class TradingCore:
 
             logger.info(f"📊 전략 마켓타입: {strategy_market_type} → 거래소 마켓타입: {market_type}")
 
-            # @FEAT:order-queue @COMP:service @TYPE:core
-            # Phase 3: LIMIT/STOP 주문 → 즉시 대기열 진입
+            # @FEAT:immediate-execution @COMP:service @TYPE:core
+            # Phase 4: Queue 제거 및 즉시 실행 전환 (모든 주문 타입)
+            #
+            # 변경 내용:
+            # ==================
+            # - 제거: OrderQueueManager.enqueue() 호출 (100+ 건)
+            # - 제거: PendingOrder 모델 사용 (100+ 건)
+            # - 제거: queue_rebalancer.py 서비스 (주기적 재정렬 중단)
+            #
+            # 주문 타입별 처리 (Before → After):
+            # ==================
+            # - MARKET: 즉시 실행 (변경 없음)
+            # - CANCEL_ALL_ORDER: 즉시 실행 (변경 없음)
+            # - LIMIT: Queue 진입 → 즉시 실행 (Phase 4 변경)
+            # - STOP: Queue 진입 → 즉시 실행 (Phase 4 변경)
+            #
+            # 모든 주문 경로:
+            # ==================
+            # 1. 주문 검증 (StrategyAccount.is_active 확인)
+            # 2. _execute_exchange_order() 호출 (즉시 거래소 제출)
+            # 3. 성공: OpenOrder 생성 (기존 로직 유지)
+            # 4. 실패: FailedOrder 생성 (Phase 2 패턴 재사용)
+            #
+            # Phase 5 정리 계획:
+            # ==================
+            # - order_queue_manager.py 파일 삭제 (참조 103건)
+            # - PendingOrder 모델 제거 (참조 8건)
+            # - queue_rebalancer.py 서비스 삭제 (참조 9건)
+            #
+            # 실제 구현: Lines 141-203 참조
             from app.constants import ORDER_TYPE_GROUPS
 
             type_group = None
@@ -138,86 +166,8 @@ class TradingCore:
                     type_group = group_name
                     break
 
-            # LIMIT/STOP 그룹: 재정렬 경로가 아니면 대기열 진입
-            if type_group in ['LIMIT', 'STOP']:
-                # 재정렬 경로에서는 거래소 직접 제출
-                if from_pending_queue:
-                    logger.info(
-                        f"🔄 재정렬 실행 (PendingOrder → 거래소) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}"
-                    )
-                    # 거래소 직접 제출 (아래 MARKET 로직으로 fall-through)
-                else:
-                    # 웹훅 경로: 대기열 진입
-                    logger.info(
-                        f"📥 대기열 진입 (웹훅) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
-                        f"수량: {quantity}, price: {price}, stop_price: {stop_price}"
-                    )
-
-                    # 🆕 Phase 5: 대기열 진입 직전 is_active 재확인 (Race Condition 방지)
-                    if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
-                        logger.warning(
-                            f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
-                            f"LIMIT/STOP 대기열 진입 스킵 (전략: {strategy.group_name}, "
-                            f"계좌: {account.name}, 심볼: {symbol})"
-                        )
-                        return {
-                            'success': False,
-                            'error': 'StrategyAccount가 비활성 상태입니다',
-                            'error_type': 'account_inactive',
-                            'account_id': account.id,
-                            'account_name': account.name,
-                            'strategy_account_id': strategy_account.id,
-                            'skipped': True,
-                            'skip_reason': 'strategy_account_inactive'
-                        }
-
-                    enqueue_result = self.service.order_queue_manager.enqueue(
-                        strategy_account_id=strategy_account.id,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        quantity=quantity,
-                        price=price,
-                        stop_price=stop_price,
-                        market_type=strategy_market_type,
-                        reason='WEBHOOK_ORDER',
-                        commit=True
-                    )
-
-                    if not enqueue_result.get('success'):
-                        logger.error(f"대기열 추가 실패: {enqueue_result.get('error')}")
-                        return {
-                            'success': False,
-                            'error': enqueue_result.get('error'),
-                            'error_type': 'queue_error',
-                            'strategy': strategy.group_name,
-                            'account_id': account.id
-                        }
-
-                    # NOTE: 재정렬은 백그라운드 작업(queue_rebalancer)이 자동 처리
-                    # 즉시 재정렬 호출 시 웹훅 응답이 지연되어 nginx 504 timeout 발생
-
-                    logger.info(
-                        f"✅ 대기열 추가 완료 - "
-                        f"pending_id: {enqueue_result.get('pending_order_id')}, "
-                        f"우선순위: {enqueue_result.get('priority')}"
-                    )
-
-                    return {
-                        'success': True,
-                        'queued': True,
-                        'pending_order_id': enqueue_result.get('pending_order_id'),
-                        'priority': enqueue_result.get('priority'),
-                        'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
-                        'strategy': strategy.group_name,
-                        'account_id': account.id,
-                        'action': 'queued',  # SSE 이벤트용
-                        'summary': f'{order_type} {side} 주문 대기열 진입'
-                    }
-
-            # MARKET/CANCEL 주문: 기존대로 즉시 거래소 제출
+            # MARKET/CANCEL/LIMIT/STOP 주문: 모두 즉시 거래소 제출
+            # (Phase 4: Queue 시스템 제거 완료)
             # 🆕 Phase 5: 주문 실행 직전 is_active 재확인 (Race Condition 방지)
             if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
                 logger.warning(
@@ -250,7 +200,64 @@ class TradingCore:
 
             order_result['account_id'] = account.id
 
+            # Phase 4: 주문 실패 시 FailedOrder 생성 (@FEAT:immediate-execution @COMP:service @TYPE:core)
+            #
+            # FailedOrder 생성 로직 (Phase 2 패턴 재사용):
+            # =============================================
+            # - 트리거: order_result['success'] == False
+            # - 원인: 거래소 API 오류, 거래소 제한, 네트워크 오류 등
+            #
+            # 저장 정보:
+            # =============================================
+            # - strategy_account_id: 전략 계정 ID (재시도 시 참조)
+            # - order_params: 주문 파라미터 (심볼, 방향, 타입, 수량, 가격)
+            # - reason: 실패 이유 (거래소 에러 메시지)
+            # - exchange_error: 거래소 에러 상세 정보 (있는 경우)
+            #
+            # 재시도 메커니즘:
+            # =============================================
+            # - 초기 상태: status='pending_retry', retry_count=0
+            # - 재시도: retry_failed_order() 메서드 호출
+            # - 최대 재시도: 5회 (기본값)
+            # - 대기 시간: 지수 백오프 (1초, 2초, 4초, 8초, 16초)
+            #
+            # 실패 사례:
+            # =============================================
+            # 1. 거래소 오류 (Exchange API 연결 실패)
+            #    → reason: "Exchange API connection failed"
+            #    → 재시도 가능
+            #
+            # 2. 거래소 제한 (Rate limit, 심볼 미지원)
+            #    → reason: "Invalid symbol XXX"
+            #    → 재시도 불가 (설정 검토 필요)
+            #
+            # 3. 계정 오류 (잔고 부족, 거래 중지)
+            #    → reason: "Insufficient balance"
+            #    → 재시도 불가 (조건 개선 필요)
             if not order_result['success']:
+                from app.services.trading.failed_order_manager import failed_order_manager
+
+                failed_order_manager.create_failed_order(
+                    strategy_account_id=strategy_account.id,
+                    order_params={
+                        'symbol': symbol,
+                        'side': side,
+                        'order_type': order_type,
+                        'quantity': quantity,
+                        'price': price,
+                        'stop_price': stop_price,
+                        'market_type': market_type
+                    },
+                    reason=order_result.get('error', 'Exchange order failed'),
+                    exchange_error=order_result.get('exchange_error')
+                )
+
+                logger.warning(
+                    f"⚠️ 주문 실패 → FailedOrder 생성 - "
+                    f"심볼: {symbol}, 타입: {order_type}, side: {side}, "
+                    f"오류: {order_result.get('error')}"
+                )
+
                 return order_result
 
             # 조정된 수량/가격 보관 (거래소 제한 반영)
@@ -876,9 +883,6 @@ class TradingCore:
                 type_group = group_name
                 break
 
-        # 📡 배치 PendingOrder SSE 발송 대상 수집
-        pending_orders_to_emit_sse = []
-
         # ✅ Issue #10: 배치 주문 실행 로직 (enqueue 내부에서 자동 Lock 보호)
         def _execute_batch_logic():
             """
@@ -939,59 +943,8 @@ class TradingCore:
                         })
                         continue
 
-                    # Phase 4: LIMIT/STOP 주문 → 즉시 대기열 진입 (검증 없음)
-                    if type_group in ['LIMIT', 'STOP']:
-                        logger.info(
-                            f"📥 대기열 진입 (배치) - "
-                            f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
-                            f"수량: {calculated_quantity}, 계좌: {account.name}"
-                        )
-
-                        enqueue_result = self.service.order_queue_manager.enqueue(
-                            strategy_account_id=sa.id,
-                            symbol=symbol,
-                            side=side,
-                            order_type=order_type,
-                            quantity=calculated_quantity,
-                            price=price,
-                            stop_price=stop_price,
-                            market_type=market_type,
-                            reason='BATCH_ORDER',
-                            commit=False  # 배치는 마지막에 한 번만 커밋
-                        )
-
-                        if enqueue_result.get('success'):
-                            results.append({
-                                'success': True,
-                                'queued': True,
-                                'pending_order_id': enqueue_result.get('pending_order_id'),
-                                'priority': enqueue_result.get('priority'),
-                                'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
-                                'account_id': account.id,
-                                'account_name': account.name,
-                                'order_type': order_type,        # SSE 집계용 (emit_order_batch_update)
-                                'event_type': 'order_created'    # SSE 집계용 (emit_order_batch_update)
-                            })
-
-                            # SSE 발송 대상 수집 (배치 커밋 후 발송)
-                            pending_orders_to_emit_sse.append({
-                                'pending_order_id': enqueue_result.get('pending_order_id'),
-                                'strategy_account': sa,
-                                'symbol': symbol
-                            })
-                        else:
-                            logger.error(
-                                f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
-                                f"error: {enqueue_result.get('error')}"
-                            )
-                            results.append({
-                                'success': False,
-                                'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
-                                'account_id': account.id
-                            })
-                        continue  # 거래소 실행 건너뛰기
-
-                    # MARKET/CANCEL 주문: 즉시 거래소 제출 (기존 로직)
+                    # Phase 4: 모든 주문 타입을 즉시 거래소에 제출 (Queue 제거)
+                    # LIMIT/STOP/MARKET/CANCEL 주문: 모두 즉시 거래소 제출
                     def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
                         with app.app_context():
                             return self.execute_trade(
@@ -1025,54 +978,8 @@ class TradingCore:
                             'account_id': account.id
                         })
 
-            # 배치 커밋 (대기열 추가 + 거래소 주문)
+            # Phase 4: 배치 커밋 (거래소 주문만)
             db.session.commit()
-
-            # 📡 배치 커밋 후 PendingOrder SSE 일괄 발송
-            if pending_orders_to_emit_sse and self.service.event_emitter:
-                logger.debug(f"📡 [SSE] 배치 PendingOrder SSE 발송 시작: {len(pending_orders_to_emit_sse)}개")
-
-                for pending_info in pending_orders_to_emit_sse:
-                    try:
-                        # DB에서 커밋된 PendingOrder 조회 (ID가 할당됨)
-                        from app.models import PendingOrder
-                        pending_order = PendingOrder.query.get(pending_info['pending_order_id'])
-                        if not pending_order:
-                            logger.warning(
-                                f"⚠️ PendingOrder SSE 발송 스킵: DB에서 찾을 수 없음 "
-                                f"(ID: {pending_info['pending_order_id']})"
-                            )
-                            continue
-
-                        # user_id 추출
-                        strategy_account = pending_info['strategy_account']
-                        if not strategy_account.strategy:
-                            logger.warning(
-                                f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
-                                f"(ID: {pending_order.id})"
-                            )
-                            continue
-
-                        user_id = strategy_account.strategy.user_id
-
-                        # SSE 발송
-                        self.service.event_emitter.emit_pending_order_event(
-                            event_type='order_created',
-                            pending_order=pending_order,
-                            user_id=user_id
-                        )
-
-                        logger.debug(
-                            f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
-                            f"ID={pending_order.id}, user_id={user_id}, symbol={pending_info['symbol']}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
-                            f"ID={pending_info.get('pending_order_id')}, error={e}"
-                        )
-
-                logger.debug(f"✅ [SSE] 배치 PendingOrder SSE 발송 완료: {len(pending_orders_to_emit_sse)}개")
 
         # ✅ Issue #10: enqueue 내부에서 자동으로 Lock 획득하므로 여기서는 불필요
         _execute_batch_logic()
@@ -1581,91 +1488,14 @@ class TradingCore:
                 })
             return results
 
-        # @FEAT:webhook-batch-queue @COMP:service @TYPE:core
-        # Phase 1: Separate orders by type (intelligent routing)
-        queue_orders = [order for order in exchange_orders
-                        if order['type'].upper() in OrderType.QUEUED_TYPES]
-        direct_orders = [order for order in exchange_orders
-                         if order['type'].upper() in OrderType.DIRECT_TYPES]
+        # @FEAT:webhook-order @COMP:service @TYPE:core
+        # Phase 4: 모든 주문 타입을 즉시 거래소에 제출 (Queue 시스템 제거)
+        # LIMIT/STOP/MARKET/CANCEL 모두 direct_orders로 처리
+        direct_orders = exchange_orders  # 모든 주문을 즉시 실행
 
-        logger.info(f"Order separation - Queue: {len(queue_orders)}, Direct: {len(direct_orders)}")
+        logger.info(f"Phase 4: All orders immediate execution - Total: {len(direct_orders)}")
 
-        # @FEAT:webhook-batch-queue @COMP:service @TYPE:core
-        # Process queue orders with Individual Commit Pattern (Binance partial success alignment)
-        success_results = []
-        failed_results = []
-
-        if queue_orders:
-            for idx, order in enumerate(queue_orders):
-                # Calculate original index for error reporting
-                original_idx = exchange_orders.index(order)
-
-                try:
-                    enqueue_result = self.service.order_queue_manager.enqueue(
-                        strategy_account_id=account_data['strategy_account'].id,
-                        symbol=order['symbol'],
-                        side=order['side'],
-                        order_type=order['type'],
-                        quantity=Decimal(str(order['amount'])),
-                        price=Decimal(str(order.get('price'))) if order.get('price') else None,
-                        stop_price=Decimal(str(order.get('params', {}).get('stopPrice'))) if order.get('params', {}).get('stopPrice') else None,
-                        market_type=market_type,
-                        commit=True  # Individual Commit Pattern: Matches Binance batch API partial success
-                                     # Phase 1 decision: UX > consistency (partial success preferred over rollback)
-                    )
-
-                    if enqueue_result['success']:
-                        # 성공: results에 추가
-                        success_results.append({
-                            'order_index': original_idx,
-                            'success': True,
-                            'result': {
-                                'action': 'queued',
-                                'queued': True,
-                                'pending_order_id': enqueue_result['pending_order_id'],
-                                'priority': enqueue_result['priority'],
-                                'account_id': account.id,
-                                'account_name': account.name
-                            },
-                            'order_type': order['type'],
-                            'event_type': 'order_created'
-                        })
-
-                        # SSE 발송 (성공 직후)
-                        pending_order = PendingOrder.query.get(enqueue_result['pending_order_id'])
-                        if pending_order and self.service and hasattr(self.service, 'event_emitter'):
-                            user_id = pending_order.strategy_account.strategy.user_id
-                            self.service.event_emitter.emit_pending_order_event(
-                                event_type='order_created',
-                                pending_order=pending_order,
-                                user_id=user_id
-                            )
-                    else:
-                        # Enqueue 실패: 실패 결과 추가, 다음 주문 계속
-                        logger.warning(f"Enqueue failed for order {idx}: {enqueue_result.get('error')}")
-                        failed_results.append({
-                            'order_index': original_idx,
-                            'success': False,
-                            'error': enqueue_result.get('error', 'Unknown enqueue error')
-                        })
-                except Exception as e:
-                    # Error recovery: Log and continue to next order (partial success enabled)
-                    logger.error(f"Exception during enqueue for order {idx}: {e}")
-                    failed_results.append({
-                        'order_index': original_idx,
-                        'success': False,
-                        'error': f'Enqueue exception: {str(e)}'
-                    })
-                    continue  # Process next order (partial success enabled, no batch rollback)
-
-            # Merge success and failed results for transparent reporting
-            results.extend(success_results)
-            results.extend(failed_results)
-
-            logger.info(f"Queue processing complete - Success: {len(success_results)}, Failed: {len(failed_results)}")
-
-        # @FEAT:webhook-batch-queue @COMP:service @TYPE:core
-        # Phase 1: Process direct orders (MARKET/CANCEL) - UNCHANGED logic
+        # Phase 4: 모든 주문을 즉시 거래소에 제출
         if not direct_orders:
             return results
 

@@ -225,13 +225,164 @@ class WebhookService:
                     normalized_data['strategy_name'] = strategy.name
                     normalized_data['market_type'] = market_type  # Strategy에서 가져온 market_type 주입
 
+                    # 🆕 Phase 4: 배치 크기 제한 (10초 안전 마진)
+                    BATCH_SIZE_LIMIT = 30
+
                     # 🆕 주문 정규화: 단일 → 배치 (비파괴적)
                     is_batch = 'orders' in normalized_data
 
                     if is_batch:
-                        # 이미 배치 형식 → 그대로 사용
-                        logger.info(f"📦 배치 주문 모드 감지 - {len(normalized_data['orders'])}개 주문")
-                        result = trading_service.core.process_batch_trading_signal(normalized_data, timing_context)
+                        # 배치 크기 체크
+                        orders = normalized_data.get('orders', [])
+                        if len(orders) > BATCH_SIZE_LIMIT:
+                            logger.error(f"❌ 배치 크기 초과: {len(orders)}개 (최대: {BATCH_SIZE_LIMIT}개)")
+                            raise WebhookError(f'Order limit exceeded (max: {BATCH_SIZE_LIMIT}, received: {len(orders)})')
+
+                        # 🆕 Phase 4: 우선순위별 분류 (@FEAT:immediate-execution @COMP:service @TYPE:core)
+                        #
+                        # 배치 우선순위 분류 전략:
+                        # ========================
+                        # - HIGH_PRIORITY: CANCEL_ALL_ORDER, MARKET
+                        #   ├─ 목적: 즉시 실행 필수 (포지션 정리, 시장가 체결)
+                        #   └─ 처리: 배치1에서 먼저 실행 (원래 포지션 영향 차단)
+                        #
+                        # - LOW_PRIORITY: LIMIT, STOP
+                        #   ├─ 목적: 조건부 체결 (지정가 대기, 조건부 실행)
+                        #   └─ 처리: 배치2에서 나중에 실행 (배치1 성공 보장)
+                        #
+                        # Phase 1 classify_priority 패턴과 일치:
+                        # - EXTREME/HIGH (고우선순위) → 배치1
+                        # - MEDIUM/LOW (저우선순위) → 배치2
+                        #
+                        # 부분 실패 격리 효과:
+                        # - 배치1 실패 → 롤백, 배치2 계속 실행
+                        # - 배치2 실패 → 롤백, 배치1 커밋 유지 (부분 성공 보장)
+                        from app.constants import OrderType, ORDER_TYPE_GROUPS
+
+                        high_priority = []  # CANCEL_ALL_ORDER, MARKET
+                        low_priority = []   # LIMIT, STOP
+
+                        for order in orders:
+                            order_type = order.get('order_type', '').upper()
+
+                            # 고우선순위: 즉시 체결 필요 (포지션 정리, 시장가)
+                            if order_type == OrderType.CANCEL_ALL_ORDER or order_type == OrderType.MARKET:
+                                high_priority.append(order)
+                            # 저우선순위: 조건부 체결 (지정가, 스탑)
+                            elif order_type in ORDER_TYPE_GROUPS.get('LIMIT', []) or order_type in ORDER_TYPE_GROUPS.get('STOP', []):
+                                low_priority.append(order)
+                            else:
+                                # 기타 타입은 low_priority로 분류
+                                low_priority.append(order)
+
+                        logger.info(f"📦 배치 주문 우선순위 분류 - 고우선순위: {len(high_priority)}개, 저우선순위: {len(low_priority)}개")
+
+                        # 🆕 Phase 4: 독립 트랜잭션 패턴 (@FEAT:immediate-execution @COMP:service @TYPE:core)
+                        #
+                        # 트랜잭션 경계 설계:
+                        # ===================
+                        # - 배치1 트랜잭션 (고우선순위):
+                        #   ├─ process_batch_trading_signal() 호출
+                        #   ├─ db.session.commit() → 배치1 독립 커밋
+                        #   └─ Exception → db.session.rollback() (명시적)
+                        #
+                        # - 배치2 트랜잭션 (저우선순위):
+                        #   ├─ process_batch_trading_signal() 호출
+                        #   ├─ db.session.commit() → 배치2 독립 커밋
+                        #   └─ Exception → db.session.rollback() (배치1과 독립)
+                        #
+                        # 부분 실패 격리 (Phase 3 교훈 반영):
+                        # - 배치1 실패 → 배치1 롤백, 배치2는 계속 실행
+                        # - 배치2 실패 → 배치2 롤백, 배치1 커밋 유지
+                        # - 모든 Exception 경로에서 명시적 rollback() 호출
+                        #
+                        # 응답 구성:
+                        # - HTTP 200 OK (TradingView 재전송 방지)
+                        # - summary: {succeeded: 배치1+배치2, failed: 배치1+배치2}
+                        # - 클라이언트는 batch1_*/batch2_* 로 세부 결과 확인 가능
+                        #
+                        # 예시 흐름:
+                        #   웹훅 → 배치1: CANCEL 1개, MARKET 2개 → 성공 3개, 배치1 커밋
+                        #        → 배치2: LIMIT 3개, STOP 1개 → 실패 4개, 배치2 롤백
+                        #        → 응답: {succeeded: 3, failed: 4} + HTTP 200 OK
+
+                        # 🆕 Phase 4: 배치1 실행 (고우선순위: CANCEL_ALL_ORDER + MARKET)
+                        batch1_results = {'succeeded': 0, 'failed': 0, 'errors': []}
+                        if high_priority:
+                            try:
+                                logger.info(f"⚡ 배치1 실행 시작 - {len(high_priority)}개 주문")
+                                result1 = trading_service.core.process_batch_trading_signal(
+                                    {**normalized_data, 'orders': high_priority},
+                                    timing_context
+                                )
+                                db.session.commit()  # 배치1 독립 커밋
+
+                                # 결과 집계
+                                summary1 = result1.get('summary', {})
+                                batch1_results['succeeded'] = summary1.get('successful_trades', 0)
+                                batch1_results['failed'] = summary1.get('failed_trades', 0)
+
+                                if batch1_results['succeeded'] > 0:
+                                    logger.info(f"✅ 배치1 완료 - 성공: {batch1_results['succeeded']}개")
+                                if batch1_results['failed'] > 0:
+                                    logger.warning(f"⚠️ 배치1 실패 - 실패: {batch1_results['failed']}개")
+
+                            except Exception as e:
+                                db.session.rollback()  # 명시적 롤백 (Phase 3 교훈)
+                                logger.error(f"❌ 배치1 실행 실패: {e}")
+                                batch1_results['failed'] = len(high_priority)
+                                batch1_results['errors'].append(str(e))
+
+                        # 🆕 Phase 4: 배치2 실행 (저우선순위: LIMIT + STOP) - 배치1과 독립
+                        batch2_results = {'succeeded': 0, 'failed': 0, 'errors': []}
+                        if low_priority:
+                            try:
+                                logger.info(f"📋 배치2 실행 시작 - {len(low_priority)}개 주문")
+                                result2 = trading_service.core.process_batch_trading_signal(
+                                    {**normalized_data, 'orders': low_priority},
+                                    timing_context
+                                )
+                                db.session.commit()  # 배치2 독립 커밋
+
+                                # 결과 집계
+                                summary2 = result2.get('summary', {})
+                                batch2_results['succeeded'] = summary2.get('successful_trades', 0)
+                                batch2_results['failed'] = summary2.get('failed_trades', 0)
+
+                                if batch2_results['succeeded'] > 0:
+                                    logger.info(f"✅ 배치2 완료 - 성공: {batch2_results['succeeded']}개")
+                                if batch2_results['failed'] > 0:
+                                    logger.warning(f"⚠️ 배치2 실패 - 실패: {batch2_results['failed']}개")
+
+                            except Exception as e:
+                                db.session.rollback()  # 명시적 롤백
+                                logger.error(f"❌ 배치2 실행 실패: {e}")
+                                batch2_results['failed'] = len(low_priority)
+                                batch2_results['errors'].append(str(e))
+
+                        # 🆕 Phase 4: 결과 병합
+                        total = len(orders)
+                        succeeded = batch1_results['succeeded'] + batch2_results['succeeded']
+                        failed = batch1_results['failed'] + batch2_results['failed']
+
+                        result = {
+                            'action': 'trading_signal',
+                            'strategy': strategy.name,
+                            'success': succeeded > 0,  # 1개라도 성공하면 success: true
+                            'summary': {
+                                'total_orders': total,
+                                'successful_trades': succeeded,
+                                'failed_trades': failed,
+                                'batch1_succeeded': batch1_results['succeeded'],
+                                'batch1_failed': batch1_results['failed'],
+                                'batch2_succeeded': batch2_results['succeeded'],
+                                'batch2_failed': batch2_results['failed']
+                            },
+                            'results': []
+                        }
+
+                        logger.info(f"📊 배치 처리 완료 - 전체: {total}개, 성공: {succeeded}개, 실패: {failed}개")
+
                     else:
                         logger.info(f"📝 단일 주문 처리")
                         result = trading_service.core.process_trading_signal(normalized_data, timing_context)
