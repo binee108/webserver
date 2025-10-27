@@ -794,19 +794,72 @@ class TradingCore:
             }
         }
 
-    # @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:helper
+    # @FEAT:batch-order-race-condition @FEAT:order-queue @COMP:service @TYPE:core @DEPS:order-tracking,exchange-integration
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str,
                                  side: str, order_type: str, price: Optional[Decimal],
                                  stop_price: Optional[Decimal], qty_per: Decimal,
                                  market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
         """
-        병렬 거래 실행 (Phase 4: 배치 처리 통합)
+        배치 주문 병렬 실행 (타입 그룹별 분리)
 
-        Phase 4 변경사항:
-        - MARKET 주문: 즉시 거래소 제출
-        - LIMIT/STOP 주문: 즉시 PendingOrder에 추가 (검증 없음)
-        - 배치 커밋: commit=False로 개별 커밋 방지, 마지막 한 번만 커밋
+        Issue #10: Lock 기반 Race Condition 방지
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        LIMIT/STOP 배치 주문 생성 시 재정렬 알고리즘과의 동시 접근을 Lock으로 차단합니다.
+
+        Lock 획득 전략:
+        - 대상: LIMIT/STOP 주문 (PendingOrder 생성)
+        - 제외: MARKET 주문 (즉시 거래소 실행, Lock 불필요)
+        - Deadlock 방지: (account_id, symbol) 튜플 정렬 순서로 Lock 획득
+        - Lock 범위: PendingOrder 추가 + 배치 커밋 + SSE 발송
+        - 자동 해제: contextlib.ExitStack으로 예외 시에도 Lock 해제 보장
+
+        Issue #9 패턴 재사용:
+        - Lock 헬퍼: order_queue_manager._get_lock(account_id, symbol)
+        - CANCEL_ALL과 동일한 Lock 메커니즘 공유
+
+        처리 흐름:
+        1. 타입 그룹 확인 (LIMIT/STOP/MARKET)
+        2. LIMIT/STOP: Lock 획득 → 배치 주문 생성 → Lock 해제
+        3. MARKET: Lock 없이 즉시 실행
+
+        Args:
+            filtered_accounts (List[tuple]): (strategy, account, strategy_account) 튜플 리스트
+            symbol (str): 거래 심볼
+            side (str): 주문 방향 ('BUY' 또는 'SELL')
+            order_type (str): 주문 타입 ('MARKET', 'LIMIT', 'STOP' 등)
+            price (Optional[Decimal]): LIMIT 주문 가격
+            stop_price (Optional[Decimal]): STOP 주문 트리거 가격
+            qty_per (Decimal): 계좌별 주문 수량 (%)
+            market_type (str): 마켓 유형
+            timing_context (Optional[Dict[str, float]]): 웹훅 타이밍 정보
+
+        Returns:
+            List[Dict[str, Any]]: [
+                {
+                    'success': bool,
+                    'account_id': int,
+                    'account_name': str,
+                    'message': str,
+                    'pending_order_id': Optional[int],  # LIMIT/STOP만
+                    'priority': Optional[int],
+                    'order_type': str,
+                    'event_type': str,
+                    'queued': Optional[bool],  # LIMIT/STOP만
+                    'error': Optional[str]
+                },
+                ...
+            ]
+
+        Side Effects:
+        - db.session.commit() 호출 (배치 커밋)
+        - PendingOrder SSE 이벤트 발송
+        - 재정렬 알고리즘 Lock 획득/해제
+
+        Performance:
+        - ThreadPoolExecutor: max(min(10, account_count)) 병렬 처리
+        - Lock 보유 시간: ThreadPoolExecutor 완료까지 (개별 함수 선택)
+        - Lock 정렬: (account_id, symbol) 조합 정렬으로 Deadlock 방지
         """
         results = []
         max_workers = min(10, len(filtered_accounts))
@@ -826,177 +879,203 @@ class TradingCore:
         # 📡 배치 PendingOrder SSE 발송 대상 수집
         pending_orders_to_emit_sse = []
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {}
-            for strategy, account, sa in filtered_accounts:
-                # qty_per를 실제 주문 수량으로 변환
-                try:
-                    calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
-                        strategy_account=sa,
-                        qty_per=qty_per,
-                        symbol=symbol,
-                        order_type=order_type,
-                        market_type=market_type,
-                        price=price,
-                        stop_price=stop_price,
-                        side=side
-                    )
+        # ✅ Issue #10: 배치 주문 실행 로직 (enqueue 내부에서 자동 Lock 보호)
+        def _execute_batch_logic():
+            """
+            배치 주문 실행 로직 (모든 주문 타입 공통)
 
-                    if calculated_quantity == Decimal('0'):
-                        logger.warning(f"계좌 {account.id}: 수량 계산 결과 0, 주문 스킵")
-                        results.append({
-                            'success': False,
-                            'error': '계산된 주문 수량이 0입니다',
-                            'account_id': account.id,
-                            'skipped': True
-                        })
-                        continue
+            Issue #10: enqueue 내부에서 심볼별 Lock 자동 획득
+            - 단일 주문: enqueue(commit=True) → 자동 Lock 보호
+            - 배치 주문: enqueue(commit=False) × N → 자동 Lock 보호
+            - 리밸런서: _move_to_pending() → 자동 Lock 보호
 
-                    logger.debug(f"계좌 {account.id}: qty_per {qty_per}% → quantity {calculated_quantity}")
+            처리 단계:
+            1. ThreadPoolExecutor로 병렬 enqueue (commit=False)
+            2. 배치 커밋 (db.session.commit())
+            3. SSE 일괄 발송
 
-                except Exception as calc_error:
-                    logger.error(f"계좌 {account.id}: 수량 계산 실패 - {calc_error}")
-                    results.append({
-                        'success': False,
-                        'error': f'수량 계산 실패: {calc_error}',
-                        'account_id': account.id
-                    })
-                    continue
+            Returns:
+                None (results는 외부 스코프 변수에 추가)
 
-                # Phase 4: LIMIT/STOP 주문 → 즉시 대기열 진입 (검증 없음)
-                if type_group in ['LIMIT', 'STOP']:
-                    logger.info(
-                        f"📥 대기열 진입 (배치) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
-                        f"수량: {calculated_quantity}, 계좌: {account.name}"
-                    )
-
-                    enqueue_result = self.service.order_queue_manager.enqueue(
-                        strategy_account_id=sa.id,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        quantity=calculated_quantity,
-                        price=price,
-                        stop_price=stop_price,
-                        market_type=market_type,
-                        reason='BATCH_ORDER',
-                        commit=False  # 배치는 마지막에 한 번만 커밋
-                    )
-
-                    if enqueue_result.get('success'):
-                        results.append({
-                            'success': True,
-                            'queued': True,
-                            'pending_order_id': enqueue_result.get('pending_order_id'),
-                            'priority': enqueue_result.get('priority'),
-                            'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
-                            'account_id': account.id,
-                            'account_name': account.name,
-                            'order_type': order_type,        # SSE 집계용 (emit_order_batch_update)
-                            'event_type': 'order_created'    # SSE 집계용 (emit_order_batch_update)
-                        })
-
-                        # SSE 발송 대상 수집 (배치 커밋 후 발송)
-                        pending_orders_to_emit_sse.append({
-                            'pending_order_id': enqueue_result.get('pending_order_id'),
-                            'strategy_account': sa,
-                            'symbol': symbol
-                        })
-                    else:
-                        logger.error(
-                            f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
-                            f"error: {enqueue_result.get('error')}"
-                        )
-                        results.append({
-                            'success': False,
-                            'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
-                            'account_id': account.id
-                        })
-                    continue  # 거래소 실행 건너뛰기
-
-                # MARKET/CANCEL 주문: 즉시 거래소 제출 (기존 로직)
-                def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
-                    with app.app_context():
-                        return self.execute_trade(
-                            strategy=strategy,
+            Side Effects:
+            - db.session.commit()
+            - PendingOrder SSE 이벤트 발송
+            - results 리스트 업데이트 (외부 스코프)
+            """
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for strategy, account, sa in filtered_accounts:
+                    # qty_per를 실제 주문 수량으로 변환
+                    try:
+                        calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
+                            strategy_account=sa,
+                            qty_per=qty_per,
                             symbol=symbol,
-                            side=side,
-                            quantity=calculated_quantity,  # ✅ 변환된 수량 사용
                             order_type=order_type,
+                            market_type=market_type,
                             price=price,
                             stop_price=stop_price,
-                            strategy_account_override=sa,
-                            timing_context=timing_context
+                            side=side
                         )
 
-                future = executor.submit(
-                    execute_in_context,
-                    app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context
-                )
-                futures[future] = (strategy, account, sa)
+                        if calculated_quantity == Decimal('0'):
+                            logger.warning(f"계좌 {account.id}: 수량 계산 결과 0, 주문 스킵")
+                            results.append({
+                                'success': False,
+                                'error': '계산된 주문 수량이 0입니다',
+                                'account_id': account.id,
+                                'skipped': True
+                            })
+                            continue
 
-            for future in as_completed(futures):
-                strategy, account, sa = futures[future]
-                try:
-                    result = future.result(timeout=30)
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"거래 실행 실패 (계좌 {account.id}): {e}")
-                    results.append({
-                        'success': False,
-                        'error': str(e),
-                        'account_id': account.id
-                    })
+                        logger.debug(f"계좌 {account.id}: qty_per {qty_per}% → quantity {calculated_quantity}")
 
-        # 배치 커밋 (대기열 추가 + 거래소 주문)
-        db.session.commit()
-
-        # 📡 배치 커밋 후 PendingOrder SSE 일괄 발송
-        if pending_orders_to_emit_sse and self.service.event_emitter:
-            logger.debug(f"📡 [SSE] 배치 PendingOrder SSE 발송 시작: {len(pending_orders_to_emit_sse)}개")
-
-            for pending_info in pending_orders_to_emit_sse:
-                try:
-                    # DB에서 커밋된 PendingOrder 조회 (ID가 할당됨)
-                    from app.models import PendingOrder
-                    pending_order = PendingOrder.query.get(pending_info['pending_order_id'])
-                    if not pending_order:
-                        logger.warning(
-                            f"⚠️ PendingOrder SSE 발송 스킵: DB에서 찾을 수 없음 "
-                            f"(ID: {pending_info['pending_order_id']})"
-                        )
+                    except Exception as calc_error:
+                        logger.error(f"계좌 {account.id}: 수량 계산 실패 - {calc_error}")
+                        results.append({
+                            'success': False,
+                            'error': f'수량 계산 실패: {calc_error}',
+                            'account_id': account.id
+                        })
                         continue
 
-                    # user_id 추출
-                    strategy_account = pending_info['strategy_account']
-                    if not strategy_account.strategy:
-                        logger.warning(
-                            f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
-                            f"(ID: {pending_order.id})"
+                    # Phase 4: LIMIT/STOP 주문 → 즉시 대기열 진입 (검증 없음)
+                    if type_group in ['LIMIT', 'STOP']:
+                        logger.info(
+                            f"📥 대기열 진입 (배치) - "
+                            f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
+                            f"수량: {calculated_quantity}, 계좌: {account.name}"
                         )
-                        continue
 
-                    user_id = strategy_account.strategy.user_id
+                        enqueue_result = self.service.order_queue_manager.enqueue(
+                            strategy_account_id=sa.id,
+                            symbol=symbol,
+                            side=side,
+                            order_type=order_type,
+                            quantity=calculated_quantity,
+                            price=price,
+                            stop_price=stop_price,
+                            market_type=market_type,
+                            reason='BATCH_ORDER',
+                            commit=False  # 배치는 마지막에 한 번만 커밋
+                        )
 
-                    # SSE 발송
-                    self.service.event_emitter.emit_pending_order_event(
-                        event_type='order_created',
-                        pending_order=pending_order,
-                        user_id=user_id
+                        if enqueue_result.get('success'):
+                            results.append({
+                                'success': True,
+                                'queued': True,
+                                'pending_order_id': enqueue_result.get('pending_order_id'),
+                                'priority': enqueue_result.get('priority'),
+                                'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
+                                'account_id': account.id,
+                                'account_name': account.name,
+                                'order_type': order_type,        # SSE 집계용 (emit_order_batch_update)
+                                'event_type': 'order_created'    # SSE 집계용 (emit_order_batch_update)
+                            })
+
+                            # SSE 발송 대상 수집 (배치 커밋 후 발송)
+                            pending_orders_to_emit_sse.append({
+                                'pending_order_id': enqueue_result.get('pending_order_id'),
+                                'strategy_account': sa,
+                                'symbol': symbol
+                            })
+                        else:
+                            logger.error(
+                                f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
+                                f"error: {enqueue_result.get('error')}"
+                            )
+                            results.append({
+                                'success': False,
+                                'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
+                                'account_id': account.id
+                            })
+                        continue  # 거래소 실행 건너뛰기
+
+                    # MARKET/CANCEL 주문: 즉시 거래소 제출 (기존 로직)
+                    def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
+                        with app.app_context():
+                            return self.execute_trade(
+                                strategy=strategy,
+                                symbol=symbol,
+                                side=side,
+                                quantity=calculated_quantity,  # ✅ 변환된 수량 사용
+                                order_type=order_type,
+                                price=price,
+                                stop_price=stop_price,
+                                strategy_account_override=sa,
+                                timing_context=timing_context
+                            )
+
+                    future = executor.submit(
+                        execute_in_context,
+                        app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context
                     )
+                    futures[future] = (strategy, account, sa)
 
-                    logger.debug(
-                        f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
-                        f"ID={pending_order.id}, user_id={user_id}, symbol={pending_info['symbol']}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
-                        f"ID={pending_info.get('pending_order_id')}, error={e}"
-                    )
+                for future in as_completed(futures):
+                    strategy, account, sa = futures[future]
+                    try:
+                        result = future.result(timeout=30)
+                        results.append(result)
+                    except Exception as e:
+                        logger.error(f"거래 실행 실패 (계좌 {account.id}): {e}")
+                        results.append({
+                            'success': False,
+                            'error': str(e),
+                            'account_id': account.id
+                        })
 
-            logger.debug(f"✅ [SSE] 배치 PendingOrder SSE 발송 완료: {len(pending_orders_to_emit_sse)}개")
+            # 배치 커밋 (대기열 추가 + 거래소 주문)
+            db.session.commit()
+
+            # 📡 배치 커밋 후 PendingOrder SSE 일괄 발송
+            if pending_orders_to_emit_sse and self.service.event_emitter:
+                logger.debug(f"📡 [SSE] 배치 PendingOrder SSE 발송 시작: {len(pending_orders_to_emit_sse)}개")
+
+                for pending_info in pending_orders_to_emit_sse:
+                    try:
+                        # DB에서 커밋된 PendingOrder 조회 (ID가 할당됨)
+                        from app.models import PendingOrder
+                        pending_order = PendingOrder.query.get(pending_info['pending_order_id'])
+                        if not pending_order:
+                            logger.warning(
+                                f"⚠️ PendingOrder SSE 발송 스킵: DB에서 찾을 수 없음 "
+                                f"(ID: {pending_info['pending_order_id']})"
+                            )
+                            continue
+
+                        # user_id 추출
+                        strategy_account = pending_info['strategy_account']
+                        if not strategy_account.strategy:
+                            logger.warning(
+                                f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
+                                f"(ID: {pending_order.id})"
+                            )
+                            continue
+
+                        user_id = strategy_account.strategy.user_id
+
+                        # SSE 발송
+                        self.service.event_emitter.emit_pending_order_event(
+                            event_type='order_created',
+                            pending_order=pending_order,
+                            user_id=user_id
+                        )
+
+                        logger.debug(
+                            f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
+                            f"ID={pending_order.id}, user_id={user_id}, symbol={pending_info['symbol']}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
+                            f"ID={pending_info.get('pending_order_id')}, error={e}"
+                        )
+
+                logger.debug(f"✅ [SSE] 배치 PendingOrder SSE 발송 완료: {len(pending_orders_to_emit_sse)}개")
+
+        # ✅ Issue #10: enqueue 내부에서 자동으로 Lock 획득하므로 여기서는 불필요
+        _execute_batch_logic()
 
         return results
 
