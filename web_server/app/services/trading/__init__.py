@@ -20,6 +20,7 @@ from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
 from .order_queue_manager import OrderQueueManager
+from .failed_order_manager import failed_order_manager
 
 logger = logging.getLogger(__name__)
 
@@ -289,4 +290,5 @@ __all__ = [
     'OrderError',
     'PositionError',
     'QuantityCalculationError',
+    'failed_order_manager',
 ]
