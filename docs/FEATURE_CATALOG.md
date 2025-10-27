@@ -80,6 +80,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-26 | Issue #9: CANCEL_ALL Race Condition | ✅ Phase 1 | order_manager.py, order_queue_manager.py | 심볼별 Lock, 아토믹 처리, 주문 손실 제거 (18.75% → 0%) |
 | 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/strategies.py, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition 방지 |
 | 2025-10-26 | Strategies UI Refactoring | ✅ Phase 1-4 | strategies.html (+286) | 8개 렌더링 함수, 3-tier 아키텍처 |
 | 2025-10-26 | Webhook Token Copy | ✅ Complete | profile.html, components.css | 클립보드 복사 버튼 추가 |

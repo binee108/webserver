@@ -257,17 +257,76 @@ CREATE INDEX idx_pending_strategy ON pending_orders(strategy_account_id);
 class OrderQueueManager:
     def __init__(self):
         self._rebalance_locks = {}  # (account_id, symbol) -> Lock
+        self._locks_lock = threading.Lock()  # _rebalance_locks 자체를 보호
+
+    def _get_lock(self, account_id: int, symbol: str):
+        """심볼별 Lock 반환 (CANCEL_ALL과 재정렬이 공유)
+
+        Thread-safe하게 Lock 생성 및 반환. CANCEL_ALL과 재정렬이
+        동일한 Lock을 사용하여 아토믹 처리 보장.
+
+        Args:
+            account_id: 계정 ID
+            symbol: 심볼 (예: 'BTC/USDT')
+
+        Returns:
+            threading.Lock: 해당 심볼의 Lock
+        """
+        lock_key = (account_id, symbol)
+        with self._locks_lock:
+            if lock_key not in self._rebalance_locks:
+                self._rebalance_locks[lock_key] = threading.Lock()
+            return self._rebalance_locks[lock_key]
 
     def rebalance_symbol(self, account_id: int, symbol: str):
-        lock_key = (account_id, symbol)
-        if lock_key not in self._rebalance_locks:
-            self._rebalance_locks[lock_key] = threading.Lock()
-
-        with self._rebalance_locks[lock_key]:
+        """심볼별 동적 재정렬"""
+        lock = self._get_lock(account_id, symbol)
+        with lock:
             self._do_rebalance(account_id, symbol)
 ```
 
 **효과**: 동일 (account_id, symbol) 조합에 대한 동시 재정렬 방지
+
+### Race Condition 해결 (Issue #9)
+
+**문제**: CANCEL_ALL 작업 중 재정렬이 끼어들어 주문 손실 발생 (18.75%)
+
+**시나리오**:
+```
+Thread A (CANCEL_ALL)         Thread B (재정렬)
+1. SELECT PendingOrder
+2.                            1. SELECT OpenOrder
+3. DELETE PendingOrder        2. SELECT PendingOrder
+                              3. ... 주문 1개 손실
+```
+
+**해결 방법**: 심볼별 Lock을 CANCEL_ALL과 재정렬이 공유
+- 모든 영향받는 (account_id, symbol) 조합의 Lock 획득
+- Phase 1 (PendingOrder 삭제) + Phase 2 (OpenOrder 취소)를 불가분 작업으로 처리
+- Deadlock 방지: 정렬된 순서 (account → symbol) Lock 획득
+
+**구현 (order_manager.py:516-794)**:
+```python
+def cancel_all_orders_by_user(...):
+    # Step 0: 영향받는 (account_id, symbol) 조합 파악
+    pending_symbols = {(o.strategy_account.account.id, o.symbol)
+                       for o in pending_orders}
+    open_symbols = {(o.strategy_account.account.id, o.symbol)
+                    for o in open_orders}
+    affected_symbols = sorted(pending_symbols | open_symbols)
+
+    # Step 1: 정렬된 순서로 모든 Lock 획득 (Deadlock 방지)
+    with ExitStack() as stack:
+        for account_id, symbol in affected_symbols:
+            lock = self.queue_manager._get_lock(account_id, symbol)
+            stack.enter_context(lock)
+
+        # Step 2: Lock 내에서 아토믹 처리
+        # - PendingOrder 즉시 삭제 (재정렬 대기 중 손실 방지)
+        # - OpenOrder 거래소 취소 (재정렬과 동시 실행 불가)
+```
+
+**효과**: CANCEL_ALL 진행 중 재정렬이 대기 → 주문 손실 제거
 
 ## Known Issues & Counterintuitive Code
 
@@ -371,8 +430,15 @@ grep -r "_rebalance_locks" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-17*
-*Version: 3.0.0 (타입 그룹별 독립 정렬)*
+*Last Updated: 2025-10-26*
+*Version: 3.1.0 (Race Condition 수정)*
+
+**v3.1.0 주요 변경사항 (2025-10-26)**:
+- **Issue #9 해결**: CANCEL_ALL 작업 중 재정렬로 인한 주문 손실 (18.75%) 제거
+- **심볼별 Lock 도입**: `_get_lock(account_id, symbol)` 헬퍼 메서드 추가
+- **아토믹 처리**: CANCEL_ALL과 재정렬이 동일한 Lock 사용하여 불가분 작업 보장
+- **Deadlock 방지**: 정렬된 순서(account → symbol) Lock 획득으로 교착 상태 방지
+- 문서화: Race Condition 해결 방법 및 구현 세부사항 추가
 
 **v3.0 주요 변경사항 (2025-10-17)**:
 - **타입 그룹별 독립 정렬**: LIMIT과 STOP이 각각 독립적인 할당량 보유
