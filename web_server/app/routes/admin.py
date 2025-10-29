@@ -1120,188 +1120,18 @@ def get_tracking_stats():
         }), 500
 
 
-# ============================================
-# 대기열 시스템 API
-# ============================================
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
-@bp.route('/api/queue-status', methods=['GET'])
-@login_required
-@admin_required
-def get_queue_status():
-    """
-    대기열 현황 조회 (Order Queue System)
-
-    계좌별 심볼별 활성 주문 수, 대기 주문 수, 제한 반환
-    """
-    try:
-        from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
-        from app.constants import MAX_ORDERS_PER_SYMBOL_TYPE_SIDE
-        from sqlalchemy import distinct, func
-
-        # 활성 계정 조회
-        active_accounts = Account.query.filter_by(is_active=True).all()
-
-        result = {
-            'success': True,
-            'accounts': [],
-            'total_active': 0,
-            'total_pending': 0
-        }
-
-        for account in active_accounts:
-            # (account_id, symbol) 조합 추출
-            active_symbols_query = db.session.query(
-                distinct(OpenOrder.symbol)
-            ).join(
-                StrategyAccount,
-                OpenOrder.strategy_account_id == StrategyAccount.id
-            ).filter(
-                StrategyAccount.account_id == account.id
-            )
-
-            pending_symbols_query = db.session.query(
-                distinct(PendingOrder.symbol)
-            ).filter(
-                PendingOrder.account_id == account.id
-            )
-
-            # 합집합
-            all_symbols = set(
-                [s[0] for s in active_symbols_query.all()] +
-                [s[0] for s in pending_symbols_query.all()]
-            )
-
-            if not all_symbols:
-                continue  # 주문이 없는 계정은 건너뛰기
-
-            # market_type 결정
-            strategy_account = StrategyAccount.query.filter_by(account_id=account.id).first()
-            market_type = 'SPOT'
-            if strategy_account and strategy_account.strategy:
-                market_type = strategy_account.strategy.market_type or 'SPOT'
-
-            account_data = {
-                'account_id': account.id,
-                'account_name': account.name,
-                'exchange': account.exchange,
-                'market_type': market_type,
-                'symbols': []
-            }
-
-            for symbol in sorted(all_symbols):
-                # 활성 주문 수 (DB 조회)
-                active_count = OpenOrder.query.join(StrategyAccount).filter(
-                    StrategyAccount.account_id == account.id,
-                    OpenOrder.symbol == symbol
-                ).count()
-
-                # 대기열 주문 수
-                pending_count = PendingOrder.query.filter_by(
-                    account_id=account.id,
-                    symbol=symbol
-                ).count()
-
-                # 고정 제한 (거래소 구분 없음)
-                # LIMIT BUY 2개, LIMIT SELL 2개, STOP BUY 2개, STOP SELL 2개 = 총 8개
-                limits = {
-                    'max_orders': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 4,  # 8개
-                    'max_orders_per_side': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 2,  # 4개
-                    'max_stop_orders': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE * 2,  # 4개
-                    'max_stop_orders_per_side': MAX_ORDERS_PER_SYMBOL_TYPE_SIDE  # 2개
-                }
-
-                account_data['symbols'].append({
-                    'symbol': symbol,
-                    'active_orders': active_count,
-                    'pending_orders': pending_count,
-                    'total': active_count + pending_count,
-                    'limit': limits['max_orders'],
-                    'limit_stop': limits['max_stop_orders']
-                })
-
-                result['total_active'] += active_count
-                result['total_pending'] += pending_count
-
-            result['accounts'].append(account_data)
-
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'대기열 현황 조회 중 오류가 발생했습니다: {str(e)}'
-        }), 500
-
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
-@bp.route('/api/queue-rebalance', methods=['POST'])
-@login_required
-@admin_required
-def manual_rebalance_queue():
-    """
-    수동 대기열 재정렬 (Order Queue System)
-
-    특정 계좌/심볼의 대기열 수동 재정렬
-    """
-    try:
-        data = request.get_json()
-        account_id = data.get('account_id')
-        symbol = data.get('symbol')
-
-        if not account_id or not symbol:
-            return jsonify({
-                'success': False,
-                'message': 'account_id와 symbol은 필수입니다'
-            }), 400
-
-        # 계정 존재 확인
-        from app.models import Account
-        account = Account.query.get(account_id)
-        if not account:
-            return jsonify({
-                'success': False,
-                'message': f'계정을 찾을 수 없습니다 (ID: {account_id})'
-            }), 404
-
-        # 재정렬 실행
-        from app.services.trading.order_queue_manager import OrderQueueManager
-        from app.services.trading import trading_service
-
-        queue_manager = OrderQueueManager(service=trading_service.trading_core)
-        result = queue_manager.rebalance_symbol(
-            account_id=account_id,
-            symbol=symbol
-        )
-
-        if result.get('success'):
-            return jsonify({
-                **result,
-                'message': f'재정렬 완료: {result.get("executed")}개 실행, {result.get("cancelled")}개 취소'
-            })
-        else:
-            return jsonify(result), 500
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'수동 재정렬 중 오류가 발생했습니다: {str(e)}'
-        }), 500
-
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
+# @FEAT:admin-panel @COMP:route @TYPE:core
 @bp.route('/api/metrics', methods=['GET'])
 @login_required
 @admin_required
 def get_metrics():
     """
-    대기열 시스템 메트릭 조회
+    시스템 메트릭 조회
 
-    재정렬 메트릭, 대기열 통계, WebSocket 통계 반환
+    WebSocket 통계 반환
     """
     try:
         from app.services.trading import trading_service
-        from app.models import PendingOrder
         import logging
 
         logger = logging.getLogger(__name__)
@@ -1313,37 +1143,6 @@ def get_metrics():
                 'error': 'Trading service가 초기화되지 않았습니다'
             }), 503
 
-        if not hasattr(trading_service, 'order_queue_manager') or not trading_service.order_queue_manager:
-            return jsonify({
-                'success': False,
-                'error': 'Order queue manager가 초기화되지 않았습니다'
-            }), 503
-
-        # 재정렬 메트릭
-        queue_manager = trading_service.order_queue_manager
-        queue_metrics = queue_manager.get_metrics()
-
-        # 대기열 통계
-        pending_stats = db.session.query(
-            PendingOrder.account_id,
-            PendingOrder.symbol,
-            func.count(PendingOrder.id).label('count')
-        ).group_by(
-            PendingOrder.account_id,
-            PendingOrder.symbol
-        ).all()
-
-        pending_by_symbol = [
-            {
-                'account_id': stat.account_id,
-                'symbol': stat.symbol,
-                'count': stat.count
-            }
-            for stat in pending_stats
-        ]
-
-        total_pending = sum(stat['count'] for stat in pending_by_symbol)
-
         # WebSocket 통계
         websocket_manager = trading_service.websocket_manager
         websocket_stats = websocket_manager.get_stats() if websocket_manager else {}
@@ -1351,11 +1150,6 @@ def get_metrics():
         return jsonify({
             'success': True,
             'data': {
-                'queue_metrics': queue_metrics,
-                'pending_orders': {
-                    'total': total_pending,
-                    'by_symbol': pending_by_symbol
-                },
                 'websocket_stats': websocket_stats
             }
         })

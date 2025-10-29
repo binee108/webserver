@@ -770,19 +770,7 @@ def register_background_jobs(app):
         max_instances=1
     )
 
-    # Order Queue System: 대기열 재정렬 (1초마다)
-    from app.services.background.queue_rebalancer import rebalance_all_symbols
-    scheduler.add_job(
-        func=rebalance_all_symbols,
-        trigger="interval",
-        seconds=1,
-        id='rebalance_order_queue',
-        name='Rebalance Order Queue',
-        replace_existing=True,
-        max_instances=1
-    )
-
-    # Phase 2: 오래된 처리 잠금 해제 (60초마다)
+    # OpenOrder 처리 잠금 해제 (60초마다)
     scheduler.add_job(
         func=release_stale_order_locks,
         trigger="interval",

@@ -84,12 +84,12 @@ class TradingCore:
                      timing_context: Optional[Dict[str, float]] = None,
                      from_pending_queue: bool = False) -> Dict[str, Any]:
         """
-        거래 실행 (Phase 3: 즉시 대기열 진입)
+        거래 실행 (Phase 4: 즉시 실행)
 
-        Phase 3 변경사항:
+        Phase 4 변경사항:
+        - 모든 주문 타입: 검증 후 즉시 거래소 실행
         - MARKET 주문: 기존대로 즉시 거래소 제출
-        - LIMIT/STOP 주문: 검증 없이 즉시 PendingOrder에 추가
-        - 재정렬 트리거: enqueue 후 즉시 rebalance_symbol() 호출
+        - LIMIT/STOP 주문: 검증 후 즉시 거래소 실행 (Phase 4+)
 
         Args:
             strategy: 전략 객체
@@ -130,34 +130,7 @@ class TradingCore:
 
             # @FEAT:immediate-execution @COMP:service @TYPE:core
             # Phase 4: Queue 제거 및 즉시 실행 전환 (모든 주문 타입)
-            #
-            # 변경 내용:
-            # ==================
-            # - 제거: OrderQueueManager.enqueue() 호출 (100+ 건)
-            # - 제거: PendingOrder 모델 사용 (100+ 건)
-            # - 제거: queue_rebalancer.py 서비스 (주기적 재정렬 중단)
-            #
-            # 주문 타입별 처리 (Before → After):
-            # ==================
-            # - MARKET: 즉시 실행 (변경 없음)
-            # - CANCEL_ALL_ORDER: 즉시 실행 (변경 없음)
-            # - LIMIT: Queue 진입 → 즉시 실행 (Phase 4 변경)
-            # - STOP: Queue 진입 → 즉시 실행 (Phase 4 변경)
-            #
-            # 모든 주문 경로:
-            # ==================
-            # 1. 주문 검증 (StrategyAccount.is_active 확인)
-            # 2. _execute_exchange_order() 호출 (즉시 거래소 제출)
-            # 3. 성공: OpenOrder 생성 (기존 로직 유지)
-            # 4. 실패: FailedOrder 생성 (Phase 2 패턴 재사용)
-            #
-            # Phase 5 정리 계획:
-            # ==================
-            # - order_queue_manager.py 파일 삭제 (참조 103건)
-            # - PendingOrder 모델 제거 (참조 8건)
-            # - queue_rebalancer.py 서비스 삭제 (참조 9건)
-            #
-            # 실제 구현: Lines 141-203 참조
+            # 모든 주문 타입을 즉시 거래소에 제출합니다.
             from app.constants import ORDER_TYPE_GROUPS
 
             type_group = None
@@ -812,18 +785,14 @@ class TradingCore:
 
         Issue #10: Lock 기반 Race Condition 방지
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        LIMIT/STOP 배치 주문 생성 시 재정렬 알고리즘과의 동시 접근을 Lock으로 차단합니다.
+        배치 주문 생성 시 동시 접근을 Lock으로 차단합니다.
 
         Lock 획득 전략:
-        - 대상: LIMIT/STOP 주문 (PendingOrder 생성)
+        - 대상: LIMIT/STOP 주문 (거래소 즉시 실행)
         - 제외: MARKET 주문 (즉시 거래소 실행, Lock 불필요)
         - Deadlock 방지: (account_id, symbol) 튜플 정렬 순서로 Lock 획득
-        - Lock 범위: PendingOrder 추가 + 배치 커밋 + SSE 발송
+        - Lock 범위: 거래소 주문 실행 + 배치 커밋 + SSE 발송
         - 자동 해제: contextlib.ExitStack으로 예외 시에도 Lock 해제 보장
-
-        Issue #9 패턴 재사용:
-        - Lock 헬퍼: order_queue_manager._get_lock(account_id, symbol)
-        - CANCEL_ALL과 동일한 Lock 메커니즘 공유
 
         처리 흐름:
         1. 타입 그룹 확인 (LIMIT/STOP/MARKET)
@@ -1454,8 +1423,6 @@ class TradingCore:
             - success=True: Order queued, includes pending_order_id
             - success=False: Order failed, includes error message
         """
-        from app.models import PendingOrder
-
         account = account_data['account']
         strategy_account = account_data['strategy_account']
         exchange_orders = account_data['orders']
