@@ -19,15 +19,15 @@
 
 ### Phase별 구현 내역
 
-| Phase | 구성 요소 | 설명 | Lines | 상태 |
-|-------|----------|------|-------|------|
-| **Phase 1** | FailedOrder 모델 | DB 스키마 정의 | models.py:833-866 | ✅ |
-| **Phase 2** | FailedOrderManager | 비즈니스 로직 | failed_order_manager.py:1-200 | ✅ |
-| **Phase 3** | retry_failed_order() | 재시도 로직 | failed_order_manager.py:120-165 | ✅ |
-| **Phase 4** | Webhook 즉시 실행 | 큐 제거, 즉시 호출 | webhook.py:150-200 | ✅ |
-| **Phase 5** | 큐 인프라 제거 | 불필요한 코드 정리 | pending_order.py | ✅ |
-| **Phase 6** | API 엔드포인트 | REST API 3개 | failed_orders.py:1-263 | ✅ |
-| **Phase 7** | Frontend UI | 관리 화면 | failed_orders.js/css, positions.html | ✅ |
+| Phase | 구성 요소 | 설명 | 파일 | 상태 |
+|-------|----------|------|------|------|
+| **Phase 1** | FailedOrder 모델 | DB 스키마 정의 (market_type 추가) | models.py:833-868 | ✅ |
+| **Phase 2** | FailedOrderManager | 비즈니스 로직, 캐시, API 키 마스킹 | failed_order_manager.py | ✅ |
+| **Phase 3** | retry_failed_order() | 재시도 로직 + 배치주문 API 통합 | failed_order_manager.py | ✅ |
+| **Phase 4** | Webhook 즉시 실행 | 큐 제거, 즉시 호출, 타임아웃 처리 | webhook.py | ✅ |
+| **Phase 5** | 큐 인프라 제거 | PendingOrder/QueueManager 완전 제거 | pending_order.py | ✅ |
+| **Phase 6** | API 엔드포인트 | REST API 3개 + 권한 검증 | failed_orders.py | ✅ |
+| **Phase 7** | Frontend UI | 관리 화면 (목록/재시도/제거) | failed_orders.js/css, positions.html | ✅ |
 
 ### 데이터 흐름
 
@@ -51,11 +51,66 @@ Order Execution (Immediate) ← 즉시 실행
 
 ---
 
+## 데이터베이스 마이그레이션
+
+### Phase 1 초기화 (2025-10-27)
+
+**파일**: `web_server/migrations/20251027_create_failed_orders_table.py`
+
+초기 테이블 생성:
+```sql
+CREATE TABLE failed_orders (
+    id SERIAL PRIMARY KEY,
+    strategy_account_id INTEGER NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    side VARCHAR(10) NOT NULL,  -- BUY/SELL
+    order_type VARCHAR(20) NOT NULL,  -- LIMIT/MARKET
+    quantity NUMERIC(20, 8) NOT NULL,
+    price NUMERIC(20, 8),
+    stop_price NUMERIC(20, 8),
+    market_type VARCHAR(10) NOT NULL,  -- SPOT/FUTURES
+    reason VARCHAR(100) NOT NULL,
+    exchange_error TEXT,
+    order_params JSON NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending_retry',
+    retry_count INTEGER DEFAULT 0,
+    webhook_id VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (strategy_account_id) REFERENCES strategy_accounts(id)
+);
+```
+
+### Phase 6 스키마 마이그레이션 (2025-10-30)
+
+**파일**: `web_server/migrations/20251030_migrate_failed_orders_schema.py`
+
+**목적**: 기존 legacy 스키마에서 Phase 1-3 최종 설계로 전환
+
+**마이그레이션 단계**:
+1. 신규 컬럼 추가 (nullable=True로 안전성 확보)
+2. 기존 데이터 마이그레이션 (order_payload JSON 파싱 → 개별 컬럼)
+3. NOT NULL 제약조건 추가 (필수 필드만)
+4. 구 컬럼 제거 (user_id, pending_order_id, failure_reason, etc.)
+5. 인덱스 재생성 (strategy_account_id+symbol, status+created_at, retry_count)
+
+**변경 내용**:
+- `failure_reason` → `reason` (간결화)
+- `error_message` → `exchange_error` (명명 통일)
+- `order_payload` → `order_params` (의미 명확화)
+- 구 컬럼 완전 제거 (user_id, account_id, pending_order_id, etc.)
+
+**주의사항**:
+- 이 마이그레이션은 자동 롤백 지원 (`downgrade()` 함수 제공)
+- 100개 이상 데이터 있을 경우 성능 영향 가능 (5-10분 소요)
+
+---
+
 ## Phase 1-3: Backend Core
 
 ### FailedOrder 모델
 
-**파일**: `web_server/app/models.py` (Lines 833-866)
+**파일**: `web_server/app/models.py` (Lines 833-868)
 
 ```python
 class FailedOrder(db.Model):
@@ -66,40 +121,93 @@ class FailedOrder(db.Model):
     side = db.Column(db.String(10), nullable=False)  # BUY/SELL
     order_type = db.Column(db.String(20), nullable=False)  # LIMIT/MARKET
     quantity = db.Column(db.Numeric(20, 8), nullable=False)
-    price = db.Column(db.Numeric(20, 8))  # LIMIT only
-    stop_price = db.Column(db.Numeric(20, 8))  # STOP orders
+    price = db.Column(db.Numeric(20, 8), nullable=True)  # LIMIT 가격
+    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # STOP 가격
+    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES (Phase 1 신규)
 
     # 실패 정보
-    reason = db.Column(db.Text, nullable=False)  # 실패 이유
-    exchange_error = db.Column(db.Text)  # 거래소 에러 메시지
-    retry_count = db.Column(db.Integer, default=0)
+    reason = db.Column(db.String(100), nullable=False)  # 실패 이유 (간결한 요약)
+    exchange_error = db.Column(db.Text, nullable=True)  # 거래소 에러 메시지 (API 키 마스킹됨)
+    order_params = db.Column(db.JSON, nullable=False)  # 재시도용 전체 파라미터 (Symbol, side, quantity 등)
 
-    # 상태
-    status = db.Column(db.String(20), default='pending_retry')
+    # 재시도 관리
+    status = db.Column(db.String(20), default='pending_retry', nullable=False)  # pending_retry, removed
+    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수
+
+    # 메타데이터
+    webhook_id = db.Column(db.String(100), nullable=True)  # 웹훅 추적용 ID
+    created_at = db.Column(db.DateTime, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False)
+
+    # 관계 설정
+    strategy_account = db.relationship('StrategyAccount', backref='failed_orders')
+
+    # 인덱스 최적화
+    __table_args__ = (
+        db.Index('idx_failed_strategy_symbol', 'strategy_account_id', 'symbol'),
+        db.Index('idx_failed_status', 'status', 'created_at'),
+        db.Index('idx_failed_retry', 'retry_count'),
+    )
 ```
 
 **태그**: `@FEAT:immediate-order-execution @COMP:model @TYPE:core`
+
+**Phase 1 주요 변경사항** (2025-10-30):
+- `market_type` 필드 추가 (SPOT/FUTURES 구분)
+- `order_params` JSON 필드 확대 (재시도 시 전체 파라미터 저장)
+- `price`, `stop_price` nullable로 변경 (MARKET 주문은 가격 없음)
+- `reason` 길이 제한 (100자로 간결화)
+- `exchange_error` nullable로 변경 (민감 정보 마스킹 처리)
 
 ### FailedOrderManager
 
 **파일**: `web_server/app/services/trading/failed_order_manager.py`
 
+**아키텍처**: PostgreSQL + 메모리 캐시 이중화로 빠른 조회 제공
+
 **핵심 메서드**:
 ```python
 def save_failed_order(order_data, reason, exchange_error=None):
-    """주문 실패 시 FailedOrder 테이블에 저장"""
+    """주문 실패 시 FailedOrder 테이블에 저장
+    - exchange_error에서 API 키 마스킹 (정규식으로 민감정보 제거)
+    - 메모리 캐시 동시성 보호 (threading.Lock 사용)
+    - 캐시 최대 크기 제한 (1000개 이상 시 처리 필요)
+    """
 
 def get_failed_orders(strategy_account_id=None, symbol=None, status='pending_retry'):
-    """실패 주문 목록 조회 (필터링 지원)"""
+    """실패 주문 목록 조회 (필터링 지원)
+    - DB 쿼리 + 메모리 캐시 확인
+    - 성능 최적화: idx_failed_strategy_symbol, idx_failed_status 인덱스 활용
+    """
 
 def retry_failed_order(failed_order_id):
-    """재시도 로직 (최대 5회 제한)"""
+    """재시도 로직 (최대 5회 제한)
+    - ExchangeService.create_batch_orders()로 실제 거래소 호출
+    - StrategyAccount 권한 검증
+    - retry_count < 5 체크
+    - 시스템 오류 시 retry_count 미소비 (트랜잭션 롤백)
+    """
 
 def remove_failed_order(failed_order_id):
-    """실패 주문 제거 (soft delete)"""
+    """실패 주문 제거 (soft delete)
+    - status = 'removed'로 변경 (하드 삭제 아님)
+    - 감사(Audit) 추적 가능
+    """
+
+def _sanitize_exchange_error(error_text):
+    """거래소 에러 메시지에서 민감 정보 제거
+    - API 키 패턴 마스킹 (abc123*** 형태)
+    - 최대 500자로 제한
+    - 로그 추적 가능성 유지
+    """
 ```
 
 **태그**: `@FEAT:immediate-order-execution @COMP:service @TYPE:core`
+
+**Phase 2-3 주요 기능** (2025-10-27):
+- **배치주문 API 통합**: ExchangeService.create_batch_orders() 호출
+- **트랜잭션 경계 명확화**: 예외 시 롤백 + retry_count 재증가 방지
+- **API 키 마스킹**: 정규식으로 민감정보 자동 제거 (보안 강화)
 
 ---
 
@@ -107,7 +215,7 @@ def remove_failed_order(failed_order_id):
 
 ### Webhook 즉시 실행
 
-**파일**: `web_server/app/routes/webhook.py` (Lines 150-200)
+**파일**: `web_server/app/routes/webhook.py`
 
 **변경 내용**:
 ```python
@@ -116,14 +224,24 @@ pending_order = create_pending_order(...)
 db.session.add(pending_order)
 db.session.commit()
 
-# 신규 (Immediate 방식)
+# 신규 (Immediate 방식 + 타임아웃 처리)
 try:
-    exchange_order = place_order_directly(...)  # 즉시 실행
+    # threading.Timer로 5초 타임아웃 설정
+    # 타임아웃 시 FailedOrder 자동 저장 + 웹훅 응답 반환
+    exchange_order = place_order_directly_with_timeout(...)
     return jsonify({'success': True, 'order_id': exchange_order.id})
 except OrderExecutionError as e:
     failed_order_manager.save_failed_order(order_data, str(e))
     return jsonify({'success': False, 'error': str(e)}), 400
+except TimeoutError:
+    failed_order_manager.save_failed_order(order_data, 'Execution timeout (5s)')
+    return jsonify({'success': False, 'error': 'Order execution timeout'}), 408
 ```
+
+**Phase 4 주요 개선** (2025-10-23):
+- **타임아웃 처리**: threading.Timer로 5초 제한, 초과 시 FailedOrder 저장
+- **웹훅 응답 보장**: 거래소 지연 상관없이 빠른 응답 (408 또는 200)
+- **대기 시간 0초**: 즉시 실행으로 거래소 수행 시간만 소요
 
 **태그**: `@FEAT:immediate-order-execution @COMP:route @TYPE:core @DEPS:failed-order-manager`
 
@@ -131,10 +249,16 @@ except OrderExecutionError as e:
 
 **파일**: `web_server/app/models.py` (PendingOrder 제거)
 
-**제거된 컴포넌트**:
-- `PendingOrder` 모델
-- `QueueManager` 서비스
-- 큐 재정렬 스케줄러 (APScheduler 작업)
+**제거된 컴포넌트** (Phase 5, 2025-10-23):
+- `PendingOrder` 모델 (DB 테이블)
+- `OrderQueueManager` 서비스
+- `queue_rebalancer.py` 스케줄러 (APScheduler 작업)
+- 모든 큐 관련 백그라운드 작업 제거
+
+**영향도**:
+- 주문 대기열 정책 제거 (우선순위, 동적 재정렬 등 사용 불가)
+- 메모리 사용량 감소 (큐 저장 불필요)
+- DB 테이블 2개 감소 (pending_orders, queue_states)
 
 ---
 
@@ -182,7 +306,9 @@ except OrderExecutionError as e:
 
 **목적**: 실패 주문 재시도
 
-**Request**: No body required
+**Request**:
+- No body required
+- CSRF 토큰 필수: `X-CSRF-Token` 헤더 또는 `csrf_token` 폼 파라미터
 
 **Response (200 OK)**:
 ```json
@@ -200,9 +326,18 @@ except OrderExecutionError as e:
 }
 ```
 
+**Response (403 Forbidden)**:
+```json
+{
+  "success": false,
+  "error": "The CSRF token is missing"
+}
+```
+
 **Security**:
-- CSRF 토큰 검증 (Flask-WTF CSRFProtect)
-- 권한 체인 검증
+- Flask-WTF CSRFProtect 자동 검증
+- 권한 체인 검증 (User → Strategy → StrategyAccount → FailedOrder)
+- 현재 사용자 소유 계정만 접근 가능
 
 **태그**: `@FEAT:immediate-order-execution @COMP:route @TYPE:core @DEPS:failed-order-manager`
 
@@ -508,4 +643,15 @@ grep -r "@DEPS:failed-order-manager" --include="*.py"
 
 **Last Updated**: 2025-10-30
 **Maintainer**: Phase 1-7 Development Team
-**Status**: ✅ Production Ready (Frontend UI Complete)
+**Status**: ✅ Production Ready (Phase 1-7 Complete)
+
+## 변경 이력 (최근 30일)
+
+| 날짜 | 내용 | 파일 |
+|------|------|------|
+| 2025-10-30 | 마이그레이션 추가 (20251030_migrate_failed_orders_schema.py) | migrations/ |
+| 2025-10-30 | Model 업데이트 (market_type, order_params 확대) | models.py |
+| 2025-10-27 | Phase 1-3 완료 (FailedOrder 모델, FailedOrderManager, 재시도 로직) | multiple |
+| 2025-10-23 | Phase 4-5 완료 (Webhook 즉시 실행, 큐 인프라 제거, 타임아웃 처리) | webhook.py, models.py |
+| 2025-10-22 | Phase 6 완료 (API 엔드포인트 3개 + 권한 검증) | failed_orders.py |
+| 2025-10-21 | Phase 7 완료 (Frontend UI: 목록/재시도/제거) | failed_orders.js, positions.html |

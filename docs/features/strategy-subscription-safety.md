@@ -55,9 +55,11 @@ failed_cleanups = [
 
 ### 구현 코드
 
-**파일:** `web_server/app/routes/strategies.py:264-420`
+**파일:** `web_server/app/routes/strategies.py:274-431`
 
-**핵심 함수:** `update_strategy()` (소유자 권한 검증 필요)
+**핵심 함수:** `update_strategy()` (Line 215, 소유자 권한 검증 필요)
+
+**기능 태그:** `@FEAT:strategy-subscription-safety @COMP:route @TYPE:core` (Line 274)
 
 ## Phase 2: 구독 상태 조회 API
 
@@ -348,8 +350,8 @@ unsubscribeStrategy(strategyId, accountId);
 
 **Status**: ✅ Complete
 **Files**:
-- `web_server/app/services/strategy_service.py:778-949`
-- `web_server/app/routes/strategies.py:149-183`
+- `web_server/app/services/strategy_service.py:778-961`
+- `web_server/app/routes/strategies.py:148-183`
 
 ### 개요
 
@@ -378,26 +380,63 @@ Phase 1의 7단계 cleanup 패턴을 재사용하여 일관성과 안정성을 �
 ### Backward Compatibility
 
 **`force=false` (기본값)**: 기존 동작 유지
-- 활성 포지션 있으면 StrategyError 발생
+- 활성 포지션 확인 후 있으면 StrategyError 발생
+- SSE 클라이언트 정리 (`disconnect_client()` 호출)
+- StrategyAccount 즉시 삭제
 - 안전한 구독 해제만 허용
 
 **`force=true`**: Phase 4 신규 기능
 - 활성 포지션 강제 청산
+- 미체결 주문 취소
 - Best-effort 방식 (일부 실패해도 계속 진행)
+- 모든 cleanup 완료 후 StrategyAccount 삭제
 
 ### 구현 세부사항
 
-**파일**: `web_server/app/services/strategy_service.py:836-949`
+**파일**: `web_server/app/services/strategy_service.py:778-961`
 **태그**: `@FEAT:strategy-subscription-safety @COMP:service @TYPE:core`
 
 **핵심 로직**:
-- Line 807-834: force=false 경로 (기존 동작)
-- Line 836-949: force=true 경로 (Phase 1 패턴)
-- Line 844-846: Race condition 방지
-- Line 849-883: 주문 취소 + defensive verification
-- Line 884-910: 포지션 청산 (best-effort)
-- Line 912-920: SSE 연결 해제
-- Line 923-936: 실패 추적 및 로깅
+- Line 820-846: force=false 경로 (기존 동작 - SSE 정리 + 즉시 삭제)
+- Line 848-961: force=true 경로 (Phase 1 패턴 - 7단계 cleanup)
+- Line 856-858: Race condition 방지
+- Line 860-875: 주문 취소 + 실패 추적
+- Line 877-894: Defensive verification
+- Line 896-921: 포지션 청산 (best-effort)
+- Line 923-932: SSE 연결 해제
+- Line 934-948: 실패 항목 로깅 (TODO: 텔레그램 알림)
+- Line 950-961: DB 제거 및 자본 재배분
+
+### 실패 추적 구조 (force=true)
+
+```python
+failed_cleanups = [
+    {
+        'type': 'order_cancellation',  # 주문 취소 실패
+        'symbol': 'BTCUSDT',
+        'order_id': '12345',
+        'reason': 'Insufficient balance'
+    },
+    {
+        'type': 'remaining_order',     # Defensive verification 검출
+        'symbol': 'ETHUSDT',
+        'order_id': '67890',
+        'quantity': '1.5'
+    },
+    {
+        'type': 'position_close',      # 포지션 청산 실패
+        'symbol': 'BNBUSDT',
+        'quantity': '10.5',
+        'reason': 'Market closed'
+    },
+    {
+        'type': 'position_close_exception',  # 포지션 청산 예외
+        'symbol': 'ADAUSDT',
+        'quantity': '100',
+        'reason': 'Connection timeout'
+    }
+]
+```
 
 ### 테스트 시나리오
 
@@ -434,7 +473,7 @@ Phase 1의 7단계 cleanup 패턴을 재사용하여 일관성과 안정성을 �
 
 **Status**: ✅ Complete
 **Files**:
-- `web_server/app/services/trading/core.py:158-174, 221-237, 1482-1503`
+- `web_server/app/services/trading/core.py:144-150, 210-216, 1435-1441`
 
 ### 개요
 
@@ -466,7 +505,7 @@ T4: [Phase 5 체크] is_active 재확인 → False 감지 → 주문 스킵 ✅
 
 ### 3개 실행 경로 보호
 
-#### 1. LIMIT/STOP 대기열 진입 (Line 158-174)
+#### 1. LIMIT/STOP 대기열 진입 (Line 144-150)
 **체크 시점**: PendingOrder 진입 직전
 **효과**: 대기열 오염 방지
 **에러 응답**:
@@ -484,13 +523,13 @@ T4: [Phase 5 체크] is_active 재확인 → False 감지 → 주문 스킵 ✅
 ```
 **로그**: `⚠️ [Phase 5] StrategyAccount {id} 비활성 상태 - LIMIT/STOP 대기열 진입 스킵 (전략: {strategy}, 계좌: {account}, 심볼: {symbol})`
 
-#### 2. MARKET 주문 즉시 실행 (Line 221-237)
+#### 2. MARKET 주문 즉시 실행 (Line 210-216)
 **체크 시점**: 거래소 API 호출 직전
 **효과**: 즉시 실행 주문 차단
 **에러 응답**: 위와 동일
 **로그**: `⚠️ [Phase 5] StrategyAccount {id} 비활성 상태 - MARKET 주문 스킵 (전략: {strategy}, 계좌: {account}, 심볼: {symbol}, 방향: {side})`
 
-#### 3. 배치 주문 실행 (Line 1482-1503)
+#### 3. 배치 주문 실행 (Line 1435-1441)
 **체크 시점**: 배치 실행 직전
 **효과**: 다중 주문 일괄 차단
 **배치 응답 구조** (원본 인덱스 매핑):
@@ -550,10 +589,10 @@ Phase 5: is_active 재확인 (실행 직전 게이트)
 # @FEAT:strategy-subscription-safety @COMP:service @TYPE:core
 ```
 
-위치:
-- Line 158-174: LIMIT/STOP 대기열
-- Line 221-237: MARKET 주문
-- Line 1482-1503: 배치 주문
+위치 (`web_server/app/services/trading/core.py`):
+- Line 144-150: LIMIT/STOP 대기열 재확인
+- Line 210-216: MARKET 주문 재확인
+- Line 1435-1441: 배치 주문 재확인
 
 ### 테스트 시나리오
 
@@ -592,4 +631,27 @@ WARNING: ⚠️ [Phase 5] StrategyAccount 123 비활성 상태 - MARKET 주문 �
 ## 관련 링크
 
 - 기능 카탈로그: `docs/FEATURE_CATALOG.md`
-- 계획서: `.plan/strategy_subscription_safety_plan.md`
+- 기능 태그 검색: `grep -r "@FEAT:strategy-subscription-safety" --include="*.py"`
+
+---
+
+## 2025-10-30 동기화 요약
+
+### 변경 사항
+
+**Phase 4 (Backend Forced Liquidation)**
+- `force=false` 경로 명확화: SSE 정리 → 즉시 삭제 (Line 820-846)
+- `force=true` 경로 상세화: 7단계 cleanup (Line 848-961)
+- 실패 추적 구조 확장: `position_close_exception` 타입 추가
+- 파일 경로 정확화: `web_server/app/services/strategy_service.py:778-961`
+
+**Phase 5 (Webhook is_active Recheck)**
+- 라인 번호 정확화:
+  - LIMIT/STOP: Line 144-150 (구 158-174)
+  - MARKET: Line 210-216 (구 221-237)
+  - 배치: Line 1435-1441 (구 1482-1503)
+
+**Phase 1 (공개→비공개 전환)**
+- 파일 경로 정확화: `web_server/app/routes/strategies.py:274-431` (구 264-420)
+- 함수 위치 명시: `update_strategy()` at Line 215
+- 기능 태그 위치: Line 274

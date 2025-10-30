@@ -4,40 +4,55 @@
 
 TradingView 등 외부 시그널을 웹훅으로 수신하여 다중 계좌에 자동으로 주문을 실행하는 시스템입니다.
 
-**핵심 기능**:
-- 다중 계좌 동시 주문 실행 (하나의 웹훅 → 여러 계좌)
-- 전략별 독립적 주문 관리 (전략 격리)
-- 유연한 주문 타입 지원 (LIMIT, MARKET, STOP_LIMIT)
-- 배치 주문 지원 (단일 웹훅 → 여러 심볼 동시 처리)
+**핵심 기능** (Phase 4: 즉시 실행):
+- 다중 계좌 동시 주문 실행 (하나의 웹훅 → 여러 계좌, 병렬 처리)
+- 전략별 독립적 주문 관리 (전략 격리, DB 기반)
+- 유연한 주문 타입 지원 (LIMIT, MARKET, STOP_LIMIT, STOP_MARKET)
+- 배치 주문 지원 (단일 웹훅 → 여러 심볼 동시 처리, 우선순위 분류)
+- **10초 타임아웃** (threading.Timer, 멀티스레드 안전)
+- **증권(STOCK) 거래 지원** (크립토 병렬 처리)
 
 ---
 
-## 2. 실행 플로우 (Execution Flow)
+## 2. 실행 플로우 (Execution Flow - Phase 4: 즉시 실행 + 타임아웃)
 
 ```
 외부 시그널 (TradingView)
     ↓ POST /api/webhook
-[1] 웹훅 수신 (webhook.py) → 타임스탬프 기록
+[1] 웹훅 수신 (webhook.py) → 10초 타임아웃 설정 (threading.Timer, 멀티스레드 안전)
+    ↓ TimeoutContext.__enter__() → Timer 시작
+[2] JSON 파싱 + 데이터 정규화 (webhook_service.py)
     ↓
-[2] 데이터 정규화 (webhook_service.py) → 필수 필드 검증
+[3] 전략 조회 및 토큰 검증 (DB 기반, 공개 전략 구독자 허용)
     ↓
-[3] 전략 조회 및 토큰 검증 → 권한 확인
+[4] 주문 타입별 파라미터 검증
+    ├─ LIMIT: price 필수 검증
+    ├─ STOP_LIMIT: price + stop_price 필수 검증
+    └─ MARKET: price/stop_price 자동 제거
     ↓
-[4] 주문 타입별 파라미터 검증 → LIMIT: price 필수, MARKET: price 제거
+[5] 거래 타입 분기
+    ├─ CANCEL_ALL_ORDER → process_cancel_all_orders() [DB 기반 취소]
+    ├─ CANCEL → process_cancel_order() [개별 주문 취소]
+    └─ 정상 거래 → [6]으로 진행
+    ↓ (정상 거래)
+[6] 배치 모드 판정 및 우선순위 분류 (Phase 4 신규)
+    ├─ 단일 주문: 배치 형식으로 자동 변환
+    ├─ 배치 주문: 우선순위 분류 (30개 제한)
+    │   ├─ HIGH: CANCEL_ALL_ORDER + MARKET (즉시 체결)
+    │   └─ LOW: LIMIT + STOP (조건부 체결)
     ↓
-[5] 거래 타입 라우팅
-    ├─ CANCEL_ALL_ORDER → process_cancel_all_orders()
-    ├─ CANCEL → process_cancel_order()
-    ├─ Crypto (FUTURES/SPOT) → trading_service.core.process_orders()
-    └─ Securities (STOCK) → _process_securities_order()
+[7] 크립토/증권 거래소 분기 (Phase 4: 독립 트랜잭션)
+    ├─ Crypto (SPOT/FUTURES):
+    │   ├─ 배치1 실행 (고우선순위) → db.session.commit()
+    │   ├─ 배치2 실행 (저우선순위) → db.session.commit() [배치1과 독립]
+    │   └─ 병렬 처리 (ThreadPoolExecutor, max_workers=10)
+    └─ Securities (STOCK): UnifiedExchangeFactory → create_order()
     ↓
-[6] Trading Service 주문 실행
-    - 전략 연결 계좌 조회
-    - 계좌별 병렬 주문 처리 (ThreadPoolExecutor)
-    - 수량 계산 (qty_per, 청산 로직)
-    - 거래소 API 호출 (OpenOrder/PendingOrder)
+[8] 결과 병합 + 타이밍 정보 수집
+    ↓ TimeoutContext.__exit__() → Timer 취소
+[9] 타임아웃 확인 → HTTP 200 OK + error response (타임아웃 시)
     ↓
-[7] 결과 반환 및 성능 메트릭 기록 → WebhookLog 업데이트
+[10] 성능 메트릭 계산 및 WebhookLog 업데이트
 ```
 
 ---
@@ -86,17 +101,16 @@ TradingView 등 외부 시그널을 웹훅으로 수신하여 다중 계좌에 �
 
 ---
 
-## 4. 주요 컴포넌트 (Components)
+## 4. 주요 컴포넌트 (Components - Phase 4: 즉시 실행)
 
-| 파일 | 역할 | 태그 | 핵심 메서드 |
-|------|------|------|-------------|
-| `app/routes/webhook.py` | HTTP 요청 수신 | @FEAT:webhook-order @COMP:route @TYPE:core | `webhook()` |
-| `app/services/webhook_service.py` | 웹훅 처리 오케스트레이터 | @FEAT:webhook-order @COMP:service @TYPE:core | `process_webhook()`, `_validate_strategy_token()`, `process_cancel_all_orders()` |
-| `app/services/trading/core.py` | 거래 실행 코어 | @FEAT:webhook-order @COMP:service @TYPE:core | `process_orders()`, `execute_trade()` |
-| `app/services/trading/order_manager.py` | 주문 생성/취소 | @COMP:service @TYPE:core | `create_order()`, `cancel_all_orders_by_user()`, `create_open_order_record()` |
-| `app/services/trading/quantity_calculator.py` | 수량 계산 | @FEAT:capital-management @COMP:service @TYPE:helper | `calculate_order_quantity()`, `calculate_quantity_from_percentage()` |
-| `app/services/trading/record_manager.py` | DB 저장 | @COMP:service @TYPE:helper | `create_trade_record()`, `create_trade_execution_record()` |
-| `app/services/exchange.py` | 거래소 통합 레이어 | @FEAT:exchange-integration @COMP:exchange @TYPE:integration | `create_order()`, `cancel_order()` |
+| 파일 | 역할 | 핵심 메서드 | 라인 |
+|------|------|------------|------|
+| `app/routes/webhook.py` | HTTP 요청 수신 + 타임아웃 | `webhook()`, `TimeoutContext` (threading.Timer) | 99-271 |
+| `app/services/webhook_service.py` | 웹훅 처리 오케스트레이터 | `process_webhook()`, `_validate_strategy_token()`, `process_cancel_all_orders()`, `_process_securities_order()` | 28-1184 |
+| `app/services/trading/core.py` | 거래 실행 + 배치 처리 | `execute_trade()`, `process_trading_signal()`, `process_batch_trading_signal()` | 71+ |
+| `app/services/utils.py` | 데이터 정규화 | `normalize_webhook_data()` | - |
+| `app/services/exchange.py` | 거래소 통합 (crpyto/stock) | `create_order()`, `cancel_order()` | - |
+| `app/models` | 데이터 모델 | `WebhookLog`, `Strategy`, `StrategyAccount`, `OpenOrder`, `Trade` | - |
 
 ### Grep 검색 예시
 ```bash
@@ -112,10 +126,78 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
-## 5. 주요 기능 상세
+## 5. Phase 4: 타임아웃 처리 (새로운 기능)
 
-### 5.1. 전략 조회 및 토큰 검증
-**파일**: `app/services/webhook_service.py`
+### 5.0. TimeoutContext (threading.Timer 기반)
+
+**파일**: `app/routes/webhook.py:55-94`
+
+웹훅 처리의 10초 타임아웃을 구현합니다 (Phase 4 신규).
+
+**메커니즘**:
+```python
+with TimeoutContext(10) as timeout_ctx:
+    result = webhook_service.process_webhook(data, webhook_received_at)
+    if timeout_ctx.timed_out:
+        return create_success_response(
+            data={'success': False, 'error': '...', 'timeout': True},
+            message='웹훅 타임아웃'
+        )
+```
+
+**특징**:
+- `threading.Timer` 사용 (signal.alarm 대체, 멀티스레드 안전)
+- Flask 워커 스레드에서 정상 작동
+- 크로스 플랫폼 지원 (Windows/Unix)
+- HTTP 200 OK 응답 (TradingView 재전송 방지)
+
+**배경**:
+- Phase 3: signal.alarm() → Flask 워커 스레드에서 작동 불가 (ValueError)
+- Phase 4: threading.Timer → 멀티스레드 환경에서 정상 작동
+
+---
+
+### 5.1. 배치 우선순위 분류 (Phase 4 신규)
+
+**파일**: `app/services/webhook_service.py:241-382`
+
+배치 주문을 우선순위별로 분류하여 독립 트랜잭션으로 처리합니다.
+
+**분류 로직**:
+```python
+HIGH_PRIORITY:    CANCEL_ALL_ORDER, MARKET
+                  → 즉시 체결 필수 (포지션 정리, 시장가)
+
+LOW_PRIORITY:     LIMIT, STOP
+                  → 조건부 체결 (지정가 대기, 조건부 실행)
+```
+
+**트랜잭션 패턴**:
+```python
+# 배치1 (고우선순위) - 독립 트랜잭션
+try:
+    result1 = trading_service.core.process_batch_trading_signal(...)
+    db.session.commit()  # 배치1 독립 커밋
+except Exception:
+    db.session.rollback()  # 배치1 롤백
+
+# 배치2 (저우선순위) - 배치1과 독립
+try:
+    result2 = trading_service.core.process_batch_trading_signal(...)
+    db.session.commit()  # 배치2 독립 커밋
+except Exception:
+    db.session.rollback()  # 배치1 커밋 유지
+```
+
+**효과** (부분 실패 격리):
+- 배치1 실패 → 롤백, 배치2는 계속 실행
+- 배치2 실패 → 롤백, 배치1 커밋 유지 (부분 성공 보장)
+- HTTP 200 OK + `{succeeded: N, failed: M}`
+
+---
+
+### 5.3. 전략 조회 및 토큰 검증
+**파일**: `app/services/webhook_service.py:68-114`
 **메서드**: `_validate_strategy_token()`
 
 **검증 규칙**:
@@ -129,8 +211,8 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
-### 5.2. 주문 타입별 파라미터 검증
-**파일**: `app/services/webhook_service.py`
+### 5.4. 주문 타입별 파라미터 검증
+**파일**: `app/services/webhook_service.py:35-66`
 **메서드**: `_validate_order_type_params()`
 
 | 주문 타입 | price | stop_price | 처리 |
@@ -145,14 +227,19 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
-### 5.3. 주문 취소 (CANCEL_ALL_ORDER)
-**파일**: `app/services/webhook_service.py`
-**메서드**: `process_cancel_all_orders()`
+### 5.5. 주문 취소 (CANCEL_ALL_ORDER / CANCEL)
 
-**특징**:
+**CANCEL_ALL_ORDER**:
+- **파일**: `app/services/webhook_service.py:537-722`
+- **메서드**: `process_cancel_all_orders()`
 - DB 기반 전략 격리 (다른 전략 주문 미영향)
-- 심볼 필터링 지원 (symbol 파라미터, **선택적**)
-- Side 필터링 지원 (side: buy/sell, **선택적**)
+- 심볼 필터링 (symbol 파라미터, 선택적)
+- Side 필터링 (side: buy/sell, 선택적)
+
+**CANCEL**:
+- **파일**: `app/services/webhook_service.py:725-830`
+- **메서드**: `process_cancel_order()`
+- 개별 주문 취소 (order_id 기반)
 
 **예시**:
 ```json
@@ -160,15 +247,29 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
   "group_name": "test1",
   "symbol": "BTC/USDT",
   "order_type": "CANCEL_ALL_ORDER",
-  "token": "xxx"
+  "token": "xxx",
+  "side": "buy"  // 선택적
 }
 ```
 
-**참고**: symbol과 side 파라미터는 선택적입니다. 생략하면 전략의 모든 주문을 취소합니다.
+---
+
+### 5.6. 증권 거래 (STOCK 시장)
+
+**파일**: `app/services/webhook_service.py:832-1127`
+
+증권 거래소 주문 처리 (Phase 4 신규):
+- **생성**: `_process_securities_order()` (861-992줄)
+- **취소**: `_cancel_securities_orders()` (995-1127줄)
+
+특징:
+- UnifiedExchangeFactory로 증권 어댑터 생성
+- Trade + OpenOrder 테이블 DB 저장
+- SSE 이벤트 발행 (`_emit_order_event()`)
 
 ---
 
-### 5.4. 포지션 청산 (qty_per=-100)
+### 5.7. 포지션 청산 (qty_per=-100)
 **파일**: `app/services/trading/quantity_calculator.py`
 **메서드**: `calculate_order_quantity()`
 
@@ -182,9 +283,8 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
-### 5.5. 배치 주문
-**파일**: `app/services/trading/core.py`
-**메서드**: `process_orders()`
+### 5.8. 배치 주문 (Phase 4: 우선순위 분류)
+**파일**: `app/services/webhook_service.py:228-382`
 
 **입력 형식**:
 ```json
@@ -192,22 +292,74 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
   "group_name": "test1",
   "token": "xxx",
   "orders": [
-    {"symbol": "BTC/USDT", "side": "buy", "order_type": "LIMIT", "price": "90000", "qty_per": 5, "priority": 1},
-    {"symbol": "ETH/USDT", "side": "sell", "order_type": "MARKET", "qty_per": 10, "priority": 2}
+    {"symbol": "BTC/USDT", "side": "buy", "order_type": "LIMIT", "price": "90000", "qty_per": 5},
+    {"symbol": "ETH/USDT", "side": "sell", "order_type": "MARKET", "qty_per": 10}
   ]
 }
 ```
 
-**처리**:
-- 단일 주문 → 배치 형식으로 자동 변환 (`orders` 배열)
+**처리** (Phase 4):
+- 단일 주문 → 배치 형식으로 자동 변환
+- 배치 크기 제한: 30개 (10초 안전 마진)
+- 우선순위 분류 (고/저):
+  - HIGH: CANCEL_ALL_ORDER, MARKET
+  - LOW: LIMIT, STOP
+- 배치1 실행 → db.session.commit()
+- 배치2 실행 → db.session.commit() (배치1과 독립)
 - 계좌별 병렬 처리 (ThreadPoolExecutor, max_workers=10)
-- 우선순위 기반 정렬 (priority 필드)
 
 ---
 
 ## 6. 설계 결정 히스토리 (Design Decisions)
 
-### 6.1. DB 기반 주문 조회 (CANCEL_ALL_ORDER)
+### 6.0. Threading.Timer vs signal.alarm (Phase 4 신규)
+
+**WHY**: Phase 3에서 signal.alarm()이 Flask 워커 스레드에서 작동하지 않아 ValueError 발생.
+
+**선택**:
+```python
+# ❌ Phase 3: signal.alarm() (멀티스레드 환경 비호환)
+signal.signal(signal.SIGALRM, timeout_handler)
+signal.alarm(10)  # ValueError: signal only works in main thread
+
+# ✅ Phase 4: threading.Timer (멀티스레드 안전)
+timer = threading.Timer(10, timeout_callback)
+timer.start()  # 모든 스레드에서 작동
+```
+
+**효과**: 크로스 플랫폼 (Windows/Unix) 지원, 멀티스레드 안전
+
+---
+
+### 6.1. 배치 우선순위 분류 + 독립 트랜잭션 (Phase 4 신규)
+
+**WHY**: 배치 주문에서 일부 실패 시 다른 주문도 함께 롤백되는 문제 해결.
+
+**선택**:
+```python
+# ❌ Phase 3: 단일 트랜잭션
+try:
+    for order in orders:
+        process(order)
+    db.session.commit()  # 하나 실패 → 모두 롤백
+
+# ✅ Phase 4: 배치별 독립 트랜잭션
+try:
+    for order in high_priority:
+        process(order)
+    db.session.commit()  # 배치1 독립
+
+try:
+    for order in low_priority:
+        process(order)
+    db.session.commit()  # 배치2 독립, 배치1과 무관
+```
+
+**효과**: 부분 성공 보장 (배치1 성공 + 배치2 실패 가능)
+
+---
+
+### 6.2. DB 기반 주문 조회 (CANCEL_ALL_ORDER)
 **WHY**: 거래소 API는 전략 개념이 없어 모든 주문을 반환함. DB 기반 조회로 전략 격리 보장.
 
 **구현**:
@@ -221,7 +373,7 @@ orders = OpenOrder.query.filter_by(strategy_id=strategy.id, symbol=symbol).all()
 
 ---
 
-### 6.2. 단일 주문 → 배치 형식 자동 변환
+### 6.3. 단일 주문 → 배치 형식 자동 변환
 **WHY**: Trading Service는 배치 처리만 지원. 웹훅 서비스에서 단일 주문을 배치 형식으로 변환.
 
 **구현**:
@@ -229,17 +381,17 @@ orders = OpenOrder.query.filter_by(strategy_id=strategy.id, symbol=symbol).all()
 # 단일 주문 입력
 normalized_data = {"symbol": "BTC/USDT", "side": "buy", ...}
 
-# 배치 형식으로 변환
-batch_data = normalized_data.copy()
-batch_data['orders'] = [normalized_data.copy()]
+# 배치 형식으로 변환 (Phase 4)
+if 'orders' not in normalized_data:
+    normalized_data['orders'] = [normalized_data.copy()]
 
 # Trading Service 호출
-trading_service.core.process_orders(batch_data, timing_context)
+result = trading_service.core.process_trading_signal(normalized_data, timing_context)
 ```
 
 ---
 
-### 6.3. MARKET 주문에서 price/stop_price 자동 제거
+### 6.4. MARKET 주문에서 price/stop_price 자동 제거
 **WHY**: 거래소 API는 MARKET 주문에 price 파라미터를 허용하지 않음. 사용자 실수 방지.
 
 **구현**:
@@ -375,5 +527,5 @@ curl -k -s -X POST https://localhost:5001/api/webhook \
 
 ---
 
-*Last Updated: 2025-10-11*
-*Version: 2.0.0 (Streamlined)*
+*Last Updated: 2025-10-30 (Phase 4: Immediate Execution & Timeout)*
+*Version: 3.0.0 (Phase 4: threading.Timer, Priority Classification, Independent Transactions)*

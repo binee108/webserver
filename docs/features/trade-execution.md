@@ -18,24 +18,47 @@
 
 ## 2. 실행 플로우 (Execution Flow)
 
+### 2.1 단일 주문 체결 (Real-time WebSocket)
+
 ```
-체결 발생 (WebSocket/REST)
+WebSocket 체결 이벤트
     ↓
-OrderFillMonitor.on_order_update() or OrderTrackingService.sync_open_orders()
+OrderFillMonitor.on_order_update()
     ↓
 TradingService.process_order_fill()
     ↓
 RecordManager.create_trade_execution_record()
     ├─→ 중복 체크 (exchange_order_id)
     ├─→ TradeExecution 생성/업데이트
-    ├─→ Hook 1: 실시간 성과 업데이트 (DailyPerformance)
-    └─→ Hook 2: 실현 손익 자본 반영 (StrategyAccount)
+    ├─→ Hook 1: _trigger_performance_update() - 실시간 성과 재계산
+    └─→ Hook 2: _trigger_capital_pnl_reflection() - 실현 손익 자본 반영
 ```
 
-**핵심 단계**:
-1. **체결 감지**: WebSocket 또는 REST API에서 FILLED/PARTIALLY_FILLED 상태 감지
-2. **기록 생성**: `RecordManager`가 체결 데이터 저장/업데이트
-3. **자동 Hook**: 성과 재계산 및 실현 손익 자본 반영 자동 실행 (비침습적)
+### 2.2 배치 거래 처리 (Parallel ThreadPoolExecutor)
+
+```
+process_batch_trading_signal() 호출
+    ↓
+1️⃣ 계좌별 배치 주문 준비
+    ├─ symbol별 매수/매도 수량 집계
+    └─ 거래소 배치 API 포맷 생성
+    ↓
+2️⃣ ThreadPoolExecutor 병렬 실행 (max_workers = min(10, account_count))
+    ├─ 계좌1: _execute_account_batch() [async]
+    ├─ 계좌2: _execute_account_batch() [async]
+    ├─ ... (모든 계좌 동시 처리)
+    └─ 계좌N: _execute_account_batch() [async]
+    ↓
+3️⃣ as_completed()로 완료되는 대로 처리
+    ├─ 각 계좌의 거래 결과 수집
+    ├─ TradeExecution 레코드 생성
+    └─ Hook 자동 실행 (성과 + 자본 반영)
+```
+
+**병렬 처리 특징**:
+- **독립적 실행**: 각 계좌는 독립적인 ThreadPoolExecutor 워커에서 실행
+- **타임아웃 격리**: 한 계좌의 타임아웃이 다른 계좌에 영향 없음
+- **결과 수집**: `as_completed()`로 완료 순서대로 처리 (blocking 최소화)
 
 ---
 
@@ -70,6 +93,7 @@ RecordManager.create_trade_execution_record()
 |------|------|------|-------------|
 | `trade_record.py` | 독립형 체결 기록 서비스 | `@FEAT:trade-execution @COMP:service @TYPE:core` | `record_execution()`, `get_executions_by_order()`, `get_execution_stats()` |
 | `record_manager.py` | TradingService 통합 기록 관리 | `@FEAT:trade-execution @FEAT:order-tracking @COMP:service @TYPE:integration` | `create_trade_execution_record()`, `_trigger_performance_update()`, `_trigger_capital_pnl_reflection()` |
+| `core.py` | 배치 거래 병렬 처리 | `@FEAT:trade-execution @COMP:service @TYPE:core` | `process_batch_trading_signal()`, `_execute_account_batch()` |
 | `order_fill_monitor.py` | WebSocket 체결 감지 | `@FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:integration` | `on_order_update()` |
 | `models.py` (TradeExecution) | 체결 데이터 모델 | `@FEAT:trade-execution @COMP:model @TYPE:core` | N/A |
 
@@ -97,6 +121,44 @@ RecordManager.create_trade_execution_record()
 - **비침습적**: Hook 실패 시에도 체결 기록은 성공 처리
 - **조건부 실행**: 자본 반영은 realized_pnl이 있을 때만 실행
 - **로깅**: 모든 Hook 동작을 로그에 기록하여 추적 가능
+
+### TradingService - 배치 거래 병렬 처리
+
+**위치**: `/Users/binee/Desktop/quant/webserver/web_server/app/services/trading/core.py`
+
+**핵심 메서드**:
+- `process_batch_trading_signal(webhook_data, ...)`: 배치 거래 신호 처리
+  - 계좌별 배치 주문 준비
+  - ThreadPoolExecutor 기반 병렬 실행
+  - as_completed()로 결과 수집
+
+- `_execute_account_batch(...)`: 단일 계좌 배치 실행
+  - 거래소 배치 API 호출
+  - TradeExecution 레코드 생성
+  - Hook 자동 실행
+
+**병렬 처리 메커니즘**:
+```python
+max_workers = min(10, len(account_data))  # 계좌 수에 따라 워커 수 동적 결정
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    futures = {
+        executor.submit(execute_account_batch_in_context, ...): account_id
+        for account_id, account_data in account_data.items()
+    }
+
+    # 각 계좌의 결과를 완료 순서대로 처리
+    for future in as_completed(futures):
+        account_id = futures[future]
+        try:
+            result = future.result()  # 각 계좌의 거래 결과
+        except Exception as exc:
+            logger.error(f"계좌 {account_id} 배치 처리 실패: {exc}")
+```
+
+**특징**:
+- **워커 제한**: 동시 최대 10개 계좌 처리 (DB 부하 제어)
+- **개별 타임아웃**: 각 계좌는 독립적인 타임아웃 처리
+- **결과 격리**: 한 계좌의 실패가 다른 계좌에 영향 없음
 
 ---
 
@@ -202,6 +264,31 @@ execution_result = self.record_manager.create_trade_execution_record(
 # 자동 실행: 성과 업데이트 + 실현 손익 자본 반영
 ```
 
+### 사례 4: 배치 거래 병렬 처리
+
+```python
+# 웹훅 핸들러 또는 자동 거래 신호
+webhook_data = {
+    'signal_type': 'batch',
+    'trading_signals': {
+        'BTCUSDT': {'buy_weight': 0.3, 'sell_weight': 0.0},
+        'ETHUSDT': {'buy_weight': 0.2, 'sell_weight': 0.1},
+        'BNBUSDT': {'buy_weight': 0.0, 'sell_weight': 0.2}
+    },
+    'market_type': 'SPOT'
+}
+
+# ThreadPoolExecutor 기반 병렬 처리 (계좌 단위)
+result = trading_service.process_batch_trading_signal(webhook_data)
+
+# 결과 예시:
+# {
+#   'account_1': {'status': 'success', 'orders': 3, 'executions': 3},
+#   'account_2': {'status': 'success', 'orders': 3, 'executions': 2},
+#   'account_3': {'status': 'error', 'reason': 'timeout'}
+# }
+```
+
 ---
 
 ## 8. 검색 패턴 (Grep Patterns)
@@ -272,5 +359,5 @@ grep -r "@FEAT:trade-execution" --include="*.py" | grep "@FEAT:order-tracking"
 
 ---
 
-*Last Updated: 2025-10-11*
-*Version: 2.0.0 (Streamlined)*
+*Last Updated: 2025-10-30*
+*Version: 2.1.0 (Parallel Processing Added)*

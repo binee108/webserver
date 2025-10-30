@@ -52,14 +52,11 @@ PendingOrder(내부 큐)의 토스트 필터링 및 OpenOrder(거래소 주문) 
 
 **파일**: `web_server/app/services/trading/core.py`
 
-**추가 코드** (Line 726-743) - "모든 주문 취소" 배치 처리 시 SSE 발송:
+**추가 코드** (Line 742-759) - 단일/다중 주문 배치 SSE 발송:
 ```python
-# 성공한 고유 계정 수 계산
-successful_account_ids = set(r.get('account_id') for r in successful_trades if r.get('account_id'))
-
-# 🆕 Phase 2: 배치 SSE는 다중 계좌 주문에만 적용 (단일 계좌는 개별 SSE로 충분)
+# 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
 # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
-if len(successful_account_ids) > 1 and self.service.event_emitter:
+if len(successful_trades) > 0 and self.service.event_emitter:
     # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
     # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
     # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
@@ -81,9 +78,8 @@ if len(successful_account_ids) > 1 and self.service.event_emitter:
 
 **파일**: `web_server/app/static/js/positions/realtime-openorders.js`
 
-**변경 코드** (Line 1123-1130):
+**변경 코드** (Line 1123-1131):
 ```javascript
-// 모든 주문 취소 (Batch Cancel)
 if (data.success) {
     // @FEAT:toast-ux-improvement @COMP:route @TYPE:integration
     // 토스트 제거: SSE 이벤트에서 자동으로 표시됨
@@ -96,8 +92,8 @@ if (data.success) {
 ```
 
 **변경 사항**:
-1. **Line 1127-1129**: API 응답 성공 토스트 제거 (주석으로 사유 명시)
-2. **Line 1132-1134**: 오류 토스트만 유지
+1. **Line 1123-1126**: API 응답 성공 토스트 제거 (주석으로 사유 명시)
+2. **Line 1127-1131**: 오류 토스트만 유지
 
 ### 핵심 설계
 
@@ -133,21 +129,21 @@ order_batch_update SSE 발송
 프론트엔드 showOrderNotification() → 토스트 1개
 ```
 
-### 다중 계좌 주문 (Phase 2 개선)
+### 단일/다중 주문 (Phase 2 개선)
 ```
 웹훅 (직접 파라미터)
   ↓
 process_trading_signal()
   ↓
-_execute_trades_parallel() (2개 이상 계좌)
+_execute_trades_parallel() (단일/다중 계좌)
   ↓
 results 수집 (메타데이터: order_type, event_type)
   ↓
-successful_account_ids 계산 (고유 성공 계좌 수)
+successful_trades 계산 (고유 성공 주문 수)
   ↓
-len(successful_account_ids) > 1 확인
+len(successful_trades) > 0 확인
   ↓
-emit_order_batch_update() [Line 726-743] ← 🆕 Phase 2
+emit_order_batch_update() [Line 742-759] ← 🆕 Phase 2
   ↓
 order_batch_update SSE 발송
   ↓
@@ -173,7 +169,7 @@ result['event_type'] = 'order_created'
 
 ### 필터링 로직
 
-**Phase 2 필터링** (Line 732-735):
+**Phase 2 필터링** (Line 748-751):
 ```python
 batch_results = [
     result for result in results
@@ -205,9 +201,9 @@ batch_results = [
 
 | 파일 | 라인 | 설명 |
 |------|------|------|
-| `core.py` | 726-743 | Phase 2 배치 SSE 발송 로직 (다중 계좌 주문) |
+| `core.py` | 742-759 | Phase 2 배치 SSE 발송 로직 (단일/다중 주문) |
 | `core.py` | 841-842 | LIMIT/STOP 메타데이터 포함 |
-| `realtime-openorders.js` | 1123-1130 | **Phase 2: API 응답 토스트 제거** |
+| `realtime-openorders.js` | 1123-1131 | **Phase 2: API 응답 토스트 제거** |
 | `realtime-openorders.js` | 219-220 | Phase 1: order_created 필터링 |
 | `realtime-openorders.js` | 229-230 | Phase 1: order_cancelled/filled 필터링 |
 | `realtime-openorders.js` | 972-998 | Phase 1: 배치 포맷 토스트 메시지 |
@@ -229,10 +225,13 @@ batch_results = [
 
 **grep 검색**:
 ```bash
-# Phase 1 (Backend)
+# 모든 태그 검색
+grep -r "@FEAT:toast-ux-improvement" --include="*.py" --include="*.js"
+
+# Backend (Line 743)
 grep -n "@FEAT:toast-ux-improvement" web_server/app/services/trading/core.py
 
-# Phase 2 (Frontend)
+# Frontend (Line 1124)
 grep -n "@FEAT:toast-ux-improvement" web_server/app/static/js/positions/realtime-openorders.js
 ```
 

@@ -2,12 +2,13 @@
 
 ## 개요
 
-**목표**: Strategies 페이지에서 선물(FUTURES/PERPETUAL) 전략에 선물 미지원 거래소(Upbit, Bithumb) 계좌 연동 시도 시, 프론트엔드에서 사용자 친화적 메시지로 조기 차단하는 기능
+**목표**: 선물(FUTURES/PERPETUAL) 전략에서 미지원 거래소 계좌 연동 시 이중 방어 구조로 검증
+**상태**: Phase 1-2 완료 (API + Frontend Validation)
 
 **효과**:
 - 사용자 경험 개선 (즉시 피드백)
 - 백엔드 검증과 함께 이중 방어 (보안 강화)
-- API 오류 호출 감소
+- 불필요한 API 호출 감소
 
 ---
 
@@ -152,9 +153,48 @@ def get_exchange_metadata():
 
 ---
 
+## Phase 2: 백엔드 검증 및 계좌 연동
+
+### 계좌 연동 검증
+
+**함수**: `StrategyService._validate_market_type_support()`
+**파일**: `app/services/strategy_service.py` (Lines 207-233)
+**태그**: `@FEAT:futures-validation @COMP:service @TYPE:validation`
+
+```python
+def _validate_market_type_support(self, strategy: Strategy, account: Account) -> None:
+    """전략의 market_type과 계좌 거래소의 지원 여부 검증"""
+    if strategy.market_type == MarketType.FUTURES:
+        exchange_name = account.exchange.lower()
+        supports_futures = (
+            ExchangeMetadata.supports_market_type(exchange_name, ExchangeMarketType.FUTURES) or
+            ExchangeMetadata.supports_market_type(exchange_name, ExchangeMarketType.PERPETUAL)
+        )
+
+        if not supports_futures:
+            raise StrategyError(
+                f'이 거래소({account.exchange})는 선물(FUTURES) 거래를 지원하지 않습니다.\n'
+                f'지원 거래소: Binance, Bybit'
+            )
+```
+
+**호출 위치**:
+- `StrategyService.connect_account()` - 계좌 연동 시점
+- `StrategyService.update_strategy_account()` - 계좌 정보 수정 시점
+
+**검증 로직**:
+1. 전략의 market_type이 FUTURES인 경우만 검증 수행
+2. 거래소가 FUTURES 또는 PERPETUAL(무기한 선물) 지원 여부 확인
+3. 미지원 시 StrategyError 발생 (HTTP 400)
+
+**지원 거래소**:
+- `Binance` - FUTURES 지원
+- `Bybit` - PERPETUAL 지원
+- `Upbit`, `Bithumb` - SPOT만 지원 (차단됨)
+
 ---
 
-## Phase 2: 프론트엔드 검증 로직
+## Phase 3: 프론트엔드 검증 로직
 
 ### 개요
 계좌 연동 시도 시 프론트엔드에서 선물 미지원 거래소를 조기 차단하여 사용자 경험을 개선합니다.
@@ -274,32 +314,50 @@ connectAccount() 함수 실행
 
 ---
 
-## 참고
+## Known Issues
 
-**메타데이터 소스**:
+### 없음
+현재 구현에서 발견된 알려진 이슈가 없습니다.
+
+---
+
+## 참고 자료
+
+### 메타데이터 소스
 ```
 app/exchanges/metadata.py
-├── ExchangeMetadata.METADATA (중앙 관리)
-├── MarketType enum
+├── ExchangeMetadata.METADATA (중앙 관리 - 단일 소스)
+├── MarketType enum (SPOT, FUTURES, PERPETUAL)
 └── supports_market_type() 메서드
 ```
 
-**로그 확인**:
-- 프론트엔드: 브라우저 콘솔 (`console.log`)
-- 백엔드: `/web_server/logs/app.log` (로그 레벨: INFO 이상)
+**관련 파일**:
+- `/web_server/app/exchanges/metadata.py` - ExchangeMetadata 클래스
+- `/web_server/app/services/strategy_service.py` - 백엔드 검증
+- `/web_server/app/routes/system.py` - 메타데이터 API
+- `/web_server/app/templates/strategies.html` - 프론트엔드 검증
 
-**테스트 방법**:
+### 로그 확인
+- **프론트엔드**: 브라우저 콘솔 (F12 > Console)
+- **백엔드**: `/web_server/logs/app.log` (로그 레벨: INFO 이상)
+
+### 테스트 방법
 ```bash
-# 백엔드 API 테스트
-curl -k https://222.98.151.163/api/system/exchange-metadata
+# 1. 메타데이터 API 확인
+curl -k -H "Cookie: session=..." https://localhost:PORT/api/system/exchange-metadata
 
-# 프론트엔드 확인
-# Strategies 페이지 로드 후 F12 > Console
-# window.EXCHANGE_METADATA 값 확인
+# 2. 프론트엔드 검증 확인
+# - Strategies 페이지 로드
+# - F12 > Console에서 window.EXCHANGE_METADATA 확인
+# - 선물 전략에서 Upbit/Bithumb 계좌 연동 시도
+# - 토스트 메시지 "선물 거래를 지원하지 않습니다" 확인
+
+# 3. 백엔드 검증 확인 (메타데이터 로드 실패 시)
+# - 연결 폼 제출 후 400 에러 응답 확인
 ```
 
 ---
 
-**상태**: Phase 1-2 Complete (API + Validation)
+**상태**: Phase 1-3 완료 (메타데이터 API + 백엔드 검증 + 프론트엔드 검증)
 **작성일**: 2025-10-23
-**최종 업데이트**: Phase 2 완료 (2025-10-23)
+**최종 업데이트**: 2025-10-30 (코드 동기화)

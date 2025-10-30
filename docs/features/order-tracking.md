@@ -14,28 +14,35 @@
 ## 2. 실행 플로우 (Execution Flow)
 
 ```
-주문 생성
+[웹훅 또는 수동 주문]
     ↓
-[1] OpenOrder DB 저장 (exchange_order_id 키)
+[1] OrderManager.execute()
+    ├─ 거래소 주문 전송
+    ├─ OpenOrder DB 저장
+    └─ WebSocket 구독 시작 (심볼별 참조 카운트)
     ↓
-[2] WebSocket 구독 시작 (심볼별 참조 카운트)
+[2] WebSocket 이벤트 수신 (ORDER_TRADE_UPDATE)
     ↓
-[3] WebSocket 이벤트 수신 (ORDER_TRADE_UPDATE)
-    ↓
-[4] OrderFillMonitor 처리
+[3] OrderFillMonitor.on_order_update()
+    ├─ 심볼 포맷 정규화 (Binance/Bybit)
     ├─ REST API 검증 (신뢰도 확보)
-    ├─ DB 업데이트 (FILLED → 삭제, PARTIALLY_FILLED → 업데이트)
-    └─ 재정렬 트리거 (완료 시)
+    ├─ OpenOrder 업데이트/삭제
+    └─ process_order_fill() (FILLED 시)
     ↓
-[5] 체결 처리 (FILLED 시)
+[4] 체결 처리 (event_emitter를 통해)
     ├─ Trade 기록 생성
-    ├─ 포지션 업데이트
-    └─ TradeExecution 상세 저장
+    ├─ StrategyPosition 업데이트
+    ├─ TradeExecution 상세 저장
+    └─ PendingOrder SSE 발송 (프론트엔드 실시간 업데이트)
     ↓
-[6] SSE 이벤트 발행 → 프론트엔드 UI 업데이트
+[5] 폴백 동기화 (10초 주기)
+    └─ WebSocket 끊김 시 REST API로 전체 동기화
 ```
 
-**폴백 메커니즘**: WebSocket 실패 시 백그라운드 작업(`monitor_order_fills`)이 10초마다 REST API로 전체 동기화
+**핵심 특징**:
+- 즉시 실행 (immediate-order-execution) Phase 적용 후 웹훅 → WebSocket 직접 연동
+- LIMIT/MARKET 주문 통합 처리
+- PendingOrder SSE로 실시간 체결 상태 전달
 
 ---
 
@@ -56,9 +63,9 @@
 
 **의존성**:
 - `@DEPS:exchange-integration` - 거래소 API 호출
-- `@DEPS:order-queue` - 재정렬 트리거
 - `@DEPS:position-tracking` - 포지션 업데이트
 - `@DEPS:websocket-manager` - 실시간 연결 관리
+- `@DEPS:event-sse` - PendingOrder SSE 발송
 
 ---
 
@@ -66,12 +73,12 @@
 
 | 파일 | 역할 | 태그 | 핵심 메서드 |
 |------|------|------|-------------|
-| `order_tracking.py` | 추적 세션 관리 및 동기화 | `@FEAT:order-tracking @COMP:service @TYPE:core` | `sync_open_orders()`, `track_order_update()` |
-| `order_fill_monitor.py` | WebSocket 이벤트 처리 | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `on_order_update()` |
-| `websocket_manager.py` | 연결 풀 관리 | `@FEAT:order-tracking @COMP:service @TYPE:core` | `subscribe_symbol()`, `unsubscribe_symbol()` |
-| `binance_websocket.py` | Binance User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()`, `renew_listen_key()` |
-| `bybit_websocket.py` | Bybit User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()`, `maintain_connection()` |
-| `event_service.py` | SSE 이벤트 발송 | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `emit_order_event()` |
+| `order_tracking.py` | 추적 세션 관리 및 폴백 동기화 | `@FEAT:order-tracking @COMP:service @TYPE:core` | `create_session()`, `sync_open_orders()` |
+| `order_fill_monitor.py` | WebSocket 이벤트 처리 및 DB 동기화 | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `on_order_update()` |
+| `event_emitter.py` | 체결 이벤트 처리 (Trade, SSE, FailedOrder) | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `emit_trade_event()`, `emit_pending_order_sse()` |
+| `websocket_manager.py` | 심볼별 구독 관리 (참조 카운트) | `@FEAT:order-tracking @COMP:service @TYPE:core` | `subscribe_symbol()`, `unsubscribe_symbol()` |
+| `binance_websocket.py` | Binance User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()` |
+| `bybit_websocket.py` | Bybit User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()` |
 
 ### 핵심 로직 위치
 
@@ -134,45 +141,50 @@ class TradeExecution(db.Model):
 
 ## 6. 실시간 추적 메커니즘
 
-### Primary: WebSocket 기반 추적
+### Primary: WebSocket 기반 추적 (< 1초 레이턴시)
 
-**장점**: 즉각적 (< 1초), API 비용 절감
-**단점**: 연결 끊김 시 이벤트 누락 가능
-
+**흐름**:
 ```
-Binance Exchange (User Data Stream)
+거래소 WebSocket (User Data Stream)
     ↓
-BinanceWebSocket.on_message()
-    ↓ EVENT: ORDER_TRADE_UPDATE
+BinanceWebSocket/BybitWebSocket.on_message()
+    ↓ ORDER_TRADE_UPDATE 이벤트
 OrderFillMonitor.on_order_update()
-    ├─ REST API 검증 (5초 타임아웃)
-    ├─ OpenOrder 업데이트/삭제
-    └─ process_order_fill() (FILLED 시)
-        ├─ RecordManager.record_trade()
-        ├─ PositionManager.update_position()
-        └─ EventEmitter.emit_order_event() → SSE
+    ├─ [1] 심볼 포맷 정규화 (BTCUSDT → BTC/USDT)
+    ├─ [2] REST API 검증 (5초 타임아웃, 신뢰도 확보)
+    ├─ [3] OpenOrder 업데이트 (filled_quantity)
+    │      또는 삭제 (FILLED/CANCELLED)
+    └─ [4] event_emitter.emit_trade_event() (체결 시)
+        ├─ Trade 생성
+        ├─ StrategyPosition 업데이트
+        ├─ TradeExecution 저장
+        └─ PendingOrder SSE 발송 (프론트엔드)
 ```
 
-### Fallback: REST API 동기화 (10초 주기)
+**특징**:
+- LIMIT 주문: WebSocket으로 부분/완전 체결 추적
+- MARKET 주문: 1회 WebSocket 이벤트로 즉시 완전 체결 처리
+- 심볼별 참조 카운트로 중복 구독 방지
 
-**장점**: 100% 정확 (거래소 = Source of Truth)
-**단점**: 레이턴시 높음, Rate Limit 소비
+### Fallback: REST API 동기화 (10초 주기, WebSocket 끊김 시)
 
-```python
-# @FEAT:order-tracking @COMP:service @TYPE:core
-def sync_open_orders(account_id):
-    """백그라운드 작업: 전체 주문 동기화"""
-    # 1. 거래소 주문 조회 (REST API)
-    exchange_orders = exchange_service.get_open_orders(account)
+**용도**: WebSocket 연결 실패 시 자동 복구
+**방식**: 폴링 기반 (10초마다 open_orders API 호출)
+**정확도**: 100% (거래소가 source of truth)
 
-    # 2. DB 주문 조회
-    db_orders = OpenOrder.query.filter(status.in_(['NEW', 'OPEN'])).all()
-
-    # 3. 차이점 처리
-    # - 거래소에만 있음 → INSERT
-    # - DB에만 있음 → FILLED/CANCELLED로 판단 → DELETE
-    # - 상태 불일치 → UPDATE
+**처리 로직**:
 ```
+거래소 open_orders API 조회
+    ↓
+DB OpenOrder 전체 조회
+    ↓
+차이점 식별:
+  1) 거래소 O, DB X → INSERT (새로운 주문)
+  2) 거래소 X, DB O → FILLED/CANCELLED 판단 후 DELETE
+  3) filled_quantity 불일치 → UPDATE + emit_trade_event()
+```
+
+**레이턴시**: 최대 10초 지연 (WebSocket 끊김 감지 후)
 
 ### WebSocket 참조 카운트 관리
 
@@ -199,39 +211,48 @@ unsubscribe_symbol(account_id=1, symbol="BTC/USDT")  # count: 1 → 0 (구독 �
 **결정**: 체결 완료 시 `OpenOrder` 삭제, `Trade`/`TradeExecution`에만 보관
 **결과**: 미체결 주문 쿼리 속도 향상, 히스토리는 별도 테이블로 보존
 
-### WHY: Listen Key 30분 갱신
-**요구사항**: Binance API는 Listen Key를 60분마다 자동 만료시킴
-**결정**: 30분마다 PUT 요청으로 갱신 (50% 안전 마진)
-**결과**: 연결 끊김 최소화
+### WHY: Token/Listen Key 갱신 (30분 주기)
+**요구사항**: 거래소별 타임아웃 정책
+- Binance: 60분 자동 만료
+- Bybit: 30분 자동 만료
+**결정**: 30분마다 토큰/Listen Key 갱신 (50% 안전 마진)
+**결과**: 예상치 못한 연결 끊김 방지
 
 ---
 
 ## 8. 동기화 시나리오
 
-### 시나리오 1: 정상 동작 (WebSocket 활성)
+### 시나리오 1: WebSocket 정상 동작 (LIMIT 주문)
 ```
-T+0.0s: 주문 생성 → OpenOrder INSERT
-T+0.5s: WebSocket 이벤트 수신 → status='FILLED'
-T+0.6s: OrderFillMonitor 처리 → OpenOrder DELETE, Trade INSERT
-T+0.7s: SSE 이벤트 → 프론트엔드 업데이트 ✅
+T+0.0s: 웹훅/수동 주문 → OrderManager.execute()
+T+0.1s: OpenOrder INSERT (filled=0.0) + WebSocket 구독
+T+0.5s: WebSocket 이벤트 → PARTIALLY_FILLED (filled=0.3)
+T+0.6s: OrderFillMonitor → OpenOrder UPDATE (filled=0.3)
+T+2.5s: WebSocket 이벤트 → FILLED (filled=1.0)
+T+2.6s: OrderFillMonitor → event_emitter.emit_trade_event()
+        ├─ OpenOrder DELETE
+        ├─ Trade INSERT + TradeExecution INSERT
+        ├─ StrategyPosition UPDATE
+        └─ PendingOrder SSE 발송 → 프론트엔드 ✅
 ```
 
-### 시나리오 2: WebSocket 끊김 (동기화 복구)
+### 시나리오 2: MARKET 주문 (즉시 완전 체결)
+```
+T+0.0s: 웹훅 → OrderManager.execute() (MARKET)
+T+0.1s: 거래소 즉시 FILLED 응답
+T+0.1s: OpenOrder INSERT + WebSocket 이벤트 즉시 수신
+T+0.2s: OrderFillMonitor → event_emitter.emit_trade_event()
+T+0.3s: PendingOrder SSE 발송 ✅
+```
+
+### 시나리오 3: WebSocket 끊김 (REST API 폴백)
 ```
 T+0.0s: 주문 생성 → OpenOrder INSERT
 T+1.0s: [WebSocket 연결 끊김]
-T+5.0s: [재연결 시도 중]
-T+10s:  sync_open_orders() 실행 → REST API로 FILLED 감지
-        → OpenOrder DELETE, Trade INSERT
-T+10.1s: SSE 이벤트 발송 (10초 지연) ✅
-```
-
-### 시나리오 3: 부분 체결
-```
-T+0s:  주문 생성 (qty=1.0) → OpenOrder INSERT (filled=0.0)
-T+2s:  PARTIALLY_FILLED (filled=0.3) → UPDATE filled_quantity=0.3
-T+5s:  PARTIALLY_FILLED (filled=0.7) → UPDATE filled_quantity=0.7
-T+8s:  FILLED (filled=1.0) → DELETE OpenOrder, INSERT Trade
+T+10s:  sync_open_orders() 실행 (10초 주기)
+        → REST API로 FILLED 감지
+        → event_emitter.emit_trade_event()
+T+10.1s: PendingOrder SSE 발송 (10초 지연) ✅
 ```
 
 ---
@@ -331,5 +352,29 @@ eventSource.onerror = () => {
 
 ---
 
-*Last Updated: 2025-10-11*
-*Version: 2.0.0 (간결화)*
+## 12. 핵심 구현 파일
+
+**grep 검색**:
+```bash
+# 전체 기능
+grep -r "@FEAT:order-tracking" --include="*.py"
+
+# 핵심 로직만
+grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:core"
+
+# 통합 로직 (WebSocket, 이벤트)
+grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:integration"
+```
+
+**주요 파일**:
+- `web_server/app/services/order_tracking.py` - 폴백 동기화
+- `web_server/app/services/order_fill_monitor.py` - WebSocket 이벤트 처리
+- `web_server/app/services/trading/event_emitter.py` - 체결 이벤트 발송
+- `web_server/app/services/websocket_manager.py` - 심볼 구독 관리
+- `web_server/app/services/exchanges/binance_websocket.py` - Binance 연동
+- `web_server/app/services/exchanges/bybit_websocket.py` - Bybit 연동
+
+---
+
+*Last Updated: 2025-10-30*
+*Version: 2.1.0 (Phase 4-7 완전 동기화)*

@@ -173,8 +173,9 @@ POST /admin/verify-session
 
 ### 5.7 백그라운드 작업 로그 조회
 
-**엔드포인트**: `GET /admin/api/jobs/<job_id>/logs`
+**엔드포인트**: `GET /admin/system/background-jobs/<job_id>/logs`
 **권한**: `@admin_required`
+**파일**: `/web_server/app/routes/admin.py` (L450+)
 
 **기능**: 특정 백그라운드 작업(queue_rebalancer, update_open_orders 등)의 로그를 조회합니다.
 
@@ -203,29 +204,15 @@ POST /admin/verify-session
 }
 ```
 
-**UTF-8 Safe Tail Read Algorithm** (GitHub Issue #2 해결):
+**UTF-8 Safe Tail Read Algorithm**:
 
-대용량 로그 파일의 마지막 N줄을 읽을 때 UnicodeDecodeError 발생을 방지하는 알고리즘:
+대용량 로그 파일의 마지막 N줄을 읽을 때 UnicodeDecodeError 발생 방지:
 
-1. **바이너리 모드('rb')로 파일 열기**
-   - 이유: 텍스트 모드는 UTF-8 멀티바이트 문자 중간 seek 위험 (약 13% 발생 확률)
-   - 바이너리 모드는 모든 바이트 위치에서 안전
-
-2. **파일 끝에서 200KB 역방향 seek**
-   - 대응 로그 줄 수: 약 1000줄 (평균 200B/줄)
-   - 일반 사용 사례에 충분
-
-3. **라인 경계(\n) 탐색으로 완전한 라인부터 읽기**
-   - 최대 1KB 청크에서 첫 번째 \n 위치 탐색
-   - 파일 중간부터 읽을 때 불완전한 라인 제거
-
-4. **decode('utf-8', errors='replace') 사용**
-   - 깨진 문자/부분 바이트는 U+FFFD(마름모 '�')로 대체
-   - UnicodeDecodeError 발생 방지
-
-5. **폴백: 최적화 읽기 실패 시 전체 파일 읽기**
-   - 극히 드문 경우에만 발동 (성능 영향 최소)
-   - 안전 디코딩으로 재시도하여 항상 응답 반환
+1. **바이너리 모드('rb')로 파일 열기** - 텍스트 모드의 UTF-8 멀티바이트 중간 seek 위험 회피
+2. **파일 끝에서 200KB 역방향 seek** - 약 1000줄 로그 대응
+3. **\n 경계 탐색으로 완전 라인부터 읽기** - 불완전 라인 제거
+4. **decode('utf-8', errors='replace')** - 깨진 문자 U+FFFD로 대체
+5. **폴백 처리** - 최적화 실패 시 전체 파일 읽기
 
 ---
 
@@ -261,9 +248,12 @@ POST /admin/verify-session
 - **조작** (`@admin_verification_required`): 주문 동기화, 성과 계산, 세션 정리
 
 ### 대기열 API (GET/POST, @admin_required)
-- `GET /admin/api/queue-status` - 대기열 현황
-- `POST /admin/api/queue-rebalance` - 수동 재정렬
-- `GET /admin/api/metrics` - 메트릭 조회
+- `GET /admin/api/queue-status` - 대기열 현황 (계좌별/심볼별 활성/대기 주문)
+- `POST /admin/api/queue-rebalance` - 수동 재정렬 (`account_id`, `symbol` 필수)
+- `GET /admin/api/metrics` - 메트릭 조회 (재정렬 통계, 대기열 통계, WebSocket 통계)
+
+### 백그라운드 로그 API (GET, @admin_required)
+- `GET /admin/system/background-jobs/<job_id>/logs` - 백그라운드 작업 로그 조회 (limit, level, search 파라미터)
 
 ---
 
@@ -321,6 +311,7 @@ POST /admin/verify-session
 
 ---
 
-*Last Updated: 2025-10-11*
-*Endpoints: 30+ APIs*
+*Last Updated: 2025-10-30*
+*File Location: `/web_server/app/routes/admin.py` (611 lines)*
+*Components: 3 (route, template, model)*
 *Security: Double verification for sensitive actions*

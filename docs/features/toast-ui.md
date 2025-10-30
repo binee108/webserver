@@ -1,28 +1,72 @@
-# Phase 1: Toast UI Improvement
+# Toast Notification System
 
 ## Summary
 
-Toast notification management enhancement for the Real-time Open Orders page:
-- **Maximum 10 active toasts** - FIFO removal when limit exceeded
-- **300ms fade-out animation** - Smooth disappearance with translate effect
-- **Batch notification function** - `createBatchToast()` aggregates multiple order events
-- **DRY refactoring** - Extracted `_removeFIFOToast()` helper to eliminate code duplication
-- **Null-safety improvements** - Defensive checks for DOM container and parent node
+Complete toast notification management system for app-wide notifications:
+- **Global `showToast()` function** - Centralized toast creation and display
+- **FIFO queue management** - Maximum 10 concurrent toasts, automatic removal of oldest
+- **Race condition protection** - `pendingRemovals` counter prevents limit violation during rapid-fire calls
+- **DEBUG lifecycle logging** - 7 log points tracking container, display, and removal (DEBUG mode only)
+- **Batch aggregation** - `createBatchToast()` groups multiple order events by type
+- **Null-safety** - Defensive checks for DOM containers and parent nodes
 
 ## Implementation Details
 
+### Core Files
+- **Toast System**: `web_server/app/static/js/toast.js`
+- **Toast Integration**: `web_server/app/static/js/positions/realtime-openorders.js`
+- **CSS Styles**: `web_server/app/static/css/components.css` (Lines 1140-1238)
+
 ### Configuration Constants
 ```javascript
-// @FEAT:toast-ui @COMP:config @TYPE:config
-const MAX_TOASTS = 10;                    // Maximum concurrent toasts
-const TOAST_FADE_DURATION_MS = 300;       // Must match CSS transition duration
+// @FEAT:toast-system @COMP:config @TYPE:config
+const MAX_TOASTS = 10;                    // Maximum concurrent toasts per RFC (2 toasts/sec × 5 sec window)
+const TOAST_FADE_DURATION_MS = 300;       // Animation duration, must match CSS
 ```
 
-**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 24-25)
+**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 47-48)
 
-### CSS Animation
+### Global showToast() Function
+```javascript
+// @FEAT:toast-system @COMP:util @TYPE:core
+function showToast(message, type = 'info', duration = 5000)
+```
+
+**Location**: `web_server/app/static/js/toast.js` (Lines 82-168)
+
+**Parameters**:
+- `message`: Toast content (truncated to 100 chars in logs)
+- `type`: 'success', 'info', 'warning', 'error'
+- `duration`: Auto-removal delay in ms (0 = no auto-removal)
+
+**Features**:
+- Creates dynamic toast container if missing
+- Enforces MAX_TOASTS limit via FIFO queue
+- Race condition protection: `pendingRemovals` counter prevents violation during rapid-fire calls
+- Close button support
+- 300ms fade-out animation (slide-out)
+- Auto-removal with configurable timeout
+- DEBUG logging at 7 points (container, trigger, display, removal)
+
+**DEBUG Log Points** (Line 14-22):
+1-3: Container management (creation/existence checks)
+4-5: Toast display (trigger, completion with elapsed time)
+6-7: Toast removal (start, completion with remaining count)
+
+### CSS Animations
 ```css
-/* Phase 1: Toast UI Improvement - Fade-out animation for FIFO removal */
+/* Slide-in animation (entry) */
+.toast.slide-in {
+    animation: slideInRight 0.3s ease-out;
+}
+
+/* Slide-out animation (exit) */
+.toast.slide-out {
+    animation: slideOutRight 0.3s ease-out;
+    opacity: 0;
+}
+
+/* @FEAT:toast-system FIFO Queue: Fade-out for oldest removal */
 .toast.fade-out {
     opacity: 0;
     transform: translateX(100%);
@@ -30,133 +74,191 @@ const TOAST_FADE_DURATION_MS = 300;       // Must match CSS transition duration
 }
 ```
 
-**Location**: `web_server/app/static/css/components.css` (Lines 1218-1223)
+**Location**: `web_server/app/static/css/components.css` (Lines 1156-1238)
 
-**Critical**: CSS transition duration MUST match `TOAST_FADE_DURATION_MS` constant. Mismatch causes animation/removal timing issues.
+**Critical**: CSS `transition: 300ms` MUST match `TOAST_FADE_DURATION_MS = 300`. Mismatch causes animation/removal timing issues (animation finishes before or after removal).
 
-## Key Methods
+## Queue Management
 
-### _removeFIFOToast()
+### _removeFIFOToast() in RealtimeOpenOrdersManager
 ```javascript
-// @FEAT:toast-ui @COMP:service @TYPE:helper
+// @FEAT:toast-system @COMP:service @TYPE:helper
 _removeFIFOToast() {
     // Remove oldest toast when MAX_TOASTS exceeded
-    // Handles: missing container, null toast, already-removed toast (null-safe)
-    // Animation: 300ms fade-out before DOM removal
+    // Phase 2: Batch processing integration (Lines 1018-1053)
 }
 ```
 
-**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 946-964)
+**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 1018-1053)
 
-**Key improvements**:
-1. **Extracted to avoid duplication** (Phase 1.2.1)
-2. **Null-safe removal**: Checks both `oldestToast` and `oldestToast.parentNode` before removal
-3. **Timeout safety**: Uses constant `TOAST_FADE_DURATION_MS` instead of hardcoded value
+**Features**:
+1. Checks container existence (null-safe)
+2. Validates `currentToasts >= MAX_TOASTS` before removal
+3. Safely adds `fade-out` class (checks `parentNode`)
+4. Deferred removal: `setTimeout(..., TOAST_FADE_DURATION_MS)` allows animation to complete
+5. DEBUG logging at 3 points:
+   - `Toast-FIFO` Checking FIFO removal (currentCount, maxToasts, needsRemoval)
+   - `Toast-FIFO` Removing oldest toast (toastType)
+   - `Toast-FIFO` FIFO removal complete (remaining count)
+
+**Race Condition Prevention** (toast.js Lines 94-113):
+- `pendingRemovals` counter tracks scheduled (but not yet executed) removals
+- Incremented before removal, decremented after timeout completes
+- Formula: `if (currentCount + pendingRemovals >= MAX_TOASTS)` prevents violation
+- Example: If 9 toasts exist and 2 removals pending, prevents 11th toast creation
+
+## Batch Aggregation
 
 ### createBatchToast()
 ```javascript
-// @FEAT:toast-ui @COMP:service @TYPE:integration
+// @FEAT:toast-system @COMP:service @TYPE:integration
 createBatchToast(summaries) {
-    // Aggregate multiple order event messages
-    // Format: "📦 ORDER_TYPE 주문 생성 X건, 취소 Y건 | ..."
-    // Called during batch order processing (Phase 3 integration)
+    // Aggregates order events by type (LIMIT, STOP_LIMIT, etc.)
+    // Creates separate toast per order type
 }
 ```
 
-**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 1089-1116)
+**Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 1172-1229)
 
 **Parameters**:
-- `summaries`: Array of objects with `{order_type, created, cancelled}`
+- `summaries`: Array of `{order_type, action, count}` or legacy `{order_type, created, cancelled}`
 
-**Example**:
+**Features**:
+- Aggregates multiple events by `${order_type}_${action}` key
+- Creates individual toast per unique type (not combined format)
+- Toast type: 'warning' if `cancelled > 0`, else 'info'
+- Calls `_removeFIFOToast()` before each toast to enforce limit
+- DEBUG logging at 2 points:
+  - `Toast-Batch` Batch aggregation started (summaryCount, uniqueTypes)
+  - `Toast-Batch` Individual toast created (orderType, message, toastType)
+- Auto-removal after 3 seconds
+
+**Message Format**:
+```
+📦 LIMIT 주문 생성 5건, 취소 3건
+📦 STOP_LIMIT 주문 생성 2건
+```
+
+**Example Usage** (Phase 3 integration):
 ```javascript
 manager.createBatchToast([
-    {order_type: 'LIMIT', created: 5, cancelled: 3},
-    {order_type: 'STOP_LIMIT', created: 2, cancelled: 0}
+    {order_type: 'LIMIT', action: 'created', count: 5},
+    {order_type: 'LIMIT', action: 'cancelled', count: 3},
+    {order_type: 'STOP_LIMIT', action: 'created', count: 2}
 ]);
-// Output: "📦 LIMIT 주문 생성 5건, 취소 3건 | STOP_LIMIT 주문 생성 2건"
+// Output: 2 toasts (one per type, each 3sec duration)
 ```
 
 ## Search Patterns
 
 ```bash
-# Find all Toast UI code
-grep -r "@FEAT:toast-ui" --include="*.js" --include="*.css"
+# Find all toast system code
+grep -r "@FEAT:toast-system" --include="*.js" --include="*.css"
 
-# Find configuration constants
+# Find core configuration
 grep -n "MAX_TOASTS\|TOAST_FADE_DURATION_MS" web_server/app/static/js/positions/realtime-openorders.js
 
-# Find FIFO removal logic
-grep -n "_removeFIFOToast" web_server/app/static/js/positions/realtime-openorders.js
+# Find FIFO removal
+grep -n "_removeFIFOToast\|pendingRemovals" web_server/app/static/js/toast.js
 
-# Find batch toast function
+# Find batch function
 grep -n "createBatchToast" web_server/app/static/js/positions/realtime-openorders.js
 ```
 
 ## Known Issues
 
-### CSS-JS Duration Mismatch
-**Issue**: If `TOAST_FADE_DURATION_MS` (300ms) doesn't match CSS `transition: 300ms`, toasts disappear before animation completes or animation hangs after removal.
+### CSS-JS Duration Mismatch Risk
+**Issue**: If `TOAST_FADE_DURATION_MS` (300ms) doesn't match CSS `transition: 300ms`, animation and removal get out of sync. Toast may disappear before animation completes or vice versa.
 
-**Location**: Lines 25 (JS) and 1222 (CSS)
+**Locations**:
+- JS constant: `web_server/app/static/js/positions/realtime-openorders.js:48`
+- CSS transition: `web_server/app/static/css/components.css:1237`
+- Referenced in: `toast.js:148` (removeToast timeout), `realtime-openorders.js:1050` (FIFO removal timeout)
 
-**Prevention**: Update both files together. Verify in browser DevTools: `Inspect Element → Animations → Check fade-out duration`.
+**Prevention**: Always update both JS and CSS together. Verify in DevTools: `Inspect Element → Animations tab → Check fade-out duration matches 300ms`.
+
+## Debugging Guide
+
+### DEBUG Mode Activation
+```javascript
+// URL parameter
+https://yoursite.com/positions?debug=true
+
+// Or console
+enableDebugMode();
+showToast('Test', 'info', 2000);
+```
+
+### Expected Log Output (12 total points)
+**Phase 1 (toast.js - 7 logs)**:
+```
+🔍 Toast Container creation/existence check
+🔍 Toast Toast triggered { type: 'info', duration: 2000, message: 'Test' }
+🔍 Toast Toast displayed { type: 'info', count: 1, elapsed: '1.23ms' }
+🔍 Toast Removing toast { type: 'info' }
+🔍 Toast Toast removed { type: 'info', remaining: 0 }
+```
+
+**Phase 2 (realtime-openorders.js - 5 logs)**:
+```
+🔍 Toast-Batch Batch aggregation started { summaryCount: 3, uniqueTypes: 2 }
+🔍 Toast-FIFO Checking FIFO removal { currentCount: 5, maxToasts: 10, needsRemoval: false }
+🔍 Toast-FIFO Removing oldest toast { toastType: 'info' }
+🔍 Toast-Batch Individual toast created { orderType: 'LIMIT', message: '...', toastType: 'info' }
+🔍 Toast-FIFO FIFO removal complete { remaining: 4 }
+```
+
+### Performance Metrics
+- **Memory**: O(1) - Maximum 10 DOM elements
+- **Animation**: 300ms GPU-accelerated (transform + opacity)
+- **FIFO Removal**: O(1) - Always removes `firstChild`
+- **Batch Aggregation**: O(n) where n = unique order types
+
+## Error Handling
+
+### Toast Container Not Found
+- **Fallback**: `ensureToastContainer()` dynamically creates `#toast-container` in `body`
+- **Logger**: Warns in toast.js, skips in realtime-openorders.js
+- **Safety**: Always null-checks `oldestToast.parentNode` before removal
+
+### Logger Not Loaded
+- **Fallback**: toast.js (Lines 33-38) provides no-op functions
+- **Result**: Zero production impact if `logger.js` not loaded
+- **Safety**: All DEBUG calls handled gracefully
+
+### Rapid-Fire Toast Creation
+- **Protection**: `pendingRemovals` counter in toast.js
+- **Example**: 9 toasts + 2 pending removals = prevents 11th creation
+- **Formula**: `if (currentCount + pendingRemovals >= MAX_TOASTS)` before adding
 
 ## Testing
 
-### Manual Test Checklist
-1. **Max Toast Test**: Create 15 toasts → Verify only 10 visible → Oldest fades out
-2. **Batch Function**: Call `createBatchToast()` with multiple order types → Verify format "📦 TYPE1 ... | TYPE2 ..."
-3. **Animation**: Observe fade-out smoothness (should slide right + fade to transparent)
-4. **Edge Cases**:
-   - Empty array to `createBatchToast()` → No toast created
-   - `{created: 0, cancelled: 0}` → No message for that type
-
-### Test Command (Browser Console)
+### Manual Smoke Test
 ```javascript
-// Test 1: Create 15 toasts
+// Test 1: FIFO limit (browser console)
 for (let i = 0; i < 15; i++) {
-    manager.showToast(`Toast #${i}`, 'info');
+    showToast(`Toast #${i}`, 'info', 1000);
 }
-// Expected: 10 visible, oldest 5 fade out one by one
+// Expected: Only 10 visible, oldest 5 fade out progressively
 
 // Test 2: Batch toast
+manager = getRealtimeOpenOrdersManager();
 manager.createBatchToast([
-    {order_type: 'LIMIT', created: 3, cancelled: 1},
-    {order_type: 'MARKET', created: 0, cancelled: 2}
+    {order_type: 'LIMIT', action: 'created', count: 3},
+    {order_type: 'LIMIT', action: 'cancelled', count: 1},
+    {order_type: 'MARKET', action: 'created', count: 2}
 ]);
-// Expected: "📦 LIMIT 주문 생성 3건, 취소 1건 | MARKET 주문 취소 2건"
+// Expected: 2 toasts ("📦 LIMIT..." and "📦 MARKET..."), each 3sec duration
 ```
-
-## Integration Points
-
-### Phase 3 (Planned)
-`createBatchToast()` will be called during batch order processing to display aggregated results:
-```javascript
-// Example (Phase 3)
-const results = {LIMIT: {created: 5, cancelled: 2}, MARKET: {created: 1, cancelled: 0}};
-manager.createBatchToast(Object.entries(results).map(([type, counts]) => ({
-    order_type: type,
-    created: counts.created,
-    cancelled: counts.cancelled
-})));
-```
-
-## Performance
-
-- **Memory**: Constant (max 10 toasts)
-- **Animation**: 300ms (GPU-accelerated, transform only)
-- **FIFO Removal**: O(1) (always removes `firstChild`)
-- **Batch Processing**: O(n) where n = number of unique order types
 
 ## Dependencies
 
-- **None** - Self-contained within `RealtimeOpenOrdersManager`
-- Related: `realtime-core.js` (shared logger/utilities)
+- **toast.js**: `logger.js` (optional - degrades gracefully)
+- **realtime-openorders.js**: `toast.js`, `realtime-core.js`
+- **components.css**: No external dependencies
 
 ---
 
-**Last Updated**: 2025-10-18
-**Phase**: 1 (Complete)
+**Last Updated**: 2025-10-30
 **Status**: ✅ Production Ready
-**Document Size**: 220 lines (under 500-line limit)
+**Document Size**: ~350 lines

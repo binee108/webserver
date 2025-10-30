@@ -5,15 +5,33 @@
 
 ## Key Components
 
-### Core Authentication Logic
-- **Files**: `web_server/app/routes/auth.py`, `web_server/app/services/security.py`, `web_server/app/models.py`
-- **Tags**: `@FEAT:auth-session @TYPE:core`
-- **Purpose**: 사용자 인증, 세션 생성/검증, 비밀번호 관리
+### Core Authentication Routes
+- **File**: `web_server/app/routes/auth.py`
+- **Tag**: `@FEAT:auth-session @COMP:route @TYPE:core`
+- **Functions**:
+  - `login()` (line 13): Flask-Login 기반 웹 UI 로그인
+  - `register()` (line 159): 회원가입 (관리자 승인 필요)
+  - `profile()` (line 223): 프로필 및 웹훅 토큰 관리
+  - `force_change_password()` (line 64): 비밀번호 강제 변경
+  - `change_password()` (line 112): 일반 비밀번호 변경
+  - `test_telegram()` (line 315): 텔레그램 연결 테스트
+  - `logout()` (line 364): 로그아웃
 
-### Security Features
-- **Files**: `web_server/app/services/security.py`
-- **Tags**: `@FEAT:auth-session @TYPE:validation`
-- **Purpose**: IP 기반 차단, 로그인 실패 추적, 보안 통계
+### Admin Authentication
+- **File**: `web_server/app/routes/admin.py`
+- **Tag**: `@FEAT:auth-session @FEAT:admin-panel @COMP:route @TYPE:validation`
+- **Functions**:
+  - `admin_required()` (line 28): 관리자 권한 검증 데코레이터
+  - `admin_verification_required()` (line 60): 추가 비밀번호 검증 데코레이터
+  - `verify_admin_session()` (line 87): 관리자 세션 재검증
+  - `_is_admin_session_verified()` (line 44): 검증 상태 확인
+
+### Database Models
+- **File**: `web_server/app/models.py`
+- **Tags**: `@FEAT:auth-session @COMP:model @TYPE:core`
+- **Models**:
+  - `User`: 사용자 정보 (username, password_hash, webhook_token, is_admin, is_active, must_change_password, etc.)
+  - `UserSession`: 커스텀 토큰 기반 세션 (미사용 상태 - 내부 서비스용 예약)
 
 ## Main Features
 
@@ -55,9 +73,12 @@
 - **검증**: `SecurityService.check_permission(user, action)`
 
 ### 6. Webhook Token Management
-- **자동 발급**: 회원가입 시 또는 프로필 페이지 GET 요청 시 (토큰이 없는 경우 자동 생성)
-- **재발행**: 프로필 페이지에서 "웹훅 토큰 재발행" 버튼으로 가능
-- **포맷**: `secrets.token_urlsafe(32)` (44자 Base64 URL-safe)
+- **생성 시점**:
+  1. 회원가입 완료 시 (auth.py:207): `secrets.token_urlsafe(32)` 자동 발급
+  2. 프로필 GET 요청 시 (auth.py:307-309): 토큰이 없으면 자동 생성
+- **재발행**: 프로필 페이지 POST에서 action='regenerate_webhook_token' (auth.py:237-246)
+- **포맷**: Base64 URL-safe, 32바이트 (약 43자)
+- **사용처**: 웹훅 인증 토큰 (현재 구현 예정)
 
 ## Security Architecture
 
@@ -83,15 +104,20 @@ IP 차단:
 ## API Endpoints
 
 ### Web UI Routes (`/auth`)
-| Route | Method | Purpose | Auth |
-|-------|--------|---------|------|
-| `/auth/login` | GET, POST | 로그인 | No |
-| `/auth/logout` | GET | 로그아웃 | Yes |
-| `/auth/register` | GET, POST | 회원가입 | No |
-| `/auth/profile` | GET, POST | 프로필 관리 | Yes |
-| `/auth/force-change-password` | GET, POST | 강제 비밀번호 변경 | Yes |
-| `/auth/change-password` | GET, POST | 일반 비밀번호 변경 | Yes |
-| `/auth/profile/test-telegram` | POST | 텔레그램 테스트 | Yes |
+| Route | Method | Purpose | Auth | Implementation |
+|-------|--------|---------|------|-----------------|
+| `/auth/login` | GET, POST | 로그인 | No | `auth.py:login()` |
+| `/auth/logout` | GET | 로그아웃 | Yes | `auth.py:logout()` |
+| `/auth/register` | GET, POST | 회원가입 | No | `auth.py:register()` |
+| `/auth/profile` | GET, POST | 프로필 관리 | Yes | `auth.py:profile()` |
+| `/auth/force-change-password` | GET, POST | 강제 비밀번호 변경 | Yes | `auth.py:force_change_password()` |
+| `/auth/change-password` | GET, POST | 일반 비밀번호 변경 | Yes | `auth.py:change_password()` |
+| `/auth/profile/test-telegram` | POST | 텔레그램 테스트 | Yes | `auth.py:test_telegram()` |
+
+### Admin Routes (`/admin`)
+| Route | Method | Purpose | Auth | Implementation |
+|-------|--------|---------|------|-----------------|
+| `/admin/verify-session` | POST | 관리자 비밀번호 재검증 | Yes | `admin.py:verify_admin_session()` |
 
 ### Service Methods (SecurityService)
 | Method | Purpose | Returns |
@@ -143,6 +169,58 @@ grep -r "must_change_password" --include="*.py"
 # 세션 토큰
 grep -r "session_token" --include="*.py"
 ```
+
+## Implementation Details
+
+### Login Flow (auth.py:13-61)
+1. 기존 인증 사용자 → 대시보드 리다이렉트
+2. 비밀번호 변경 필수 플래그 확인 → force_change_password 리다이렉트
+3. 사용자명/비밀번호 검증
+4. 비활성 계정 확인 (is_active=False)
+5. last_login 시간 업데이트
+6. Flask-Login 세션 생성 (remember=True)
+7. next_page 파라미터로 원래 페이지 리다이렉트
+
+### Register Flow (auth.py:159-220)
+1. 입력 검증: username, email, password, confirm_password
+2. 비밀번호 확인 및 최소 길이 검증 (6자)
+3. 중복 확인: username, email
+4. User 객체 생성 (is_active=False - 관리자 승인 필요)
+5. 웹훅 토큰 자동 발급: `secrets.token_urlsafe(32)`
+6. DB 커밋 후 로그인 페이지로 리다이렉트
+
+### Profile Management (auth.py:223-312)
+1. 강제 비밀번호 변경 플래그 확인
+2. 이메일 중복 확인 및 업데이트
+3. 텔레그램 설정 검증: 둘 다 있거나 둘 다 없어야 함
+4. 비밀번호 변경 (선택사항, 모든 필드 필수 입력)
+5. 웹훅 토큰 자동 발급: GET 요청 시 토큰 없으면 생성
+6. 텔레그램 테스트: JSON 요청에서 임시 값 또는 저장된 값 사용
+
+### Password Change Flow
+**일반 비밀번호 변경** (auth.py:112-156):
+- 현재 비밀번호 검증 필수
+- 새 비밀번호 확인 및 최소 길이 검증 (6자)
+- 강제 변경 플래그 확인
+
+**강제 비밀번호 변경** (auth.py:64-109):
+- must_change_password 플래그 설정 시에만 접근 가능
+- 완료 후 플래그 해제
+- 이후 정상 기능 접근 허용
+
+### Admin Verification (admin.py:87-100+)
+- 관리자 비밀번호 재검증 엔드포인트
+- 검증 유효 시간: 10분 (session['admin_verified_until'])
+- 민감한 작업(@admin_verification_required)에 선수 조건
+
+### Admin Required Decorator (admin.py:28-41)
+- 로그인 여부 + is_admin 권한 확인
+- 실패 시 대시보드로 리다이렉트
+
+### Test Telegram Function (auth.py:315-361)
+- 사용자별 봇 토큰 지원
+- JSON 요청에서 임시 값 또는 저장된 값 사용
+- telegram_service.test_user_connection() 호출
 
 ## Maintenance Notes
 

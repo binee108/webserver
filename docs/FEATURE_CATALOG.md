@@ -68,7 +68,7 @@
 - **securities-token** - 한국투자증권 토큰 관리 (자동 갱신) [`@COMP:service`] → [docs](features/securities-token.md)
 
 ### 📢 Notifications & Admin
-- **telegram-notification** - 텔레그램 봇 기반 알림 시스템 [`@COMP:service`] → [docs](features/telegram-notification.md)
+- **telegram-notification** - 사용자별/전역 텔레그램 봇 알림 (우선순위 기반 선택, 9가지 알림 타입) [`@COMP:service`] → [docs](features/telegram-notification.md)
 - **admin-panel** - Admin 대시보드, 시스템 모니터링, 백그라운드 작업 로그 조회 [`@COMP:route,ui`] → [docs](features/admin-panel.md)
 
 ### 🔐 Authentication & Security
@@ -81,26 +81,16 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
-| 2025-10-26 | Issue #9: CANCEL_ALL Race Condition | ✅ Phase 1 | order_manager.py, order_queue_manager.py | 심볼별 Lock, 아토믹 처리, 주문 손실 제거 (18.75% → 0%) |
-| 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/strategies.py, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition 방지 |
-| 2025-10-26 | Strategies UI Refactoring | ✅ Phase 1-4 | strategies.html (+286) | 8개 렌더링 함수, 3-tier 아키텍처 |
-| 2025-10-26 | Webhook Token Copy | ✅ Complete | profile.html, components.css | 클립보드 복사 버튼 추가 |
+| 2025-10-30 | Catalog Sync | ✅ Complete | FEATURE_CATALOG.md | 메인 프로젝트 동기화 |
+| 2025-10-26 | Immediate Order Execution | ✅ Phase 1-7 | order_manager.py, routes/, ui/ | FailedOrder 관리, 웹훅 즉시 실행 |
+| 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition |
 | 2025-10-25 | Toast UX Improvement | ✅ Phase 1-2 | realtime-openorders.js, core.py | 단일/배치 Toast 통일 |
-| 2025-10-25 | Dynamic Port Allocation | ✅ Complete | cli/commands/list.py | 메인 프로젝트 포트 동적 읽기 |
 | 2025-10-24 | Background Log Tagging | ✅ Phase 3.1 | logging.py, __init__.py | MARKET_INFO 태그 적용 |
-| 2025-10-24 | Background Log Tagging | ✅ Phase 2 | logging.py, __init__.py | 데코레이터 자동 태그 (10개 함수) |
-| 2025-10-23 | Worktree Conflict Resolution | ✅ Complete | run.py | 서비스 충돌 자동 해결 |
-| 2025-10-23 | Background Log Tagging | ✅ Phase 1 | constants.py, logging.py | BackgroundJobTag 시스템 |
 | 2025-10-23 | Circuit Breaker | ✅ Phase 2 | order_manager.py | 거래소별 Gradual Recovery |
-| 2025-10-23 | Background Job Logs UI | ✅ Phase 2 | admin.py, system.html | Admin 로그 조회 UI |
-| 2025-10-21 | CANCEL_ALL Type Fix | ✅ Complete | core.py | TypeError 해결 |
-| 2025-10-21 | Capital Management | ✅ Phase 5.1 | strategies.html | Force 모드 UI 단순화 |
+| 2025-10-23 | Worktree Conflict Resolution | ✅ Complete | run.py | 서비스 충돌 자동 해결 |
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
-| 2025-10-21 | Capital Management | ✅ Phase 2 | __init__.py | 스케줄 660초 간격 (130회/일) |
 | 2025-10-18 | Open Orders Sorting | ✅ Phase 3 | realtime-openorders.js | SSE 정렬 유지 통합 |
-| 2025-10-16 | Order Queue v2.2 | ✅ Complete | order_queue_manager.py | Known Issues 문서화 |
-| 2025-10-15 | Order Queue Side Separation | ✅ Phase 1-2 | constants.py, order_queue_manager.py | Buy/Sell 독립 제한 |
-| 2025-10-15 | Webhook Order Fix | ✅ Complete | webhook_service.py, core.py | AttributeError 3건 해결 |
+| 2025-10-15 | Order Queue v2.2 | ✅ Complete | order_queue_manager.py | Known Issues 문서화 |
 
 ---
 
@@ -213,6 +203,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-26*  
-*Format: C (계층적 축약형) - 인덱스 역할에 충실*  
-*Total Lines: ~400 (목표 준수)*
+*Last Updated: 2025-10-30*
+*Format: C (계층적 축약형) - 인덱스 역할에 충실*
+*Total Lines: ~195 (목표 준수)*

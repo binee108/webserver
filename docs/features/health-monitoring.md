@@ -122,6 +122,12 @@ Manually execute background job.
 **Request:** `{"job_type": "update_orders|calculate_pnl|daily_summary|calculate_performance"}`
 **Response:** `{"success": true, "message": "작업 완료"}`
 
+**Job Types:**
+- `update_orders`: Update open orders status via `trading_service.update_open_orders_status()`
+- `calculate_pnl`: Calculate unrealized PnL via `trading_service.calculate_unrealized_pnl()`
+- `daily_summary`: Generate and send daily summary to all active accounts
+- `calculate_performance`: Execute daily performance calculation
+
 ### Cache Management (Admin Only)
 
 #### GET /api/system/cache-stats
@@ -162,10 +168,31 @@ Test Telegram notification connectivity.
 
 ## Implementation Details
 
-### Files
-- `web_server/app/routes/health.py` - Health check endpoints
-- `web_server/app/routes/system.py` - System monitoring and control
-- `web_server/app/__init__.py` - Scheduler initialization
+### Files & Location Details
+
+#### Health Check Endpoints
+- **File**: `web_server/app/routes/health.py` (76 lines)
+- **Tag**: `@FEAT:health-monitoring @COMP:route @TYPE:core`
+- **Endpoints**:
+  - `GET /health` (lines 14-35): Basic health + DB status
+  - `GET /health/ready` (lines 38-64): Readiness probe
+  - `GET /health/live` (lines 67-75): Liveness probe
+
+#### System Management Routes
+- **File**: `web_server/app/routes/system.py` (332 lines)
+- **Tag**: `@FEAT:health-monitoring @COMP:route @TYPE:core` (primary)
+- **Endpoints**:
+  - `GET /api/system/health` (lines 16-32): Minimal health check
+  - `GET /api/system/scheduler-status` (lines 57-104): APScheduler state query
+  - `POST /api/system/scheduler-control` (lines 107-162): Start/stop/restart scheduler
+  - `POST /api/system/trigger-job` (lines 165-232): Manual job execution
+  - `GET /api/system/cache-stats` (lines 235-260): Cache statistics
+  - `POST /api/system/cache-clear` (lines 263-304): Granular cache clearing
+  - `GET /api/system/exchange-metadata` (lines 307-331): Futures support metadata
+
+#### Scheduler Integration
+- **File**: `web_server/app/__init__.py`
+- **Purpose**: APScheduler initialization and registration of background jobs
 
 ### Quick Search
 ```bash
@@ -255,6 +282,7 @@ curl -X POST https://example.com/api/system/cache-clear \
 ```
 
 ---
-**Last Updated:** 2025-10-11
+**Last Updated:** 2025-10-30
 **Feature Status:** Active
-**Dependencies:** None (core monitoring feature)
+**Dependencies:** APScheduler, Flask-Login, SQLAlchemy
+**Sync Status:** Code-aligned (health.py 76L, system.py 332L)

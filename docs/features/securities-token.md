@@ -37,6 +37,9 @@
 2. 내부에서 `asyncio.run(run_async())`로 비동기 로직 실행
 3. 모든 증권 계좌(`SECURITIES_%`) 조회 (Line 96-98)
 4. 각 계좌마다 `await exchange.ensure_token()` 호출 → 자동 갱신 판단 (Line 125)
+   - `ensure_token()`: 토큰 유효성 확인 → 만료되거나 6시간 경과 시 갱신
+   - `is_expired()`: 만료 5분 전 판정 (재발급 트리거)
+   - `needs_refresh()`: 마지막 갱신 후 6시간 경과 판정 (갱신 트리거)
 5. 갱신 필요 시 증권사 API 호출 → DB 업데이트
 6. 성공/실패 로깅 및 결과 반환 (Line 150-164)
 
@@ -83,26 +86,54 @@
 
 | 파일 | 역할 | 태그 | 핵심 메서드/기능 |
 |------|------|------|----------------|
-| `jobs/securities_token_refresh.py` | 자동 갱신 Job | `@FEAT:securities-token @COMP:job @TYPE:core` | `run_async()`, `run()` |
+| `jobs/securities_token_refresh.py` | 자동 갱신 Job | `@FEAT:securities-token @COMP:job @TYPE:core` | `run_async()`, `run()`, `get_accounts_needing_refresh()` |
 | `cli/securities.py` | CLI 명령어 | `@FEAT:securities-token @COMP:cli @TYPE:core` | `refresh-tokens`, `check-status` |
-| `exchanges/securities/base.py` | 토큰 관리 로직 | `@FEAT:securities-token @FEAT:exchange-integration @COMP:exchange @TYPE:core` | `ensure_token()`, `needs_refresh()` |
+| `exchanges/securities/base.py` | 토큰 관리 로직 | `@FEAT:securities-token @COMP:exchange @TYPE:core` | `ensure_token()` (동기), `authenticate()`, `refresh_token()` |
 | `models.py:SecuritiesToken` | 토큰 캐시 모델 | `@FEAT:securities-token @COMP:model @TYPE:core` | `is_expired()`, `needs_refresh()` |
-| `__init__.py:621-631` | 스케줄러 등록 | N/A (uses wrapper function) | `scheduler.add_job(refresh_securities_tokens_with_context)` |
+| `exchanges/securities/factory.py` | 거래소 팩토리 | `@FEAT:securities-token @COMP:exchange @TYPE:helper` | `SecuritiesExchangeFactory.create()` |
+
+### ensure_token() - 토큰 관리의 핵심 메서드
+
+**파일**: `exchanges/securities/base.py:96-188`
+
+```python
+def ensure_token(self) -> str:
+    """
+    유효한 토큰 보장 (자동 갱신)
+
+    Race Condition 방지:
+    - SELECT ... FOR UPDATE로 DB 레벨 락 사용
+    - 동시 요청 시 첫 번째만 토큰 발급, 나머지는 대기 후 재사용
+
+    Returns:
+        str: 유효한 access_token
+    """
+```
+
+**동작 흐름**:
+1. DB에서 토큰 캐시 조회 (SELECT FOR UPDATE 락 적용)
+2. 토큰이 없거나 `is_expired()` = True → `authenticate()` 호출 (재발급)
+3. 토큰이 있고 `needs_refresh()` = True → `refresh_token()` 호출 (갱신)
+4. 그 외 → 캐시된 토큰 반환 (DB 쓰기 없음)
+5. 모든 성공/실패 로그 기록
 
 ### 토큰 상태 판정 로직
 
+**파일**: `models.py:SecuritiesToken`
+
 ```python
-# models.py:SecuritiesToken (lines 725-733)
 def is_expired(self) -> bool:
     """토큰 만료 여부 확인 (5분 버퍼)"""
-    from datetime import timedelta
     return datetime.utcnow() > (self.expires_at - timedelta(minutes=5))
 
 def needs_refresh(self) -> bool:
     """토큰 갱신 필요 여부 (6시간 기준)"""
-    from datetime import timedelta
     return datetime.utcnow() > (self.last_refreshed_at + timedelta(hours=6))
 ```
+
+**판정 기준**:
+- `is_expired()`: 만료 5분 전 도달 시 True (긴급 상황 감지)
+- `needs_refresh()`: 마지막 갱신으로부터 6시간 경과 시 True (예방적 갱신)
 
 ---
 
@@ -128,6 +159,30 @@ COMMIT (락 해제) ────→  🔓 락 획득
                         캐시 확인 → 갱신 불필요
                         COMMIT
 ```
+
+---
+
+## 5.5 Helper 메서드
+
+### get_accounts_needing_refresh()
+
+**파일**: `jobs/securities_token_refresh.py:204-267`
+
+```python
+@staticmethod
+async def get_accounts_needing_refresh_async(app: Flask = None) -> List['Account']:
+    """갱신이 필요한 계좌 목록 조회 (비동기 버전)"""
+    # 내부: 6시간 이내 만료되는 계좌 조회
+    threshold = datetime.utcnow() + timedelta(hours=6)
+    accounts = db.session.query(Account)\
+        .join(SecuritiesToken)\
+        .filter(SecuritiesToken.expires_at <= threshold).all()
+```
+
+**목적**:
+- Job 실행 전 갱신 대상 사전 파악
+- 스케줄러 모니터링 및 알림 시스템에 사용 가능
+- CLI 명령어 `check-status`와 연동
 
 ---
 
@@ -224,12 +279,19 @@ grep -r "@FEAT:securities-token" --include="*.py" | grep "@COMP:job"
 
 ---
 
-*Last Updated: 2025-10-12*
-*Version: 2.0.1 (Verified against codebase)*
+*Last Updated: 2025-10-30*
+*Version: 2.1 (Full Codebase Sync)*
 
-**Verification Notes:**
-- All method signatures verified against `models.py` (lines 725-733)
-- Scheduler registration verified at `__init__.py:621-631`
-- Async/sync wrapper pattern documented (run/run_async methods)
-- SecuritiesToken-Account relationship clarified (CASCADE behavior)
-- Comparison operators corrected (> not >=)
+**Changes from 2.0.1:**
+- Added `ensure_token()` detailed flow (base.py:96-188)
+- Documented helper method `get_accounts_needing_refresh()` (job.py:204-267)
+- Clarified `ensure_token()` is synchronous (not async)
+- Updated component table with factory.py and method tags
+- Enhanced OAuth flow documentation with Race Condition prevention details
+
+**Verification Status:**
+- ✅ `jobs/securities_token_refresh.py`: run(), run_async(), get_accounts_needing_refresh()
+- ✅ `cli/securities.py`: refresh-tokens, check-status commands
+- ✅ `exchanges/securities/base.py`: ensure_token() flow & SELECT FOR UPDATE
+- ✅ `models.py`: SecuritiesToken with is_expired(), needs_refresh()
+- ✅ Account-SecuritiesToken 1:1 relationship (CASCADE DELETE on Account)

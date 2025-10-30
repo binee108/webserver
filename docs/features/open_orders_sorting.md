@@ -18,10 +18,10 @@
 - 심볼 → 상태 → 주문 타입 → 주문 방향 → 가격 순서
 
 **Key Methods:**
-- `sortOrders(orders, sortConfig)` - Line 512: 5단계 우선순위 적용
-- `compareByColumn(a, b, column, direction)` - Line 546: 컬럼별 비교 로직
-- `getStatusPriority(order)` - 상태 우선순위 (NEW > PENDING_QUEUE)
-- `getOrderTypePriority(orderType)` - 타입 우선순위 (STOP_MARKET > STOP_LIMIT > LIMIT)
+- `sortOrders(orders, sortConfig)` - Line 595-617: 5단계 우선순위 적용
+- `compareByColumn(a, b, column, direction)` - Line 629-665: 컬럼별 비교 로직
+- `getStatusPriority(order)` - Line 673-678: 상태 우선순위 (NEW=1 > PENDING_QUEUE=0)
+- `getOrderTypePriority(orderType)` - Line 686-694: 타입 우선순위 (STOP_MARKET=3 > STOP_LIMIT=2 > LIMIT=1)
 
 ### Phase 2: Column Click Sorting (✅ Implemented - 2025-10-18)
 - 각 컬럼 헤더 클릭 시 정렬 기준 및 방향 토글
@@ -29,10 +29,10 @@
 - 사용자 선택 정렬이 5단계 기본 정렬보다 우선
 
 **Key Methods:**
-- `handleSort(column)` - Line 592: 헤더 클릭 이벤트 처리, 방향 토글
-- `reorderTable()` - Line 610: 테이블 재정렬 및 재렌더링
-- `updateSortIndicators()` - Line 568: 정렬 아이콘 UI 업데이트 (▲▼ 표시)
-- `attachSortListeners()` - Line 633: 컬럼 헤더에 클릭 이벤트 리스너 등록 (중복 방지)
+- `handleSort(column)` - Line 730-742: 헤더 클릭 이벤트 처리, 방향 토글
+- `reorderTable()` - Line 754-771: 테이블 재정렬 및 재렌더링
+- `updateSortIndicators()` - Line 706-723: 정렬 아이콘 UI 업데이트 (▲▼ 표시)
+- `attachSortListeners()` - Line 783-796: 컬럼 헤더에 클릭 이벤트 리스너 등록 (중복 방지)
 
 **UI Enhancements:**
 - 정렬 가능한 헤더: `data-sortable` 속성 및 `sortable` 클래스
@@ -41,9 +41,9 @@
 - 다크/라이트 테마 지원
 
 **Files Modified:**
-- `realtime-openorders.js` - 정렬 UI 로직 추가 (+135 lines)
-- `positions.html` - 헤더에 `data-sortable` 속성 추가 (+18 lines in createOrderTable)
-- `positions.css` - 정렬 스타일 추가 (+73 lines, Lines 327-401)
+- `/web_server/app/static/js/positions/realtime-openorders.js` - 정렬 UI 로직 추가 (Lines 706-796)
+- `/web_server/app/templates/positions.html` - 헤더에 `data-sortable` 속성 추가 (Lines 859-875 in createOrderTable)
+- `/web_server/app/static/css/positions.css` - 정렬 스타일 추가 (Lines 327-401)
 
 ### Phase 3: SSE Real-time Update Integration (✅ Implemented - 2025-10-18)
 
@@ -57,7 +57,7 @@
 - Same scenario → Table becomes: [$100k, **$98k**, $95k, $90k] ✅ (correct sorted position)
 
 #### Key Method
-- `upsertOrderRow(orderData, isNew)` - Lines 249-337: Sorted insertion with O(n log n) complexity
+- `upsertOrderRow(orderData, isNew)` - Lines 346-420: Sorted insertion with O(n log n) complexity
 
 #### Algorithm (7 Steps)
 1. Update in-memory state (`this.openOrders.set`)
@@ -92,7 +92,7 @@
 - **Order update with position change**: Existing row removed then re-inserted
 
 **Files Modified:**
-- `realtime-openorders.js` - `upsertOrderRow()` refactored (+49 net lines)
+- `/web_server/app/static/js/positions/realtime-openorders.js` - `upsertOrderRow()` 메서드 구현 (Lines 346-420)
 
 ## Usage
 
@@ -473,26 +473,44 @@ RealtimeOpenOrdersManager
 
 ### Tags for Grep Search
 ```bash
-# Find all sorting-related code
-grep -r "@FEAT:open-orders-sorting" --include="*.js"
+# Find all sorting-related code (12 tags total)
+grep -n "@FEAT:open-orders-sorting" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
+# Output: Lines 7, 71, 327, 593, 627, 671, 684, 704, 727, 752, 781
 
 # Find Phase 3 SSE integration code
-grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@PHASE:3"
+grep -n "@PHASE:3" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
+# Output: Line 327 (upsertOrderRow - sorted insertion)
 
 # Find core sorting logic
-grep -r "@FEAT:open-orders-sorting" --include="*.js" | grep "@TYPE:core"
+grep -n "@TYPE:core" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js | grep "open-orders"
+# Output: Lines 71, 327, 593, 627, 671, 684, 704, 752
 
-# Find specific methods
-grep -n "upsertOrderRow\|sortOrders\|handleSort" \
+# Find specific methods by line
+grep -n "sortOrders\|compareByColumn\|handleSort\|upsertOrderRow\|reorderTable\|updateSortIndicators\|attachSortListeners" \
   /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
 ```
 
+**Tag Statistics (Phase 1-3):**
+- File header: Line 7 (@FEAT:open-orders-sorting, Phase 1-2 note - should be Phase 1-3)
+- Constructor: Line 71 (sorting state initialization)
+- Phase 3 upsertOrderRow: Line 327 (@PHASE:3)
+- Phase 1 sortOrders: Line 593 (@TYPE:core)
+- Phase 1 compareByColumn: Line 627 (@TYPE:core)
+- Phase 1 getStatusPriority: Line 671 (@TYPE:core)
+- Phase 1 getOrderTypePriority: Line 684 (@TYPE:core)
+- Phase 2 updateSortIndicators: Line 704 (@TYPE:core)
+- Phase 2 handleSort: Line 727 (@TYPE:interaction)
+- Phase 2 reorderTable: Line 752 (@TYPE:core)
+- Phase 2 attachSortListeners: Line 781 (@TYPE:interaction)
+
 ## Related Files
-- `/web_server/app/static/js/positions/realtime-openorders.js` - Core logic (Lines 1-800+)
+- `/web_server/app/static/js/positions/realtime-openorders.js` - Core sorting logic (Phase 1-3 implemented)
+  - Phase 1: `sortOrders()`, `compareByColumn()`, priority helpers (Lines 595-694)
+  - Phase 2: `handleSort()`, `reorderTable()`, `updateSortIndicators()`, `attachSortListeners()` (Lines 706-796)
+  - Phase 3: `upsertOrderRow()` with sorted insertion (Lines 346-420)
 - `/web_server/app/static/css/positions.css` - Sort UI styles (Lines 327-401)
-- `/web_server/app/templates/positions.html` - Table structure
-- `.plan/open_orders_sorting_phase3_plan.md` - Implementation plan
-- `docs/FEATURE_CATALOG.md` - Feature catalog
+- `/web_server/app/templates/positions.html` - Table structure with sortable headers
+- `docs/FEATURE_CATALOG.md` - Feature catalog with all tags
 
 ## Changelog
 - **2025-10-18**: Phase 3 구현 완료 (SSE 실시간 업데이트 정렬 유지)

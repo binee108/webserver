@@ -86,6 +86,9 @@ Webhook Request
 
 ### StrategyService 주요 메서드
 
+**권한 검증**:
+- `verify_strategy_access(strategy_id, user_id)`: 소유자 또는 구독자 여부 확인 (보안: 전략 미존재 시 403)
+
 **조회**:
 - `get_strategies_by_user(user_id)`: 소유 전략 목록
 - `get_accessible_strategies(user_id)`: 소유 + 구독 전략
@@ -108,8 +111,10 @@ Webhook Request
 
 | Method | Endpoint | 설명 | 권한 |
 |--------|----------|------|------|
-| GET | `/api/strategies` | 소유 전략 목록 | 소유자 |
-| GET | `/api/strategies/public` | 공개 전략 목록 | 모든 사용자 |
+| GET | `/api/strategies` | 소유 전략 목록 | 인증 사용자 |
+| GET | `/api/strategies/accessibles` | 소유 + 구독 전략 | 인증 사용자 |
+| GET | `/api/strategies/public` | 공개 전략 목록 (기본정보) | 인증 사용자 |
+| GET | `/api/strategies/public/{id}` | 공개 전략 상세 조회 | 인증 사용자 |
 | POST | `/api/strategies` | 전략 생성 | 인증 사용자 |
 | PUT | `/api/strategies/{id}` | 전략 수정 | 소유자 |
 | DELETE | `/api/strategies/{id}` | 전략 삭제 | 소유자 |
@@ -215,12 +220,17 @@ if token not in valid_tokens: raise WebhookError()
 
 ### 주의사항
 
-1. **전략 삭제 제약**: 계좌 연결 및 활성 포지션이 없어야 삭제 가능
+1. **권한 검증 (verify_strategy_access)**: 모든 전략 조회/수정에서 사용 필수
+   - 소유자 또는 활성 구독자(StrategyAccount) 확인
+   - 보안상 전략 미존재 시 403 응답 (404 아님)
+   - 구독자 여부: `StrategyAccount.is_active=True && Account.user_id=user_id`
+
+2. **전략 삭제 제약**: 계좌 연결 및 활성 포지션이 없어야 삭제 가능
    - 해결: 포지션 청산 → 계좌 연결 해제 → 전략 삭제 순서
 
-2. **is_public 전환**: True → False 전환 시 구독자 연결 자동 비활성화 (데이터 삭제 없음)
+3. **is_public 전환**: True → False 전환 시 구독자 연결 자동 비활성화 (데이터 삭제 없음)
 
-3. **전략 격리**: DB 쿼리에서 `strategy_account_id` 필터링 필수
+4. **전략 격리**: DB 쿼리에서 `strategy_account_id` 필터링 필수
    ```python
    # 특정 전략의 주문만 조회
    OpenOrder.query.join(StrategyAccount).filter(
@@ -228,7 +238,7 @@ if token not in valid_tokens: raise WebhookError()
    ).all()
    ```
 
-4. **CASCADE 삭제**: StrategyAccount 삭제 시 하위 데이터 자동 삭제
+5. **CASCADE 삭제**: StrategyAccount 삭제 시 하위 데이터 자동 삭제
    - StrategyCapital, StrategyPosition, Trade, OpenOrder
 
 ### 확장 포인트
@@ -269,7 +279,13 @@ grep -n "_validate_strategy_token" web_server/app/services/webhook_service.py
 
 ---
 
-*Last Updated: 2025-10-10*
-*Lines: ~250 (간결화: 853줄 → 250줄, 70% 축소)*
+*Last Updated: 2025-10-30*
+*Lines: ~280 (간결화: 853줄 → 280줄, 67% 축소)*
 *Feature Tags: `@FEAT:strategy-management`*
 *Dependencies: webhook-order, capital-management, order-tracking, position-tracking*
+
+**변경 사항** (2025-10-30):
+- `verify_strategy_access()` 메서드 추가 (권한 검증)
+- `/strategies/accessibles` 엔드포인트 추가 (소유+구독 전략 조회)
+- `/strategies/public/{id}` 엔드포인트 추가 (공개 전략 상세 조회)
+- 권한 검증 관련 유지보수 가이드 추가

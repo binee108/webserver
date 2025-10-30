@@ -98,11 +98,13 @@ class MarketInfo:
     min_qty: Decimal           # 최소 주문 수량
     max_qty: Decimal           # 최대 주문 수량
     step_size: Decimal         # 수량 증분 (예: 0.001)
+    amount_precision: int      # 수량 기본 소수점 자리수 (step_size 없을 때 대체)
 
     # PRICE_FILTER 제한
     min_price: Decimal         # 최소 주문 가격
     max_price: Decimal         # 최대 주문 가격
     tick_size: Decimal         # 가격 증분 (예: 0.01, 1)
+    price_precision: int       # 가격 기본 소수점 자리수 (tick_size 없을 때 대체)
 
     # MIN_NOTIONAL 제한
     min_notional: Decimal      # 최소 거래금액 (qty × price)
@@ -147,10 +149,49 @@ cache_key = f"{EXCHANGE}_{SYMBOL}_{MARKET_TYPE}"
 ### 2. 주문 파라미터 검증
 **@FEAT:symbol-validation @COMP:validation @TYPE:core**
 
-#### 검증 항목
-1. **수량**: min_qty/max_qty 확인, step_size로 조정 (내림)
-2. **가격**: min_price/max_price 확인, tick_size로 조정 (내림)
-3. **최소 거래금액**: MIN_NOTIONAL (qty × price) 확인
+#### 검증 플로우
+```
+validate_order_params()
+  ├─ _validate_and_adjust_quantity()  # 수량 검증 및 소수점 조정
+  │   ├─ min_qty/max_qty 범위 확인
+  │   └─ step_size 또는 amount_precision으로 소수점 조정 (내림)
+  ├─ _validate_and_adjust_price()     # 가격 검증 및 소수점 조정
+  │   ├─ min_price/max_price 범위 확인
+  │   └─ tick_size 또는 price_precision으로 소수점 조정 (내림)
+  └─ min_notional 검증 (adjusted_qty × adjusted_price)
+```
+
+#### 수량 조정 로직
+```python
+# step_size > 0이면 step_size 기반 조정
+precision = abs(step_size.as_tuple().exponent)
+adjusted_quantity = quantity.quantize(
+    Decimal('0.1') ** precision,
+    rounding=ROUND_DOWN
+)
+
+# step_size ≤ 0이면 amount_precision 기반 조정
+adjusted_quantity = quantity.quantize(
+    Decimal('0.1') ** amount_precision,
+    rounding=ROUND_DOWN
+)
+```
+
+#### 가격 조정 로직
+```python
+# tick_size > 0이면 tick_size 기반 조정
+precision = abs(tick_size.as_tuple().exponent)
+adjusted_price = price.quantize(
+    Decimal('0.1') ** precision,
+    rounding=ROUND_DOWN
+)
+
+# tick_size ≤ 0이면 price_precision 기반 조정
+adjusted_price = price.quantize(
+    Decimal('0.1') ** price_precision,
+    rounding=ROUND_DOWN
+)
+```
 
 #### 반환값 (성공)
 ```python
@@ -301,9 +342,18 @@ grep -r "@FEAT:symbol-validation" --include="*.py" | grep "@FEAT:exchange-integr
 grep -rn "ExchangeMetadata" web_server/app/services/symbol_validator.py
 ```
 
-### 주요 파일
-- **핵심 서비스**: `web_server/app/services/symbol_validator.py`
-- **데이터 모델**: `web_server/app/exchanges/models.py` (MarketInfo)
+### 주요 파일 및 함수
+- **핵심 서비스**:
+  - `web_server/app/services/symbol_validator.py`
+    - `SymbolValidator.load_initial_symbols()` (L65) - 초기 심볼 로드
+    - `SymbolValidator._refresh_all_symbols()` (L155) - 백그라운드 갱신
+    - `SymbolValidator.validate_order_params()` (L236) - 주문 검증
+    - `SymbolValidator._validate_and_adjust_quantity()` (L315) - 수량 조정
+    - `SymbolValidator._validate_and_adjust_price()` (L368) - 가격 조정
+
+- **데이터 모델**:
+  - `web_server/app/exchanges/models.py` - MarketInfo 클래스
+
 - **사용처**:
   - `web_server/app/services/trading/quantity_calculator.py`
   - `web_server/app/services/exchange.py`
