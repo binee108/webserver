@@ -352,7 +352,13 @@ class Trade(db.Model):
         return f'<Trade {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'
 
 class OpenOrder(db.Model):
-    """미체결 주문 정보 테이블"""
+    """미체결 주문 정보 테이블 (Phase 5 이후 유일한 주문 모델)
+
+    @FEAT:order-tracking @COMP:model @TYPE:core
+
+    Phase 5 (2025-10-29) 이후 PendingOrder 모델이 제거되어 OpenOrder가 유일한 주문 추적 모델입니다.
+    모든 주문은 Phase 4부터 즉시 거래소에 실행되므로 대기열 개념이 없습니다.
+    """
     __tablename__ = 'open_orders'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -754,124 +760,6 @@ class SecuritiesToken(db.Model):
         return f'<SecuritiesToken account_id={self.account_id}, expires_at={self.expires_at}>'
 
 
-# ============================================
-# 주문 대기열 시스템 테이블 (Phase 1)
-# ============================================
-
-class PendingOrder(db.Model):
-    """대기열 주문 테이블
-
-    거래소 제한 초과로 즉시 실행하지 못한 주문을 저장합니다.
-    우선순위와 가격 기반으로 정렬되어 처리됩니다.
-
-    관리 단위: (account_id, symbol) 조합
-    """
-    __tablename__ = 'pending_orders'
-
-    # 식별자
-    id = db.Column(db.Integer, primary_key=True)
-    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
-    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
-
-    # 주문 정보
-    symbol = db.Column(db.String(20), nullable=False)
-    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
-    order_type = db.Column(db.String(20), nullable=False)  # LIMIT, STOP_LIMIT, STOP_MARKET
-    price = db.Column(db.Numeric(20, 8), nullable=True)  # LIMIT 가격
-    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # STOP 트리거 가격
-    quantity = db.Column(db.Numeric(20, 8), nullable=False)
-
-    # 우선순위 계산
-    priority = db.Column(db.Integer, nullable=False)  # OrderType.PRIORITY 값 (1-5)
-    sort_price = db.Column(db.Numeric(20, 8), nullable=True)  # 정렬용 가격 (계산값)
-
-    # 메타데이터
-    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
-    reason = db.Column(db.String(50), nullable=False, default='QUEUE_LIMIT')  # 대기열 진입 사유
-    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수
-
-    # @FEAT:order-tracking @COMP:model @TYPE:core
-    # Webhook 수신 시각 - 정렬 및 순서 보장용 (NOT NULL)
-    webhook_received_at = db.Column(db.DateTime, nullable=False)
-
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    # 관계 설정
-    account = db.relationship('Account', backref='pending_orders')
-    strategy_account = db.relationship('StrategyAccount', backref='pending_orders')
-
-    # 인덱스
-    __table_args__ = (
-        db.Index('idx_pending_account_symbol', 'account_id', 'symbol'),
-        db.Index('idx_pending_priority_sort', 'account_id', 'symbol', 'priority', 'sort_price', 'created_at'),
-        db.Index('idx_pending_strategy', 'strategy_account_id'),
-    )
-
-    def __init__(self, **kwargs):
-        """PendingOrder 초기화 - priority와 sort_price 자동 계산"""
-        from app.constants import OrderType
-        from decimal import Decimal
-
-        # priority 자동 계산
-        if 'priority' not in kwargs and 'order_type' in kwargs:
-            kwargs['priority'] = OrderType.get_priority(kwargs['order_type'])
-
-        super().__init__(**kwargs)
-
-        # sort_price 자동 계산 (생성 후)
-        if self.sort_price is None and self.order_type:
-            self.sort_price = self._calculate_sort_price()
-
-    def _calculate_sort_price(self):
-        """정렬용 가격 계산
-
-        정렬 로직:
-        - LIMIT BUY:   sort_price = price          (높을수록 우선)
-        - LIMIT SELL:  sort_price = -price         (낮을수록 우선)
-        - STOP BUY:    sort_price = -stop_price    (낮을수록 우선)
-        - STOP SELL:   sort_price = stop_price     (높을수록 우선)
-        - MARKET:      sort_price = None
-        """
-        from app.constants import OrderType
-        from decimal import Decimal
-
-        # MARKET 주문은 정렬 가격 없음
-        if self.order_type == 'MARKET':
-            return None
-
-        # LIMIT 주문
-        if self.order_type == 'LIMIT':
-            if self.price is None:
-                return None
-
-            price_decimal = Decimal(str(self.price))
-            if self.side.upper() == 'BUY':
-                # 높을수록 우선
-                return price_decimal
-            else:  # SELL
-                # 낮을수록 우선 → 음수 변환
-                return -price_decimal
-
-        # STOP 주문 (STOP_LIMIT, STOP_MARKET)
-        if OrderType.requires_stop_price(self.order_type):
-            if self.stop_price is None:
-                return None
-
-            stop_decimal = Decimal(str(self.stop_price))
-            if self.side.upper() == 'BUY':
-                # 낮을수록 우선 → 음수 변환
-                return -stop_decimal
-            else:  # SELL
-                # 높을수록 우선
-                return stop_decimal
-
-        return None
-
-    def __repr__(self):
-        return f'<PendingOrder {self.symbol} {self.side} {self.order_type} qty={self.quantity} priority={self.priority}>'
-
-
 class OrderFillEvent(db.Model):
     """주문 체결 이벤트 로그 테이블
 
@@ -914,3 +802,67 @@ class OrderFillEvent(db.Model):
 
     def __repr__(self):
         return f'<OrderFillEvent order={self.exchange_order_id} status={self.status} qty={self.filled_quantity}>'
+
+
+# ============================================
+# Phase 1: 즉시 주문 실행 시스템 (Immediate Order Execution)
+# ============================================
+
+class FailedOrder(db.Model):
+    """실패한 주문 기록 테이블
+
+    @FEAT:immediate-order-execution @COMP:model @TYPE:core
+
+    거래소 API 호출 실패로 즉시 실행되지 못한 주문을 기록합니다.
+    배치 주문 처리 시 우선순위에 따라 재시도됩니다.
+
+    상태:
+    - pending_retry: 재시도 대기 중
+    - removed: 제거됨 (사용자 요청 또는 최대 재시도 초과)
+    """
+    __tablename__ = 'failed_orders'
+
+    # 식별자
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+
+    # 주문 정보
+    symbol = db.Column(db.String(20), nullable=False)
+    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
+    order_type = db.Column(db.String(20), nullable=False)  # MARKET, LIMIT, STOP_LIMIT, STOP_MARKET
+    quantity = db.Column(db.Numeric(20, 8), nullable=False)
+    price = db.Column(db.Numeric(20, 8), nullable=True)  # LIMIT 가격
+    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # STOP 가격
+    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
+
+    # 실패 정보
+    reason = db.Column(db.String(100), nullable=False)  # 실패 이유 (간결한 요약)
+    exchange_error = db.Column(db.Text, nullable=True)  # 거래소 응답 원문 (API 키 마스킹 필수)
+    # ⚠️ Phase 2: FailedOrderManager에서 저장 시 민감 정보(API-KEY, Secret) 마스킹 처리 예정
+    # 예: "API-KEY: abc123def456..." → "API-KEY: ***" (로그 추적 가능하면서 보안 강화)
+    order_params = db.Column(db.JSON, nullable=False)  # 재시도용 전체 파라미터
+    # Symbol, side, quantity, price, stop_price, market_type 등 포함
+    # Phase 2: 최대 크기 제한 검토 필요 (권장 2KB 이하, 과도한 정보 저장 방지)
+
+    # 재시도 관리
+    status = db.Column(db.String(20), default='pending_retry', nullable=False)  # pending_retry, removed
+    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수 기록
+    # Phase 2: 최대 재시도 횟수 제한 예정 (권장 5회 이상 실패 시 automatic removal)
+
+    # 메타데이터
+    webhook_id = db.Column(db.String(100), nullable=True)  # 웹훅 추적용 ID
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # 관계 설정
+    strategy_account = db.relationship('StrategyAccount', backref='failed_orders')
+
+    # 인덱스 최적화
+    __table_args__ = (
+        db.Index('idx_failed_strategy_symbol', 'strategy_account_id', 'symbol'),
+        db.Index('idx_failed_status', 'status', 'created_at'),
+        db.Index('idx_failed_retry', 'retry_count'),
+    )
+
+    def __repr__(self):
+        return f'<FailedOrder {self.symbol} {self.side} {self.order_type} status={self.status} retry={self.retry_count}>'

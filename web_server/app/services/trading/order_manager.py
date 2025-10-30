@@ -2,8 +2,8 @@
 """
 Order management logic extracted from the legacy trading service.
 
-@FEAT:pending-order-cancel @COMP:service @TYPE:core
-Phase X: Step 5 (Documentation) - PendingOrder 취소 기능 문서화
+@FEAT:order-cancel @COMP:service @TYPE:core
+Phase 5: Step 3 (Code Implementation) - OpenOrder 취소 기능 (PendingOrder 제거 완료)
 """
 
 from __future__ import annotations
@@ -26,11 +26,8 @@ from app.constants import OrderType
 
 logger = logging.getLogger(__name__)
 
-# @FEAT:pending-order-cancel @COMP:util @TYPE:config
-# PendingOrder ID 접두사: 대기 주문과 체결 주문을 구분하는 규칙
-# 규칙: 'p_' + PendingOrder.id (예: "p_42")
-# 용도: cancel_order_by_user()에서 order_id 타입 라우팅 (line 175)
-PENDING_ORDER_PREFIX = 'p_'
+# @FEAT:order-cancel @COMP:util @TYPE:config
+# Phase 5: PendingOrder 시스템 제거됨 (모든 주문은 즉시 거래소 실행)
 
 
 class OrderManager:
@@ -155,16 +152,15 @@ class OrderManager:
             }
 
     def cancel_order_by_user(self, order_id: str, user_id: int) -> Dict[str, Any]:
-        """사용자 권한 기준 주문 취소 (OpenOrder + PendingOrder 통합 처리)
+        """사용자 권한 기준 주문 취소 (OpenOrder)
 
-        @FEAT:pending-order-cancel @COMP:service @TYPE:core
+        @FEAT:order-cancel @COMP:service @TYPE:core
 
-        order_id 접두사 기반 라우팅:
-        - 'p_': PendingOrder 삭제 (DB 삭제 + Order List SSE 발송, Toast SSE 미발송)
-        - 기타: OpenOrder 취소 (거래소 API + Order List SSE 발송)
+        OpenOrder를 거래소 API를 통해 취소하고 Order List SSE를 발송합니다.
+        Phase 5 이후 모든 주문은 즉시 거래소에 실행되므로 PendingOrder 로직은 제거되었습니다.
 
         Args:
-            order_id: 주문 ID ("p_42" or "1234567890")
+            order_id: 주문 ID (거래소 주문 ID)
             user_id: 사용자 ID (권한 검증용)
 
         Returns:
@@ -172,172 +168,51 @@ class OrderManager:
                 'success': bool,
                 'error': str,  # 실패 시
                 'symbol': str,  # 성공 시
-                'source': str   # 'pending_order' or 'open_order'
+                'source': str   # 'exchange'
             }
         """
         try:
             from app.constants import OrderStatus
-            from app.models import PendingOrder
 
-            # ============================================================
-            # Phase 1: order_id 접두사 기반 라우팅
-            # ============================================================
-            if order_id.startswith(PENDING_ORDER_PREFIX):
-                # PendingOrder 취소 경로
-                logger.info(f"📋 PendingOrder 취소 요청: order_id={order_id}, user_id={user_id}")
+            # OpenOrder 취소 경로 (모든 주문은 거래소 직접 실행)
+            logger.info(f"📋 OpenOrder 취소 요청: order_id={order_id}, user_id={user_id}")
 
-                # ID 추출 (p_42 → 42)
-                try:
-                    pending_id = int(order_id[len(PENDING_ORDER_PREFIX):])
-                except (ValueError, IndexError):
-                    return {
-                        'success': False,
-                        'error': '잘못된 PendingOrder ID 형식입니다.',
-                        'error_type': 'invalid_id'
-                    }
-
-                # PendingOrder 조회 및 권한 검증
-                pending_order = (
-                    PendingOrder.query
-                    .join(StrategyAccount)
-                    .join(Account)
-                    .options(
-                        joinedload(PendingOrder.strategy_account)
-                        .joinedload(StrategyAccount.account),
-                        joinedload(PendingOrder.strategy_account)
-                        .joinedload(StrategyAccount.strategy)
-                    )
-                    .filter(
-                        PendingOrder.id == pending_id,
-                        Account.user_id == user_id,
-                        Account.is_active == True
-                    )
-                    .first()
+            open_order = (
+                OpenOrder.query
+                .join(StrategyAccount)
+                .join(Account)
+                .options(
+                    joinedload(OpenOrder.strategy_account)
+                    .joinedload(StrategyAccount.account)
                 )
-
-                if not pending_order:
-                    # 폴백: 거래소에서 받은 주문 ID가 'p_'로 시작하는 경우 대비
-                    # (미테스트 엣지 케이스) 자세히: CLAUDE.md 계획서 Risk Assessment Line 328
-                    logger.debug(f"PendingOrder 없음 → OpenOrder 폴백 시도: {order_id}")
-
-                    open_order = (
-                        OpenOrder.query
-                        .join(StrategyAccount)
-                        .join(Account)
-                        .options(
-                            joinedload(OpenOrder.strategy_account)
-                            .joinedload(StrategyAccount.account)
-                        )
-                        .filter(
-                            OpenOrder.exchange_order_id == order_id,
-                            Account.user_id == user_id,
-                            Account.is_active == True,
-                            OpenOrder.status.in_(OrderStatus.get_open_statuses())
-                        )
-                        .first()
-                    )
-
-                    if open_order:
-                        # OpenOrder로 처리 (기존 로직 재사용)
-                        logger.debug(f"OpenOrder 폴백 성공: {order_id}")
-                        result = self.service.cancel_order(
-                            order_id=order_id,
-                            symbol=open_order.symbol,
-                            account_id=open_order.strategy_account.account.id
-                        )
-
-                        if result['success']:
-                            result['symbol'] = open_order.symbol
-                            result['source'] = 'open_order'
-
-                        return result
-
-                    # 진짜 없는 경우에만 에러 반환
-                    return {
-                        'success': False,
-                        'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
-                        'error_type': 'permission_error'
-                    }
-
-                # PendingOrder 정보 추출 (삭제 전)
-                symbol = pending_order.symbol
-                strategy_id = (
-                    pending_order.strategy_account.strategy.id
-                    if pending_order.strategy_account and pending_order.strategy_account.strategy
-                    else None
+                .filter(
+                    OpenOrder.exchange_order_id == order_id,
+                    Account.user_id == user_id,
+                    Account.is_active == True,
+                    OpenOrder.status.in_(OrderStatus.get_open_statuses())
                 )
+                .first()
+            )
 
-                # 📡 Order List SSE 발송 (삭제 전, Toast SSE는 미발송)
-                # @FEAT:pending-order-sse @COMP:service @TYPE:core
-                if self.service and hasattr(self.service, 'event_emitter') and strategy_id:
-                    try:
-                        self.service.event_emitter.emit_pending_order_event(
-                            event_type='order_cancelled',
-                            pending_order=pending_order,
-                            user_id=user_id
-                        )
-                        logger.debug(
-                            f"📡 [SSE] PendingOrder 취소 → Order List 업데이트: "
-                            f"ID={pending_id}, user_id={user_id}, symbol={symbol}"
-                        )
-                    except Exception as sse_error:
-                        logger.warning(
-                            f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
-                            f"ID={pending_id}, error={sse_error}"
-                        )
-
-                # DB에서 삭제
-                db.session.delete(pending_order)
-                db.session.commit()
-
-                logger.info(f"✅ PendingOrder 취소 완료: ID={pending_id}, symbol={symbol}")
-
+            if not open_order:
                 return {
-                    'success': True,
-                    'symbol': symbol,
-                    'source': 'pending_order'
+                    'success': False,
+                    'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
+                    'error_type': 'permission_error'
                 }
 
-            else:
-                # OpenOrder 취소 경로 (기존 로직 유지)
-                logger.info(f"📋 OpenOrder 취소 요청: order_id={order_id}, user_id={user_id}")
+            # 기존 cancel_order 메서드 재사용
+            result = self.service.cancel_order(
+                order_id=order_id,
+                symbol=open_order.symbol,
+                account_id=open_order.strategy_account.account.id
+            )
 
-                open_order = (
-                    OpenOrder.query
-                    .join(StrategyAccount)
-                    .join(Account)
-                    .options(
-                        joinedload(OpenOrder.strategy_account)
-                        .joinedload(StrategyAccount.account)
-                    )
-                    .filter(
-                        OpenOrder.exchange_order_id == order_id,
-                        Account.user_id == user_id,
-                        Account.is_active == True,
-                        OpenOrder.status.in_(OrderStatus.get_open_statuses())
-                    )
-                    .first()
-                )
+            if result['success']:
+                result['symbol'] = open_order.symbol
+                result['source'] = 'exchange'
 
-                if not open_order:
-                    return {
-                        'success': False,
-                        'error': '주문을 찾을 수 없거나 취소할 권한이 없습니다.',
-                        'error_type': 'permission_error'
-                    }
-
-                # 기존 cancel_order 메서드 재사용
-                result = self.service.cancel_order(
-                    order_id=order_id,
-                    symbol=open_order.symbol,
-                    account_id=open_order.strategy_account.account.id
-                )
-
-                if result['success']:
-                    result['symbol'] = open_order.symbol
-                    result['source'] = 'open_order'
-
-                return result
+            return result
 
         except Exception as e:
             db.session.rollback()
@@ -454,18 +329,15 @@ class OrderManager:
                                   symbol: Optional[str] = None,
                                   side: Optional[str] = None,
                                   timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """사용자 권한 기준의 미체결 주문 일괄 취소 (심볼별 Lock 보호)
+        """사용자 권한 기준의 미체결 주문 일괄 취소 (Phase 5 이후)
 
-        PendingOrder 삭제 시 SSE 발송하지 않습니다 (내부 상태이므로).
-        웹훅의 CANCEL_ALL_ORDER는 응답 시 Batch SSE로 통합 발송됩니다.
+        @FEAT:order-cancel @COMP:service @TYPE:core
 
-        ⚠️ Race Condition 방지: 심볼별 Lock 획득 후 Phase 1 + Phase 2 실행 (Issue #9)
+        ⚠️ Race Condition 방지: 심볼별 Lock 획득 후 OpenOrder 취소 (Issue #9)
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Phase 1: PendingOrder 삭제 → commit (먼저 커밋)
-        Phase 2: OpenOrder 취소 (거래소 API 호출)
-
-        심볼별 Lock을 획득하여 재정렬 알고리즘과 직렬화합니다.
-        모든 영향받는 (account_id, symbol) 조합의 Lock을 Deadlock 방지 순서로 획득합니다.
+        모든 영향받는 (account_id, symbol) 조합의 Lock을 Deadlock 방지 순서로 획득하여
+        OpenOrder를 취소하고 거래소 API를 호출합니다.
+        Phase 5 이후 OpenOrder만 처리하며 PendingOrder 로직은 제거되었습니다.
 
         권한 모델 (Permission Models)
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -483,17 +355,18 @@ class OrderManager:
         Returns:
             Dict[str, Any]: {
                 'success': bool,
-                'cancelled_orders': List[Dict],  # OpenOrder 취소 목록
+                'cancelled_orders': List[Dict],  # OpenOrder 취소 목록 (PendingOrder 없음)
                 'failed_orders': List[Dict],      # 실패 목록
-                'pending_deleted': int,           # PendingOrder 삭제 수
                 'total_processed': int,
                 'filter_conditions': List[str],
                 'message': str
             }
+
+        Note:
+            Phase 5 이후 모든 주문은 즉시 거래소에 실행되므로 PendingOrder 로직은 제거됨.
         """
         try:
             from app.constants import OrderStatus
-            from app.models import PendingOrder
 
             # ============================================================
             # 입력 파라미터 검증 및 정규화
@@ -516,29 +389,6 @@ class OrderManager:
             # ============================================================
             # Step 0: 영향받는 계정 및 심볼 조회, Lock 획득 (Issue #9)
             # ============================================================
-
-            # PendingOrder 쿼리 구성
-            pending_query = (
-                PendingOrder.query
-                .join(StrategyAccount)
-                .join(Account)
-                .options(
-                    joinedload(PendingOrder.strategy_account)
-                    .joinedload(StrategyAccount.account)
-                )
-                .filter(
-                    Account.user_id == user_id,
-                    Account.is_active == True,
-                    StrategyAccount.strategy_id == strategy_id
-                )
-            )
-
-            if account_id:
-                pending_query = pending_query.filter(Account.id == account_id)
-            if symbol:
-                pending_query = pending_query.filter(PendingOrder.symbol == symbol)
-            if side:
-                pending_query = pending_query.filter(PendingOrder.side == side.upper())
 
             # OpenOrder 쿼리 구성
             open_query = (
@@ -570,12 +420,6 @@ class OrderManager:
             # 모든 영향받는 계정 추출
             affected_account_ids = set()
 
-            # PendingOrder에서 계정 추출
-            for po in pending_query.all():
-                strategy_account = StrategyAccount.query.get(po.strategy_account_id)
-                if strategy_account:
-                    affected_account_ids.add(strategy_account.account_id)
-
             # OpenOrder에서 계정 추출
             for oo in open_query.all():
                 strategy_account = StrategyAccount.query.get(oo.strategy_account_id)
@@ -585,12 +429,7 @@ class OrderManager:
             # 영향받는 심볼 목록 추출
             affected_symbols = set()
 
-            # PendingOrder에서 심볼 추출 (재쿼리)
-            pending_query_symbols = pending_query.with_entities(PendingOrder.symbol).distinct()
-            for row in pending_query_symbols:
-                affected_symbols.add(row.symbol)
-
-            # OpenOrder에서 심볼 추출 (재쿼리)
+            # OpenOrder에서 심볼 추출
             open_query_symbols = open_query.with_entities(OpenOrder.symbol).distinct()
             for row in open_query_symbols:
                 affected_symbols.add(row.symbol)
@@ -604,7 +443,6 @@ class OrderManager:
                     'success': True,
                     'cancelled_orders': [],
                     'failed_orders': [],
-                    'pending_deleted': 0,
                     'total_processed': 0,
                     'filter_conditions': filter_conditions,
                     'message': '취소할 주문이 없습니다.'
@@ -623,208 +461,116 @@ class OrderManager:
             )
 
             # ============================================================
-            # Lock 획득 및 Phase 1 + Phase 2 실행
+            # OpenOrder 취소 실행
             # ============================================================
-            with contextlib.ExitStack() as stack:
-                # OrderQueueManager 인스턴스 접근
-                order_queue_manager = self.service.order_queue_manager
+            # filter_conditions 업데이트
+            if account_id and f"account_id={account_id}" not in filter_conditions:
+                filter_conditions.append(f"account_id={account_id}")
+            if symbol and f"symbol={symbol}" not in filter_conditions:
+                filter_conditions.append(f"symbol={symbol}")
+            if side and f"side={side.upper()}" not in filter_conditions:
+                filter_conditions.append(f"side={side.upper()}")
 
-                # 모든 (account_id, symbol) 조합의 Lock 획득
-                # Deadlock 방지: 계정별 → 심볼별 순서로 획득
-                for acc_id in sorted_account_ids:
-                    for sym in sorted_symbols:
-                        lock = order_queue_manager._get_lock(acc_id, sym)
-                        stack.enter_context(lock)
-                        logger.debug(f"  🔒 Lock 획득: account={acc_id}, symbol={sym}")
+            # OpenOrder 조회
+            target_orders = open_query.all()
 
+            if not target_orders:
                 logger.info(
-                    f"✅ 모든 Lock 획득 완료 - "
-                    f"{len(sorted_account_ids)}개 계정 × {len(sorted_symbols)}개 심볼 "
-                    f"= {total_locks}개 Lock"
-                )
-
-                # ============================================================
-                # Phase 1: PendingOrder 삭제 (Lock 내부)
-                # ============================================================
-
-                # filter_conditions 업데이트
-                if account_id and f"account_id={account_id}" not in filter_conditions:
-                    filter_conditions.append(f"account_id={account_id}")
-                if symbol and f"symbol={symbol}" not in filter_conditions:
-                    filter_conditions.append(f"symbol={symbol}")
-                if side and f"side={side.upper()}" not in filter_conditions:
-                    filter_conditions.append(f"side={side.upper()}")
-
-                pending_orders = pending_query.all()
-                pending_deleted_count = len(pending_orders)
-
-                logger.info(
-                    f"🗑️ PendingOrder 삭제 시작 - 사용자: {user_id}, {pending_deleted_count}개"
+                    f"No orders to cancel for user {user_id}"
                     + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
                 )
+                return {
+                    'success': True,
+                    'cancelled_orders': [],
+                    'failed_orders': [],
+                    'total_processed': 0,
+                    'filter_conditions': filter_conditions,
+                    'message': '취소할 주문이 없습니다.'
+                }
 
-                # 📡 Order List SSE 발송 (PendingOrder 삭제 전, Toast SSE는 웹훅 응답 시 Batch 통합)
-                # @FEAT:pending-order-sse @COMP:service @TYPE:core @DEPS:event-emitter
-                for pending_order in pending_orders:
-                    # user_id 사전 추출 (삭제 전)
-                    user_id_for_sse = None
-                    if pending_order.strategy_account and pending_order.strategy_account.strategy:
-                        user_id_for_sse = pending_order.strategy_account.strategy.user_id
-                    else:
-                        logger.warning(
-                            f"⚠️ PendingOrder 삭제 SSE 발송 스킵: strategy 정보 없음 "
-                            f"(pending_order_id={pending_order.id})"
-                        )
+            cancelled_orders: List[Dict[str, Any]] = []
+            failed_orders: List[Dict[str, Any]] = []
 
-                    # Order List SSE 발송
-                    if self.service and hasattr(self.service, 'event_emitter') and user_id_for_sse:
-                        try:
-                            self.service.event_emitter.emit_pending_order_event(
-                                event_type='order_cancelled',
-                                pending_order=pending_order,
-                                user_id=user_id_for_sse
-                            )
-                            logger.debug(
-                                f"📡 [SSE] PendingOrder 삭제 (CANCEL_ALL_ORDER) → Order List 업데이트: "
-                                f"ID={pending_order.id}, user_id={user_id_for_sse}, symbol={pending_order.symbol}"
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
-                                f"ID={pending_order.id}, error={e}"
-                            )
+            logger.info(
+                f"🔄 OpenOrder 취소 시작 - 사용자: {user_id}, {len(target_orders)}개"
+                + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
+            )
 
-                    # DB에서 삭제
-                    db.session.delete(pending_order)
+            for open_order in target_orders:
+                strategy_account = open_order.strategy_account
+                account = strategy_account.account if strategy_account else None
 
-                # PendingOrder 삭제 커밋 (OpenOrder 취소 전에 완료)
-                db.session.commit()
-
-                if pending_deleted_count > 0:
-                    logger.info(f"✅ PendingOrder {pending_deleted_count}개 삭제 완료")
-
-                # ============================================================
-                # Phase 2: OpenOrder 취소 (Lock 내부)
-                # ============================================================
-                target_orders = open_query.all()
-
-                if not target_orders and pending_deleted_count == 0:
-                    logger.info(
-                        f"No orders to cancel for user {user_id}"
-                        + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
+                if not account:
+                    logger.warning(
+                        f"Skip cancel: missing account for order {open_order.exchange_order_id}"
                     )
-                    return {
-                        'success': True,
-                        'cancelled_orders': [],
-                        'failed_orders': [],
-                        'pending_deleted': 0,
-                        'total_processed': 0,
-                        'filter_conditions': filter_conditions,
-                        'message': '취소할 주문이 없습니다.'
+                    failed_orders.append({
+                        'order_id': open_order.exchange_order_id,
+                        'symbol': open_order.symbol,
+                        'error': 'Account not linked to order'
+                    })
+                    continue
+
+                try:
+                    cancel_result = self.service.cancel_order(
+                        order_id=open_order.exchange_order_id,
+                        symbol=open_order.symbol,
+                        account_id=account.id
+                    )
+
+                    order_summary = {
+                        'order_id': open_order.exchange_order_id,
+                        'symbol': open_order.symbol,
+                        'account_id': account.id,
+                        'strategy_id': strategy_account.strategy.id if strategy_account and strategy_account.strategy else None
                     }
 
-                cancelled_orders: List[Dict[str, Any]] = []
-                failed_orders: List[Dict[str, Any]] = []
-
-                logger.info(
-                    f"🔄 OpenOrder 취소 시작 - 사용자: {user_id}, {len(target_orders)}개"
-                    + (f" ({', '.join(filter_conditions)})" if filter_conditions else '')
-                )
-
-                for open_order in target_orders:
-                    strategy_account = open_order.strategy_account
-                    account = strategy_account.account if strategy_account else None
-
-                    if not account:
-                        logger.warning(
-                            f"Skip cancel: missing account for order {open_order.exchange_order_id}"
-                        )
+                    if cancel_result.get('success'):
+                        cancelled_orders.append(order_summary)
+                    else:
                         failed_orders.append({
-                            'order_id': open_order.exchange_order_id,
-                            'symbol': open_order.symbol,
-                            'error': 'Account not linked to order'
-                        })
-                        continue
-
-                    try:
-                        cancel_result = self.service.cancel_order(
-                            order_id=open_order.exchange_order_id,
-                            symbol=open_order.symbol,
-                            account_id=account.id
-                        )
-
-                        order_summary = {
-                            'order_id': open_order.exchange_order_id,
-                            'symbol': open_order.symbol,
-                            'account_id': account.id,
-                            'strategy_id': strategy_account.strategy.id if strategy_account and strategy_account.strategy else None
-                        }
-
-                        if cancel_result.get('success'):
-                            cancelled_orders.append(order_summary)
-                        else:
-                            failed_orders.append({
-                                **order_summary,
-                                'error': cancel_result.get('error')
-                            })
-
-                    except Exception as cancel_error:
-                        logger.error(
-                            f"Bulk cancel failure for order {open_order.exchange_order_id}: {cancel_error}"
-                        )
-                        failed_orders.append({
-                            'order_id': open_order.exchange_order_id,
-                            'symbol': open_order.symbol,
-                            'account_id': account.id,
-                            'strategy_id': strategy_account.strategy.id if strategy_account and strategy_account.strategy else None,
-                            'error': str(cancel_error)
+                            **order_summary,
+                            'error': cancel_result.get('error')
                         })
 
-                total_cancelled = len(cancelled_orders)
-                total_failed = len(failed_orders)
-                total_processed = total_cancelled + total_failed + pending_deleted_count
+                except Exception as cancel_error:
+                    logger.error(
+                        f"Bulk cancel failure for order {open_order.exchange_order_id}: {cancel_error}"
+                    )
+                    failed_orders.append({
+                        'order_id': open_order.exchange_order_id,
+                        'symbol': open_order.symbol,
+                        'account_id': account.id,
+                        'strategy_id': strategy_account.strategy.id if strategy_account and strategy_account.strategy else None,
+                        'error': str(cancel_error)
+                    })
 
-                logger.info(
-                    f"✅ CANCEL_ALL 완료 (Lock 보호됨) - 사용자: {user_id}, "
-                    f"OpenOrder 취소: {total_cancelled}개, 실패: {total_failed}개, "
-                    f"PendingOrder 삭제: {pending_deleted_count}개, "
-                    f"심볼: {sorted_symbols}"
-                )
+            total_cancelled = len(cancelled_orders)
+            total_failed = len(failed_orders)
+            total_processed = total_cancelled + total_failed
 
-            # Lock 자동 해제 (contextlib.ExitStack)
+            logger.info(
+                f"✅ CANCEL_ALL 완료 - 사용자: {user_id}, "
+                f"OpenOrder 취소: {total_cancelled}개, 실패: {total_failed}개, "
+                f"심볼: {sorted_symbols}"
+            )
 
             response = {
                 'cancelled_orders': cancelled_orders,
                 'failed_orders': failed_orders,
-                'pending_deleted': pending_deleted_count,
                 'total_processed': total_processed,
                 'filter_conditions': filter_conditions
             }
 
             if total_cancelled > 0 and total_failed == 0:
-                if pending_deleted_count > 0:
-                    response['success'] = True
-                    response['message'] = f'{total_cancelled}개 주문 취소 및 {pending_deleted_count}개 대기열 주문 삭제 완료'
-                else:
-                    response['success'] = True
-                    response['message'] = f'{total_cancelled}개 주문을 취소했습니다.'
+                response['success'] = True
+                response['message'] = f'{total_cancelled}개 주문을 취소했습니다.'
             elif total_cancelled > 0 and total_failed > 0:
                 response['success'] = True
                 response['partial_success'] = True
-                if pending_deleted_count > 0:
-                    response['message'] = (
-                        f'일부 주문만 취소되었습니다. '
-                        f'OpenOrder: 성공 {total_cancelled}개, 실패 {total_failed}개, '
-                        f'PendingOrder: {pending_deleted_count}개 삭제'
-                    )
-                else:
-                    response['message'] = (
-                        f'일부 주문만 취소되었습니다. 성공 {total_cancelled}개, 실패 {total_failed}개'
-                    )
-            elif total_cancelled == 0 and pending_deleted_count > 0:
-                # OpenOrder는 없고 PendingOrder만 삭제된 경우
-                response['success'] = True
-                response['message'] = f'{pending_deleted_count}개 대기열 주문을 삭제했습니다.'
+                response['message'] = (
+                    f'일부 주문만 취소되었습니다. 성공 {total_cancelled}개, 실패 {total_failed}개'
+                )
             else:
                 response['success'] = False
                 response['error'] = '모든 주문 취소에 실패했습니다.'
@@ -839,7 +585,6 @@ class OrderManager:
                 'error': str(e),
                 'cancelled_orders': [],
                 'failed_orders': [],
-                'pending_deleted': 0,
                 'total_processed': 0,
                 'filter_conditions': []
             }

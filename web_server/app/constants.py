@@ -682,6 +682,50 @@ class OrderType:
         normalized_type = order_type.upper()
         return cls.PRIORITY.get(normalized_type, 99)
 
+    @staticmethod
+    def classify_priority(order_type: str) -> str:
+        """배치주문 우선순위 분류
+
+        @FEAT:immediate-order-execution @COMP:config @TYPE:core
+
+        배치 주문 처리 시 즉시 실행 여부를 결정하는 우선순위를 반환합니다.
+
+        비즈니스 로직:
+        - 'high' (즉시 실행): CANCEL(취소), MARKET(시장가), STOP_MARKET(손절매)
+          → 시장 상황에 민감하며 지연 시 손실 가능성 높음
+        - 'low' (지연 실행 가능): LIMIT(지정가), STOP_LIMIT(조건부지정가)
+          → 대기 가능하며 배치 처리로 효율성 제고
+
+        Args:
+            order_type (str): 주문 타입 (CANCEL, MARKET, LIMIT, STOP_LIMIT, STOP_MARKET 등)
+
+        Returns:
+            str: 'high' (즉시 실행 우선) 또는 'low' (지연 실행 가능)
+
+        Examples:
+            >>> OrderType.classify_priority('MARKET')
+            'high'
+            >>> OrderType.classify_priority('CANCEL')
+            'high'
+            >>> OrderType.classify_priority('STOP_MARKET')
+            'high'
+            >>> OrderType.classify_priority('LIMIT')
+            'low'
+            >>> OrderType.classify_priority('STOP_LIMIT')
+            'low'
+
+        Notes:
+            - None 또는 빈 문자열 입력: 'low' 반환 (안전한 기본값)
+            - 유효하지 않은 order_type: 'low' 반환 (조용히 처리, 로그 없음)
+            - Phase 2: webhook 우선순위 큐 분류에 활용 예정
+        """
+        if not order_type:
+            return 'low'
+
+        high_priority = {OrderType.CANCEL, OrderType.MARKET, OrderType.STOP_MARKET}
+        normalized_type = order_type.upper()
+        return 'high' if normalized_type in high_priority else 'low'
+
 
 class MinOrderAmount:
     """거래소별 마켓타입별 최소 거래 금액 (USDT 기준)"""

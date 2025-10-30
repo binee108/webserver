@@ -19,7 +19,7 @@ from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
-from .order_queue_manager import OrderQueueManager
+from .failed_order_manager import failed_order_manager
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +50,11 @@ class TradingService:
         self.order_manager = OrderManager(service=self)
         self.core = TradingCore(service=self)
         self.event_emitter = EventEmitter(service=self)
-        self.order_queue_manager = OrderQueueManager(service=self)
 
         # WebSocket 관리자 (앱 초기화 시 설정됨)
         self.websocket_manager = None
 
-        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성 + 대기열 관리)")
+        logger.info("✅ 통합 트레이딩 서비스 초기화 완료")
 
     def init_websocket_manager(self, app):
         """WebSocket 관리자 초기화
@@ -289,4 +288,5 @@ __all__ = [
     'OrderError',
     'PositionError',
     'QuantityCalculationError',
+    'failed_order_manager',
 ]

@@ -33,7 +33,7 @@ class OrderFillMonitor:
     1. WebSocket 이벤트 수신 (from BinanceWebSocket/BybitWebSocket)
     2. REST API로 주문 상태 확인 (신뢰도 확보)
     3. DB 업데이트 (OpenOrder 삭제 또는 수정)
-    4. 재정렬 트리거 (OrderQueueManager.rebalance_symbol)
+    4. OpenOrder 상태 동기화 (Phase 4+)
     """
 
     def __init__(self, app: Flask):
@@ -129,28 +129,9 @@ class OrderFillMonitor:
                     # DB 업데이트 (커밋하지 않음)
                     self._update_order_in_db(confirmed_order, commit=False)
 
-                    # 재정렬 트리거 (주문이 완료되었을 때만)
-                    if confirmed_status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
-                        from app.services.trading import trading_service
-                        queue_manager = trading_service.order_queue_manager
-
-                        result = queue_manager.rebalance_symbol(
-                            account_id=account_id,
-                            symbol=normalized_symbol,  # 정규화된 심볼 사용
-                            commit=False  # 커밋하지 않음
-                        )
-
-                        if not result.get('success'):
-                            raise Exception(f"재정렬 실패: {result.get('error')}")
-
+                    # Phase 5: 재정렬 로직 완전 제거됨 (Queue 인프라 제거)
                     # 모든 작업 성공 시 한 번에 커밋
                     db.session.commit()
-
-                    if confirmed_status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
-                        logger.info(
-                            f"🔄 WebSocket 트리거 재정렬 완료 - {normalized_symbol}: "
-                            f"취소 {result.get('cancelled', 0)}개, 실행 {result.get('executed', 0)}개"
-                        )
 
                 except Exception as e:
                     db.session.rollback()
