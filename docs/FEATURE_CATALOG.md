@@ -23,6 +23,7 @@
 
 ### 🔄 Core Trading
 - **webhook-order** - 웹훅 수신, 토큰 검증, 주문 처리 [`@COMP:service,route`] → [docs](features/webhook-order-processing.md)
+- **immediate-order-execution** - 웹훅 주문 즉시 실행 및 FailedOrder 관리 UI [`@COMP:service,route,ui`] → [docs](features/immediate-order-execution.md)
 - **order-tracking** - 주문 상태 추적 및 WebSocket 실시간 감시 [`@COMP:service`] → [docs](features/order-tracking.md)
 - **order-queue** - 대기열 관리 및 동적 재정렬 (v2.2 Side별 분리) [`@COMP:service`] → [docs](features/order-queue-system.md)
 - **trade-execution** - 거래 실행 및 체결 처리 [`@COMP:service`] → [docs](features/trade-execution.md)
