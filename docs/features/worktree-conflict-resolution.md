@@ -45,7 +45,18 @@
 - 워크트리 환경이면 True, 메인 프로젝트면 False 반환
 - 경로: `cli/commands/start.py:61-72`
 
-### 2. 동적 포트 할당
+### 2. 워크트리 포트 초기화
+`_setup_worktree_ports()` 메서드 (StartCommand):
+- 워크트리명 기반 해시로 포트 사전 계산
+- 생성자에서 호출되어 인스턴스 변수에 저장
+- 포트 할당 범위:
+  - **Flask**: 5002-5100 (워크트리명 해시 기반)
+  - **PostgreSQL**: 5433-5531
+  - **HTTPS**: 4431-4529
+- 프로젝트명: `webserver_{worktree_name}` 형식
+- 경로: `cli/commands/start.py:74-93`
+
+### 3. 동적 포트 할당
 `_allocate_ports_dynamically()` 메서드:
 
 **우선순위**:
@@ -64,9 +75,9 @@ def _calculate_hash_port(project_name, start_port, end_port):
 - 같은 프로젝트명은 항상 동일 포트 할당
 - 예: `webserver_feature-x` → 항상 5042 (hash 기반)
 
-**경로**: `cli/commands/start.py:251-320`
+**경로**: `cli/commands/start.py:251-340`
 
-### 3. 메인 프로젝트 DB 복사 (Worktree 환경)
+### 4. 메인 프로젝트 DB 복사 (Worktree 환경)
 `copy_main_db_to_worktree()` 메서드 (DockerHelper):
 
 @FEAT:worktree-db-copy @COMP:service @TYPE:core
@@ -176,7 +187,19 @@ def _detect_worktree_environment(self) -> bool:
         return False
 ```
 
-#### 2. `_calculate_hash_port(project_name, start_port, end_port) -> int`
+#### 2. `_setup_worktree_ports()`
+**경로**: `cli/commands/start.py:74-93`
+
+워크트리명 기반 해시로 포트를 사전 계산하여 인스턴스 변수에 저장합니다.
+
+**동작**:
+- 워크트리명 기반 오프셋 계산 (0-97 범위)
+- `self.flask_port = 5002 + offset`
+- `self.postgres_port = 5433 + offset`
+- `self.https_port = 4431 + offset`
+- 프로젝트명 설정: `webserver_{worktree_name}`
+
+#### 3. `_calculate_hash_port(project_name, start_port, end_port) -> int`
 **경로**: `cli/commands/start.py:227-249`
 
 프로젝트명의 해시값으로 포트 범위 내 일관된 포트를 계산합니다.
@@ -187,8 +210,8 @@ hash_offset = abs(hash(project_name)) % port_range
 return start_port + hash_offset
 ```
 
-#### 3. `_allocate_ports_dynamically(project_name) -> dict`
-**경로**: `cli/commands/start.py:251-320`
+#### 4. `_allocate_ports_dynamically(project_name) -> dict`
+**경로**: `cli/commands/start.py:251-340`
 
 동적 포트 할당 메서드로, 다음 우선순위로 포트를 결정합니다:
 
@@ -201,13 +224,23 @@ return start_port + hash_offset
 **반환값**:
 ```python
 {
-    "HTTPS_PORT": 4453,
-    "APP_PORT": 5025,
-    "POSTGRES_PORT": 5456
+    "HTTPS_PORT": 4431,
+    "APP_PORT": 5002,
+    "POSTGRES_PORT": 5433
 }
 ```
 
-#### 4. `_detect_and_stop_conflicts() -> bool` (DEPRECATED)
+#### 5. `_check_required_ports(args) -> bool`
+**경로**: `cli/commands/start.py:342-418`
+
+필수 포트 사용 가능 여부 확인, 충돌 시 동적 할당 시작합니다.
+
+**동작**:
+- 메인: 고정 포트 검증만 (443, 5001, 5432)
+- 워크트리: 충돌 감지 시 `_allocate_ports_dynamically()` 호출
+- 할당 포트를 `os.environ`과 인스턴스 변수에 반영
+
+#### 6. `_detect_and_stop_conflicts() -> bool` (DEPRECATED)
 **경로**: `cli/commands/start.py:179-225`
 
 **현재 상태**: 하위 호환성을 위해 유지, 실제로는 종료하지 않음.
@@ -244,15 +277,16 @@ return start_port + hash_offset
 ### 명령어 통합
 
 #### execute() (StartCommand)
-**경로**: `cli/commands/start.py:99-177`
+**경로**: `cli/commands/start.py:95-177`
 
 1. 배너 및 요구사항 확인
 2. 충돌 감지 (`_detect_and_stop_conflicts()`) - 정보 출력만
 3. 포트 확인 (`_check_required_ports()`)
-4. 워크트리 환경 변수 설정
+4. 워크트리 환경 변수 설정 (`_setup_worktree_environment()`)
 5. 기존 컨테이너 정리
 6. **워크트리면 DB 복사** (`copy_main_db_to_worktree()`)
 7. PostgreSQL, Flask, Nginx 시작
+8. 성공 메시지 및 접속 정보 출력
 
 ## 장점
 
@@ -400,11 +434,14 @@ python run.py start --sync-db  # 매 시작 시 메인 DB 동기화
 ## 관련 파일 및 라인 번호
 
 ### CLI 명령어 체계
-- `cli/commands/start.py:61-72` - 워크트리 환경 감지
-- `cli/commands/start.py:99-177` - execute() 메인 로직
+- `cli/commands/start.py:61-72` - _detect_worktree_environment()
+- `cli/commands/start.py:74-93` - _setup_worktree_ports()
+- `cli/commands/start.py:95-177` - execute() 메인 로직
 - `cli/commands/start.py:179-225` - _detect_and_stop_conflicts() (deprecated)
 - `cli/commands/start.py:227-249` - _calculate_hash_port()
-- `cli/commands/start.py:251-320` - _allocate_ports_dynamically()
+- `cli/commands/start.py:251-340` - _allocate_ports_dynamically()
+- `cli/commands/start.py:342-418` - _check_required_ports()
+- `cli/commands/start.py:453-467` - _setup_worktree_environment()
 
 ### 헬퍼 모듈
 - `cli/helpers/docker.py:325-387` - _find_main_project_root()
@@ -438,3 +475,6 @@ grep -n "_detect_worktree_environment" cli/commands/start.py
 grep -n "_detect_and_stop_conflicts" cli/commands/start.py
 ```
 
+---
+
+**Last Updated**: 2025-10-30 - 코드 기준 동기화 (execute() 라인, _setup_worktree_ports() 추가, 메서드 라인번호 정확화)

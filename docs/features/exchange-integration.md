@@ -68,7 +68,7 @@
 | `app/exchanges/unified_factory.py` | 통합 Factory (진입점) | `@FEAT:exchange-integration @COMP:exchange @TYPE:config` | `UnifiedExchangeFactory.create()`, `list_exchanges()`, `is_supported()` |
 | `app/exchanges/models.py` | 데이터 모델 | `@FEAT:exchange-integration @COMP:model @TYPE:boilerplate` | `Order`, `Position`, `Balance`, `MarketInfo` |
 | `app/exchanges/metadata.py` | 거래소 메타데이터 | `@FEAT:exchange-integration @COMP:model @TYPE:config` | 거래소별 특성, 수수료, 지원 마켓 |
-| `app/services/exchange.py` | Exchange Service Orchestrator | `@FEAT:exchange-integration @COMP:service @TYPE:orchestrator` | Rate Limit, Precision Cache, Client Management |
+| `app/services/exchange.py` | Exchange Service Orchestrator | `@FEAT:exchange-integration @COMP:service @TYPE:orchestrator` | RateLimiter (Rate Limit), ExchangeService (Adapter Management) |
 
 ### 통합 인터페이스 메서드
 
@@ -119,7 +119,7 @@ class Position:
 | **Binance** | Crypto | SPOT, FUTURES | ccxt | `app/exchanges/crypto/binance.py` | ✅ 구현됨 |
 | **Upbit** | Crypto | SPOT | ccxt | `app/exchanges/crypto/upbit.py` | ✅ 구현됨 |
 | **Bithumb** | Crypto | SPOT | ccxt | `app/exchanges/crypto/bithumb.py` | ✅ 구현됨 |
-| **Bybit** | Crypto | FUTURES | ccxt | `app/exchanges/crypto/bybit.py` | ❌ 계획 중 (향후) |
+| **Bybit** | Crypto | FUTURES | ccxt | `app/exchanges/crypto/bybit.py` | 📋 계획 중 (메타데이터만 정의됨) |
 | **한국투자증권(KIS)** | Securities | 국내주식, 해외주식, 선물옵션 | REST API (OAuth 2.0) | `app/exchanges/securities/korea_investment.py` | ✅ 구현됨 |
 
 ### Crypto 거래소 특징 (ccxt 기반)
@@ -132,7 +132,59 @@ class Position:
 - 거래소별 헤더/바디 커스터마이징 필요
 - 모의투자 지원 (`use_testnet=True`)
 
-## 6. 설계 결정 히스토리 (Design Decisions)
+## 6. Precision 시스템 (Price & Amount Rounding)
+
+**목적**: 거래소별로 다른 가격/수량 정밀도 규칙을 통일하여 주문 생성 실패를 방지합니다.
+
+### 6.1 두 가지 Precision 방식
+
+| 방식 | 설명 | 거래소 | 동작 |
+|------|------|--------|------|
+| **API_BASED** | API에서 정밀도 정보 제공 | Binance, Bybit | `load_markets()` 호출 시 시장 정보 포함 |
+| **RULE_BASED** | 고정 규칙 적용 | Upbit, Bithumb | 거래소별 수동 규칙 구현 |
+
+### 6.2 구현 구조
+
+```python
+# app/exchanges/models.py
+@dataclass
+class MarketInfo:
+    price_precision: int       # 가격 소수점 자리
+    amount_precision: int      # 수량 소수점 자리
+    precision_provider: PrecisionProvider  # NEW - Phase 1
+    # 실제 가격/수량 정밀도는 precision_provider 사용
+
+# app/exchanges/precision_providers.py
+class PrecisionProvider:
+    """기본 인터페이스"""
+    def get_tick_size(self) -> Decimal
+    def get_step_size(self) -> Decimal
+
+class ApiBasedPrecisionProvider(PrecisionProvider):
+    """Binance/Bybit: API 정보로 계산"""
+
+class RuleBasedPrecisionProvider(PrecisionProvider):
+    """Upbit/Bithumb: 고정 규칙으로 계산"""
+```
+
+### 6.3 사용 예시
+
+```python
+# Crypto 거래소에서 마켓 로드 시 자동 적용
+exchange = BinanceExchange(api_key, secret)
+markets = exchange.load_markets()
+# → MarketInfo 객체의 precision_provider가 자동 설정됨
+
+# 주문 생성 시 precision_provider 사용
+order = exchange.create_order('BTC/USDT', 'buy', 'limit',
+                               quantity=1.23456,  # 원본
+                               price=50123.456)   # 원본
+# → precision_provider가 자동으로 반올림 처리
+```
+
+---
+
+## 7. 설계 결정 히스토리 (Design Decisions)
 
 ### 1. Factory Pattern 선택 이유
 - **문제**: Trading Service가 거래소별 Adapter 생성 로직을 알아야 함 (결합도 증가)
@@ -148,9 +200,9 @@ class Position:
 - **해결**: `_normalize_order()`, `_normalize_position()` 메서드로 표준화
 - **예시**: ccxt는 timestamp를 ms로 반환, KIS는 초 단위 → 모두 초 단위로 통일
 
-## 7. Factory 패턴 상세 구현
+## 8. Factory 패턴 상세 구현
 
-### 7.1 Crypto 거래소 (플러그인 구조)
+### 8.1 Crypto 거래소 (플러그인 구조)
 ```python
 # app/exchanges/crypto/factory.py
 class CryptoExchangeFactory:
@@ -173,18 +225,18 @@ class CryptoExchangeFactory:
 - 플러그인 구조로 새 거래소 추가 시 클래스만 등록
 - Testnet 미지원 거래소 자동 제외
 
-### 7.2 Securities 거래소
+### 8.2 Securities 거래소
 ```python
 # app/exchanges/securities/factory.py
 class SecuritiesExchangeFactory:
-    @staticmethod
-    def create(account: Account):
-        exchange = account.exchange.upper()
+    _EXCHANGE_CLASSES = {
+        Exchange.KIS: KoreaInvestmentExchange,  # ✅ 구현됨
+        # Exchange.KIWOOM: KiwoomExchange,       # 향후 추가
+    }
 
-        if exchange == 'KIS':
-            from .korea_investment import KoreaInvestmentExchange
-            return KoreaInvestmentExchange(account)
-        # ... 향후 확장
+    @classmethod
+    def create(cls, account: Account) -> BaseSecuritiesExchange:
+        # Account.exchange 기반 적절한 어댑터 반환
 ```
 
 **특징**:
@@ -192,7 +244,7 @@ class SecuritiesExchangeFactory:
 - OAuth 토큰 자동 갱신
 - 증권사별 복잡한 헤더/인증 처리
 
-### 7.3 통합 진입점
+### 8.3 통합 진입점
 ```python
 # app/exchanges/unified_factory.py
 class UnifiedExchangeFactory:
@@ -213,7 +265,7 @@ class UnifiedExchangeFactory:
         # 거래소 지원 여부 확인
 ```
 
-## 8. 새 거래소 추가 가이드
+## 9. 새 거래소 추가 가이드
 
 ### Crypto 거래소 추가 (예: Bybit)
 
@@ -273,7 +325,7 @@ ExchangeMetadata.EXCHANGES['bybit'] = {
 pytest tests/test_exchanges.py::TestBybit -v
 ```
 
-## 9. 에러 처리
+## 10. 에러 처리
 
 ### Crypto 예외 계층
 ```python
@@ -320,7 +372,7 @@ except TokenExpiredError:
     # 재시도
 ```
 
-## 10. 유지보수 가이드
+## 11. 유지보수 가이드
 
 ### 주의사항
 1. **응답 정규화 필수**: 모든 Adapter는 표준 데이터 모델(Order, Position) 반환
@@ -346,7 +398,7 @@ grep -r "@FEAT:exchange-integration" --include="*.py" | grep "@TYPE:core"
 grep -r "BinanceAdapter\|BybitAdapter" --include="*.py"
 ```
 
-## 11. 관련 문서
+## 12. 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
 - [웹훅 주문 처리](./webhook-order-processing.md)
@@ -356,10 +408,12 @@ grep -r "BinanceAdapter\|BybitAdapter" --include="*.py"
 ---
 
 *Last Updated: 2025-10-30*
-*Status: Synced with Code*
+*Status: Synced with Code (Phase 1 - Precision System Added)*
 *Summary:*
-- ✅ Crypto 거래소 추가됨 (Binance, Upbit, Bithumb)
-- ✅ 통합 Factory 패턴 상세 구현 추가
-- ✅ Securities 거래소 구조 명확화 (KIS)
-- ✅ Bybit 계획 중으로 업데이트
-- ✅ 에러 처리 체계 분리 (Crypto vs Securities)
+- ✅ Precision System 문서화 (API_BASED vs RULE_BASED)
+- ✅ PrecisionProvider 구현 추가 (Phase 1 완료)
+- ✅ MarketInfo 데이터 모델 업데이트
+- ✅ RateLimiter 구현 추가
+- ✅ Bybit 상태 명확화 (메타데이터 정의됨)
+- ✅ SecurityFactory 플러그인 구조 명확화
+- ✅ UnifiedExchangeFactory 로깅 추가

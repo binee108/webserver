@@ -103,10 +103,19 @@ process_batch_trading_signal() 호출
 
 **주요 메서드**:
 - `record_execution(execution_data)`: 체결 기록 (중복 체크 포함)
+  - exchange_trade_id 기반 중복 체크 후 신규 또는 기존 레코드 반환
+  - Trade 레코드와 선택적 연결 가능
 - `get_executions_by_order(exchange_order_id)`: 주문별 체결 조회 (부분 체결 추적)
-- `get_executions_by_symbol(symbol, ...)`: 심볼별 체결 조회
+  - 부분 체결된 주문의 모든 체결 내역 시간순 정렬
+- `get_executions_by_symbol(symbol, ...)`: 심볼별 체결 조회 (필터링 옵션)
+  - 심볼, 계좌, 날짜 범위 필터 지원
 - `get_execution_stats(strategy_account_id, ...)`: 체결 통계 집계
+  - 총 체결건수, 거래량, 수수료, 평균가격, 심볼별/매매별/시장별 분포
+  - 매수/매도별 분류 (`_get_executions_by_side()`)
+  - 현물/선물 분류 (`_get_executions_by_market()`)
 - `sync_with_trades(strategy_account_id)`: 레거시 Trade 테이블 동기화
+  - 기존 Trade 데이터를 TradeExecution으로 마이그레이션
+  - 중복 체크 후 신규 레코드만 생성
 
 ### RecordManager (통합형)
 
@@ -360,4 +369,4 @@ grep -r "@FEAT:trade-execution" --include="*.py" | grep "@FEAT:order-tracking"
 ---
 
 *Last Updated: 2025-10-30*
-*Version: 2.1.0 (Parallel Processing Added)*
+*Version: 2.1.1 (Documentation Sync - Helper Methods Added)*

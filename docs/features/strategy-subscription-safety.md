@@ -635,23 +635,18 @@ WARNING: ⚠️ [Phase 5] StrategyAccount 123 비활성 상태 - MARKET 주문 �
 
 ---
 
-## 2025-10-30 동기화 요약
+## Known Issues
 
-### 변경 사항
+### Variable Shadowing in unsubscribe_from_strategy (strategy_service.py:817)
+**이상한 점**: `strategy_name` 변수를 StrategyAccount 삭제 직후에 lazy load하려고 시도함
+**이유**: 세션 분리 후 lazy load 방지를 위해 삭제 전에 strategy.name 캐싱 필수. 현재 코드는 hasattr/if 체크로 우회함.
+**참고**: 향후 strategy 관계를 명시적 lazy load로 정리 필요
 
-**Phase 4 (Backend Forced Liquidation)**
-- `force=false` 경로 명확화: SSE 정리 → 즉시 삭제 (Line 820-846)
-- `force=true` 경로 상세화: 7단계 cleanup (Line 848-961)
-- 실패 추적 구조 확장: `position_close_exception` 타입 추가
-- 파일 경로 정확화: `web_server/app/services/strategy_service.py:778-961`
+## Last Updated
 
-**Phase 5 (Webhook is_active Recheck)**
-- 라인 번호 정확화:
-  - LIMIT/STOP: Line 144-150 (구 158-174)
-  - MARKET: Line 210-216 (구 221-237)
-  - 배치: Line 1435-1441 (구 1482-1503)
-
-**Phase 1 (공개→비공개 전환)**
-- 파일 경로 정확화: `web_server/app/routes/strategies.py:274-431` (구 264-420)
-- 함수 위치 명시: `update_strategy()` at Line 215
-- 기능 태그 위치: Line 274
+**2025-10-30** - 코드 기준 전체 동기화 완료
+- Phase 1: 공개→비공개 전환 (routes/strategies.py:274-431)
+- Phase 2: 구독 상태 조회 API (routes/strategies.py:495-602)
+- Phase 3: 프론트엔드 경고 UI (상세 코드 경로 확인 필요)
+- Phase 4: 강제 청산 (service/strategy_service.py:778-961)
+- Phase 5: Webhook is_active 재확인 (trading/core.py 실행 경로)

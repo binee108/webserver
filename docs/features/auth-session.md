@@ -282,3 +282,8 @@ grep -r "session_token" --include="*.py"
 - [ ] 중복 사용자명/이메일 → 오류
 - [ ] 웹훅 토큰 자동 발급
 - [ ] 초기 상태 `is_active=False`
+
+---
+
+**Last Updated**: 2025-10-30
+**Status**: 코드 기준 최신 동기화 완료

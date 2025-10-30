@@ -5,7 +5,7 @@
 
 ## Core Components
 
-### 1. OrderBatchEvent Model (event_service.py:56-66)
+### 1. OrderBatchEvent Model (event_service.py:57-66)
 **Purpose**: 배치 이벤트 데이터 구조 정의
 ```python
 # @FEAT:event-sse @COMP:model @TYPE:core
@@ -22,30 +22,43 @@ class OrderBatchEvent:
 
 **필드 설명**:
 - `summaries`: order_type별 주문 생성/취소 카운트 (빈 항목은 필터링됨)
-- `strategy_id`, `user_id`: 대상 사용자/전략 식별
-- `timestamp`: ISO 8601 형식 (UTC)
+- `strategy_id`, `user_id`: 대상 사용자/전략 식별 (전략별 격리 모드)
+- `timestamp`: ISO 8601 형식 (UTC, 'Z' suffix 포함)
 
-### 2. emit_order_batch_event() (event_service.py:163+)
+### 2. emit_order_batch_event() (event_service.py:163-194)
 **Purpose**: 배치 이벤트를 전략별 SSE 클라이언트로 발송
-- 검증: strategy_id와 summaries 확인
-- Event Type: `order_batch_update`
-- 라우팅: (user_id, strategy_id) 키로 해당 클라이언트만 수신
 
-### 3. emit_order_batch_update() (event_emitter.py:475-517)
+**검증 로직**:
+- strategy_id 존재 여부 확인 (0이면 차단)
+- summaries 존재 여부 확인 (비어있으면 스킵)
+
+**Event 포맷**:
+- Type: `order_batch_update`
+- 라우팅: (user_id, strategy_id) 키로 전략별 격리
+- 로깅: `📦 Batch SSE sent` + summaries 개수
+
+### 3. emit_order_batch_update() (event_emitter.py:453-517)
 **Purpose**: 배치 결과 집계 및 SSE 발송
+
 **알고리즘**:
 ```
-1. O(n) 반복: order_created → created 카운트, order_cancelled → cancelled 카운트
-2. order_type별 그룹화 (defaultdict)
-3. 공백 필터링: created=0 AND cancelled=0 제외
-4. OrderBatchEvent 생성 및 발송
+1. batch_results 입력: success + order_type + event_type 필드
+2. O(n) 반복: event_type == 'order_created' → created++, 'order_cancelled' → cancelled++
+3. order_type별 grouping (defaultdict)
+4. 공백 필터링: created=0 AND cancelled=0 제외
+5. OrderBatchEvent 생성 후 emit_order_batch_event() 호출
 ```
 
-**호출 위치**:
-- `web_server/app/services/trading/core.py`: 배치 작업 완료 후
-- 메타데이터 추적: order_created 플래그로 생성 판별
+**입력 파라미터**:
+- `user_id`: 사용자 ID (SSE 라우팅용)
+- `strategy_id`: 전략 ID (검증용)
+- `batch_results`: order_type, event_type, success 필드 포함 딕셔너리 리스트
 
-### 4. 배치 이벤트 포맷
+**로깅**:
+- 성공: `Batch aggregation: {len(summaries)} order types`
+- 실패: `No successful orders - batch SSE skipped`
+
+### 4. 배치 이벤트 포맷 (event_service.py:185-191)
 ```json
 {
   "type": "order_batch_update",
@@ -59,6 +72,8 @@ class OrderBatchEvent:
 }
 ```
 
+**주목**: event_emitter에서 `datetime.utcnow().isoformat() + 'Z'`로 생성
+
 ## 성능 최적화
 
 | 메트릭 | 값 | 설명 |
@@ -71,10 +86,24 @@ class OrderBatchEvent:
 
 ## 통합 플로우
 
-1. **Order Creation/Cancellation**: 주문 상태 변경 시 메타데이터 기록
-2. **Batch Aggregation**: 배치 완료 후 emit_order_batch_update() 호출
-3. **SSE Emission**: OrderBatchEvent 발송 → 프론트엔드 수신
-4. **Toast Display** (frontend): createBatchToast()로 UI 업데이트
+```
+주문 생성/취소
+    ↓
+batch_results 리스트에 메타데이터 수집
+  (order_type, event_type='order_created|order_cancelled', success=True)
+    ↓
+EventEmitter.emit_order_batch_update(user_id, strategy_id, batch_results)
+    ↓
+order_type별 집계 + 공백 필터링
+    ↓
+OrderBatchEvent 생성 (strategy_id, user_id, summaries, timestamp)
+    ↓
+EventService.emit_order_batch_event(batch_event)
+    ↓
+_emit_to_user() → SSE 클라이언트에 이벤트 발송 (전략별 격리)
+    ↓
+프론트엔드 수신: type='order_batch_update'
+```
 
 ## 확장성 고려사항
 
@@ -88,4 +117,8 @@ class OrderBatchEvent:
 - 이벤트 버스 큐잉 (고빈도 배치 환경)
 
 ---
-*Updated: 2025-10-30 Code-Driven Documentation Sync*
+**Last Updated**: 2025-10-30 (Code-Driven Sync)
+- ✅ 라인 번호 최신화: event_service.py 57-194, event_emitter.py 453-517
+- ✅ 검증 로직 상세화: strategy_id, summaries 검증 추가
+- ✅ 알고리즘 정확화: 입력 파라미터, 로깅 메시지 추가
+- ✅ 통합 플로우 다이어그램화: 실제 코드 흐름 반영

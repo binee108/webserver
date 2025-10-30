@@ -44,9 +44,11 @@ ROI/승률/리스크 메트릭 계산 + StrategyPerformance 저장
 
 | 파일 | 역할 | 태그 | 핵심 메서드 |
 |------|------|------|-------------|
-| `services/analytics.py` | 통합 분석 서비스 | `@FEAT:analytics @COMP:service @TYPE:core` | `get_user_dashboard_stats()`, `get_capital_overview()`, `get_user_recent_trades()`, `auto_allocate_capital_for_account()` |
-| `services/performance_tracking.py` | 성과 추적 서비스 | `@FEAT:analytics @COMP:service @TYPE:core` | `calculate_daily_performance()`, `_calculate_metrics()`, `_calculate_risk_metrics()` |
+| `services/analytics.py` | 통합 분석 서비스 | `@FEAT:analytics @COMP:service @TYPE:core` | `get_user_dashboard_stats()`, `get_dashboard_summary()`, `get_strategy_performance()`, `get_position_analysis()`, `get_capital_overview()`, `get_pnl_history()`, `generate_monthly_report()`, `get_trading_statistics()`, `get_user_recent_trades()`, `auto_allocate_capital_for_account()`, `_calculate_risk_metrics()` |
+| `services/performance_tracking.py` | 성과 추적 서비스 | `@FEAT:analytics @COMP:service @TYPE:core` | `calculate_daily_performance()`, `get_performance_summary()`, `calculate_roi()`, `batch_calculate()`, `_calculate_metrics()`, `_calculate_risk_metrics()`, `_calculate_max_drawdown()` |
 | `routes/dashboard.py` | 대시보드 API | `@FEAT:analytics @COMP:route @TYPE:core` | `GET /api/dashboard/stats`, `GET /api/dashboard/recent-trades` |
+| `routes/strategies.py` | 전략 관리 API | `@FEAT:strategy-management @FEAT:analytics @COMP:route @TYPE:core` | 성과 분석 관련 라우트 |
+| `routes/admin.py` | 관리자 패널 | `@FEAT:admin-panel @FEAT:analytics @COMP:route @TYPE:core` | 관리자 대시보드 통계 |
 
 ### AnalyticsService 주요 메서드
 
@@ -68,11 +70,65 @@ def get_dashboard_summary(user_id: int) -> Dict[str, Any]
     """
 
 def get_recent_activities(user_id: int, limit: int = 10) -> Dict[str, Any]
-    """최근 활동 내역 (벌크 로딩)"""
+    """최근 활동 내역 (벌크 로딩)
+    - 최근 거래, 포지션 변동, 주문 체결 등 N+1 최적화
+    """
 
-# @FEAT:analytics @FEAT:capital-management @COMP:service @TYPE:core
+def get_strategy_performance(strategy_id: int, period_days: int = 30) -> Dict[str, Any]
+    """전략 성과 분석 (30일 기본)
+
+    반환값:
+    - metrics: {roi, win_rate, profit_factor, sharpe_ratio, sortino_ratio, volatility, mdd}
+    - daily_pnl_map: 일별 손익 맵
+    - trades: 기간별 거래 통계
+    - positions: 현재 포지션 분석
+    """
+
+def get_position_analysis(strategy_id: int) -> Dict[str, Any]
+    """포지션 상세 분석
+    - 활성 포지션 목록
+    - 포지션별 손익, 진입가, 현재가
+    - 헤징 상태, 리스크 지표
+    """
+
 def get_capital_overview(user_id: int) -> Dict[str, Any]
-    """자본 현황 개요 (계좌별 잔고)"""
+    """자본 현황 개요 (계좌별 잔고)
+
+    반환값:
+    - accounts: 계좌별 SPOT/FUTURES 자본 현황
+    - strategies: 전략별 할당 자본
+    - total_balance: 사용자 전체 자본
+    """
+
+def get_pnl_history(user_id: int, period_days: int = 30) -> Dict[str, Any]
+    """손익 이력 조회 (누적 손익 추적)
+
+    반환값:
+    - daily_pnl_map: 일별 손익 맵 (전략별 분리)
+    - cumulative_pnl: 누적 손익
+    - period_stats: 기간 통계
+    """
+
+def generate_monthly_report(user_id: int, year: int, month: int) -> Dict[str, Any]
+    """월간 리포트 생성
+
+    반환값:
+    - summary: 월간 성과 요약 (ROI, 승률, Sharpe 등)
+    - daily_breakdown: 일별 상세 데이터
+    - top_trades: 상위 거래
+    - strategy_performance: 전략별 성과
+    """
+
+def get_trading_statistics(user_id: int) -> Dict[str, Any]
+    """거래 통계 (전체 사용자 기준)
+
+    반환값:
+    - total_trades: 누적 거래 수
+    - win_count, lose_count: 수익/손실 거래
+    - avg_win, avg_loss: 평균 수익/손실
+    - best_trade, worst_trade: 최고/최저 거래
+    - consecutive_wins, consecutive_losses: 연속 수익/손실
+    """
 
 def auto_allocate_capital_for_account(account_id: int) -> bool
     """계좌의 모든 전략에 마켓 타입별 자동 자본 할당
@@ -81,6 +137,10 @@ def auto_allocate_capital_for_account(account_id: int) -> bool
     - SPOT 전략들의 weight 합계 계산 → SPOT 잔고 배분
     - FUTURES 전략들의 weight 합계 계산 → FUTURES 잔고 배분
     - 각 마켓 타입 내에서 weight 비율에 따라 자본 할당
+
+    **내부 함수**:
+    - _allocate_capital_by_market_type(): 마켓 타입별 할당
+    - _get_cached_daily_balance(): 일일 잔고 캐싱
     """
 
 def get_user_recent_trades(user_id: int, limit: int = 10, offset: int = 0) -> List[Dict]
@@ -103,6 +163,21 @@ def _bulk_load_orders(sa_ids: List[int]) -> List[OpenOrder]
 
 def _bulk_load_trades(sa_ids: List[int], start_date=None) -> List[Trade]
     """거래 벌크 로딩 (날짜 필터링 가능)"""
+
+def _calculate_risk_metrics(trades: List[Trade], allocated_capital: Decimal) -> Dict[str, float]
+    """리스크 메트릭 계산 (Sharpe, Sortino, MDD 등)"""
+
+def _calculate_timeframe_metrics(trades: List[Trade], allocated_capital: Decimal, period_days: int = 30) -> Dict[str, Any]
+    """기간별 메트릭 계산 (일별 수익률, 리스크 지표)"""
+
+def _calculate_sharpe_ratio(daily_returns: List[float]) -> float
+    """샤프 비율 계산 (√252 annualize 포함)"""
+
+def _calculate_sortino_ratio(daily_returns: List[float]) -> float
+    """소르티노 비율 계산 (하방 편차 기반)"""
+
+def _calculate_drawdown(trades: List[Trade], allocated_capital: Decimal) -> float
+    """최대낙폭(MDD) 계산"""
 ```
 
 ### PerformanceTrackingService 주요 메서드
@@ -137,6 +212,48 @@ def _calculate_risk_metrics(strategy_id: int, target_date: date) -> tuple
 
     반환: (sharpe_ratio, sortino_ratio, volatility)
     """
+
+def get_performance_summary(strategy_id: int, days_back: int = 30) -> Dict[str, Any]
+    """성과 요약 (최근 N일 기준)
+
+    반환값:
+    - total_roi: 누적 ROI (%)
+    - avg_daily_return: 평균 일별 수익률
+    - sharpe_ratio, sortino_ratio: 리스크 조정 수익률
+    - max_drawdown: 최대낙폭
+    - win_rate: 승률
+    - total_trades: 총 거래 수
+    """
+
+def calculate_roi(strategy_id: int, days: int = None) -> Dict[str, Any]
+    """ROI 계산 (기간 명시 가능)
+
+    반환값:
+    - total_capital: 전략 할당 자본
+    - cumulative_pnl: 누적 손익
+    - roi_percent: ROI (%)
+    - period_days: 계산 기간
+    """
+
+def batch_calculate(days_back: int = 7) -> Dict[str, Any]
+    """배치 성과 계산 (매일 자동 실행용)
+
+    프로세스:
+    1. 모든 활성 전략 조회
+    2. 최근 N일간 calculate_daily_performance() 실행
+    3. StrategyPerformance 테이블 일별 레코드 생성/업데이트
+
+    반환값:
+    - successful: 성공한 전략 수
+    - failed: 실패한 전략 수
+    - errors: 오류 상세 정보
+    """
+
+def _calculate_max_drawdown(performances: List[StrategyPerformance]) -> float
+    """최대낙폭 계산 (누적 손익 기반)"""
+
+def _get_empty_metrics() -> Dict[str, Any]
+    """초기 메트릭 (전략-계좌 없을 때)"""
 ```
 
 ## 5. 성과 지표 계산 공식
@@ -314,11 +431,11 @@ grep -rn "_bulk_load" web_server/app/services/analytics.py
 ---
 
 *Last Updated: 2025-10-30*
-*Version: 2.2.0 (Code Sync)*
+*Version: 2.3.0 (Code Sync - Full Method Coverage)*
 *Changes:*
-- *벌크 로딩 헬퍼 함수 추가 (_bulk_load_positions, _bulk_load_orders, _bulk_load_trades)*
-- *get_dashboard_summary() 메서드 추가 (요약 정보)*
-- *get_recent_activities() 메서드 추가 (최근 활동)*
-- *PerformanceTrackingService._calculate_metrics() 상세 로직 문서화*
-- *실행 플로우 개선 (API 라우트 명시)*
-- *AnalyticsService 메서드 시그니처 코드 기준 동기화*
+- *AnalyticsService 누락 메서드 추가 (get_strategy_performance, get_position_analysis, get_pnl_history, generate_monthly_report, get_trading_statistics)*
+- *PerformanceTrackingService 완전 문서화 (get_performance_summary, calculate_roi, batch_calculate, _calculate_max_drawdown)*
+- *자본 할당 로직 (auto_allocate_capital_for_account) 상세화*
+- *리스크 메트릭 계산 헬퍼 함수 추가 (_calculate_risk_metrics, _calculate_timeframe_metrics, _calculate_sharpe_ratio, _calculate_sortino_ratio, _calculate_drawdown)*
+- *컴포넌트 테이블 확장 (routes/strategies.py, routes/admin.py 추가)*
+- *메서드 시그니처 및 반환값 코드 기준 정확화*

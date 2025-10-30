@@ -13,8 +13,8 @@ Complete toast notification management system for app-wide notifications:
 ## Implementation Details
 
 ### Core Files
-- **Toast System**: `web_server/app/static/js/toast.js`
-- **Toast Integration**: `web_server/app/static/js/positions/realtime-openorders.js`
+- **Toast Core**: `web_server/app/static/js/toast.js` (Lines 1-172)
+- **Toast Integration**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 46-48, 1018-1229)
 - **CSS Styles**: `web_server/app/static/css/components.css` (Lines 1140-1238)
 
 ### Configuration Constants
@@ -102,10 +102,11 @@ _removeFIFOToast() {
    - `Toast-FIFO` FIFO removal complete (remaining count)
 
 **Race Condition Prevention** (toast.js Lines 94-113):
-- `pendingRemovals` counter tracks scheduled (but not yet executed) removals
-- Incremented before removal, decremented after timeout completes
+- `pendingRemovals` counter tracks scheduled (but not yet executed) removals in toast.js
+- Incremented before FIFO removal starts, decremented after immediate DOM removal completes
 - Formula: `if (currentCount + pendingRemovals >= MAX_TOASTS)` prevents violation
 - Example: If 9 toasts exist and 2 removals pending, prevents 11th toast creation
+- Note: Separate from realtime-openorders.js FIFO removal (uses `fade-out` animation + setTimeout)
 
 ## Batch Aggregation
 
@@ -121,17 +122,17 @@ createBatchToast(summaries) {
 **Location**: `web_server/app/static/js/positions/realtime-openorders.js` (Lines 1172-1229)
 
 **Parameters**:
-- `summaries`: Array of `{order_type, action, count}` or legacy `{order_type, created, cancelled}`
+- `summaries`: Array of `{order_type, created, cancelled}` format (legacy structure, currently used)
 
 **Features**:
-- Aggregates multiple events by `${order_type}_${action}` key
-- Creates individual toast per unique type (not combined format)
+- Aggregates events by `${order_type}_${action}` key (internal optimization)
+- Creates separate toast per order type based on `summaries` array
 - Toast type: 'warning' if `cancelled > 0`, else 'info'
-- Calls `_removeFIFOToast()` before each toast to enforce limit
+- Calls `_removeFIFOToast()` before each toast to enforce MAX_TOASTS limit
+- Each toast displays for 3 seconds with 📦 emoji prefix
 - DEBUG logging at 2 points:
   - `Toast-Batch` Batch aggregation started (summaryCount, uniqueTypes)
   - `Toast-Batch` Individual toast created (orderType, message, toastType)
-- Auto-removal after 3 seconds
 
 **Message Format**:
 ```
@@ -139,14 +140,13 @@ createBatchToast(summaries) {
 📦 STOP_LIMIT 주문 생성 2건
 ```
 
-**Example Usage** (Phase 3 integration):
+**Example Usage**:
 ```javascript
 manager.createBatchToast([
-    {order_type: 'LIMIT', action: 'created', count: 5},
-    {order_type: 'LIMIT', action: 'cancelled', count: 3},
-    {order_type: 'STOP_LIMIT', action: 'created', count: 2}
+    {order_type: 'LIMIT', created: 5, cancelled: 3},
+    {order_type: 'STOP_LIMIT', created: 2, cancelled: 0}
 ]);
-// Output: 2 toasts (one per type, each 3sec duration)
+// Output: 2 toasts ("📦 LIMIT..." and "📦 STOP_LIMIT..."), each 3sec duration
 ```
 
 ## Search Patterns
@@ -254,11 +254,34 @@ manager.createBatchToast([
 ## Dependencies
 
 - **toast.js**: `logger.js` (optional - degrades gracefully)
-- **realtime-openorders.js**: `toast.js`, `realtime-core.js`
+- **realtime-openorders.js**: `toast.js`, `logger.js`, `realtime-core.js`
 - **components.css**: No external dependencies
+
+## Additional Toast Features
+
+### Toast Close Button (Click Handler)
+**Location**: `web_server/app/static/js/toast.js` (Lines 131-149)
+
+- Close button removes toast with slide-out animation
+- Custom `removeToast()` function handles both close-button and auto-removal
+- 300ms slide-out animation before DOM removal
+- Null-safe removal via `toast.parentNode` check
+
+### Toast Auto-Removal
+- Configurable duration via `showToast(message, type, duration)` parameter
+- Duration in milliseconds (0 = no auto-removal)
+- Uses `setTimeout` for deferred removal after animation completes
+- Default auto-remove delays: 5000ms (basic), 3000ms (batch), 2000ms (handler calls)
+
+### Toast Security
+**Location**: `web_server/app/static/js/toast.js` (Lines 117-119)
+
+- HTML content from server-controlled SSE only (not user input)
+- innerHTML used safely: Server validates message in `core.py` before SSE emit
+- Message directly interpolated into toast HTML via `innerHTML`
 
 ---
 
 **Last Updated**: 2025-10-30
 **Status**: ✅ Production Ready
-**Document Size**: ~350 lines
+**Document Size**: ~385 lines

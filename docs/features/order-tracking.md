@@ -29,11 +29,10 @@
     ├─ OpenOrder 업데이트/삭제
     └─ process_order_fill() (FILLED 시)
     ↓
-[4] 체결 처리 (event_emitter를 통해)
-    ├─ Trade 기록 생성
-    ├─ StrategyPosition 업데이트
-    ├─ TradeExecution 상세 저장
-    └─ PendingOrder SSE 발송 (프론트엔드 실시간 업데이트)
+[4] 체결/실패 처리 (event_emitter를 통해)
+    ├─ 체결 시: Trade, TradeExecution 저장 + StrategyPosition 업데이트
+    ├─ 거부/만료/취소 시: FailedOrder 기록
+    └─ SSE 이벤트 발송 (프론트엔드 실시간 업데이트)
     ↓
 [5] 폴백 동기화 (10초 주기)
     └─ WebSocket 끊김 시 REST API로 전체 동기화
@@ -65,7 +64,8 @@
 - `@DEPS:exchange-integration` - 거래소 API 호출
 - `@DEPS:position-tracking` - 포지션 업데이트
 - `@DEPS:websocket-manager` - 실시간 연결 관리
-- `@DEPS:event-sse` - PendingOrder SSE 발송
+- `@DEPS:event-sse` - SSE 이벤트 발송
+- `@DEPS:failed-order-management` - 주문 실패 기록 (Phase 7+)
 
 ---
 
@@ -75,7 +75,7 @@
 |------|------|------|-------------|
 | `order_tracking.py` | 추적 세션 관리 및 폴백 동기화 | `@FEAT:order-tracking @COMP:service @TYPE:core` | `create_session()`, `sync_open_orders()` |
 | `order_fill_monitor.py` | WebSocket 이벤트 처리 및 DB 동기화 | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `on_order_update()` |
-| `event_emitter.py` | 체결 이벤트 처리 (Trade, SSE, FailedOrder) | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `emit_trade_event()`, `emit_pending_order_sse()` |
+| `event_emitter.py` | 체결 이벤트 처리 (Trade, SSE, FailedOrder) | `@FEAT:order-tracking @COMP:service @TYPE:integration` | `emit_trading_event()`, `emit_order_events_smart()`, `emit_order_cancelled_or_expired_event()` |
 | `websocket_manager.py` | 심볼별 구독 관리 (참조 카운트) | `@FEAT:order-tracking @COMP:service @TYPE:core` | `subscribe_symbol()`, `unsubscribe_symbol()` |
 | `binance_websocket.py` | Binance User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()` |
 | `bybit_websocket.py` | Bybit User Data Stream | `@FEAT:order-tracking @COMP:exchange @TYPE:integration` | `on_message()` |
@@ -137,6 +137,25 @@ class TradeExecution(db.Model):
 - `Trade`: 주문 단위 집계 (1 주문 → 1 Trade)
 - `TradeExecution`: 체결 단위 상세 (1 주문 → N TradeExecution)
 
+### FailedOrder (주문 실패 기록) - Phase 7 추가
+```python
+# @FEAT:order-tracking @COMP:model @TYPE:core
+class FailedOrder(db.Model):
+    exchange_order_id  # 거래소 주문 ID (또는 클라이언트 주문 ID)
+    strategy_id        # 전략 ID
+    symbol             # 심볼
+    side               # BUY/SELL
+    quantity           # 주문 수량
+    status             # 'rejected', 'expired', 'cancelled'
+    reason             # 실패 사유 (거래소 에러 메시지)
+    created_at         # 기록 시간
+```
+
+**생명주기**:
+- 생성: 주문 거부/만료/취소 감지 시 INSERT
+- 조회: 관리 페이지에서 실패 이력 확인
+- 삭제: 사용자가 관리 페이지에서 명시적 삭제
+
 ---
 
 ## 6. 실시간 추적 메커니즘
@@ -150,15 +169,20 @@ class TradeExecution(db.Model):
 BinanceWebSocket/BybitWebSocket.on_message()
     ↓ ORDER_TRADE_UPDATE 이벤트
 OrderFillMonitor.on_order_update()
-    ├─ [1] 심볼 포맷 정규화 (BTCUSDT → BTC/USDT)
+    ├─ [1] 심볼 포맷 정규화 (거래소별)
+    │      ├─ Binance: BTCUSDT → BTC/USDT
+    │      ├─ Bybit: BTC/USDT → BTC/USDT (유지)
+    │      ├─ Upbit: BTC-KRW → BTC/KRW
+    │      └─ Bithumb: BTC → BTC/KRW (기본값)
     ├─ [2] REST API 검증 (5초 타임아웃, 신뢰도 확보)
     ├─ [3] OpenOrder 업데이트 (filled_quantity)
     │      또는 삭제 (FILLED/CANCELLED)
-    └─ [4] event_emitter.emit_trade_event() (체결 시)
+    └─ [4] event_emitter.emit_order_events_smart() (체결 시)
         ├─ Trade 생성
         ├─ StrategyPosition 업데이트
         ├─ TradeExecution 저장
-        └─ PendingOrder SSE 발송 (프론트엔드)
+        ├─ FailedOrder 기록 (거부/만료 시)
+        └─ SSE 이벤트 발송 (프론트엔드)
 ```
 
 **특징**:
@@ -377,4 +401,4 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:integration"
 ---
 
 *Last Updated: 2025-10-30*
-*Version: 2.1.0 (Phase 4-7 완전 동기화)*
+*Version: 2.2.0 (FailedOrder, 심볼 변환, event_emitter 메서드 동기화)*

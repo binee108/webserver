@@ -652,6 +652,25 @@ done
 
 ---
 
+## 구현 통계
+
+### 태그 적용 현황 (최신)
+- **백그라운드 함수**: 14개 (데코레이터 11개 + 직접 호출 3개)
+- **BackgroundJobTag**: 16개 태그 상수 (상수 정의만, JOB_TAG_MAP 제외)
+- **JOB_TAG_MAP**: 13개 키 (scheduler job_id → tag 매핑)
+- **queue_rebalancer.py**: 24개 로그 라인 태그 적용
+
+### 파일별 구현 현황
+| 파일 | 태그 | 라인 | 상태 |
+|------|------|------|------|
+| `app/constants.py` | 정의 | 988-1044 | ✅ 16개 태그 + 13개 매핑 |
+| `app/utils/logging.py` | 유틸 | 1-211 | ✅ 2개 함수 + 1개 데코레이터 |
+| `app/__init__.py` | 구현 | 73-1506 | ✅ 14개 함수 + import |
+| `app/services/background/queue_rebalancer.py` | 로깅 | 다중 | ✅ 24개 로그 |
+| `app/routes/admin.py` | 파싱 | 1481-1551 | ✅ 정규식 + 필터 |
+
+---
+
 ## 검색 명령어
 
 ### 코드 검색
@@ -723,3 +742,14 @@ echo "Phase 4 (admin.py): $(grep -c 'JOB_TAG_MAP' web_server/app/routes/admin.py
 echo "=== JOB_TAG_MAP Keys Count ==="
 grep -c "':.*BackgroundJobTag\." web_server/app/constants.py  # expect 13
 ```
+
+---
+
+**Last Updated**: 2025-10-30
+**Synchronized with Code**: ✅ All verified against source files
+
+**동기화 결과**:
+- `app/constants.py`: BackgroundJobTag (Line 988-1016), JOB_TAG_MAP (Line 1024-1044) 검증 ✅
+- `app/utils/logging.py`: TaggedLogger, tag_background_logger, format_background_log 검증 ✅
+- `app/__init__.py`: 14개 백그라운드 함수 + 데코레이터/직접 호출 방식 검증 ✅
+- 문서 구현 통계 추가: 파일별 태그 적용 현황 테이블 추가

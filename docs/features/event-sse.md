@@ -92,7 +92,7 @@ GeneratorExit 예외 → event_service.remove_client(user_id, strategy_id, clien
 
 | 파일 | 역할 | 태그 | 핵심 메서드 |
 |------|------|------|-------------|
-| `event_service.py` | SSE 연결 관리 및 이벤트 발송 | `@FEAT:event-sse @COMP:service @TYPE:core` | `get_event_stream()`, `emit_order_event()`, `emit_position_event()`, `emit_order_batch_event()`, `add_client()`, `remove_client()`, `cleanup_strategy_clients()`, `disconnect_client()` |
+| `event_service.py` | SSE 연결 관리 및 이벤트 발송 | `@FEAT:event-sse @COMP:service @TYPE:core` | `get_event_stream()`, `emit_order_event()`, `emit_position_event()`, `emit_order_batch_event()`, `add_client()`, `remove_client()`, `_emit_to_user()`, `_format_sse_message()`, `_periodic_cleanup()`, `get_statistics()` |
 | `event_emitter.py` | 거래 로직 이벤트 발행 헬퍼 | `@FEAT:event-sse @COMP:service @TYPE:helper` | `emit_trading_event()`, `emit_order_events_smart()`, `emit_position_event()`, `emit_order_cancelled_event()`, `emit_order_batch_update()`, `emit_order_cancelled_or_expired_event()` |
 | `positions.py` | SSE 엔드포인트 | `@FEAT:event-sse @COMP:route @TYPE:core` | `event_stream()`, `check_auth()`, `event_stats()` |
 
@@ -439,7 +439,16 @@ emitter.emit_order_batch_update(
 
 ---
 
-## 10. 트러블슈팅 (Troubleshooting)
+## 10. 문제 해결 (Known Issues)
+
+### Strategy 검증 강화 (event_service.py:119, 143)
+**이상한 점**: `emit_order_event()`, `emit_position_event()`에서 strategy_id를 두 번 검증 (이벤트 메서드 + `_emit_to_user()`)
+**이유**: 방어적 프로그래밍 - 첫 번째 검증은 빠른 실패, 두 번째는 race condition 방지
+**참고**: `_emit_to_user()`에서 Strategy 활성화 여부도 확인하므로 이벤트 발송 전 조기 종료 효율적
+
+---
+
+## 11. 트러블슈팅 (Troubleshooting)
 
 | 문제 | 원인 | 해결 방법 |
 |------|------|-----------|
@@ -459,7 +468,7 @@ emitter.emit_order_batch_update(
 
 ---
 
-## 11. 유지보수 가이드 (Maintenance Guide)
+## 12. 유지보수 가이드 (Maintenance Guide)
 
 ### 주의사항
 - `event_service.emit_*()` 호출 시 반드시 `user_id` + `strategy_id` 전달 필요 (전략별 격리 보장)
@@ -493,7 +502,26 @@ curl -k -X POST http://localhost:5000/api/webhook \
 
 ---
 
-## 12. 관련 파일 (Related Files)
+## 12. 메서드 상세 (Method Details)
+
+### EventService 메서드
+- **`get_event_stream(user_id, strategy_id)`**: SSE 스트림 생성, Queue 기반 클라이언트 관리, 10초 heartbeat
+- **`emit_order_event(order_event)`**: 주문 이벤트 발송, strategy_id 검증 (None/0 차단)
+- **`emit_position_event(position_event)`**: 포지션 이벤트 발송, strategy_id 검증
+- **`emit_order_batch_event(batch_event)`**: 배치 주문 이벤트 발송 (Phase 2)
+- **`_emit_to_user(user_id, strategy_id, event_data)`**: 핵심 발송 로직, Strategy 활성화 여부 검증
+- **`_format_sse_message(event_dict)`**: 이벤트를 SSE 포맷으로 변환 (`event: type\ndata: json\n\n`)
+- **`_periodic_cleanup()`**: 60초마다 죽은 클라이언트 및 빈 큐 정리
+- **`get_statistics()`**: 관리자용 연결 통계 (활성 클라이언트 수, 이벤트 큐 크기)
+
+### EventEmitter 메서드
+- **`emit_trading_event(event_type, strategy, symbol, side, quantity, order_result)`**: 주문 이벤트 발송, account_id 검증
+- **`emit_order_events_smart(strategy, symbol, side, quantity, order_result)`**: 주문 상태에 따라 자동 이벤트 타입 선택
+- **`emit_order_batch_update(user_id, strategy_id, batch_results)`**: 배치 주문 결과 집계 후 발송
+
+---
+
+## 14. 관련 파일 (Related Files)
 
 **핵심 파일**:
 - `web_server/app/services/event_service.py` - SSE 이벤트 서비스 (Level 1)
@@ -521,7 +549,7 @@ grep -r "emit_order_event\|emit_position_event" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-30*
+*Last Updated: 2025-10-30 (코드 동기화 - 메서드 상세 추가)*
 *Version: 3.0.0 (전략별 격리 + 배치 SSE)*
 *Maintainer: documentation-manager*
 *Changes:*

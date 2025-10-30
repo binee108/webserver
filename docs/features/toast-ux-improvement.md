@@ -52,14 +52,19 @@ PendingOrder(내부 큐)의 토스트 필터링 및 OpenOrder(거래소 주문) 
 
 **파일**: `web_server/app/services/trading/core.py`
 
-**추가 코드** (Line 742-759) - 단일/다중 주문 배치 SSE 발송:
+**구현 위치**: `process_trading_signal()` 메서드 (Line 742-759)
+
+**동작 방식**:
+- `execute_trade()` 호출 결과 (successful_trades 포함)
+- 메타데이터 자동 포함 조건: `_execute_trades_parallel()` → 모든 타입의 거래 주문
+- 필터링: `result.get('order_type')` + `result.get('event_type')` 기반
+
+**구현 코드**:
 ```python
-# 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
 # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
+# 단일/다중 주문 배치 SSE 발송 (배치 주문과 통일)
 if len(successful_trades) > 0 and self.service.event_emitter:
     # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
-    # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
-    # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
     batch_results = [
         result for result in results
         if result.get('success') and result.get('order_type') and result.get('event_type')
@@ -73,6 +78,10 @@ if len(successful_trades) > 0 and self.service.event_emitter:
             batch_results=batch_results
         )
 ```
+
+**메타데이터 생성 위치**: `_execute_trades_parallel()` (Line 916-957)
+- 모든 주문 타입이 `execute_trade()` 호출
+- 결과에 `order_type`, `event_type` 자동 포함 (인코딩됨)
 
 #### Frontend - API 응답 토스트 제거
 
@@ -154,33 +163,43 @@ order_batch_update SSE 발송
 
 ## 기술 세부사항
 
-### 메타데이터 소스
+### 메타데이터 생성 흐름
 
-**`_execute_trades_parallel()` (core.py Line 841-842)**:
+**단일/다중 주문 경로**: `process_trading_signal()` → `_execute_trades_parallel()` → `execute_trade()`
+
+**메타데이터 포함 여부**:
+- `_execute_trades_parallel()` (Line 937-941): ThreadPoolExecutor 결과를 그대로 append
+- `execute_trade()` (Line 362): `order_type` 포함하여 반환
+- `event_type`: **실제 코드에는 없음** (과거 설계에서 누락)
+
+**실제 필터링 동작**:
 ```python
-# LIMIT/STOP 주문 결과에 메타데이터 자동 포함
-result['order_type'] = 'LIMIT'  # 또는 'STOP_LIMIT'
-result['event_type'] = 'order_created'
-```
-
-**MARKET 주문**:
-- `order_type`, `event_type` 미포함
-- 필터링 로직에서 자동 제외됨
-
-### 필터링 로직
-
-**Phase 2 필터링** (Line 748-751):
-```python
+# Line 748-751: execute_trade() 반환값을 필터링
 batch_results = [
     result for result in results
     if result.get('success') and result.get('order_type') and result.get('event_type')
 ]
 ```
 
-**동작**:
-- `result.get('success')`: 성공한 주문만
-- `result.get('order_type')`: 주문 타입 존재 여부
-- `result.get('event_type')`: 이벤트 타입 존재 여부
+- `result.get('order_type')`: O (execute_trade 반환값에 포함)
+- `result.get('event_type')`: X (반환값에 없음)
+- **결과**: 필터링 조건 미충족 → batch_results 항상 공집합
+
+### 필터링 로직 분석
+
+**배치 주문 경로** (정상 동작):
+- `_execute_account_batch()` (Line 1596-1597): `order_type`, `event_type` 명시적 추가
+- 필터링: 메타데이터 완전함 → batch_results 포함
+- SSE: `emit_order_batch_update()` 발송됨 ✅
+
+**단일/다중 주문 경로** (미동작):
+- `execute_trade()` (Line 362): `order_type`만 반환
+- 필터링 (Line 748-751): `event_type` 미충족 → batch_results 공집합
+- SSE: 발송 안됨 ✗
+
+**근본 원인**: event_type 필드 누락
+- 설계: 모든 경로에서 메타데이터 추가 의도
+- 실제: _execute_account_batch에서만 추가됨
 
 ---
 
@@ -255,10 +274,25 @@ grep -n "@FEAT:toast-ux-improvement" web_server/app/static/js/positions/realtime
 
 ## Known Issues & Design Decisions
 
+### 단일/다중 주문의 배치 SSE 미동작 (Phase 2 불완전 구현)
+**상태**: 미동작 (event_type 필드 누락)
+
+**증상**:
+- 단일 주문(process_trading_signal) → batch_results 항상 공집합
+- SSE 발송 안됨 → 토스트 2개 표시 (개별 + API 응답)
+
+**코드 분석**:
+- `execute_trade()` 반환: `order_type` O, `event_type` X
+- 필터링 조건 (Line 750): `result.get('event_type')` 미충족
+- 배치 경로 (_execute_account_batch): event_type 명시 추가 (1596-1597)
+
+**수정 필요**:
+- `_execute_trades_parallel()` 또는 `execute_trade()`에서 event_type 추가
+- 또는 필터링 조건 완화 (event_type 제거)
+
 ### 의도적 메타데이터 제외 (MARKET 주문)
 - **이유**: MARKET 주문은 즉시 체결되므로 order_batch_update SSE 발송 불필요
-- **구현**: `_execute_trades_parallel()`에서 MARKET 결과에 메타데이터 미포함
-- **효과**: 필터링 로직에서 자연스럽게 제외
+- **구현**: 현재 방식이 우연히 이를 달성 (event_type 미포함)
 
 ---
 
@@ -285,3 +319,4 @@ Frontend: SSE 이벤트 리스너 → showOrderNotification() → 토스트 표�
 
 *Phase 1 완료: 2025-10-25*
 *Phase 2 완료: 2025-10-26*
+*최종 문서 검증: 2025-10-30*

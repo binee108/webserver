@@ -41,14 +41,14 @@ position_manager.process_order_fill()
 Database Update (StrategyPosition, Trade, TradeExecution)
 ```
 
-### 백그라운드 미실현 손익 계산 (307초 주기, 약 5분)
+### 백그라운드 미실현 손익 계산 (APScheduler - 10초 주기)
 
 ```
-APScheduler (307초 간격, 소수 주기)
+APScheduler (10초 간격)
           ↓
 position_manager.calculate_unrealized_pnl()
   1. 활성 포지션 조회 (quantity != 0)
-  2. price_cache에서 현재가 조회
+  2. exchange_service.get_current_price()로 현재가 조회
   3. 미실현 손익 계산:
      - 롱: (현재가 - 진입가) × 수량
      - 숏: (진입가 - 현재가) × |수량|
@@ -172,8 +172,13 @@ realized_pnl = closing_qty * (진입가 - 청산가)
 
 **저장 위치**: `Trade.pnl`, `TradeExecution.realized_pnl`
 
+**계산 로직** (`position_manager.py:_update_position()`):
+- 청산 수량(closing_qty) = min(|현재수량|, |거래수량|)
+- 포지션 반전 시에도 부분 청산 실현 손익 먼저 계산, 초과분은 새 포지션으로 기록
+
 ### 미실현 손익 (Unrealized PnL)
-**계산 시점**: 백그라운드 작업 (10초 주기)
+**계산 시점**: 백그라운드 작업 (APScheduler - 10초 주기)
+**호출 경로**: `TradingService.calculate_unrealized_pnl()` → `PositionManager.calculate_unrealized_pnl()`
 
 ```python
 # 롱 포지션
@@ -183,7 +188,10 @@ unrealized_pnl = quantity * (현재가 - 진입가)
 unrealized_pnl = abs(quantity) * (진입가 - 현재가)
 ```
 
-**저장 위치**: `StrategyPosition.unrealized_pnl` (백그라운드 작업으로 갱신)
+**저장 정책**:
+- 현재는 DB에 저장하지 않음 (계산만 수행)
+- 향후 `StrategyPosition.unrealized_pnl` 필드 추가 시 백그라운드에서 갱신할 예정
+- 현재가 조회 실패 시 DEBUG 로그만 기록하고 계속 진행
 
 ---
 
@@ -293,6 +301,6 @@ grep -r "@FEAT:webhook-order" --include="*.py" | grep "@FEAT:position-tracking"
 
 ---
 
-*Last Updated: 2025-10-11*
-*Lines: ~290 (75% reduced from 1178)*
-*Version: 2.0.0*
+*Last Updated: 2025-10-30*
+*Lines: ~310 (더 정확한 실시간 주기 및 호출 경로 추가)*
+*Version: 2.1.0*

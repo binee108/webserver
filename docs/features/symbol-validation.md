@@ -345,11 +345,14 @@ grep -rn "ExchangeMetadata" web_server/app/services/symbol_validator.py
 ### 주요 파일 및 함수
 - **핵심 서비스**:
   - `web_server/app/services/symbol_validator.py`
-    - `SymbolValidator.load_initial_symbols()` (L65) - 초기 심볼 로드
-    - `SymbolValidator._refresh_all_symbols()` (L155) - 백그라운드 갱신
-    - `SymbolValidator.validate_order_params()` (L236) - 주문 검증
-    - `SymbolValidator._validate_and_adjust_quantity()` (L315) - 수량 조정
-    - `SymbolValidator._validate_and_adjust_price()` (L368) - 가격 조정
+    - `SymbolValidator.load_initial_symbols()` (L65) - 초기 심볼 로드 (Public API)
+    - `SymbolValidator.refresh_symbols()` (L57) - Flask context 래퍼 (APScheduler용)
+    - `SymbolValidator._refresh_all_symbols()` (L155) - 백그라운드 갱신 (DB 계좌 사용)
+    - `SymbolValidator.validate_order_params()` (L236) - 주문 파라미터 검증
+    - `SymbolValidator._validate_and_adjust_quantity()` (L315) - 수량 검증 및 조정
+    - `SymbolValidator._validate_and_adjust_price()` (L368) - 가격 검증 및 조정
+    - `SymbolValidator.get_market_info()` (L228) - 캐시 조회 헬퍼
+    - `SymbolValidator.get_cache_stats()` (L419) - 캐시 통계 조회
 
 - **데이터 모델**:
   - `web_server/app/exchanges/models.py` - MarketInfo 클래스
@@ -431,15 +434,27 @@ grep -rn "ExchangeMetadata" web_server/app/services/symbol_validator.py
 ```python
 # 캐시 상태 확인
 stats = symbol_validator.get_cache_stats()
-print(stats['total_symbols'])      # 0이면 초기화 실패
-print(stats['is_initialized'])     # False면 초기화 안됨
+# 반환값: {
+#   'total_symbols': 1234,           # 캐시된 심볼 개수
+#   'is_initialized': True,          # 초기화 완료 여부
+#   'cache_keys': [...]              # 캐시 키 샘플 (처음 10개)
+# }
+
+if stats['total_symbols'] == 0:
+    print("❌ 캐시가 비어있음 - 초기화 실패")
+
+if not stats['is_initialized']:
+    print("❌ 초기화되지 않음 - 서비스 미시작")
 
 # 수동 초기화
 symbol_validator.load_initial_symbols()
 
 # 특정 심볼 확인
 market_info = symbol_validator.get_market_info('UPBIT', 'BTC/KRW', 'SPOT')
-print(market_info)
+if market_info:
+    print(f"min_qty: {market_info.min_qty}, min_notional: {market_info.min_notional}")
+else:
+    print("심볼 정보 없음")
 ```
 
 ### 2. 백그라운드 갱신 실패
@@ -506,6 +521,6 @@ print(metadata.get('supported_markets'))
 
 ---
 
-*Last Updated: 2025-10-13*
-*Version: 2.2.0 (Metadata-Driven Loading)*
-*Changes: CryptoExchangeFactory 기반 동적 로딩, 메타데이터 기반 market_type 필터링, Upbit SPOT 지원 추가, 하드코딩 제거*
+*Last Updated: 2025-10-30*
+*Version: 2.2.1 (Documentation Sync)*
+*Changes: refresh_symbols() 메서드 추가, get_cache_stats() 메서드 문서화, 캐시 통계 반환값 명확화, 문제 해결 섹션 개선*

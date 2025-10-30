@@ -14,13 +14,15 @@ Individual toast notifications for single order events (order_created, order_fil
 **Purpose**: Handle SSE `order_update` events with PendingOrder filtering
 
 **Workflow**:
-1. Flatten account structure (`data.account.name` → `data.account_name`)
-2. **Detect PendingOrder** via status or order_id prefix (`p_`)
+1. Flatten account structure (`data.account.name` → `data.account_name`, `data.account.exchange` → `data.exchange`)
+2. **Detect PendingOrder** via dual checks: `status === 'PENDING_QUEUE'` OR `order_id.startsWith('p_')`
 3. **Set source field** (`pending_order` | `open_order`)
-4. **Filter by event type**:
-   - `order_created`: Show toast only if `data.source === 'open_order'`
-   - `order_filled`/`order_cancelled`: Show toast only if `data.source === 'open_order'`
+4. **Validate event type** (must exist, else return early)
+5. **Filter by event type**:
+   - `order_created`: Show toast + upsert order only if `data.source === 'open_order'`
+   - `order_filled`/`order_cancelled`: Show toast + remove order only if `data.source === 'open_order'`
    - `order_updated`: Always process (no toast)
+6. **Warn on market orders** (unexpected in open orders table)
 
 **Why PendingOrder filtering**: Single limit order creates 3 events in 1 second:
 - PendingOrder created → filtered out
@@ -31,17 +33,24 @@ Individual toast notifications for single order events (order_created, order_fil
 **Purpose**: Display individual toast with order type and action
 
 **Toast Format**: `"📦 {ORDER_TYPE} 주문 {ACTION} 1건"`
+- Maps event types: `order_created` → 생성, `order_filled` → 체결, `order_cancelled` → 취소, `order_updated` → 업데이트
 - Example: "📦 LIMIT 주문 생성 1건", "📦 STOP_LIMIT 주문 취소 1건"
 
-**Toast Types**:
+**Toast Color Types**:
 - `order_filled` → info (blue)
 - `order_cancelled` → warning (orange)
 - `order_created` → info (blue)
+- Others → info (default)
 
-**FIFO Management** (Lines 1018-1050):
+**Process Flow**:
+1. Call `_removeFIFOToast()` before displaying new toast (enforce max queue)
+2. Call `window.showToast(message, toastType, 2000)` to render (2s timeout)
+
+**FIFO Management** via `_removeFIFOToast()` (Lines 1018-1053):
 - Max 10 toasts (`MAX_TOASTS = 10`)
-- Oldest toast auto-removed when limit exceeded
+- When queue reaches limit, remove oldest toast first
 - Fade-out animation (300ms via `TOAST_FADE_DURATION_MS`)
+- Debug logs: FIFO check state, removal action, remaining count
 
 #### Related: `handleBatchOrderUpdate(data)` (Lines 268-283)
 **Purpose**: Handle batch order SSE events separately from individual orders
@@ -49,29 +58,32 @@ Individual toast notifications for single order events (order_created, order_fil
 
 ### PendingOrder Filtering Logic
 
-**Problem**: Single limit order triggers 3 notifications in ~1 second:
-1. PendingOrder created (내부 큐 상태)
-2. PendingOrder deleted (제거 됨)
-3. OpenOrder created (거래소 제출 완료) ✓
+**Problem**: Single limit order triggers 3 SSE events in ~1 second:
+1. `order_created` (PendingOrder state - internal queue) → **filtered**
+2. `order_updated` (PendingOrder state - internal queue) → **no toast**
+3. `order_created` (OpenOrder state - exchange submission complete) → **1 toast shown**
 
-**Solution**: Filter at `handleOrderUpdate()` level using `data.source` field
+**Solution**: Filter at `handleOrderUpdate()` level by detecting PendingOrder via `data.status` and `data.order_id` prefix
 
 **Implementation** (Lines 189-231):
 ```javascript
-// Detect PendingOrder
+// Dual detection: status field OR order_id prefix
 const isPendingOrder = data.status === 'PENDING_QUEUE' ||
                       (data.order_id && data.order_id.startsWith('p_'));
 
-// Add source field
+// Mark source for downstream filtering
 data.source = isPendingOrder ? 'pending_order' : 'open_order';
 
-// Show toast only for open_order
+// Toast shown only for OpenOrder (exchange orders)
+// PendingOrder is internal queue - no user notification
 if (data.source === 'open_order') {
     this.showOrderNotification(eventType, data);
 }
 ```
 
 **Result**: 3 events → 1 toast (최종 거래소 주문만 표시)
+
+**Why Dual Checks**: Status field is primary (reliable), order_id prefix is fallback (handles format variations)
 
 ## Related Features
 - **batch-sse**: Batch order toast notifications for bulk operations (complementary)
@@ -117,7 +129,7 @@ if (data.source === 'open_order') {
 
 ## Known Issues
 
-**Order Status Transition** (Lines 189-199): Detecting PendingOrder via dual checks (`status === 'PENDING_QUEUE'` AND `order_id.startsWith('p_')`) ensures robustness across API response variations. If backend changes order ID format, code remains stable via status field fallback.
+**Dual Detection Fallback** (Lines 190-191): PendingOrder detection uses status field (primary) OR order_id prefix (fallback). This redundancy prevents notification loss if backend changes order ID format or status field encoding.
 
 ---
 

@@ -57,9 +57,9 @@ JSON 응답 or 페이지 리다이렉트
 
 | 파일 | 역할 | 태그 | 핵심 메서드 |
 |------|------|------|-------------|
-| `routes/admin.py` | 관리자 페이지 및 API | `@FEAT:admin-panel @COMP:route @TYPE:core` | `admin_required()`, `admin_verification_required()` |
+| `routes/admin.py` | 관리자 페이지 및 API | `@FEAT:admin-panel @COMP:route @TYPE:core` | `admin_required()`, `admin_verification_required()`, `get_job_logs()` |
 | `templates/admin/*.html` | 관리자 UI (6개 템플릿) | `@FEAT:admin-panel @COMP:template @TYPE:core` | users.html, system.html, edit_user.html, change_admin_password.html, change_user_password.html, user_telegram_settings.html ⚠️ **order_tracking.html 미구현** |
-| `models.py` | User, SystemSetting 모델 | `@FEAT:admin-panel @COMP:model @TYPE:core` | User.is_admin, SystemSetting |
+| `models.py` | User, SystemSetting 모델 | `@FEAT:admin-panel @COMP:model @TYPE:core` | User.is_admin, SystemSetting, User.telegram_id, User.telegram_bot_token |
 
 **검색 예시**:
 ```bash
@@ -156,18 +156,13 @@ POST /admin/verify-session
 
 ### 5.6 대기열 시스템 관리
 
-**대기열 현황**: `GET /admin/api/queue-status`
-- 계좌별 심볼별 활성/대기 주문 수, 제한값
-- 전체 활성/대기 주문 수
+**권한**: `@admin_required` (조회), 수동 재정렬은 코드에서 `@admin_required`로 보호됨
 
-**수동 재정렬**: `POST /admin/api/queue-rebalance`
-- 특정 계좌/심볼의 대기열 재정렬 (`account_id`, `symbol` 필수)
-- 응답: 취소/실행 주문 수, 재정렬 메시지
-
-**메트릭**: `GET /admin/api/metrics`
-- 재정렬 메트릭 (총 횟수, 취소/실행 수, 평균 소요 시간)
-- 대기열 통계 (총 대기 주문, 심볼별 분포)
-- WebSocket 통계 (연결 수, 구독 수, 고유 심볼 수)
+| 기능 | 엔드포인트 | 메서드 | 파라미터 | 설명 |
+|------|-----------|--------|---------|------|
+| 대기열 현황 | `/admin/api/queue-status` | GET | - | 계좌별/심볼별 활성/대기 주문, 제한값 조회 |
+| 수동 재정렬 | `/admin/api/queue-rebalance` | POST | `account_id`, `symbol` | 특정 대기열 재정렬 요청 |
+| 메트릭 조회 | `/admin/api/metrics` | GET | - | 재정렬/대기열/WebSocket 통계 |
 
 ---
 
@@ -248,9 +243,9 @@ POST /admin/verify-session
 - **조작** (`@admin_verification_required`): 주문 동기화, 성과 계산, 세션 정리
 
 ### 대기열 API (GET/POST, @admin_required)
-- `GET /admin/api/queue-status` - 대기열 현황 (계좌별/심볼별 활성/대기 주문)
-- `POST /admin/api/queue-rebalance` - 수동 재정렬 (`account_id`, `symbol` 필수)
-- `GET /admin/api/metrics` - 메트릭 조회 (재정렬 통계, 대기열 통계, WebSocket 통계)
+- `GET /admin/api/queue-status` - 대기열 현황 조회 (계좌별/심볼별 활성/대기 주문, 제한값)
+- `POST /admin/api/queue-rebalance` - 수동 재정렬 (`account_id`, `symbol` 필수, 취소/실행 주문 수 응답)
+- `GET /admin/api/metrics` - 메트릭 조회 (재정렬 통계, 대기열 분포, WebSocket 연결 현황)
 
 ### 백그라운드 로그 API (GET, @admin_required)
 - `GET /admin/system/background-jobs/<job_id>/logs` - 백그라운드 작업 로그 조회 (limit, level, search 파라미터)
@@ -312,6 +307,7 @@ POST /admin/verify-session
 ---
 
 *Last Updated: 2025-10-30*
-*File Location: `/web_server/app/routes/admin.py` (611 lines)*
+*File Location: `/web_server/app/routes/admin.py` (1458 lines)*
 *Components: 3 (route, template, model)*
-*Security: Double verification for sensitive actions*
+*Security: Double verification for sensitive actions, Path Traversal defense*
+*Recent Updates: Queue API (5.6), Background Job Logs (5.7) verified with code*

@@ -33,7 +33,6 @@
 ### 💰 Position & Capital
 - **position-tracking** - 포지션 관리, 평균가 계산, 손익 추적 [`@COMP:service`] → [docs](features/position-tracking.md)
 - **capital-management** - 자본 배분, 재할당, 수량 계산 [`@COMP:service,route`] → [docs](features/capital-management.md)
-  - **마켓별 잔고 조회** (`_get_cached_daily_balance`) - 캐시된 일일 잔고를 마켓 타입별로 조회 | `@FEAT:analytics` `@FEAT:capital-management` `@COMP:service` `@TYPE:helper` | Lines 1480-1522 | Issue #7 선물 전략 잔고 할당 버그 수정
 
 ### 🔌 Exchange Integration
 - **exchange-integration** - 거래소 통합 레이어 (Binance, Upbit, Bybit, Bithumb, KIS) [`@COMP:exchange`] → [docs](features/exchange-integration.md)
@@ -81,7 +80,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
-| 2025-10-30 | Catalog Sync | ✅ Complete | FEATURE_CATALOG.md | 메인 프로젝트 동기화 |
+| 2025-10-30 | Feature Catalog Sync | ✅ Complete | FEATURE_CATALOG.md | 전체 문서 동기화 (코드 기준 최신화) |
 | 2025-10-26 | Immediate Order Execution | ✅ Phase 1-7 | order_manager.py, routes/, ui/ | FailedOrder 관리, 웹훅 즉시 실행 |
 | 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition |
 | 2025-10-25 | Toast UX Improvement | ✅ Phase 1-2 | realtime-openorders.js, core.py | 단일/배치 Toast 통일 |
@@ -89,8 +88,6 @@
 | 2025-10-23 | Circuit Breaker | ✅ Phase 2 | order_manager.py | 거래소별 Gradual Recovery |
 | 2025-10-23 | Worktree Conflict Resolution | ✅ Complete | run.py | 서비스 충돌 자동 해결 |
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
-| 2025-10-18 | Open Orders Sorting | ✅ Phase 3 | realtime-openorders.js | SSE 정렬 유지 통합 |
-| 2025-10-15 | Order Queue v2.2 | ✅ Complete | order_queue_manager.py | Known Issues 문서화 |
 
 ---
 

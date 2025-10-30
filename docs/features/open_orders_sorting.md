@@ -473,7 +473,7 @@ RealtimeOpenOrdersManager
 
 ### Tags for Grep Search
 ```bash
-# Find all sorting-related code (12 tags total)
+# Find all sorting-related code (11 tags total)
 grep -n "@FEAT:open-orders-sorting" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
 # Output: Lines 7, 71, 327, 593, 627, 671, 684, 704, 727, 752, 781
 
@@ -482,26 +482,26 @@ grep -n "@PHASE:3" /Users/binee/Desktop/quant/webserver/web_server/app/static/js
 # Output: Line 327 (upsertOrderRow - sorted insertion)
 
 # Find core sorting logic
-grep -n "@TYPE:core" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js | grep "open-orders"
+grep -n "@FEAT:open-orders-sorting.*@TYPE:core" /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
 # Output: Lines 71, 327, 593, 627, 671, 684, 704, 752
 
-# Find specific methods by line
+# Find specific methods by name
 grep -n "sortOrders\|compareByColumn\|handleSort\|upsertOrderRow\|reorderTable\|updateSortIndicators\|attachSortListeners" \
   /Users/binee/Desktop/quant/webserver/web_server/app/static/js/positions/realtime-openorders.js
 ```
 
-**Tag Statistics (Phase 1-3):**
-- File header: Line 7 (@FEAT:open-orders-sorting, Phase 1-2 note - should be Phase 1-3)
-- Constructor: Line 71 (sorting state initialization)
-- Phase 3 upsertOrderRow: Line 327 (@PHASE:3)
-- Phase 1 sortOrders: Line 593 (@TYPE:core)
-- Phase 1 compareByColumn: Line 627 (@TYPE:core)
-- Phase 1 getStatusPriority: Line 671 (@TYPE:core)
-- Phase 1 getOrderTypePriority: Line 684 (@TYPE:core)
-- Phase 2 updateSortIndicators: Line 704 (@TYPE:core)
-- Phase 2 handleSort: Line 727 (@TYPE:interaction)
-- Phase 2 reorderTable: Line 752 (@TYPE:core)
-- Phase 2 attachSortListeners: Line 781 (@TYPE:interaction)
+**Tag Locations (Phase 1-3, 실제 코드 반영):**
+- File header: Line 7 (@FEAT:open-orders-sorting, Phase 1-3 구현)
+- Constructor: Line 71 (@FEAT:open-orders-sorting, 정렬 상태 초기화)
+- Phase 3 upsertOrderRow: Line 327 (@PHASE:3, 정렬된 위치 삽입)
+- Phase 1 sortOrders: Line 593 (@FEAT:open-orders-sorting, 핵심 로직)
+- Phase 1 compareByColumn: Line 627 (@FEAT:open-orders-sorting, 컬럼 비교)
+- Phase 1 getStatusPriority: Line 671 (@FEAT:open-orders-sorting, 상태 우선순위)
+- Phase 1 getOrderTypePriority: Line 684 (@FEAT:open-orders-sorting, 주문 타입 우선순위)
+- Phase 2 updateSortIndicators: Line 704 (@FEAT:open-orders-sorting, UI 아이콘)
+- Phase 2 handleSort: Line 727 (@FEAT:open-orders-sorting, 헤더 클릭 이벤트)
+- Phase 2 reorderTable: Line 752 (@FEAT:open-orders-sorting, 테이블 재정렬)
+- Phase 2 attachSortListeners: Line 781 (@FEAT:open-orders-sorting, 리스너 등록)
 
 ## Related Files
 - `/web_server/app/static/js/positions/realtime-openorders.js` - Core sorting logic (Phase 1-3 implemented)
@@ -513,6 +513,12 @@ grep -n "sortOrders\|compareByColumn\|handleSort\|upsertOrderRow\|reorderTable\|
 - `docs/FEATURE_CATALOG.md` - Feature catalog with all tags
 
 ## Changelog
+- **2025-10-30**: 문서 동기화 - 코드 기준 최신화 (Phase 1-3 태그 정확화, grep 검색 명령어 개선)
+  - 파일 헤더 태그 "Phase 1-2" → "Phase 1-3" 반영
+  - Code References 섹션 재구성 (실제 코드 태그 위치 정확화)
+  - grep 검색 명령어 개선 (실행 가능한 정규식 사용)
+  - 태그 통계 개선 (행번호 정확화)
+
 - **2025-10-18**: Phase 3 구현 완료 (SSE 실시간 업데이트 정렬 유지)
   - `upsertOrderRow()` 메서드 전체 리팩토링 (정렬된 위치 삽입)
   - 7단계 알고리즘 구현 (메모리 업데이트 → 정렬 → 인덱스 찾기 → DOM 삽입)

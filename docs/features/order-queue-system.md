@@ -44,6 +44,21 @@ Order Queue 기반 설계의 문제점:
 
 ---
 
+---
+
+## 코드 태그 상태
+
+`@FEAT:order-queue` 태그는 여전히 다음 코드에 존재합니다:
+- `services/trading/core.py`: `execute_trade()` - 거래 실행 로직
+- `services/trading/core.py`: `_execute_batch_for_symbol()` - 배치 경쟁 조건 처리
+- `exchanges/crypto/upbit.py`: 거래소 통합 로직
+- `exchanges/crypto/bithumb.py`: 거래소 통합 로직
+
+이 태그들은 **역사적 컨텍스트로 유지**되며, 현재 기능은 `@FEAT:immediate-order-execution`이 담당합니다.
+
+---
+
 *Archive Date: 2025-10-26*
 *Last Version: 3.1.0*
+*Last Updated: 2025-10-30*
 *Related Feature: immediate-order-execution*

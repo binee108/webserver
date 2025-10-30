@@ -253,4 +253,20 @@
 
 ---
 
+---
+
+## 코드 위치 맵핑
+
+| 기능 | 파일 | 줄 번호 | 태그 |
+|------|------|--------|------|
+| 캐싱 구현 | `capital_service.py` | 40-86 | @COMP:service @TYPE:helper |
+| 자본 재배분 로직 | `capital_service.py` | 87-200+ | @COMP:service @TYPE:core |
+| 리밸런싱 조건 판단 | `capital_service.py` | 309-449 | @COMP:service @TYPE:core |
+| API: 단일 계좌 재배분 | `capital.py` | 20-77 | @COMP:route @TYPE:core |
+| API: 전체 계좌 재배분 | `capital.py` | 80-200+ | @COMP:route @TYPE:core |
+| API: 강제 재할당 | `capital.py` | 212-333 | @COMP:route @TYPE:core |
+| 백그라운드 스케줄 | `__init__.py` | 744-760, 1184-1243 | @COMP:job @TYPE:core |
+| 수량 계산 (자본 기반) | `quantity_calculator.py` | - | @FEAT:capital-management |
+| 거래 기록 (자본 추적) | `record_manager.py` | - | @FEAT:capital-management |
+
 *Last Updated: 2025-10-30*
