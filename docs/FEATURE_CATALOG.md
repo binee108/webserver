@@ -61,6 +61,7 @@
 - **batch-parallel-processing** - ThreadPoolExecutor 병렬 처리 (MARKET 전용) [`@COMP:service`] → [docs](features/trade-execution.md)
 
 ### 🛡️ Infrastructure & Resilience
+- **db-first-orphan-prevention** - DB-first 패턴으로 orphan order 방지 (PENDING 상태 + cleanup job) [`@COMP:service,job`] → [docs](features/webhook-order-processing.md#5-phase-32-db-first-orphan-prevention-2025-10-30)
 - **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
@@ -81,6 +82,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-30 | DB-first Orphan Prevention | ✅ Phase 2 | constants.py, core.py, order_manager.py | PENDING/FAILED 상태 + 120s cleanup job |
 | 2025-10-30 | Error Message Sanitization | ✅ Phase 3.1 | models.py, core.py, migrations/ | OpenOrder error_message 필드 + 보안 함수 (고아 주문 방지 기반) |
 | 2025-10-30 | Feature Catalog Sync | ✅ Complete | FEATURE_CATALOG.md | 전체 문서 동기화 (코드 기준 최신화) |
 | 2025-10-26 | Immediate Order Execution | ✅ Phase 1-7 | order_manager.py, routes/, ui/ | FailedOrder 관리, 웹훅 즉시 실행 |

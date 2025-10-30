@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -15,8 +16,8 @@ from typing import Any, Dict, List, Optional
 from flask import current_app
 
 from app import db
-from app.models import Account, Strategy, StrategyAccount
-from app.constants import Exchange, MarketType, OrderType
+from app.models import Account, Strategy, StrategyAccount, OpenOrder
+from app.constants import Exchange, MarketType, OrderType, OrderStatus
 from app.services.exchange import exchange_service
 from app.services.security import security_service
 from app.services.utils import to_decimal
@@ -143,6 +144,8 @@ def sanitize_error_message(error_msg: str, max_length: int = 500) -> str:
     return sanitized[:max_length]
 
 
+
+
 # @FEAT:framework @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
 class TradingCore:
     """Encapsulates trading execution, signal processing, and exchange coordination."""
@@ -207,7 +210,7 @@ class TradingCore:
             # @FEAT:immediate-execution @COMP:service @TYPE:core
             # Phase 4: Queue 제거 및 즉시 실행 전환 (모든 주문 타입)
             # 모든 주문 타입을 즉시 거래소에 제출합니다.
-            from app.constants import ORDER_TYPE_GROUPS
+            from app.constants import ORDER_TYPE_GROUPS, OrderStatus
 
             type_group = None
             for group_name, types in ORDER_TYPE_GROUPS.items():
@@ -235,79 +238,163 @@ class TradingCore:
                     'skip_reason': 'strategy_account_inactive'
                 }
 
-            order_result = self._execute_exchange_order(
-                account=account,
+            # ============================================================
+            # STEP 1: Create PENDING order (before exchange API)
+            # ============================================================
+            # @FEAT:webhook-order @COMP:service @TYPE:core
+            # @DATA:OrderStatus.PENDING - DB-first 패턴 (Phase 2: 2025-10-30)
+            pending_order = OpenOrder(
+                strategy_account_id=strategy_account.id,
+                exchange_order_id=f"PENDING-{uuid.uuid4().hex}",  # Full UUID (Fixed Issue #3)
                 symbol=symbol,
                 side=side,
-                quantity=quantity,
                 order_type=order_type,
+                quantity=float(quantity) if quantity else 0.0,
+                filled_quantity=0.0,
+                status=OrderStatus.PENDING,
                 market_type=market_type,
-                price=price,
-                stop_price=stop_price,
-                timing_context=timing_context
+                price=float(price) if price else None,
+                stop_price=float(stop_price) if stop_price else None,
+                created_at=datetime.utcnow()
             )
 
-            order_result['account_id'] = account.id
+            db.session.add(pending_order)
+            db.session.commit()
+            pending_order_id = pending_order.id
 
-            # Phase 4: 주문 실패 시 FailedOrder 생성 (@FEAT:immediate-execution @COMP:service @TYPE:core)
-            #
-            # FailedOrder 생성 로직 (Phase 2 패턴 재사용):
-            # =============================================
-            # - 트리거: order_result['success'] == False
-            # - 원인: 거래소 API 오류, 거래소 제한, 네트워크 오류 등
-            #
-            # 저장 정보:
-            # =============================================
-            # - strategy_account_id: 전략 계정 ID (재시도 시 참조)
-            # - order_params: 주문 파라미터 (심볼, 방향, 타입, 수량, 가격)
-            # - reason: 실패 이유 (거래소 에러 메시지)
-            # - exchange_error: 거래소 에러 상세 정보 (있는 경우)
-            #
-            # 재시도 메커니즘:
-            # =============================================
-            # - 초기 상태: status='pending_retry', retry_count=0
-            # - 재시도: retry_failed_order() 메서드 호출
-            # - 최대 재시도: 5회 (기본값)
-            # - 대기 시간: 지수 백오프 (1초, 2초, 4초, 8초, 16초)
-            #
-            # 실패 사례:
-            # =============================================
-            # 1. 거래소 오류 (Exchange API 연결 실패)
-            #    → reason: "Exchange API connection failed"
-            #    → 재시도 가능
-            #
-            # 2. 거래소 제한 (Rate limit, 심볼 미지원)
-            #    → reason: "Invalid symbol XXX"
-            #    → 재시도 불가 (설정 검토 필요)
-            #
-            # 3. 계정 오류 (잔고 부족, 거래 중지)
-            #    → reason: "Insufficient balance"
-            #    → 재시도 불가 (조건 개선 필요)
-            if not order_result['success']:
-                from app.services.trading.failed_order_manager import failed_order_manager
+            logger.debug(
+                f"✅ PENDING 주문 생성: id={pending_order_id}, "
+                f"symbol={symbol}, side={side}, qty={quantity}"
+            )
 
-                failed_order_manager.create_failed_order(
-                    strategy_account_id=strategy_account.id,
-                    order_params={
-                        'symbol': symbol,
-                        'side': side,
-                        'order_type': order_type,
-                        'quantity': quantity,
-                        'price': price,
-                        'stop_price': stop_price,
-                        'market_type': market_type
-                    },
-                    reason=order_result.get('error', 'Exchange order failed'),
-                    exchange_error=order_result.get('exchange_error')
+            try:
+                # ============================================================
+                # STEP 2: Exchange API call
+                # ============================================================
+                order_result = self._execute_exchange_order(
+                    account=account,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    order_type=order_type,
+                    market_type=market_type,
+                    price=price,
+                    stop_price=stop_price,
+                    timing_context=timing_context
                 )
 
-                logger.warning(
-                    f"⚠️ 주문 실패 → FailedOrder 생성 - "
-                    f"심볼: {symbol}, 타입: {order_type}, side: {side}, "
-                    f"오류: {order_result.get('error')}"
-                )
+                order_result['account_id'] = account.id
 
-                return order_result
+                # ============================================================
+                # STEP 3: Update PENDING → OPEN (on success)
+                # ============================================================
+                if order_result.get('success'):
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    order.status = OrderStatus.OPEN
+
+                    # Update with exchange data
+                    exchange_order = {
+                        'id': order_result.get('order_id'),
+                        'price': float(price) if price else None,
+                        'filled': float(order_result.get('filled_quantity', 0)) if order_result.get('filled_quantity') else 0.0
+                    }
+                    order.exchange_order_id = exchange_order.get('id', order.exchange_order_id)
+                    if exchange_order.get('price'):
+                        order.price = exchange_order['price']
+                    if exchange_order.get('filled'):
+                        order.filled_quantity = exchange_order['filled']
+
+                    db.session.commit()
+
+                    logger.debug(
+                        f"🔄 주문 상태 전환: {old_status} → {OrderStatus.OPEN} "
+                        f"(exchange_order_id={exchange_order.get('id')})"
+                    )
+
+                else:
+                    # ============================================================
+                    # STEP 5: Update PENDING → FAILED (on exchange API failure)
+                    # ============================================================
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    error_msg = sanitize_error_message(order_result.get('error', 'Exchange order failed'))
+                    order.status = OrderStatus.FAILED
+                    order.error_message = error_msg
+
+                    db.session.commit()
+
+                    logger.warning(
+                        f"⚠️ 주문 실패: {old_status} → {OrderStatus.FAILED} "
+                        f"(error: {error_msg[:50]}...)"
+                    )
+
+                    # Phase 4: FailedOrder 생성 (재시도 메커니즘)
+                    from app.services.trading.failed_order_manager import failed_order_manager
+
+                    failed_order_manager.create_failed_order(
+                        strategy_account_id=strategy_account.id,
+                        order_params={
+                            'symbol': symbol,
+                            'side': side,
+                            'order_type': order_type,
+                            'quantity': quantity,
+                            'price': price,
+                            'stop_price': stop_price,
+                            'market_type': market_type
+                        },
+                        reason=order_result.get('error', 'Exchange order failed'),
+                        exchange_error=order_result.get('exchange_error')
+                    )
+
+                    logger.warning(
+                        f"⚠️ 주문 실패 → FailedOrder 생성 - "
+                        f"심볼: {symbol}, 타입: {order_type}, side: {side}, "
+                        f"오류: {order_result.get('error')}"
+                    )
+
+                    return order_result
+
+            except Exception as e:
+                # ============================================================
+                # STEP 5b: Update PENDING → FAILED (on exception)
+                # ============================================================
+                try:
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    error_msg = sanitize_error_message(str(e))
+                    order.status = OrderStatus.FAILED
+                    order.error_message = error_msg
+
+                    db.session.commit()
+
+                    logger.error(
+                        f"❌ 주문 실패 (exception): {old_status} → {OrderStatus.FAILED} "
+                        f"(error: {error_msg[:50]}...)"
+                    )
+                except Exception as inner_e:
+                    logger.error(f"❌ PENDING → FAILED 전환 실패: {inner_e}")
+
+                # 예외를 상위로 재전달
+                raise
 
             # 조정된 수량/가격 보관 (거래소 제한 반영)
             adjusted_quantity = order_result.get('adjusted_quantity', quantity)

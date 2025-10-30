@@ -126,6 +126,111 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
+## 5. Phase 3.2: DB-first Orphan Prevention (2025-10-30)
+
+### 목적
+
+**Orphan Order 방지**: 거래소 API 호출 중 네트워크 단절, 서버 크래시 등으로 발생하는 고아 주문(거래소엔 있는데 DB엔 없는 주문) 방지.
+
+**DB-first Pattern**: 거래소 API 호출 **전**에 PENDING 상태의 주문을 DB에 먼저 생성 → API 호출 → 결과에 따라 상태 업데이트.
+
+### 새로운 주문 상태
+
+**constants.py:818-826**
+
+```python
+PENDING = 'PENDING'              # 거래소 API 호출 전 임시 상태 (Phase 2: 2025-10-30)
+FAILED = 'FAILED'                # API 실패 또는 예외 발생 (Phase 2: 2025-10-30)
+```
+
+**상태 그룹화**:
+```python
+get_active_statuses()      # [PENDING, NEW, OPEN, PARTIALLY_FILLED] - 백그라운드 작업용 (cleanup)
+get_open_statuses_for_ui() # [NEW, OPEN, PARTIALLY_FILLED] - UI 표시용 (PENDING 제외)
+```
+
+### execute_trade() 5단계 흐름
+
+**core.py:241-397**
+
+```
+STEP 1: Create PENDING Order (Lines 241-268)
+  └─ PENDING 상태 주문 DB 저장 (exchange_order_id: PENDING-{UUID})
+
+STEP 2: Exchange API Call (Lines 270-284)
+  └─ _execute_exchange_order() 실행
+
+STEP 3: Update PENDING → OPEN (Lines 288-319)
+  └─ API 성공 시 상태 전환 + exchange_order_id 업데이트
+
+STEP 5: Update PENDING → FAILED (Lines 321-368)
+  └─ API 실패 시 상태 전환 + error_message 저장
+     └─ FailedOrder 생성 (재시도 메커니즘)
+
+STEP 5b: Exception Handling (Lines 370-397)
+  └─ 예외 발생 시 PENDING → FAILED 전환 + 재발생
+```
+
+**예시 코드**:
+```python
+# STEP 1: DB 저장
+pending_order = OpenOrder(
+    status=OrderStatus.PENDING,
+    exchange_order_id=f"PENDING-{uuid.uuid4().hex}"  # Unique marker
+)
+db.session.commit()
+
+# STEP 2: Exchange API
+order_result = self._execute_exchange_order(...)
+
+# STEP 3: Success
+if order_result.get('success'):
+    order = OpenOrder.query.get(pending_order_id)
+    order.status = OrderStatus.OPEN
+    order.exchange_order_id = order_result.get('order_id')
+    db.session.commit()
+```
+
+### Cleanup Job (고아 주문 정리)
+
+**order_manager.py:797-854**
+
+고장난 PENDING 주문을 120초 후 자동 FAILED로 전환.
+
+```python
+def _cleanup_stuck_pending_orders(self) -> None:
+    """PENDING → FAILED (타임아웃: 120초)"""
+    stuck_orders = OpenOrder.query.filter(
+        OpenOrder.status == OrderStatus.PENDING,
+        OpenOrder.created_at < cutoff_time  # 120초 이전
+    ).all()
+
+    for order in stuck_orders:
+        order.status = OrderStatus.FAILED
+        order.error_message = "Order stuck in PENDING state for >120s"
+```
+
+**호출 시점**: `update_open_orders_status()` 내 정기 실행 (29초마다)
+
+### PENDING 필터링 전략
+
+| 위치 | 필터링 | 이유 |
+|------|--------|------|
+| UI 응답 | `get_open_statuses_for_ui()` (PENDING 제외) | 사용자에게 거래소 호출 대기 상태 표시 금지 |
+| 백그라운드 | `get_active_statuses()` (PENDING 포함) | cleanup job이 PENDING을 모니터링해야 함 |
+
+**검증 명령어**:
+```bash
+# PENDING 필터링 확인
+grep -n "get_open_statuses_for_ui\|get_active_statuses" \
+  web_server/app/services/trading/order_manager.py
+
+# PENDING 상태 생성 확인
+grep -n "@DATA:OrderStatus.PENDING" web_server/app/services/trading/core.py
+```
+
+---
+
 ## 5. Phase 4: 타임아웃 처리 (새로운 기능)
 
 ### 5.0. TimeoutContext (threading.Timer 기반)
