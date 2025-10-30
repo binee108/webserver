@@ -758,6 +758,8 @@ class TradingCore:
                     batch_results=batch_results
                 )
 
+        # @FEAT:webhook-order @COMP:service @TYPE:core
+        # @DATA:successful_orders,failed_orders - 통계 필드명 (2025-10-30 통일)
         # 표준 응답 포맷 (process_cancel_all_orders와 동일한 구조)
         return {
             'action': side.lower(),  # 'buy' or 'sell'
@@ -768,8 +770,8 @@ class TradingCore:
             'summary': {
                 'total_accounts': len(filtered_accounts),
                 'executed_accounts': len(results),
-                'successful_trades': len(successful_trades),
-                'failed_trades': len(failed_trades),
+                'successful_orders': len(successful_trades),
+                'failed_orders': len(failed_trades),
                 'inactive_accounts': len(strategy_accounts) - len(filtered_accounts)
             }
         }

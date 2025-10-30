@@ -180,8 +180,10 @@ def webhook():
                 current_app.logger.warning(f'⚠️  Action 필드가 설정되지 않음: {strategy} - 처리 결과 분석 불가')
 
             if action == 'trading_signal':
-                successful_count = summary.get('successful_trades', 0)
-                failed_count = summary.get('failed_trades', 0)
+                # @FEAT:webhook-order @COMP:route @TYPE:core
+                # @DATA:successful_orders,failed_orders - HTTP 응답 필드명 (Phase 2: 2025-10-30)
+                successful_count = summary.get('successful_orders', 0)
+                failed_count = summary.get('failed_orders', 0)
                 total_accounts = summary.get('total_accounts', 0)
 
                 if successful_count > 0:

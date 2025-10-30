@@ -55,15 +55,15 @@ PendingOrder(내부 큐)의 토스트 필터링 및 OpenOrder(거래소 주문) 
 **구현 위치**: `process_trading_signal()` 메서드 (Line 742-759)
 
 **동작 방식**:
-- `execute_trade()` 호출 결과 (successful_trades 포함)
+- `execute_trade()` 호출 결과 (successful_orders 포함)
 - 메타데이터 자동 포함 조건: `_execute_trades_parallel()` → 모든 타입의 거래 주문
 - 필터링: `result.get('order_type')` + `result.get('event_type')` 기반
 
 **구현 코드**:
 ```python
 # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
-# 단일/다중 주문 배치 SSE 발송 (배치 주문과 통일)
-if len(successful_trades) > 0 and self.service.event_emitter:
+# 단일/다중 주문 배치 SSE 발송 (배치 주문과 통일) - Phase 2: 필드명 통일
+if len(successful_orders) > 0 and self.service.event_emitter:
     # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
     batch_results = [
         result for result in results
@@ -148,9 +148,9 @@ _execute_trades_parallel() (단일/다중 계좌)
   ↓
 results 수집 (메타데이터: order_type, event_type)
   ↓
-successful_trades 계산 (고유 성공 주문 수)
+successful_orders 계산 (고유 성공 주문 수)
   ↓
-len(successful_trades) > 0 확인
+len(successful_orders) > 0 확인
   ↓
 emit_order_batch_update() [Line 742-759] ← 🆕 Phase 2
   ↓

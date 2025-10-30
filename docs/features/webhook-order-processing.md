@@ -89,8 +89,8 @@ TradingView 등 외부 시그널을 웹훅으로 수신하여 다중 계좌에 �
   ],
   "summary": {
     "total_accounts": 2,
-    "successful_trades": 2,
-    "failed_trades": 0
+    "successful_orders": 2,
+    "failed_orders": 0
   },
   "performance_metrics": {
     "validation_time_ms": 12.5,
@@ -519,6 +519,71 @@ curl -k -s -X POST https://localhost:5001/api/webhook \
 
 ---
 
+## 변경 이력 (Change Log)
+
+### Phase 1: 생산자 필드명 통일 (2025-10-30)
+
+**목표**: 모든 생산자의 통계 필드명을 `successful_orders` / `failed_orders`로 통일
+
+**변경 사항**:
+1. **trading/core.py:771-772** - `process_trading_signal()` 필드명 통일
+   - `successful_orders`, `failed_orders` 사용 (이미 통일됨)
+   - Tag 추가: `@DATA:successful_orders,failed_orders`
+
+2. **webhook_service.py:374-375** - 배치 결과 필드명 통일
+   - `successful_orders`, `failed_orders` 사용 (이미 통일됨)
+   - Tag 추가: `@DATA:successful_orders,failed_orders`
+
+**영향 범위**:
+- 모든 생산자 응답 포맷 일관성 확보
+- 소비자는 단일 필드명으로 데이터 접근 가능 (폴백 불필요)
+- Phase 2에서 소비자 필드명 통일 완료 (2025-10-30)
+
+**검색 패턴**:
+```bash
+grep -r "@DATA:successful_orders" --include="*.py"
+# 결과: 4개 파일 (core.py, webhook_service.py x2, webhook.py)
+```
+
+### Phase 2: 소비자 필드명 통일 (2025-10-30)
+
+**목표**: 모든 소비자의 필드명 파싱을 `successful_orders` / `failed_orders`로 통일
+
+**변경 사항**:
+1. **webhook_service.py:496-497** - `_analyze_trading_result()` 필드명 파싱
+   - `successful_orders = summary.get('successful_orders', 0)`
+   - `failed_orders = summary.get('failed_orders', 0)`
+   - Tag: `@DATA:successful_orders,failed_orders - 소비자 필드명 파싱 (2025-10-30)`
+   - 로그 메시지 변수명 동기화 (Lines 502, 520, 522, 527, 528, 531)
+
+2. **webhook_service.py:322-323, 349-350** - 배치 통계 필드명 파싱
+   - Batch 1: `summary1.get('successful_orders', 0)`
+   - Batch 2: `summary2.get('successful_orders', 0)`
+   - Tag: `@DATA:successful_orders,failed_orders - 배치 통계 (2025-10-30)`
+
+3. **webhook.py:183-184** - HTTP 응답 필드명 파싱
+   - `successful_count = summary.get('successful_orders', 0)`
+   - `failed_count = summary.get('failed_orders', 0)`
+   - Tag: `@DATA:successful_orders,failed_orders - HTTP 응답 (2025-10-30)`
+
+**영향 범위**:
+- 생산자(Phase 1) + 소비자(Phase 2) = 전역 일관성 완성
+- 폴백 로직 불필요 (단일 필드명으로 접근 가능)
+- End-to-End 일관성: trading/core.py → webhook_service.py → webhook.py
+
+**Phase 1+2 통합 완료**:
+- 생산자 2곳: `trading/core.py:773`, `webhook_service.py:376`
+- 소비자 3곳: `webhook_service.py:322,349,496`, `webhook.py:183`
+- 총 4개 파일, 5개 위치에 `@DATA:successful_orders,failed_orders` 태그 적용
+
+**검증**:
+```bash
+grep -r "@DATA:successful_orders" --include="*.py"
+# 결과: 4개 파일 발견 (전역 일관성 확보)
+```
+
+---
+
 ## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
@@ -527,5 +592,5 @@ curl -k -s -X POST https://localhost:5001/api/webhook \
 
 ---
 
-*Last Updated: 2025-10-30 (Phase 4: Immediate Execution & Timeout)*
-*Version: 3.0.0 (Phase 4: threading.Timer, Priority Classification, Independent Transactions)*
+*Last Updated: 2025-10-30 (Phase 1: Producer Field Unification)*
+*Version: 3.0.1 (Phase 1: Producer Statistics Field Naming Consistency)*
