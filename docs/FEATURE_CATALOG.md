@@ -61,6 +61,7 @@
 - **batch-parallel-processing** - ThreadPoolExecutor 병렬 처리 (MARKET 전용) [`@COMP:service`] → [docs](features/trade-execution.md)
 
 ### 🛡️ Infrastructure & Resilience
+- **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)
@@ -80,6 +81,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-30 | Error Message Sanitization | ✅ Phase 3.1 | models.py, core.py, migrations/ | OpenOrder error_message 필드 + 보안 함수 (고아 주문 방지 기반) |
 | 2025-10-30 | Feature Catalog Sync | ✅ Complete | FEATURE_CATALOG.md | 전체 문서 동기화 (코드 기준 최신화) |
 | 2025-10-26 | Immediate Order Execution | ✅ Phase 1-7 | order_manager.py, routes/, ui/ | FailedOrder 관리, 웹훅 즉시 실행 |
 | 2025-10-26 | Strategy Subscription Safety | ✅ Phase 1-5 | strategy_service.py, routes/, trading/core.py | Cleanup, API, UI, Force liquidation, Race Condition |

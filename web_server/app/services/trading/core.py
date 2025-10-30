@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -65,6 +66,81 @@ def _parse_retry_delays(env_value: str, default: str = '125,250,500,1000,2000') 
                 f"하드코딩 값 사용 [0.125, 0.25, 0.5, 1.0, 2.0]"
             )
             return [0.125, 0.25, 0.5, 1.0, 2.0]
+
+
+def sanitize_error_message(error_msg: str, max_length: int = 500) -> str:
+    """
+    Remove sensitive information from error messages before DB storage.
+
+    Security patterns to remove:
+    - API keys: Remove patterns like "key=ABC123", "apikey: XYZ"
+    - Account numbers: Remove digit sequences >8 chars
+    - Tokens: Remove "token=...", "bearer ..."
+    - Email addresses: Redact to "***@***.***"
+    - IP addresses: Partial redaction (e.g., "192.168.*.*")
+
+    @FEAT:webhook-order @COMP:service @TYPE:core
+    @DATA:error_message - 에러 메시지 보안 처리 (Phase 1: 2025-10-30)
+
+    Args:
+        error_msg: Raw error message from exchange API
+        max_length: Maximum length of sanitized message (default: 500)
+
+    Returns:
+        str: Sanitized error message (max 500 characters)
+
+    Examples:
+        >>> sanitize_error_message("API key abc123 invalid")
+        "API key [REDACTED] invalid"
+
+        >>> sanitize_error_message("Account 123456789 insufficient balance")
+        "Account [REDACTED] insufficient balance"
+    """
+    if not error_msg:
+        return ""
+
+    sanitized = error_msg
+
+    # 1. API key pattern: API_KEY, API-KEY, SECRET, TOKEN 뒤에 오는 문자열 마스킹
+    # 예: "API-KEY: abc123def456ghi789..." → "API-KEY: abc123***"
+    sanitized = re.sub(
+        r'(API[_-]?KEY|SECRET|TOKEN)["\s:=]+([a-zA-Z0-9]{8})[a-zA-Z0-9]+',
+        r'\1: \2***',
+        sanitized,
+        flags=re.IGNORECASE
+    )
+
+    # 2. Account number pattern: 9자리 이상의 연속된 숫자 제거
+    # 예: "Account 123456789 insufficient balance" → "Account [REDACTED]"
+    sanitized = re.sub(r'\b\d{9,}\b', '[REDACTED]', sanitized)
+
+    # 3. Bearer token pattern: "bearer abc123..." 형태
+    # 예: "bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." → "bearer [REDACTED]"
+    sanitized = re.sub(
+        r'(bearer|authorization)\s+[a-zA-Z0-9\-._~+/]+=*',
+        r'\1 [REDACTED]',
+        sanitized,
+        flags=re.IGNORECASE
+    )
+
+    # 4. Email pattern: "user@example.com" → "***@***.***"
+    # 예: "invalid user@example.com" → "invalid ***@***.***"
+    sanitized = re.sub(
+        r'\b[\w\.-]+@[\w\.-]+\.\w+\b',
+        '***@***.***',
+        sanitized
+    )
+
+    # 5. IP address pattern: Partial redaction "192.168.*.*"
+    # 예: "Connection refused from 192.168.1.100" → "Connection refused from 192.168.*.*"
+    sanitized = re.sub(
+        r'(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}',
+        r'\1.*.*',
+        sanitized
+    )
+
+    # 6. Truncate to max_length
+    return sanitized[:max_length]
 
 
 # @FEAT:framework @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
