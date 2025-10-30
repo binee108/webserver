@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -794,6 +794,65 @@ class OrderManager:
             db.session.rollback()
             logger.error("OpenOrder 상태 업데이트 실패: %s", exc)
 
+    # @FEAT:webhook-order @COMP:job @TYPE:core
+    # @DATA:OrderStatus.PENDING - PENDING 주문 정리 (Phase 2: 2025-10-30)
+    def _cleanup_stuck_pending_orders(self) -> None:
+        """
+        정리 작업: PENDING 상태로 120초 이상 멈춘 주문을 FAILED로 강제 전환
+
+        호출 시점: update_open_orders_status() 실행 후 (29초마다)
+
+        동작:
+        1. PENDING 상태이고 created_at이 120초 이전인 주문 검색
+        2. status → FAILED로 변경
+        3. error_message에 타임아웃 원인 저장 (보안 정제됨)
+
+        목적:
+        - DB-first 패턴에서 거래소 API 호출 후 예외 발생 시 발생하는 고아 주문 정리
+        - 최대 대기 시간: 120초 (29초 주기 × 최대 5주기)
+        - 자동 복구: 응답 없는 PENDING 주문은 결국 FAILED로 전환
+
+        사례:
+        - 거래소 API 수행 중 네트워크 단절 → PENDING 유지
+        - 서버 크래시 후 재부팅 → PENDING 주문들 정리 대기
+        - 타임아웃 (120초): 자동으로 FAILED로 전환
+        """
+        from app.models import OpenOrder
+        from app.constants import OrderStatus
+        from app.services.trading.core import sanitize_error_message
+
+        try:
+            timeout_seconds = 120  # 120초
+            cutoff_time = datetime.utcnow() - timedelta(seconds=timeout_seconds)
+
+            # PENDING 상태이고 timeout 초과한 주문 검색
+            stuck_orders = OpenOrder.query.filter(
+                OpenOrder.status == OrderStatus.PENDING,
+                OpenOrder.created_at < cutoff_time
+            ).all()
+
+            if not stuck_orders:
+                # 정리할 주문 없음 (정상 상태)
+                return
+
+            # PENDING 주문 강제 전환
+            for order in stuck_orders:
+                order.status = OrderStatus.FAILED
+                order.error_message = sanitize_error_message(
+                    f"Order stuck in PENDING state for >{timeout_seconds}s (created: {order.created_at})"
+                )
+
+            db.session.commit()
+
+            logger.warning(
+                f"🧹 PENDING 주문 정리: {len(stuck_orders)}개 주문을 FAILED로 전환 "
+                f"(timeout: >{timeout_seconds}초)"
+            )
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ PENDING 주문 정리 실패: {e}")
+
     # @FEAT:order-tracking @COMP:job @TYPE:core
     def update_open_orders_status(self) -> None:
         """백그라운드 작업: 모든 미체결 주문의 상태를 거래소와 동기화 (Phase 3: 배치 쿼리 최적화)
@@ -822,7 +881,9 @@ class OrderManager:
         from datetime import datetime
 
         try:
-            # Step 1: 처리 중이 아닌 미체결 주문 조회 (Phase 2 낙관적 잠금)
+            # Step 1: 처리 중이 아닌 활성 주문 조회 (Phase 2 낙관적 잠금)
+            # @DATA:OrderStatus.PENDING - 백그라운드 작업용 활성 상태 포함 (Phase 2: 2025-10-30)
+            # get_active_statuses(): PENDING, NEW, OPEN, PARTIALLY_FILLED (PENDING 정리 작업용)
             open_orders = (
                 OpenOrder.query
                 .options(
@@ -832,7 +893,7 @@ class OrderManager:
                     .joinedload(StrategyAccount.strategy)
                 )
                 .filter(
-                    OpenOrder.status.in_(OrderStatus.get_open_statuses()),
+                    OpenOrder.status.in_(OrderStatus.get_active_statuses()),
                     OpenOrder.is_processing == False  # 처리 중이 아닌 주문만
                 )
                 .all()
@@ -1157,6 +1218,9 @@ class OrderManager:
                 f"처리={total_processed}, 업데이트={total_updated}, "
                 f"삭제={total_deleted}, 실패={total_failed}"
             )
+
+            # Step 5: PENDING 주문 정리 (Phase 2)
+            self._cleanup_stuck_pending_orders()
 
         except Exception as e:
             db.session.rollback()

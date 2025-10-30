@@ -815,6 +815,7 @@ class MinOrderAmount:
 class OrderStatus:
     """통합 주문 상태 (거래소 독립적)"""
     # 기본 상태
+    PENDING = 'PENDING'              # @DATA:OrderStatus.PENDING - DB-first 패턴 (Phase 2: 2025-10-30)
     NEW = 'NEW'                      # 신규 주문
     OPEN = 'OPEN'                    # 미체결
     PARTIALLY_FILLED = 'PARTIALLY_FILLED'  # 부분 체결
@@ -822,11 +823,12 @@ class OrderStatus:
     CANCELLED = 'CANCELLED'          # 취소됨
     REJECTED = 'REJECTED'            # 거부됨
     EXPIRED = 'EXPIRED'              # 만료됨
+    FAILED = 'FAILED'                # @DATA:OrderStatus.FAILED - 거래소 API 실패 (Phase 2: 2025-10-30)
 
-    # 미체결 상태 그룹
+    # 미체결 상태 그룹 (배경 작업 처리용, PENDING 포함)
     OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED]
     # 완료 상태 그룹
-    CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED]
+    CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED, FAILED]
 
     @classmethod
     def from_exchange(cls, status: str, exchange: str) -> str:
@@ -967,6 +969,47 @@ class OrderStatus:
             ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED']
         """
         return cls.CLOSED_STATUSES.copy()
+
+    @classmethod
+    def get_active_statuses(cls) -> list:
+        """백그라운드 작업용 활성 상태 목록 반환 (PENDING 포함)
+
+        활성 상태: 정리, 모니터링, 강제 상태 전환이 필요한 상태
+        - PENDING: DB-first 패턴 (거래소 API 호출 대기 중)
+        - OPEN, PARTIALLY_FILLED: 미체결 주문
+
+        Returns:
+            list: 활성 상태 목록 [PENDING, NEW, OPEN, PARTIALLY_FILLED]
+
+        Examples:
+            >>> OrderStatus.get_active_statuses()
+            ['PENDING', 'NEW', 'OPEN', 'PARTIALLY_FILLED']
+
+        Notes:
+            - PENDING: 120초 초과 시 cleanup job에서 FAILED로 변환
+            - 배경 작업 쿼리: OpenOrder.status.in_(OrderStatus.get_active_statuses())
+        """
+        return [cls.PENDING] + cls.OPEN_STATUSES.copy()
+
+    @classmethod
+    def get_open_statuses_for_ui(cls) -> list:
+        """UI 표시용 미체결 상태 목록 반환 (PENDING 제외)
+
+        사용자에게 표시되는 상태: OPEN, PARTIALLY_FILLED만 표시
+        PENDING은 거래소 호출 대기 중인 임시 상태이므로 사용자에게 숨김
+
+        Returns:
+            list: UI용 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
+
+        Examples:
+            >>> OrderStatus.get_open_statuses_for_ui()
+            ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+
+        Notes:
+            - API 응답 필터링: orders = OpenOrder.query.filter(status.in_(get_open_statuses_for_ui()))
+            - 대시보드: PENDING 상태 주문은 필터링됨
+        """
+        return cls.OPEN_STATUSES.copy()
 
 
 # @FEAT:order-limits @COMP:validation @TYPE:config

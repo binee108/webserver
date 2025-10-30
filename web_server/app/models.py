@@ -386,6 +386,12 @@ class OpenOrder(db.Model):
     is_processing = db.Column(db.Boolean, default=False, nullable=False, index=True)  # 처리 중 플래그
     processing_started_at = db.Column(db.DateTime, nullable=True, index=True)  # 처리 시작 시각
 
+    # @FEAT:webhook-order @COMP:model @TYPE:core
+    # @DATA:error_message - 주문 실패 원인 저장 (Phase 1: 2025-10-30)
+    # Sanitized error message from exchange API failures (max 500 chars)
+    # Used for debugging failed orders and orphan prevention analysis
+    error_message = db.Column(db.Text, nullable=True)
+
     def __repr__(self):
         return (
             f'<OpenOrder {self.symbol} {self.side} {self.order_type} '

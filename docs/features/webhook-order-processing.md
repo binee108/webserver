@@ -126,6 +126,111 @@ grep -r "@FEAT:exchange-integration" --include="*.py"
 
 ---
 
+## 5. Phase 3.2: DB-first Orphan Prevention (2025-10-30)
+
+### 목적
+
+**Orphan Order 방지**: 거래소 API 호출 중 네트워크 단절, 서버 크래시 등으로 발생하는 고아 주문(거래소엔 있는데 DB엔 없는 주문) 방지.
+
+**DB-first Pattern**: 거래소 API 호출 **전**에 PENDING 상태의 주문을 DB에 먼저 생성 → API 호출 → 결과에 따라 상태 업데이트.
+
+### 새로운 주문 상태
+
+**constants.py:818-826**
+
+```python
+PENDING = 'PENDING'              # 거래소 API 호출 전 임시 상태 (Phase 2: 2025-10-30)
+FAILED = 'FAILED'                # API 실패 또는 예외 발생 (Phase 2: 2025-10-30)
+```
+
+**상태 그룹화**:
+```python
+get_active_statuses()      # [PENDING, NEW, OPEN, PARTIALLY_FILLED] - 백그라운드 작업용 (cleanup)
+get_open_statuses_for_ui() # [NEW, OPEN, PARTIALLY_FILLED] - UI 표시용 (PENDING 제외)
+```
+
+### execute_trade() 5단계 흐름
+
+**core.py:241-397**
+
+```
+STEP 1: Create PENDING Order (Lines 241-268)
+  └─ PENDING 상태 주문 DB 저장 (exchange_order_id: PENDING-{UUID})
+
+STEP 2: Exchange API Call (Lines 270-284)
+  └─ _execute_exchange_order() 실행
+
+STEP 3: Update PENDING → OPEN (Lines 288-319)
+  └─ API 성공 시 상태 전환 + exchange_order_id 업데이트
+
+STEP 5: Update PENDING → FAILED (Lines 321-368)
+  └─ API 실패 시 상태 전환 + error_message 저장
+     └─ FailedOrder 생성 (재시도 메커니즘)
+
+STEP 5b: Exception Handling (Lines 370-397)
+  └─ 예외 발생 시 PENDING → FAILED 전환 + 재발생
+```
+
+**예시 코드**:
+```python
+# STEP 1: DB 저장
+pending_order = OpenOrder(
+    status=OrderStatus.PENDING,
+    exchange_order_id=f"PENDING-{uuid.uuid4().hex}"  # Unique marker
+)
+db.session.commit()
+
+# STEP 2: Exchange API
+order_result = self._execute_exchange_order(...)
+
+# STEP 3: Success
+if order_result.get('success'):
+    order = OpenOrder.query.get(pending_order_id)
+    order.status = OrderStatus.OPEN
+    order.exchange_order_id = order_result.get('order_id')
+    db.session.commit()
+```
+
+### Cleanup Job (고아 주문 정리)
+
+**order_manager.py:797-854**
+
+고장난 PENDING 주문을 120초 후 자동 FAILED로 전환.
+
+```python
+def _cleanup_stuck_pending_orders(self) -> None:
+    """PENDING → FAILED (타임아웃: 120초)"""
+    stuck_orders = OpenOrder.query.filter(
+        OpenOrder.status == OrderStatus.PENDING,
+        OpenOrder.created_at < cutoff_time  # 120초 이전
+    ).all()
+
+    for order in stuck_orders:
+        order.status = OrderStatus.FAILED
+        order.error_message = "Order stuck in PENDING state for >120s"
+```
+
+**호출 시점**: `update_open_orders_status()` 내 정기 실행 (29초마다)
+
+### PENDING 필터링 전략
+
+| 위치 | 필터링 | 이유 |
+|------|--------|------|
+| UI 응답 | `get_open_statuses_for_ui()` (PENDING 제외) | 사용자에게 거래소 호출 대기 상태 표시 금지 |
+| 백그라운드 | `get_active_statuses()` (PENDING 포함) | cleanup job이 PENDING을 모니터링해야 함 |
+
+**검증 명령어**:
+```bash
+# PENDING 필터링 확인
+grep -n "get_open_statuses_for_ui\|get_active_statuses" \
+  web_server/app/services/trading/order_manager.py
+
+# PENDING 상태 생성 확인
+grep -n "@DATA:OrderStatus.PENDING" web_server/app/services/trading/core.py
+```
+
+---
+
 ## 5. Phase 4: 타임아웃 처리 (새로운 기능)
 
 ### 5.0. TimeoutContext (threading.Timer 기반)
@@ -584,6 +689,134 @@ grep -r "@DATA:successful_orders" --include="*.py"
 
 ---
 
+## Phase 3.1: Database & Security Enhancements (2025-10-30)
+
+**목표**: 주문 실패 원인 추적 및 에러 메시지 보안 강화 (고아 주문 방지 기반 구축)
+
+### 변경 사항
+
+#### 1. OpenOrder 모델 확장 (`models.py:390-393`)
+
+**추가 필드**:
+```python
+error_message = db.Column(db.Text, nullable=True)
+# Sanitized error message from exchange API failures (max 500 chars)
+```
+
+**용도**: 거래소 API 실패 시 sanitized 에러 메시지 저장
+**제약**: 최대 500자 (`sanitize_error_message()` 함수에서 제한)
+**하위 호환성**: nullable=True (기존 주문 레코드 영향 없음)
+
+#### 2. 에러 메시지 보안 함수 (`trading/core.py:71-127`)
+
+**함수 시그니처**:
+```python
+def sanitize_error_message(error_msg: str, max_length: int = 500) -> str:
+    """
+    Remove sensitive information from error messages before DB storage.
+
+    Security patterns:
+    - API key masking (preserves first 8 chars for debugging)
+    - Account number redaction (9+ digit sequences)
+    - Bearer token masking (JWT/OAuth patterns)
+    - Email address redaction
+    - IP address partial redaction
+    - 500-char truncation
+    """
+```
+
+**6단계 보안 패턴**:
+1. **API 키 마스킹**: `API-KEY: abc123def456` → `API-KEY: abc123***`
+2. **계정 번호 제거**: `Account 123456789` → `Account [REDACTED]`
+3. **Bearer 토큰 마스킹**: `bearer eyJhbGc...` → `bearer [REDACTED]`
+4. **이메일 마스킹**: `support@exchange.com` → `***@***.***`
+5. **IP 부분 마스킹**: `192.168.1.100` → `192.168.*.*`
+6. **길이 제한**: 500자 초과 시 truncation (DB 비대화 방지)
+
+**사용 예시**:
+```python
+# 거래소 API 에러
+error = "API-KEY: abc123def456 invalid for account 123456789"
+sanitized = sanitize_error_message(error)
+# Result: "API-KEY: abc123*** invalid for account [REDACTED]"
+
+# OpenOrder 저장
+order.error_message = sanitized
+db.session.commit()
+```
+
+#### 3. 데이터베이스 마이그레이션 (`migrations/20251030_add_error_message_field.py`)
+
+**마이그레이션 특징**:
+- **Idempotent upgrade**: 기존 컬럼 존재 시 스킵 (중복 실행 안전)
+- **Safe downgrade**: 컬럼 제거 전 존재 여부 확인
+- **PostgreSQL COMMENT**: 스키마 문서화 자동화
+
+**적용 방법**:
+```bash
+# 자동 마이그레이션 (권장)
+python run.py migrate
+
+# 수동 실행
+python migrations/20251030_add_error_message_field.py
+```
+
+**롤백 방법**:
+```bash
+python migrations/20251030_add_error_message_field.py --downgrade
+```
+
+### 영향 범위
+
+**코드 변경**:
+- `models.py`: +5 lines (error_message 필드)
+- `core.py`: +75 lines (sanitize_error_message 함수)
+- `migrations/`: +180 lines (마이그레이션 파일)
+
+**보안 개선**:
+- 민감 정보 유출 방지 (API 키, 계정 번호, 토큰 등)
+- XSS 공격 표면 감소 (에러 메시지에 스크립트 코드 포함 불가)
+- 로그 스크래핑 공격 차단 (민감 정보가 DB에만 존재)
+
+**하위 호환성**:
+- ✅ 기존 주문 레코드는 `error_message=NULL` (영향 없음)
+- ✅ 기존 API 응답 형식 유지 (error_message 필드 추가만)
+- ✅ 롤백 안전 (downgrade 시 컬럼 제거, 데이터 손실 없음)
+
+### 검증 방법
+
+```bash
+# 1. 마이그레이션 적용 확인
+psql -d webserver_dev -c "\d open_orders" | grep error_message
+
+# 2. 보안 함수 테스트
+python -c "
+from web_server.app.services.trading.core import sanitize_error_message
+result = sanitize_error_message('API-KEY: abc123def456 for account 123456789')
+print(result)
+# Expected: API-KEY: abc123*** for account [REDACTED]
+"
+
+# 3. Feature tags 검색
+grep -r "@DATA:error_message" --include="*.py" web_server/app/
+# Expected: 2 files (models.py, core.py)
+```
+
+### 다음 단계
+
+**Phase 3.2: DB-first Pattern Implementation (예정)**:
+- `execute_trade()`에서 `sanitize_error_message()` 사용
+- PENDING → ACTIVE/FAILED 상태 전환 시 error_message 저장
+- 백그라운드 정리 작업에서 stuck PENDING 주문 처리 (120초 timeout)
+- 사용자 UI에서 PENDING 상태 필터링 (혼란 방지)
+
+**Phase 3.2 목표**: 로직 예외로 인한 고아 주문 완전 방지
+- 거래소 API 호출 **전에** DB에 PENDING 상태로 먼저 기록
+- API 성공/실패에 따라 ACTIVE/FAILED로 업데이트
+- 항상 DB 레코드 존재 보장 → 고아 주문 없음
+
+---
+
 ## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
@@ -592,5 +825,5 @@ grep -r "@DATA:successful_orders" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-30 (Phase 1: Producer Field Unification)*
-*Version: 3.0.1 (Phase 1: Producer Statistics Field Naming Consistency)*
+*Last Updated: 2025-10-30 (Phase 3.1: Database & Security Enhancements)*
+*Version: 3.1.0 (Phase 3.1: Error Message Sanitization + Phase 1-2: Statistics Field Consistency)*
