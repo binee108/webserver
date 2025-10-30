@@ -63,6 +63,7 @@
 ### 🛡️ Infrastructure & Resilience
 - **db-first-orphan-prevention** - DB-first 패턴으로 orphan order 방지 (PENDING 상태 + cleanup job) [`@COMP:service,job`] → [docs](features/webhook-order-processing.md#5-phase-32-db-first-orphan-prevention-2025-10-30)
 - **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
+- **cancel-order-db-first-orphan-prevention** - 주문 취소 시 고아 주문 방지 (DB-First 패턴, Phase 1: State Management) [`@FEAT:cancel-order-db-first`] [`@COMP:constant,model,migration`] → [docs](features/webhook-order-processing.md#phase-33-database-schema-for-cancel-orphan-prevention-2025-10-30)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)

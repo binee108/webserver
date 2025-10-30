@@ -392,6 +392,11 @@ class OpenOrder(db.Model):
     # Used for debugging failed orders and orphan prevention analysis
     error_message = db.Column(db.Text, nullable=True)
 
+    # @FEAT:cancel-order-db-first @COMP:model @TYPE:core
+    # @DATA:cancel_attempted_at - 주문 취소 시도 시각 (디버깅 및 백그라운드 정리용)
+    # Used for: (1) Debugging stuck CANCELLING orders, (2) Background cleanup timeout detection
+    cancel_attempted_at = db.Column(db.DateTime, nullable=True)
+
     def __repr__(self):
         return (
             f'<OpenOrder {self.symbol} {self.side} {self.order_type} '

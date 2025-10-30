@@ -816,6 +816,8 @@ class OrderStatus:
     """통합 주문 상태 (거래소 독립적)"""
     # 기본 상태
     PENDING = 'PENDING'              # @DATA:OrderStatus.PENDING - DB-first 패턴 (Phase 2: 2025-10-30)
+    CANCELLING = 'CANCELLING'        # @FEAT:cancel-order-db-first @COMP:constant @TYPE:core
+                                     # @DATA:OrderStatus.CANCELLING - Pre-exchange API call state (order cancellation)
     NEW = 'NEW'                      # 신규 주문
     OPEN = 'OPEN'                    # 미체결
     PARTIALLY_FILLED = 'PARTIALLY_FILLED'  # 부분 체결
@@ -825,8 +827,9 @@ class OrderStatus:
     EXPIRED = 'EXPIRED'              # 만료됨
     FAILED = 'FAILED'                # @DATA:OrderStatus.FAILED - 거래소 API 실패 (Phase 2: 2025-10-30)
 
-    # 미체결 상태 그룹 (배경 작업 처리용, PENDING 포함)
-    OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED]
+    # 미체결 상태 그룹 (백그라운드 작업 처리용)
+    # Note: PENDING은 get_active_statuses()에서 별도 추가됨
+    OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED, CANCELLING]  # @FEAT:cancel-order-db-first
     # 완료 상태 그룹
     CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED, FAILED]
 
@@ -916,13 +919,18 @@ class OrderStatus:
             status (str): 주문 상태
 
         Returns:
-            bool: 미체결 상태이면 True (NEW, OPEN, PARTIALLY_FILLED)
+            bool: 미체결 상태이면 True (NEW, OPEN, PARTIALLY_FILLED, CANCELLING)
 
         Examples:
             >>> OrderStatus.is_open('OPEN')
             True
+            >>> OrderStatus.is_open('CANCELLING')
+            True
             >>> OrderStatus.is_open('FILLED')
             False
+
+        Notes:
+            - CANCELLING: DB-first 주문 취소 패턴의 임시 상태 (백그라운드 작업 대상)
         """
         return status in cls.OPEN_STATUSES
 
@@ -949,11 +957,15 @@ class OrderStatus:
         """미체결 상태 목록 반환
 
         Returns:
-            list: 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
+            list: 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED, CANCELLING]
 
         Examples:
             >>> OrderStatus.get_open_statuses()
-            ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+            ['NEW', 'OPEN', 'PARTIALLY_FILLED', 'CANCELLING']
+
+        Notes:
+            - 백그라운드 작업용 활성 미체결 상태
+            - PENDING은 get_active_statuses()에서 별도 추가됨
         """
         return cls.OPEN_STATUSES.copy()
 
@@ -993,10 +1005,10 @@ class OrderStatus:
 
     @classmethod
     def get_open_statuses_for_ui(cls) -> list:
-        """UI 표시용 미체결 상태 목록 반환 (PENDING 제외)
+        """UI 표시용 미체결 상태 목록 반환 (PENDING, CANCELLING 제외)
 
-        사용자에게 표시되는 상태: OPEN, PARTIALLY_FILLED만 표시
-        PENDING은 거래소 호출 대기 중인 임시 상태이므로 사용자에게 숨김
+        사용자에게 표시되는 상태: NEW, OPEN, PARTIALLY_FILLED만 표시
+        PENDING과 CANCELLING은 임시 상태이므로 사용자에게 숨김
 
         Returns:
             list: UI용 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
@@ -1007,9 +1019,9 @@ class OrderStatus:
 
         Notes:
             - API 응답 필터링: orders = OpenOrder.query.filter(status.in_(get_open_statuses_for_ui()))
-            - 대시보드: PENDING 상태 주문은 필터링됨
+            - 대시보드: PENDING, CANCELLING 상태 주문은 필터링됨
         """
-        return cls.OPEN_STATUSES.copy()
+        return [cls.NEW, cls.OPEN, cls.PARTIALLY_FILLED]
 
 
 # @FEAT:order-limits @COMP:validation @TYPE:config
