@@ -359,14 +359,29 @@ grep -r "@FEAT:trade-execution" --include="*.py" | grep "@FEAT:order-tracking"
 
 ---
 
-## 10. 관련 문서
+## 11. 변경 이력 (Change Log)
+
+### Phase 1: 생산자 필드명 통일 (2025-10-30)
+
+**컨텍스트**: batch-statistics-orphan-fix 기능의 생산자 필드명 일관성 보장
+
+**영향**: TradeExecution 레코드 생성 시 사용되는 통계 필드명 확인
+- `successful_orders`, `failed_orders` 통일 완료
+- 향후 소비자 단에서 일관된 필드 접근 가능
+
+**참고**: 본 문서는 거래 기록 상세 관리 담당 (생산자 측 통계와 연관)
+
+---
+
+## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
 - [주문 상태 추적](./order-tracking.md)
 - [성과 추적 시스템](./performance-tracking.md)
 - [자본 할당 관리](./capital-management.md)
+- [웹훅 주문 처리](./webhook-order-processing.md)
 
 ---
 
-*Last Updated: 2025-10-30*
-*Version: 2.1.1 (Documentation Sync - Helper Methods Added)*
+*Last Updated: 2025-10-30 (Phase 1: Producer Field Unification Sync)*
+*Version: 2.1.2 (Phase 1: Statistics Field Naming Consistency)*

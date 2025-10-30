@@ -319,8 +319,8 @@ class WebhookService:
 
                                 # 결과 집계
                                 summary1 = result1.get('summary', {})
-                                batch1_results['succeeded'] = summary1.get('successful_trades', 0)
-                                batch1_results['failed'] = summary1.get('failed_trades', 0)
+                                batch1_results['succeeded'] = summary1.get('successful_orders', 0)
+                                batch1_results['failed'] = summary1.get('failed_orders', 0)
 
                                 if batch1_results['succeeded'] > 0:
                                     logger.info(f"✅ 배치1 완료 - 성공: {batch1_results['succeeded']}개")
@@ -346,8 +346,8 @@ class WebhookService:
 
                                 # 결과 집계
                                 summary2 = result2.get('summary', {})
-                                batch2_results['succeeded'] = summary2.get('successful_trades', 0)
-                                batch2_results['failed'] = summary2.get('failed_trades', 0)
+                                batch2_results['succeeded'] = summary2.get('successful_orders', 0)
+                                batch2_results['failed'] = summary2.get('failed_orders', 0)
 
                                 if batch2_results['succeeded'] > 0:
                                     logger.info(f"✅ 배치2 완료 - 성공: {batch2_results['succeeded']}개")
@@ -365,14 +365,16 @@ class WebhookService:
                         succeeded = batch1_results['succeeded'] + batch2_results['succeeded']
                         failed = batch1_results['failed'] + batch2_results['failed']
 
+                        # @FEAT:webhook-order @COMP:service @TYPE:core
+                        # @DATA:successful_orders,failed_orders - 배치 통계 필드명 (2025-10-30 통일)
                         result = {
                             'action': 'trading_signal',
                             'strategy': strategy.name,
                             'success': succeeded > 0,  # 1개라도 성공하면 success: true
                             'summary': {
                                 'total_orders': total,
-                                'successful_trades': succeeded,
-                                'failed_trades': failed,
+                                'successful_orders': succeeded,
+                                'failed_orders': failed,
                                 'batch1_succeeded': batch1_results['succeeded'],
                                 'batch1_failed': batch1_results['failed'],
                                 'batch2_succeeded': batch2_results['succeeded'],

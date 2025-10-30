@@ -519,6 +519,33 @@ curl -k -s -X POST https://localhost:5001/api/webhook \
 
 ---
 
+## 변경 이력 (Change Log)
+
+### Phase 1: 생산자 필드명 통일 (2025-10-30)
+
+**목표**: 모든 생산자의 통계 필드명을 `successful_orders` / `failed_orders`로 통일
+
+**변경 사항**:
+1. **trading/core.py:771-772** - `process_trading_signal()` 필드명 통일
+   - `successful_orders`, `failed_orders` 사용 (이미 통일됨)
+   - Tag 추가: `@DATA:successful_orders,failed_orders`
+
+2. **webhook_service.py:374-375** - 배치 결과 필드명 통일
+   - `successful_orders`, `failed_orders` 사용 (이미 통일됨)
+   - Tag 추가: `@DATA:successful_orders,failed_orders`
+
+**영향 범위**:
+- 모든 생산자 응답 포맷 일관성 확보
+- 소비자는 단일 필드명으로 데이터 접근 가능 (폴백 불필요)
+- Phase 2에서 소비자 필드명 통일 예정
+
+**검색 패턴**:
+```bash
+grep -r "@DATA:successful_orders" .worktree/batch-statistics-orphan-fix/ --include="*.py"
+```
+
+---
+
 ## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
@@ -527,5 +554,5 @@ curl -k -s -X POST https://localhost:5001/api/webhook \
 
 ---
 
-*Last Updated: 2025-10-30 (Phase 4: Immediate Execution & Timeout)*
-*Version: 3.0.0 (Phase 4: threading.Timer, Priority Classification, Independent Transactions)*
+*Last Updated: 2025-10-30 (Phase 1: Producer Field Unification)*
+*Version: 3.0.1 (Phase 1: Producer Statistics Field Naming Consistency)*
