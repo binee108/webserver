@@ -480,8 +480,12 @@ class WebhookService:
             raise WebhookError(f"웹훅 처리 실패: {str(e)}")
 
     # @FEAT:webhook-order @COMP:service @TYPE:helper
+    # @DATA:successful_orders,failed_orders - 소비자 필드명 파싱 (Phase 2: 2025-10-30)
     def _analyze_trading_result(self, result: Dict[str, Any], webhook_data: Dict[str, Any]):
-        """거래 신호 처리 결과 분석 및 로깅"""
+        """거래 신호 처리 결과 분석 및 로깅
+
+        필드명 통일: successful_orders / failed_orders (Phase 1+2 전역 일관성)
+        """
         try:
             strategy_name = result.get('strategy', 'UNKNOWN')
             results = result.get('results', [])
@@ -489,8 +493,8 @@ class WebhookService:
 
             total_accounts = summary.get('total_accounts', 0)
             executed_accounts = summary.get('executed_accounts', 0)
-            successful_trades = summary.get('successful_trades', 0)
-            failed_trades = summary.get('failed_trades', 0)
+            successful_orders = summary.get('successful_orders', 0)
+            failed_orders = summary.get('failed_orders', 0)
             inactive_accounts = summary.get('inactive_accounts', 0)
             exchange_mismatch_accounts = summary.get('exchange_mismatch_accounts', 0)
 
@@ -499,7 +503,7 @@ class WebhookService:
                                     if r.get('skipped') and r.get('skip_reason') == 'max_symbols_limit_reached')
 
             logger.info(f"📊 웹훅 처리 결과 분석 (전략: {strategy_name}):")
-            logger.info(f"   총 계좌: {total_accounts}, 실행: {executed_accounts}, 성공: {successful_trades}, 실패: {failed_trades}")
+            logger.info(f"   총 계좌: {total_accounts}, 실행: {executed_accounts}, 성공: {successful_orders}, 실패: {failed_orders}")
 
             # 🆕 최대 심볼 수 제한 관련 로깅
             if max_symbols_skipped > 0:
@@ -517,18 +521,18 @@ class WebhookService:
                 logger.error(f"   웹훅 데이터: {webhook_data}")
                 logger.error(f"   비활성 계좌: {inactive_accounts}, 거래소 불일치: {exchange_mismatch_accounts}")
 
-            elif successful_trades == 0:
+            elif successful_orders == 0:
                 logger.error(f"🚨 웹훅 처리 문제 - 모든 거래가 실패함!")
-                logger.error(f"   전략: {strategy_name}, 실패한 거래 수: {failed_trades}")
+                logger.error(f"   전략: {strategy_name}, 실패한 거래 수: {failed_orders}")
                 for result_item in results:
                     if not result_item.get('success', False):
                         logger.error(f"   실패 상세: 계좌 {result_item.get('account_id')} - {result_item.get('error')}")
 
-            elif failed_trades > 0:
-                logger.warning(f"⚠️  일부 거래 실패 - 성공: {successful_trades}, 실패: {failed_trades}")
+            elif failed_orders > 0:
+                logger.warning(f"⚠️  일부 거래 실패 - 성공: {successful_orders}, 실패: {failed_orders}")
 
             else:
-                logger.info(f"✅ 모든 거래 성공 - {successful_trades}개 계좌에서 거래 완료")
+                logger.info(f"✅ 모든 거래 성공 - {successful_orders}개 계좌에서 거래 완료")
 
         except Exception as e:
             logger.error(f"거래 결과 분석 중 오류: {str(e)}")
