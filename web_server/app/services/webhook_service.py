@@ -257,7 +257,7 @@ class WebhookService:
                         # 부분 실패 격리 효과:
                         # - 배치1 실패 → 롤백, 배치2 계속 실행
                         # - 배치2 실패 → 롤백, 배치1 커밋 유지 (부분 성공 보장)
-                        from app.constants import OrderType, ORDER_TYPE_GROUPS
+                        from app.constants import ORDER_TYPE_GROUPS
 
                         high_priority = []  # CANCEL_ALL_ORDER, MARKET
                         low_priority = []   # LIMIT, STOP
