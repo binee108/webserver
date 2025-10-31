@@ -167,8 +167,37 @@ class OrderManager:
                 # STEP 3: 성공 시 CANCELLING → CANCELLED (DB 삭제)
                 # ============================================================
                 if result['success']:
+                    # 거래소 측 취소 결과 검증
+                    if not self._confirm_order_cancelled(
+                        account=account,
+                        order_id=order_id,
+                        symbol=symbol,
+                        market_type=market_type,
+                        cancel_result=result
+                    ):
+                        # 취소 미확인 → 원래 상태 복원
+                        revert_msg = sanitize_error_message(
+                            result.get('error', 'Cancellation not confirmed by exchange')
+                        )
+                        open_order.status = old_status
+                        open_order.cancel_attempted_at = None
+                        open_order.error_message = revert_msg
+                        db.session.commit()
+
+                        logger.warning(
+                            "⚠️ 거래소 취소 미확인 → %s 복원: order_id=%s",
+                            old_status,
+                            order_id
+                        )
+
+                        return {
+                            'success': False,
+                            'error': 'Cancellation not confirmed by exchange',
+                            'error_type': 'cancel_verification_failed'
+                        }
+
                     # 주문 정보 로그 (삭제 전)
-                    logger.info(f"✅ 거래소 취소 성공 → DB 삭제: {order_id}")
+                    logger.info(f"✅ 거래소 취소 확인 → DB 삭제: {order_id}")
 
                     # SSE 이벤트 발송 (DB 삭제 전)
                     try:
@@ -392,6 +421,99 @@ class OrderManager:
         except Exception as e:
             logger.error(f"❌ 주문 상태 조회 예외: {order_id} - {e}")
             return 'unknown'
+
+    def _confirm_order_cancelled(
+        self,
+        account: Account,
+        order_id: str,
+        symbol: str,
+        market_type: str,
+        cancel_result: Dict[str, Any]
+    ) -> bool:
+        """거래소가 실제로 주문 취소를 반영했는지 확인한다.
+
+        검증 순서:
+            1. 취소 응답에 status 힌트가 있는 경우 우선 사용
+            2. fetch_order 1회 확인 (_verify_cancellation_once 재사용)
+            3. 여전히 불확실하면 get_open_orders로 잔존 여부 확인
+
+        Returns:
+            bool: True → 취소 확인, False → 취소 미확인
+        """
+        from app.constants import OrderStatus
+
+        # Step 1: 응답에 status 힌트가 있는 경우 (예: Binance cancel_order 응답)
+        result_payload = (cancel_result or {}).get('result') or {}
+        status_hint = result_payload.get('status')
+        if status_hint:
+            normalized = OrderStatus.from_exchange(status_hint, account.exchange)
+            if normalized in (
+                OrderStatus.CANCELLED,
+                OrderStatus.REJECTED,
+                OrderStatus.EXPIRED,
+            ):
+                return True
+
+        # 이미 취소됨(already_cancelled) 플래그는 불확실 -> 추가 검증 진행
+
+        # Step 2: fetch_order로 단일 확인
+        verification = self._verify_cancellation_once(
+            account=account,
+            order_id=order_id,
+            symbol=symbol,
+            market_type=market_type
+        )
+
+        if verification == 'cancelled':
+            return True
+        if verification == 'active':
+            logger.warning(
+                "⚠️ 거래소 응답에서 주문이 여전히 활성 상태로 확인됨 - order_id=%s",
+                order_id
+            )
+            return False
+
+        # Step 3: open orders 조회로 최종 확인 (verification == 'unknown')
+        try:
+            open_orders_result = exchange_service.get_open_orders(
+                account=account,
+                symbol=symbol,
+                market_type=market_type
+            )
+
+            if not open_orders_result.get('success'):
+                logger.warning(
+                    "⚠️ 거래소 미체결 주문 조회 실패 - order_id=%s, error=%s",
+                    order_id,
+                    open_orders_result.get('error')
+                )
+                return False
+
+            orders = open_orders_result.get('orders', [])
+            for raw_order in orders:
+                current_id = None
+                if hasattr(raw_order, 'id'):
+                    current_id = str(raw_order.id)
+                elif isinstance(raw_order, dict):
+                    current_id = str(raw_order.get('id') or raw_order.get('order_id'))
+
+                if current_id == str(order_id):
+                    logger.warning(
+                        "⚠️ 주문이 여전히 거래소에 존재 - order_id=%s",
+                        order_id
+                    )
+                    return False
+
+            # 미체결 목록에 존재하지 않으면 취소된 것으로 간주
+            return True
+
+        except Exception as e:
+            logger.error(
+                "❌ 거래소 미체결 주문 확인 실패 - order_id=%s, error=%s",
+                order_id,
+                e
+            )
+            return False
 
     def cancel_order_by_user(self, order_id: str, user_id: int) -> Dict[str, Any]:
         """사용자 권한 기준 주문 취소 (OpenOrder)
