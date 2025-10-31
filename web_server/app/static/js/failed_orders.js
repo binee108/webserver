@@ -12,6 +12,12 @@
  * - removeFailedOrder(id): DELETE API call
  * - filterFailedOrders(): Event handler for filter changes
  *
+ * Empty State Rendering:
+ * - Synchronized with positions.html template (positions.html Line 344-355)
+ * - CSS classes: .empty-state, .empty-state-icon, .empty-failed-orders-row
+ * - Defined in positions.css for consistent styling across application
+ * - Progressive Enhancement: HTML provides initial template, JS maintains consistency
+ *
  * Dependencies:
  * - toast.js: showToast() for notifications
  * - base.html: CSRF token meta tag
@@ -141,15 +147,20 @@
             return;
         }
 
-        // Empty state
+        // Empty state - synchronized with positions.html template (Line 344-355)
+        // Uses CSS classes (.empty-state, .empty-state-icon, .empty-failed-orders-row)
+        // defined in positions.css for consistent styling across the application
         if (!orders || orders.length === 0) {
             tbody.innerHTML = `
-                <tr>
-                    <td colspan="9" class="text-center" style="padding: 2rem;">
-                        <svg style="width: 48px; height: 48px; margin: 0 auto 0.5rem; color: var(--text-muted);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <p style="color: var(--text-muted); margin: 0;">실패된 주문이 없습니다</p>
+                <tr class="empty-failed-orders-row">
+                    <td colspan="9">
+                        <div class="empty-state">
+                            <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <h3>실패된 주문이 없습니다</h3>
+                            <p>재시도가 필요한 주문이 없습니다.</p>
+                        </div>
                     </td>
                 </tr>
             `;
