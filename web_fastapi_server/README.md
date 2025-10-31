@@ -277,17 +277,19 @@ alembic downgrade -1
 - SQLAlchemy 2.0 비동기 설정
 - 새로운 테이블 (cancel_queue, strategy_order_logs)
 
-### Phase 2: 취소 대기열 시스템 ✅ (현재)
+### Phase 2: 취소 대기열 시스템 ✅
 - PENDING 주문 취소 처리
 - 재시도 메커니즘 (exponential backoff)
 - 백그라운드 작업
 - Cancel Queue API 엔드포인트
 - Mock Exchange Service
 
-### Phase 3: 비동기 거래소 어댑터 (예정)
+### Phase 3: 비동기 거래소 어댑터 ✅ (현재)
 - Binance, Bybit, Upbit 비동기 구현
 - httpx 기반 HTTP 클라이언트
-- 에러 처리 및 재시도
+- 에러 처리 및 재시도 (500 에러 포함)
+- Rate Limiting (거래소별)
+- 통일된 데이터 형식
 
 ### Phase 4: 웹훅 처리 엔드포인트 (예정)
 - MARKET/CANCEL vs Limit/Stop 분기
@@ -314,6 +316,7 @@ alembic downgrade -1
 - **[모델 문서](docs/MODELS.md)**: CancelQueue, StrategyOrderLog 상세 API
 - **[설정 문서](docs/CONFIGURATION.md)**: 환경 변수 상세 설명 및 사용법
 - **[Cancel Queue 문서](docs/CANCEL_QUEUE.md)**: Cancel Queue 시스템 상세 가이드 (Phase 2)
+- **[거래소 어댑터 문서](docs/EXCHANGES.md)**: Binance, Bybit, Upbit 어댑터 가이드 (Phase 3)
 - **[API 문서](http://localhost:8000/docs)**: Swagger UI (서버 실행 후)
 
 ## 환경 변수
@@ -328,6 +331,15 @@ alembic downgrade -1
 | `MARKET_ORDER_TIMEOUT` | MARKET 주문 타임아웃 (초) | `10` |
 | `CANCEL_QUEUE_INTERVAL` | Cancel Queue 처리 간격 (초) | `10` |
 | `MAX_CANCEL_RETRIES` | 최대 취소 재시도 횟수 | `5` |
+| `BINANCE_API_KEY` | Binance API Key | (Phase 3) |
+| `BINANCE_API_SECRET` | Binance API Secret | (Phase 3) |
+| `BYBIT_API_KEY` | Bybit API Key | (Phase 3) |
+| `BYBIT_API_SECRET` | Bybit API Secret | (Phase 3) |
+| `UPBIT_API_KEY` | Upbit Access Key | (Phase 3) |
+| `UPBIT_API_SECRET` | Upbit Secret Key | (Phase 3) |
+| `EXCHANGE_TIMEOUT` | 거래소 API 타임아웃 (초) | `30` |
+| `EXCHANGE_MAX_RETRIES` | 거래소 API 최대 재시도 | `3` |
+| `USE_MOCK_EXCHANGE` | Mock Exchange 사용 여부 | `true` |
 
 ## 문제 해결
 
@@ -375,5 +387,5 @@ uvicorn app.main:app --port 8001
 ---
 
 **최종 업데이트**: 2025-10-31
-**버전**: 1.0.0-alpha (Phase 1)
+**버전**: 1.0.0-alpha (Phase 3)
 **문의**: FastAPI 리팩토링 프로젝트

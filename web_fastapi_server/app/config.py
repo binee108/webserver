@@ -79,6 +79,74 @@ class Settings(BaseSettings):
         description="최대 취소 재시도 횟수"
     )
 
+    # Exchange API Keys (Phase 3)
+    BINANCE_API_KEY: str = Field(
+        default="",
+        description="Binance API Key"
+    )
+    BINANCE_API_SECRET: str = Field(
+        default="",
+        description="Binance API Secret"
+    )
+
+    BYBIT_API_KEY: str = Field(
+        default="",
+        description="Bybit API Key"
+    )
+    BYBIT_API_SECRET: str = Field(
+        default="",
+        description="Bybit API Secret"
+    )
+
+    UPBIT_API_KEY: str = Field(
+        default="",
+        description="Upbit Access Key"
+    )
+    UPBIT_API_SECRET: str = Field(
+        default="",
+        description="Upbit Secret Key"
+    )
+
+    # Exchange Settings (Phase 3)
+    EXCHANGE_TIMEOUT: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="거래소 API 타임아웃 (초)"
+    )
+    EXCHANGE_MAX_RETRIES: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="거래소 API 최대 재시도 횟수"
+    )
+
+    # Exchange Rate Limits (requests per second)
+    BINANCE_RATE_LIMIT: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=100.0,
+        description="Binance Rate Limit (req/s)"
+    )
+    BYBIT_RATE_LIMIT: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=100.0,
+        description="Bybit Rate Limit (req/s)"
+    )
+    UPBIT_RATE_LIMIT: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=100.0,
+        description="Upbit Rate Limit (req/s) - 주문 API"
+    )
+
+    # Mock Exchange (Phase 2/3 테스트)
+    USE_MOCK_EXCHANGE: bool = Field(
+        default=True,
+        description="Mock Exchange 사용 여부 (테스트용)"
+    )
+
     # Application Configuration
     ENV: str = Field(
         default="development",
