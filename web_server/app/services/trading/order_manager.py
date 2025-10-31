@@ -1302,8 +1302,8 @@ class OrderManager:
             db.session.rollback()
             logger.error("OpenOrder 상태 업데이트 실패: %s", exc)
 
-    # @FEAT:webhook-order @COMP:job @TYPE:core
-    # @DATA:OrderStatus.PENDING - PENDING 주문 정리 (Phase 2: 2025-10-30)
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:4
+    # Phase 4: PENDING 주문 정리 - 120초 이상 PENDING 상태 주문을 FAILED로 전환
     def _cleanup_stuck_pending_orders(self) -> None:
         """
         정리 작업: PENDING 상태로 120초 이상 멈춘 주문을 FAILED로 강제 전환
@@ -1361,7 +1361,8 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ PENDING 주문 정리 실패: {e}")
 
-    # @FEAT:order-tracking @COMP:service @TYPE:helper
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:4
+    # Phase 4: CANCELLING 주문 정리 - 거래소 상태 재확인 후 동기화
     def _cleanup_orphan_cancelling_orders(self) -> None:
         """
         정리 작업: CANCELLING 상태로 300초 이상 멈춘 주문을 거래소 상태 재확인 후 처리
@@ -1885,10 +1886,12 @@ class OrderManager:
                 f"삭제={total_deleted}, 실패={total_failed}"
             )
 
-            # Step 5: PENDING 주문 정리 (Phase 2)
+            # @FEAT:orphan-order-prevention @PHASE:4
+            # Step 5: PENDING 주문 정리 (Phase 4)
             self._cleanup_stuck_pending_orders()
 
-            # Step 6: CANCELLING 주문 정리 (Phase 4: 2025-10-30)
+            # @FEAT:orphan-order-prevention @PHASE:4
+            # Step 6: CANCELLING 주문 정리 (Phase 4)
             self._cleanup_orphan_cancelling_orders()
 
         except Exception as e:
