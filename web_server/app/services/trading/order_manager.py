@@ -1095,6 +1095,164 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ PENDING 주문 정리 실패: {e}")
 
+    # @FEAT:order-tracking @COMP:service @TYPE:helper
+    def _cleanup_orphan_cancelling_orders(self) -> None:
+        """
+        정리 작업: CANCELLING 상태로 300초 이상 멈춘 주문을 거래소 상태 재확인 후 처리
+
+        호출 시점: update_open_orders_status() 실행 후 (29초마다)
+
+        동작:
+        1. CANCELLING 상태이고 cancel_attempted_at이 300초 이전인 주문 검색
+        2. 거래소 상태 재확인:
+           - 취소됨 확인 시: DB 삭제
+           - 미취소 확인 시: OPEN으로 복원
+           - 확인 실패 시: 600초(10분) 이상 경과하면 OPEN으로 복원 (안전장치)
+
+        목적:
+        - DB-First 패턴에서 거래소 API 예외 발생 시 남은 고아 주문 정리
+        - 최대 대기 시간: 300초 (29초 주기 × 최대 11주기)
+        - 자동 복구: 응답 없는 CANCELLING 주문은 결국 확인 또는 복원
+
+        사례:
+        - 거래소 API 예외 발생 → CANCELLING 유지 (Phase 2)
+        - 300초 후: 백그라운드가 거래소 상태 재확인
+        - 취소 확인 시: DB 삭제, 미취소 확인 시: OPEN 복원
+        - 10분 이상 확인 불가: OPEN 복원 (안전장치)
+        """
+        from app.models import OpenOrder, StrategyAccount, Account
+        from app.constants import OrderStatus
+        from app.services.trading.core import sanitize_error_message
+
+        try:
+            # 타임아웃: 300초 (5분)
+            timeout_seconds = 300
+            cutoff_time = datetime.utcnow() - timedelta(seconds=timeout_seconds)
+
+            # 안전장치 타임아웃: 600초 (10분)
+            safety_timeout_seconds = 600
+            safety_cutoff_time = datetime.utcnow() - timedelta(seconds=safety_timeout_seconds)
+
+            # CANCELLING 상태이고 timeout 초과한 주문 검색
+            stuck_orders = (
+                OpenOrder.query
+                .options(
+                    joinedload(OpenOrder.strategy_account)
+                    .joinedload(StrategyAccount.account),
+                    joinedload(OpenOrder.strategy_account)
+                    .joinedload(StrategyAccount.strategy)
+                )
+                .filter(
+                    OpenOrder.status == OrderStatus.CANCELLING,
+                    OpenOrder.cancel_attempted_at < cutoff_time
+                )
+                .all()
+            )
+
+            if not stuck_orders:
+                # 정리할 주문 없음 (정상 상태)
+                return
+
+            logger.info(
+                f"🧹 CANCELLING 주문 정리 시작: {len(stuck_orders)}개 주문 "
+                f"(timeout: >{timeout_seconds}초)"
+            )
+
+            cancelled_count = 0
+            restored_count = 0
+            safety_restored_count = 0
+
+            for order in stuck_orders:
+                try:
+                    # 계정 정보 가져오기
+                    strategy_account = order.strategy_account
+                    if not strategy_account or not strategy_account.account:
+                        logger.warning(
+                            f"⚠️ 계정 정보 없음, OPEN 복원: {order.exchange_order_id}"
+                        )
+                        order.status = OrderStatus.OPEN
+                        order.cancel_attempted_at = None
+                        order.error_message = sanitize_error_message(
+                            "Account not found during cleanup"
+                        )
+                        restored_count += 1
+                        continue
+
+                    account = strategy_account.account
+                    market_type = 'spot'
+                    if strategy_account.strategy:
+                        market_type = strategy_account.strategy.market_type.lower()
+
+                    # 안전장치: 10분 이상 경과 시 거래소 확인 없이 OPEN 복원
+                    if order.cancel_attempted_at < safety_cutoff_time:
+                        logger.warning(
+                            f"⚠️ 안전장치 작동 (>{safety_timeout_seconds}초): "
+                            f"OPEN 복원: {order.exchange_order_id}"
+                        )
+                        order.status = OrderStatus.OPEN
+                        order.cancel_attempted_at = None
+                        order.error_message = sanitize_error_message(
+                            f"Cancellation stuck >{safety_timeout_seconds}s, restored to OPEN"
+                        )
+                        safety_restored_count += 1
+                        continue
+
+                    # 거래소 상태 재확인 (Phase 2 helper 재사용)
+                    verification_result = self._verify_cancellation_once(
+                        account=account,
+                        order_id=order.exchange_order_id,
+                        symbol=order.symbol,
+                        market_type=market_type
+                    )
+
+                    if verification_result == 'cancelled':
+                        # 취소됨 확인 → DB 삭제
+                        logger.info(
+                            f"✅ 백그라운드 확인: 취소됨 → DB 삭제: "
+                            f"{order.exchange_order_id}"
+                        )
+                        db.session.delete(order)
+                        cancelled_count += 1
+
+                    elif verification_result == 'active':
+                        # 활성 상태 확인 → OPEN 복원
+                        logger.warning(
+                            f"⚠️ 백그라운드 확인: 활성 → OPEN 복원: "
+                            f"{order.exchange_order_id}"
+                        )
+                        order.status = OrderStatus.OPEN
+                        order.cancel_attempted_at = None
+                        order.error_message = sanitize_error_message(
+                            "Cancellation failed, order still active on exchange"
+                        )
+                        restored_count += 1
+
+                    else:
+                        # 확인 실패 → CANCELLING 유지 (다음 주기에 재시도)
+                        logger.warning(
+                            f"⚠️ 백그라운드 확인 실패 → CANCELLING 유지: "
+                            f"{order.exchange_order_id}"
+                        )
+
+                except Exception as order_error:
+                    logger.error(
+                        f"❌ CANCELLING 주문 정리 실패 (개별): "
+                        f"{order.exchange_order_id} - {order_error}"
+                    )
+
+            # 변경사항 커밋
+            db.session.commit()
+
+            logger.info(
+                f"🧹 CANCELLING 주문 정리 완료: "
+                f"취소={cancelled_count}개, 복원={restored_count}개, "
+                f"안전장치복원={safety_restored_count}개"
+            )
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ CANCELLING 주문 정리 실패: {e}")
+
     # @FEAT:order-tracking @COMP:job @TYPE:core
     def update_open_orders_status(self) -> None:
         """백그라운드 작업: 모든 미체결 주문의 상태를 거래소와 동기화 (Phase 3: 배치 쿼리 최적화)
@@ -1463,6 +1621,9 @@ class OrderManager:
 
             # Step 5: PENDING 주문 정리 (Phase 2)
             self._cleanup_stuck_pending_orders()
+
+            # Step 6: CANCELLING 주문 정리 (Phase 4: 2025-10-30)
+            self._cleanup_orphan_cancelling_orders()
 
         except Exception as e:
             db.session.rollback()
