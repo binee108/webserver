@@ -345,7 +345,7 @@ class OrderManager:
 
         WHY: 거래소 API 타임아웃 시 실제 취소 여부 확인. CANCELLING 상태 orphan 방지.
         Edge Cases: 네트워크 오류 → 'unknown', FILLED 상태 → 'unknown'
-        Side Effects: 거래소 API 1회 호출 (get_order_info)
+        Side Effects: 거래소 API 1회 호출 (fetch_order)
         Performance: 거래소 API 응답 시간 (보통 100-500ms)
         Debugging: 로그 "⚠️ 주문 상태 조회 실패" 또는 "⚠️ 예상치 못한 주문 상태"
 
@@ -364,10 +364,10 @@ class OrderManager:
         """
         try:
             # 거래소에서 주문 상태 조회
-            order_info = exchange_service.get_order_info(
+            order_info = exchange_service.fetch_order(
                 account=account,
-                order_id=order_id,
                 symbol=symbol,
+                order_id=order_id,
                 market_type=market_type
             )
 
