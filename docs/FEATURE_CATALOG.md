@@ -71,6 +71,7 @@
   - Phase 3b: CANCEL_ALL_ORDER improvement (Snapshot filter + Race S5.2)
   - Phase 4: PENDING/CANCELLING cleanup (백그라운드 정리)
   - Phase 5: Order state consistency check (DB-거래소 일관성 검증)
+  - Phase 6: Logging and monitoring (Phase 1-5 통합 완료)
 - **auto-migration** - 자동 마이그레이션 시스템 (schema_migrations 추적, SQLAlchemy 패턴 필수) [`@COMP:util,job`] → [docs](features/auto-migration.md)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
@@ -91,6 +92,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-31 | Orphan Order Prevention (Logging) | ✅ Phase 6 | - | Phase 1-5 통합 로깅 완료 (189 log points) |
 | 2025-10-31 | Orphan Order Prevention (Consistency Check) | ✅ Phase 5 | order_manager.py | DB-거래소 상태 일관성 검증 태그 추가 (29초 주기) |
 | 2025-10-31 | Orphan Order Prevention (Cleanup) | ✅ Phase 4 | order_manager.py | PENDING/CANCELLING 백그라운드 정리 태그 추가 |
 | 2025-10-31 | Orphan Order Prevention (CANCEL_ALL_ORDER) | ✅ Phase 3b | order_manager.py, webhook_service.py | Snapshot-based query, 'filled' 처리, FailedOrder 통합 |
