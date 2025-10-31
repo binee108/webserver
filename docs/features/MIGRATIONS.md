@@ -179,6 +179,105 @@ python migrations/20251030_add_cancelling_state.py --downgrade
 
 ---
 
+## Auto Migration System
+
+> 📌 **상세 가이드**: [Auto Migration System Documentation](auto-migration.md)
+
+자동 마이그레이션 시스템은 `python run.py start/restart` 실행 시 미실행 마이그레이션을 자동으로 감지하고 실행합니다.
+
+### 작동 방식
+
+```
+python run.py start/restart
+    ↓
+1. PostgreSQL 컨테이너 시작
+    ↓
+2. schema_migrations 테이블 확인/생성
+    ↓
+3. web_server/migrations/ 디렉토리 스캔
+    ↓
+4. 미실행 마이그레이션 감지 (날짜순 정렬)
+    ↓
+5. 순차 실행 (upgrade 함수 호출)
+    ↓
+6. 실행 이력 자동 기록 (schema_migrations 테이블)
+    ↓
+7. Flask 앱 시작
+```
+
+### 마이그레이션 작성 필수 규칙
+
+**⚠️ 중요: SQLAlchemy 패턴 필수**
+
+모든 마이그레이션은 반드시 SQLAlchemy 패턴을 따라야 합니다 (자동 마이그레이션 시스템 호환성):
+
+**✅ 올바른 패턴:**
+```python
+from sqlalchemy import text
+
+def upgrade(engine):  # ✅ engine 파라미터
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            conn.execute(text("""
+                ALTER TABLE open_orders
+                ADD COLUMN IF NOT EXISTS error_message TEXT;
+            """))  # ✅ text() 사용
+            trans.commit()
+        except Exception as e:
+            trans.rollback()
+            raise
+
+def downgrade(engine):  # ✅ engine 파라미터
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            conn.execute(text("""
+                ALTER TABLE open_orders
+                DROP COLUMN IF EXISTS error_message;
+            """))
+            trans.commit()
+        except Exception as e:
+            trans.rollback()
+            raise
+```
+
+**❌ 사용 금지: psycopg2 패턴**
+```python
+import psycopg2
+
+def upgrade(conn):  # ❌ psycopg2 connection (호환 안 됨)
+    cursor = conn.cursor()
+    cursor.execute("...")
+    conn.commit()
+```
+
+**호환성 이슈:**
+- 자동 마이그레이션 시스템은 SQLAlchemy engine을 전달
+- psycopg2 connection 패턴은 자동 실행 불가
+- 수동 실행만 가능하고 자동 마이그레이션 시스템 무시됨
+
+### 체크리스트
+
+새 마이그레이션 작성 시 다음을 확인하세요:
+
+- [ ] `from sqlalchemy import text` import
+- [ ] `def upgrade(engine):` 시그니처
+- [ ] `def downgrade(engine):` 시그니처
+- [ ] `with engine.connect() as conn:` 패턴
+- [ ] `trans = conn.begin()` 트랜잭션 시작
+- [ ] `conn.execute(text("..."))` text() 사용
+- [ ] `trans.commit()` / `trans.rollback()` 명시적 처리
+- [ ] `IF NOT EXISTS` / `IF EXISTS` Idempotent 설계
+- [ ] `__main__` 블록에서도 SQLAlchemy 패턴 사용
+
+**참고:**
+- 템플릿 코드: [auto-migration.md](auto-migration.md#migration-template)
+- 흔한 실수: [auto-migration.md](auto-migration.md#common-mistakes)
+- 트러블슈팅: [auto-migration.md](auto-migration.md#troubleshooting)
+
+---
+
 ## Migration Workflow
 
 ### 마이그레이션 적용
@@ -266,5 +365,5 @@ ALTER TABLE open_orders DROP COLUMN IF EXISTS error_message;
 
 ---
 
-*Last Updated: 2025-10-30*
-*Purpose: Database schema change tracking and rollback procedures*
+*Last Updated: 2025-10-31*
+*Purpose: Database schema change tracking, auto-migration system, and rollback procedures*
