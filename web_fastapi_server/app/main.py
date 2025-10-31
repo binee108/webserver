@@ -8,10 +8,16 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
+import asyncio
 
 from app.config import settings
 from app.core.middleware import setup_middleware
 from app.db.session import close_db
+from app.api.v1 import cancel_queue
+from app.tasks.cancel_queue_processor import (
+    start_cancel_queue_processor,
+    stop_cancel_queue_processor,
+)
 
 # 로깅 설정
 logging.basicConfig(
@@ -35,10 +41,19 @@ async def lifespan(app: FastAPI):
     logger.info(f"🔧 Debug Mode: {settings.DEBUG}")
     logger.info(f"🌐 CORS Origins: {settings.CORS_ORIGINS}")
 
+    # Cancel Queue 백그라운드 작업 시작
+    cancel_queue_task = await start_cancel_queue_processor()
+    logger.info("✅ Background tasks started")
+
     yield
 
     # Shutdown
     logger.info("🛑 Shutting down FastAPI Trading Bot Server...")
+
+    # Cancel Queue 백그라운드 작업 종료
+    await stop_cancel_queue_processor(cancel_queue_task)
+
+    # DB 연결 종료
     await close_db()
     logger.info("✅ Cleanup completed")
 
@@ -86,7 +101,10 @@ async def ping():
     return {"message": "pong"}
 
 
-# API 라우터 등록 (Phase 2 이후 추가 예정)
+# API 라우터 등록
+app.include_router(cancel_queue.router, prefix="/api/v1")
+
+# Phase 3+ 라우터 (예정)
 # app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
 # app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
 # app.include_router(strategies.router, prefix="/api/v1", tags=["Strategies"])

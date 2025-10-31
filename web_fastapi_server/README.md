@@ -65,7 +65,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## API 엔드포인트 (Phase 1)
+## API 엔드포인트
 
 ### 기본 엔드포인트
 
@@ -98,6 +98,34 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
   "message": "pong"
 }
 ```
+
+### Cancel Queue 엔드포인트 (Phase 2)
+
+#### POST `/api/v1/cancel-queue/orders/{order_id}/cancel`
+주문 취소 요청
+- **PENDING** 주문: Cancel Queue에 추가 → 202 Accepted
+- **OPEN** 주문: 즉시 거래소 취소 → 200 OK
+
+**응답 예시 (PENDING)**:
+```json
+{
+  "message": "Cancel request added to queue",
+  "order_id": 123,
+  "status": "queued",
+  "cancel_queue_id": 45,
+  "immediate": false
+}
+```
+
+#### GET `/api/v1/cancel-queue`
+Cancel Queue 목록 조회 (관리자용)
+- 쿼리 파라미터: `status`, `limit`, `offset`
+
+#### GET `/api/v1/cancel-queue/{cancel_id}`
+Cancel Queue 개별 조회
+
+#### DELETE `/api/v1/cancel-queue/{cancel_id}`
+Cancel Queue 항목 삭제 (관리자용)
 
 ## 프로젝트 구조
 
@@ -244,15 +272,17 @@ alembic downgrade -1
 
 ## Phase 구성
 
-### Phase 1: 비동기 인프라 구축 ✅ (현재)
+### Phase 1: 비동기 인프라 구축 ✅
 - FastAPI 프로젝트 초기화
 - SQLAlchemy 2.0 비동기 설정
 - 새로운 테이블 (cancel_queue, strategy_order_logs)
 
-### Phase 2: 취소 대기열 시스템 (예정)
+### Phase 2: 취소 대기열 시스템 ✅ (현재)
 - PENDING 주문 취소 처리
-- 재시도 메커니즘
+- 재시도 메커니즘 (exponential backoff)
 - 백그라운드 작업
+- Cancel Queue API 엔드포인트
+- Mock Exchange Service
 
 ### Phase 3: 비동기 거래소 어댑터 (예정)
 - Binance, Bybit, Upbit 비동기 구현
@@ -283,6 +313,7 @@ alembic downgrade -1
 
 - **[모델 문서](docs/MODELS.md)**: CancelQueue, StrategyOrderLog 상세 API
 - **[설정 문서](docs/CONFIGURATION.md)**: 환경 변수 상세 설명 및 사용법
+- **[Cancel Queue 문서](docs/CANCEL_QUEUE.md)**: Cancel Queue 시스템 상세 가이드 (Phase 2)
 - **[API 문서](http://localhost:8000/docs)**: Swagger UI (서버 실행 후)
 
 ## 환경 변수
