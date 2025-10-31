@@ -31,7 +31,7 @@ class StartCommand(BaseCommand):
     TradingSystemManager.start_system() 로직을 Command 패턴으로 구현
     """
 
-    def __init__(self, printer, docker, network, ssl, env, root_dir: Path):
+    def __init__(self, printer, docker, network, ssl, env, migration, root_dir: Path):
         """초기화
 
         Args:
@@ -40,6 +40,7 @@ class StartCommand(BaseCommand):
             network: NetworkHelper 인스턴스
             ssl: SSLHelper 인스턴스
             env: EnvHelper 인스턴스
+            migration: MigrationHelper 인스턴스
             root_dir: 프로젝트 루트 디렉토리
         """
         super().__init__(printer)
@@ -47,6 +48,7 @@ class StartCommand(BaseCommand):
         self.network = network
         self.ssl = ssl
         self.env = env
+        self.migration = migration
         self.root_dir = root_dir
         self.project_name = "webserver"  # 기본 프로젝트명
 
@@ -153,6 +155,11 @@ class StartCommand(BaseCommand):
             # PostgreSQL 시작
             if not self.docker.start_postgres(self.project_name):
                 return 1
+
+            # 마이그레이션 실행 (PostgreSQL 시작 후, Flask 시작 전)
+            self.printer.print_status("데이터베이스 마이그레이션 확인 중...", "info")
+            if not self.migration.run_pending_migrations(self.root_dir):
+                self.printer.print_status("⚠️  마이그레이션 실패, 계속 진행합니다.", "warning")
 
             # Flask 앱 시작
             if not self.docker.start_flask(self.project_name):

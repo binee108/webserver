@@ -10,6 +10,7 @@ from .network import NetworkHelper
 from .docker import DockerHelper
 from .ssl import SSLHelper
 from .env import EnvHelper
+from .migration import MigrationHelper
 
 __all__ = [
     'StatusPrinter',
@@ -18,4 +19,5 @@ __all__ = [
     'DockerHelper',
     'SSLHelper',
     'EnvHelper',
+    'MigrationHelper',
 ]

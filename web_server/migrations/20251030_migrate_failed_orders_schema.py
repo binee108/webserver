@@ -295,3 +295,33 @@ def downgrade(engine):
         raise
     finally:
         conn.close()
+
+
+if __name__ == "__main__":
+    import sys
+    from sqlalchemy import create_engine
+
+    # Database URL from environment or default
+    DATABASE_URL = "postgresql://trader:password123@postgres:5432/trading_system"
+
+    print("=" * 60)
+    print("🔧 FailedOrder Schema Migration")
+    print("=" * 60)
+    print(f"\n📍 Database: {DATABASE_URL}\n")
+
+    try:
+        engine = create_engine(DATABASE_URL)
+        upgrade(engine)
+        print("\n" + "=" * 60)
+        print("✅ 마이그레이션 성공!")
+        print("=" * 60)
+        sys.exit(0)
+    except Exception as e:
+        print("\n" + "=" * 60)
+        print(f"❌ 마이그레이션 실패: {e}")
+        print("=" * 60)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    finally:
+        engine.dispose()

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import SystemConfig
-from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper
+from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper, MigrationHelper
 from .commands import (
     StartCommand, StopCommand, RestartCommand, LogsCommand,
     StatusCommand, CleanCommand, SetupCommand, ListCommand
@@ -45,6 +45,7 @@ class TradingSystemCLI:
         self.docker = DockerHelper(self.printer, self.root_dir)
         self.ssl = SSLHelper(self.printer, self.root_dir)
         self.env = EnvHelper(self.printer, self.network, self.root_dir)  # Phase 2 수정 반영
+        self.migration = MigrationHelper(self.printer)
 
         # Command 인스턴스 생성 (의존성 주입)
         self.commands = self._create_commands()
@@ -61,7 +62,7 @@ class TradingSystemCLI:
         # StartCommand
         start_cmd = StartCommand(
             self.printer, self.docker, self.network,
-            self.ssl, self.env, self.root_dir
+            self.ssl, self.env, self.migration, self.root_dir
         )
 
         # StopCommand
