@@ -339,8 +339,19 @@
                             <th>액션</th>
                         </tr>
                     </thead>
+                    <!-- 실패된 주문이 없을 때 tbody 안에 빈 상태 메시지 표시 -->
                     <tbody id="failed-orders-tbody">
-                        <tr><td colspan="9" style="text-align: center; padding: 2rem; color: var(--text-muted);">로딩 중...</td></tr>
+                        <tr class="empty-failed-orders-row">
+                            <td colspan="9">
+                                <div class="empty-state">
+                                    <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <h3>실패된 주문이 없습니다</h3>
+                                    <p>재시도가 필요한 주문이 없습니다.</p>
+                                </div>
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
