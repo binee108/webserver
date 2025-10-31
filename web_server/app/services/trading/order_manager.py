@@ -1520,7 +1520,8 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ CANCELLING 주문 정리 실패: {e}")
 
-    # @FEAT:order-tracking @COMP:job @TYPE:core
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:5
+    # Phase 5: DB-거래소 상태 일관성 검증 및 자동 동기화 (29초 주기)
     def update_open_orders_status(self) -> None:
         """백그라운드 작업: 모든 미체결 주문의 상태를 거래소와 동기화 (Phase 3: 배치 쿼리 최적화)
 
