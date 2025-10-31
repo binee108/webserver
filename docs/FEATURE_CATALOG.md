@@ -70,6 +70,7 @@
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)
 - **securities-token** - 한국투자증권 토큰 관리 (자동 갱신) [`@COMP:service`] → [docs](features/securities-token.md)
+- **orphan-order-prevention** - DB 트랜잭션 보장으로 고아 주문 방지 (Phase 1: 3회 재시도, 95% 예방) [`@COMP:service,config`] → [docs](features/orphan-order-prevention.md)
 
 ### 📢 Notifications & Admin
 - **telegram-notification** - 사용자별/전역 텔레그램 봇 알림 (우선순위 기반 선택, 9가지 알림 타입) [`@COMP:service`] → [docs](features/telegram-notification.md)

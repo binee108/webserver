@@ -311,12 +311,43 @@ class TradingCore:
                     if exchange_order.get('filled'):
                         order.filled_quantity = exchange_order['filled']
 
-                    db.session.commit()
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
 
-                    logger.debug(
-                        f"🔄 주문 상태 전환: {old_status} → {OrderStatus.OPEN} "
-                        f"(exchange_order_id={exchange_order.get('id')})"
-                    )
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→OPEN 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, symbol={symbol}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"🔄 주문 상태 전환: {old_status} → {OrderStatus.OPEN} "
+                                    f"(exchange_order_id={exchange_order.get('id')})"
+                                )
+                            break
+                        except Exception as e:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→OPEN 재시도 {attempt+1}/3: {e} - "
+                                f"order_id={pending_order_id}, symbol={symbol}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→OPEN 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, symbol={symbol}, "
+                            f"exchange_order_id={exchange_order.get('id')}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
 
                 else:
                     # ============================================================
@@ -334,12 +365,42 @@ class TradingCore:
                     order.status = OrderStatus.FAILED
                     order.error_message = error_msg
 
-                    db.session.commit()
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
 
-                    logger.warning(
-                        f"⚠️ 주문 실패: {old_status} → {OrderStatus.FAILED} "
-                        f"(error: {error_msg[:50]}...)"
-                    )
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→FAILED 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, error={error_msg}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"⚠️ 주문 실패: {old_status} → {OrderStatus.FAILED} "
+                                    f"(error: {error_msg[:50]}...)"
+                                )
+                            break
+                        except Exception as e:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→FAILED 재시도 {attempt+1}/3: {e} - "
+                                f"order_id={pending_order_id}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→FAILED 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, error={error_msg}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
 
                     # Phase 4: FailedOrder 생성 (재시도 메커니즘)
                     from app.services.trading.failed_order_manager import failed_order_manager
@@ -384,12 +445,42 @@ class TradingCore:
                     order.status = OrderStatus.FAILED
                     order.error_message = error_msg
 
-                    db.session.commit()
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
 
-                    logger.error(
-                        f"❌ 주문 실패 (exception): {old_status} → {OrderStatus.FAILED} "
-                        f"(error: {error_msg[:50]}...)"
-                    )
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→FAILED (exception) 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, exception={str(e)[:50]}"
+                                )
+                            break
+                        except Exception as commit_error:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→FAILED (exception) 재시도 {attempt+1}/3: {commit_error} - "
+                                f"order_id={pending_order_id}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→FAILED (exception) 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, exception={str(e)[:50]}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
+                    else:
+                        logger.error(
+                            f"❌ 주문 실패 (exception): {old_status} → {OrderStatus.FAILED} "
+                            f"(error: {error_msg[:50]}...)"
+                        )
                 except Exception as inner_e:
                     logger.error(f"❌ PENDING → FAILED 전환 실패: {inner_e}")
 

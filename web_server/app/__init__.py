@@ -44,7 +44,9 @@ if config is None:
         SQLALCHEMY_ENGINE_OPTIONS = {
             'pool_size': 10,
             'pool_timeout': 20,
-            'pool_recycle': -1,
+            # @FEAT:orphan-order-prevention @COMP:config @TYPE:config @DEPS:db-connection-pool
+            # Phase 1: 1시간마다 연결 재생성 (stale connection 방지, 고아 주문 95% 예방)
+            'pool_recycle': 3600,
             'max_overflow': 0,
             'pool_pre_ping': True
         }
