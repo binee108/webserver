@@ -19,6 +19,11 @@ from collections import defaultdict
 from app.models import Account
 from app.constants import Exchange, MarketType, OrderType
 from app.exchanges.models import PriceQuote
+from app.exchanges.exceptions import (
+    ExchangeError,
+    NetworkError,
+    OrderNotFound
+)
 
 if TYPE_CHECKING:
     from app.exchanges.crypto.base import BaseCryptoExchange
@@ -908,7 +913,7 @@ class ExchangeService:
         3. OrderNotFound → 성공 처리 (이미 취소됨)
         4. 기타 예외 → 즉시 반환 (재시도 불가)
         """
-        import ccxt
+        import requests
 
         retry_count = 0
         last_error = None
@@ -926,9 +931,6 @@ class ExchangeService:
 
                 self.rate_limiter.acquire_slot(account.exchange, 'order')
 
-                # ccxt timeout 설정
-                client.timeout = timeout * 1000  # milliseconds
-
                 result = client.cancel_order(order_id, symbol, market_type)
 
                 logger.info(
@@ -942,7 +944,7 @@ class ExchangeService:
                     'retry_count': retry_count
                 }
 
-            except ccxt.RequestTimeout as e:
+            except requests.Timeout as e:
                 retry_count += 1
                 last_error = str(e)
 
@@ -965,7 +967,7 @@ class ExchangeService:
                         'retry_count': retry_count
                     }
 
-            except ccxt.NetworkError as e:
+            except NetworkError as e:
                 retry_count += 1
                 last_error = str(e)
 
@@ -987,7 +989,7 @@ class ExchangeService:
                         'retry_count': retry_count
                     }
 
-            except ccxt.OrderNotFound as e:
+            except OrderNotFound as e:
                 # 주문이 이미 취소되었거나 없음 → 성공으로 간주
                 logger.info(f"ℹ️ 주문이 이미 취소됨 또는 없음: {order_id}")
                 return {
@@ -996,13 +998,36 @@ class ExchangeService:
                     'retry_count': retry_count
                 }
 
-            except Exception as e:
-                # 재시도 불가능한 오류 (예: InvalidOrder, InsufficientFunds 등)
-                logger.error(f"❌ 주문 취소 실패 (재시도 불가): {order_id} - {e}")
+            except ExchangeError as e:
+                # ExchangeError 내부 메시지 분석으로 fallback 처리
+                # TODO: binance.py가 -2011 → OrderNotFound 변환 시 이 블록 제거 가능
+                error_msg = str(e).lower()
+
+                # Binance error code -2011: "Unknown order sent"
+                if '-2011' in error_msg or 'unknown order' in error_msg or 'order does not exist' in error_msg:
+                    logger.info(f"ℹ️ 주문이 이미 취소됨 또는 없음 (ExchangeError fallback): {order_id}")
+                    return {
+                        'success': True,
+                        'result': {'already_cancelled': True},
+                        'retry_count': retry_count
+                    }
+
+                # 기타 ExchangeError는 재시도 불가능한 오류로 처리
+                logger.error(f"❌ 주문 취소 실패 (거래소 오류): {order_id} - {e}")
                 return {
                     'success': False,
                     'error': str(e),
-                    'error_type': 'non_retryable',
+                    'error_type': 'exchange_error',
+                    'retry_count': retry_count
+                }
+
+            except Exception as e:
+                # 예상치 못한 오류
+                logger.error(f"❌ 주문 취소 실패 (예상치 못한 오류): {order_id} - {type(e).__name__}: {e}")
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'error_type': 'unexpected_error',
                     'retry_count': retry_count
                 }
 
