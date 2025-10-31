@@ -598,6 +598,10 @@ class WebhookService:
         processed_count = 0
         skipped_count = 0
 
+        # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+        # Phase 3b.3: 실패 추적 리스트
+        failed_cancellations = []
+
         for idx, sa in enumerate(strategy_accounts):
             account = sa.account
             logger.debug(f"[{idx+1}/{len(strategy_accounts)}] 계좌 처리 중 - StrategyAccount ID: {sa.id}")
@@ -656,6 +660,17 @@ class WebhookService:
                     logger.info(f"✅ 계좌 {account.id}({account.name}) 주문 취소 완료 - "
                                f"성공: {cancelled_count}개, 실패: {failed_count}개")
 
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+                    # Phase 3b.3: failed_orders를 failed_cancellations에 추가
+                    if failed_orders_details:
+                        for failed_order in failed_orders_details:
+                            failed_cancellations.append({
+                                'order_id': failed_order.get('order_id'),
+                                'symbol': failed_order.get('symbol'),
+                                'account_id': account.id,
+                                'error': failed_order.get('error')
+                            })
+
                     results.append({
                         'account_id': account.id,
                         'account_name': account.name,
@@ -707,6 +722,45 @@ class WebhookService:
 
         if skipped_count > 0:
             logger.warning(f"⚠️  {skipped_count}개 계좌가 제외되었습니다. 비활성화 또는 거래소 불일치를 확인하세요.")
+
+        # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+        # Phase 3b.3: FailedOrder 생성
+        if failed_cancellations:
+            from app.services.trading.failed_order_manager import failed_order_manager
+            from app.models import OpenOrder
+
+            logger.info(
+                f"🔄 취소 실패 추적 시작 - {len(failed_cancellations)}개 실패 주문"
+            )
+
+            for failed_cancel in failed_cancellations:
+                try:
+                    # OpenOrder 조회 (FailedOrder 생성에 필요)
+                    open_order = OpenOrder.query.filter_by(
+                        exchange_order_id=failed_cancel['order_id']
+                    ).first()
+
+                    if open_order:
+                        # ✅ Phase 2 시그니처: OpenOrder 객체 전달
+                        failed_order_manager.create_failed_cancellation(
+                            order=open_order,
+                            exchange_error=failed_cancel.get('error')
+                        )
+                        logger.info(
+                            f"✅ FailedOrder 생성 - order_id={failed_cancel['order_id']}"
+                        )
+                    else:
+                        logger.warning(
+                            f"⚠️ OpenOrder 없음, FailedOrder 생성 불가 - "
+                            f"order_id={failed_cancel['order_id']}"
+                        )
+
+                except Exception as fe:
+                    # Non-blocking: FailedOrder 생성 실패는 치명적이지 않음
+                    logger.error(
+                        f"⚠️ FailedOrder 생성 실패 - "
+                        f"order_id={failed_cancel['order_id']}, error={fe}"
+                    )
 
         return {
             'action': 'cancel_all_orders',

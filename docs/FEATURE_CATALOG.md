@@ -61,13 +61,17 @@
 - **batch-parallel-processing** - ThreadPoolExecutor 병렬 처리 (MARKET 전용) [`@COMP:service`] → [docs](features/trade-execution.md)
 
 ### 🛡️ Infrastructure & Resilience
-- **orphan-order-prevention** - 고아 주문 방지 통합 솔루션 (재시도 로직 + 상태 정리 + 자동 복구) [`@COMP:service,config,job`] → [docs](features/orphan-order-prevention.md)
-  - Phase 1: DB Transaction Guarantee (재시도 로직)
-  - Phase 2: FailedOrder Extension (취소 실패 추적)
-  - Phase 3b: CANCEL_ALL_ORDER improvement (Snapshot filter)
-  - Phase 4: PENDING/CANCELLING cleanup (백그라운드 정리)
+- **db-first-orphan-prevention** - DB-first 패턴으로 orphan order 방지 (PENDING 상태 + cleanup job) [`@COMP:service,job`] → [docs](features/webhook-order-processing.md#5-phase-32-db-first-orphan-prevention-2025-10-30)
 - **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
 - **cancel-order-db-first-orphan-prevention** - 주문 취소 시 고아 주문 방지 (DB-First 패턴, Phase 1-4 완료) [`@FEAT:cancel-order-db-first`] [`@COMP:constant,model,migration,service`] → [docs](features/webhook-order-processing.md#phase-33-database-schema-for-cancel-orphan-prevention-2025-10-30)
+- **orphan-order-prevention** - 고아 주문 방지 통합 솔루션 [`@COMP:service,config,model,job`] → [docs](features/orphan-order-prevention.md)
+  - Phase 3a: market_type 정확도 개선
+  - Phase 1: DB Transaction Guarantee (재시도 로직)
+  - Phase 2: FailedOrder Extension (취소 실패 추적)
+  - Phase 3b: CANCEL_ALL_ORDER improvement (Snapshot filter + Race S5.2)
+  - Phase 4: PENDING/CANCELLING cleanup (백그라운드 정리)
+  - Phase 5: Order state consistency check (DB-거래소 일관성 검증)
+  - Phase 6: Logging and monitoring (Phase 1-5 통합 완료)
 - **auto-migration** - 자동 마이그레이션 시스템 (schema_migrations 추적, SQLAlchemy 패턴 필수) [`@COMP:util,job`] → [docs](features/auto-migration.md)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
@@ -88,8 +92,12 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
-| 2025-10-31 | Orphan Order Prevention | ✅ Phase 4 | order_manager.py | PENDING/CANCELLING 백그라운드 정리 태그 추가 |
-| 2025-10-31 | Orphan Order Prevention | ✅ Phase 1 | __init__.py, core.py (3 locations) | DB connection pool 설정, 3회 재시도 로직 추가 |
+| 2025-10-31 | Orphan Order Prevention (Logging) | ✅ Phase 6 | - | Phase 1-5 통합 로깅 완료 (189 log points) |
+| 2025-10-31 | Orphan Order Prevention (Consistency Check) | ✅ Phase 5 | order_manager.py | DB-거래소 상태 일관성 검증 태그 추가 (29초 주기) |
+| 2025-10-31 | Orphan Order Prevention (Cleanup) | ✅ Phase 4 | order_manager.py | PENDING/CANCELLING 백그라운드 정리 태그 추가 |
+| 2025-10-31 | Orphan Order Prevention (CANCEL_ALL_ORDER) | ✅ Phase 3b | order_manager.py, webhook_service.py | Snapshot-based query, 'filled' 처리, FailedOrder 통합 |
+| 2025-10-31 | Orphan Order Prevention (FailedOrder Extension) | ✅ Phase 2 | models.py, failed_order_manager.py, order_manager.py | operation_type/original_order_id 필드, 취소 실패 추적, _retry_cancellation() 로직 |
+| 2025-10-31 | Orphan Order Prevention (market_type) | ✅ Phase 3a | order_manager.py, exchange.py | cancel_order() 시그니처 확장, market_type 정확도 개선, already_cancelled 방어 로직 |
 | 2025-10-31 | Auto Migration System | ✅ Complete | cli/helpers/migration.py, docs/ | SQLAlchemy 패턴 자동 실행, 호환성 가이드 |
 | 2025-10-31 | Cancel Order DB-First | ✅ Phase 1-4 | constants.py, models.py, exchange.py, order_manager.py | CANCELLING 상태, Retry, Background Cleanup 완료 |
 | 2025-10-30 | DB-first Orphan Prevention | ✅ Phase 2 | constants.py, core.py, order_manager.py | PENDING/FAILED 상태 + 120s cleanup job |

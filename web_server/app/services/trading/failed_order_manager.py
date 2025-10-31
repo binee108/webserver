@@ -2,15 +2,25 @@
 실패한 주문 관리 시스템
 
 @FEAT:immediate-order-execution @COMP:service @TYPE:core
+@FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+
+Phase 2 (2025-10-31): 취소 실패 추적 기능 추가
+- create_failed_cancellation(): 취소 실패 FailedOrder 생성
+- retry_failed_order(): operation_type 분기 추가 (CREATE/CANCEL)
+- _retry_cancellation(): 취소 재시도 로직
+- _retry_creation(): 기존 생성 재시도 로직 추출
 
 PostgreSQL + 메모리 캐시 이중화로 빠른 조회 제공.
 """
 import threading
 import re
+import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from app import db
-from app.models import FailedOrder
+from app.models import FailedOrder, FailedOrderOperation
+
+logger = logging.getLogger(__name__)
 
 
 class FailedOrderManager:
@@ -89,6 +99,7 @@ class FailedOrderManager:
 
         # FailedOrder 생성
         failed_order = FailedOrder(
+            operation_type=FailedOrderOperation.CREATE,  # Phase 2: 명시적 설정 (SQLAlchemy DEFAULT 대신)
             strategy_account_id=strategy_account_id,
             symbol=order_params.get('symbol'),
             side=order_params.get('side'),
@@ -112,6 +123,66 @@ class FailedOrderManager:
         self._update_cache(failed_order)
 
         return failed_order
+
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+    # Phase 2: 취소 실패 추적 - OpenOrder 객체로 완전한 컨텍스트 캡처
+    def create_failed_cancellation(self, order, exchange_error=None):
+        """
+        취소 실패한 주문을 FailedOrder에 기록.
+
+        Design: OpenOrder 객체를 직접 받아 완전한 주문 정보 보존
+        - 파라미터 폭발 방지 (개별 필드 5개 → 객체 1개)
+        - 타입 안정성 (OpenOrder 타입 보장)
+        - 정확한 재시도 가능 (원본 주문 상세 정보 유지)
+
+        Args:
+            order (OpenOrder): 취소 실패한 주문 객체
+            exchange_error (str, optional): 거래소 API 오류 메시지
+
+        Returns:
+            FailedOrder: 생성된 FailedOrder 객체 또는 None (실패 시)
+        """
+        try:
+            failed_order = FailedOrder(
+                operation_type=FailedOrderOperation.CANCEL,
+                original_order_id=order.exchange_order_id,
+                strategy_account_id=order.strategy_account_id,
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order.order_type,
+                quantity=order.quantity,
+                price=order.price,
+                reason='Cancellation failed',
+                exchange_error=self._sanitize_exchange_error(exchange_error),
+                order_params={
+                    'symbol': order.symbol,
+                    'side': order.side,
+                    'order_type': order.order_type,
+                    'quantity': float(order.quantity),
+                    'price': float(order.price) if order.price else None,
+                    'market_type': order.market_type
+                },
+                retry_count=0,
+                status='pending_retry'
+            )
+
+            db.session.add(failed_order)
+            db.session.commit()
+
+            logger.info(
+                f"✅ FailedOrder 생성 (CANCEL) - "
+                f"order_id={order.exchange_order_id}, symbol={order.symbol}"
+            )
+
+            return failed_order
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(
+                f"❌ FailedOrder 생성 실패 - "
+                f"order_id={order.exchange_order_id}, error={e}"
+            )
+            return None
 
     def _update_cache(self, failed_order: FailedOrder):
         """
@@ -187,65 +258,63 @@ class FailedOrderManager:
 
         return query.all()
 
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+    # Phase 2: operation_type 기반 분기 - CREATE/CANCEL 각각의 재시도 로직 호출
     def retry_failed_order(self, failed_order_id: int) -> Dict[str, Any]:
         """
-        실패한 주문을 재시도합니다 (Phase 3 구현 완료).
+        FailedOrder 재시도 (CREATE/CANCEL 타입 자동 분기).
 
-        동작 과정:
-        1. FailedOrder 조회 및 상태 검증 (존재 여부, removed 상태, 최대 재시도 횟수)
-        2. StrategyAccount 조회 (시스템 오류 체크)
-        3. retry_count 증가 (StrategyAccount 검증 후)
-        4. ExchangeService.create_batch_orders() 호출 (배치주문 실행)
-        5. 성공 시: status='removed', 캐시 무효화, order_id 반환
-        6. 실패 시: retry_count만 커밋, 에러 메시지 반환
-        7. 예외 시: 롤백 후 retry_count 재증가 및 커밋
+        Operation Types:
+        - CREATE: _retry_creation() 호출 → 주문 생성 재시도
+        - CANCEL: _retry_cancellation() 호출 → 주문 취소 재시도
+        - Unknown: ERROR 로그 + False 반환
 
-        트랜잭션 경계:
-        - StrategyAccount 검증은 retry_count 증가 전에 수행 (시스템 오류는 재시도 횟수 미소비)
-        - 성공/실패/예외 각 경로마다 독립적인 커밋
-        - 예외 발생 시 자동 롤백 후 retry_count만 저장
-
-        최대 재시도 횟수:
-        - MAX_RETRY_COUNT = 5 (retry_count 0~4 허용, 5 이상 차단)
-        - 재시도 횟수 초과 시 조기 리턴 (retry_count 증가 없음)
+        Phase 2 (2025-10-31): operation_type 분기 추가
+        - CREATE: 주문 생성 재시도 (_retry_creation)
+        - CANCEL: 주문 취소 재시도 (_retry_cancellation)
 
         Args:
-            failed_order_id (int): 재시도할 FailedOrder의 ID
+            failed_order_id: FailedOrder ID
 
         Returns:
-            Dict[str, Any]: 재시도 결과
-                - success (bool): 재시도 성공 여부
-                - order_id (str | None): 성공 시 거래소 주문 ID
-                - error (str | None): 실패 시 에러 메시지
-
-        Examples:
-            >>> # 성공 케이스
-            >>> result = failed_order_manager.retry_failed_order(1)
-            >>> result
-            {'success': True, 'order_id': 'BINANCE_ORDER_12345'}
-
-            >>> # 실패 케이스 (API 오류)
-            >>> result = failed_order_manager.retry_failed_order(2)
-            >>> result
-            {'success': False, 'error': 'Insufficient balance'}
-
-            >>> # 최대 재시도 횟수 초과
-            >>> result = failed_order_manager.retry_failed_order(3)
-            >>> result
-            {'success': False, 'error': 'Maximum retry count exceeded (5)'}
+            dict: {'success': bool, 'message': str}
         """
         failed_order = FailedOrder.query.get(failed_order_id)
 
         if not failed_order:
             return {'success': False, 'error': 'FailedOrder not found'}
 
-        if failed_order.status == 'removed':
-            return {'success': False, 'error': 'FailedOrder already removed'}
+        if failed_order.status in ['completed', 'removed']:
+            return {'success': True, 'message': f'Already {failed_order.status}'}
 
-        # 최대 재시도 횟수 체크 (무한 재시도 방지, DoS 공격 차단)
-        # retry_count=0: 초기 상태 (0회 시도)
-        # retry_count=1~4: 중간 재시도 (1~4회 시도)
-        # retry_count=5: 최대 도달 (5회 시도 완료, 6번째 차단)
+        # operation_type 분기
+        if failed_order.operation_type == FailedOrderOperation.CREATE:
+            return self._retry_creation(failed_order)
+        elif failed_order.operation_type == FailedOrderOperation.CANCEL:
+            return self._retry_cancellation(failed_order)
+        else:
+            logger.error(
+                f"❌ 알 수 없는 operation_type - "
+                f"failed_order_id={failed_order_id}, "
+                f"operation_type={failed_order.operation_type}"
+            )
+            return {
+                'success': False,
+                'error': f'Unknown operation_type: {failed_order.operation_type}'
+            }
+
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+    def _retry_creation(self, failed_order: FailedOrder) -> Dict[str, Any]:
+        """
+        CREATE 타입 FailedOrder 재시도 (기존 로직)
+
+        Args:
+            failed_order: FailedOrder 객체 (operation_type='CREATE')
+
+        Returns:
+            dict: {'success': bool, 'message': str}
+        """
+        # 최대 재시도 횟수 체크
         MAX_RETRY_COUNT = 5
         if failed_order.retry_count >= MAX_RETRY_COUNT:
             return {
@@ -254,70 +323,169 @@ class FailedOrderManager:
             }
 
         try:
-            # ExchangeService를 통한 배치주문 실행
             from app.services.exchange import exchange_service
             from app.models import StrategyAccount
 
             # StrategyAccount 조회 (retry_count 증가 전)
-            # 시스템 오류 (StrategyAccount 삭제 등)는 재시도 횟수를 소비하지 않음
             strategy_account = StrategyAccount.query.get(failed_order.strategy_account_id)
             if not strategy_account:
                 return {'success': False, 'error': 'StrategyAccount not found'}
 
-            # retry_count 증가 (StrategyAccount 검증 후)
-            # 트랜잭션: 성공/실패/예외 경로에서 각각 커밋됨
+            # retry_count 증가
             failed_order.retry_count += 1
             failed_order.updated_at = datetime.utcnow()
 
-            # 단일 주문을 배치 형식으로 변환
-            # Decimal → float 변환 (ExchangeService API 호환성)
-            # market_type 소문자 변환 ('FUTURES' → 'futures')
+            # 배치주문 API 호출
             orders = [{
                 'symbol': failed_order.symbol,
                 'side': failed_order.side,
                 'type': failed_order.order_type,
-                'amount': float(failed_order.quantity),  # Decimal → float
+                'amount': float(failed_order.quantity),
                 'price': float(failed_order.price) if failed_order.price else None,
                 'params': {
                     'stopPrice': float(failed_order.stop_price)
                 } if failed_order.stop_price else {}
             }]
 
-            # 배치주문 API 호출
             result = exchange_service.create_batch_orders(
                 account=strategy_account.account,
                 orders=orders,
-                market_type=failed_order.market_type.lower()  # 'FUTURES' → 'futures'
+                market_type=failed_order.market_type.lower()
             )
 
             if result['success'] and result['summary']['successful'] > 0:
-                # 성공 경로: status='removed', 캐시 무효화, order_id 반환
-                # 트랜잭션: status + retry_count 동시 커밋
+                # 성공 경로
                 failed_order.status = 'removed'
                 db.session.commit()
-                self._invalidate_cache(failed_order)  # 캐시에서 제거 (removed 상태는 캐시 안 함)
+                self._invalidate_cache(failed_order)
 
-                # 성공한 주문 ID 반환 (거래소 주문 ID)
                 first_result = result['results'][0]
                 return {
                     'success': True,
                     'order_id': first_result.get('order_id')
                 }
             else:
-                # 실패 경로: retry_count만 커밋, 에러 메시지 반환
-                # status='pending_retry' 유지 (캐시에 남음)
+                # 실패 경로
                 db.session.commit()
                 error = result.get('results', [{}])[0].get('error', 'Unknown error')
                 return {'success': False, 'error': error}
 
         except Exception as e:
-            # 예외 경로: 롤백 후 retry_count 재증가 및 커밋
-            # 트랜잭션 일관성 유지 (retry_count는 항상 증가)
+            # 예외 경로
             db.session.rollback()
             failed_order.retry_count += 1
             failed_order.updated_at = datetime.utcnow()
             db.session.commit()
             return {'success': False, 'error': str(e)}
+
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+    # Phase 2: 취소 재시도 로직 - 엣지 케이스 처리 포함
+    def _retry_cancellation(self, failed_order: FailedOrder) -> Dict[str, Any]:
+        """
+        CANCEL 타입 FailedOrder 재시도.
+
+        Edge Cases:
+        1. OpenOrder 없음 → status='completed' (이미 삭제됨, 다른 프로세스에서 처리)
+        2. 5회 초과 → status='removed' (재시도 포기, 수동 개입 필요)
+        3. OrderManager 호출 실패 → retry_count 증가 후 재시도 대기
+
+        Status Transitions:
+        - 성공: status='completed' (취소 완료)
+        - 실패 (5회 미만): retry_count++ (재시도 대기)
+        - 실패 (5회 이상): status='removed' (포기)
+
+        Args:
+            failed_order: FailedOrder 객체 (operation_type='CANCEL')
+
+        Returns:
+            dict: {'success': bool, 'message': str}
+        """
+        # 1. 원본 주문 확인
+        from app.models import OpenOrder
+        open_order = OpenOrder.query.filter_by(
+            exchange_order_id=failed_order.original_order_id
+        ).first()
+
+        if not open_order:
+            # 이미 삭제됨 (다른 프로세스에서 처리) - 성공으로 간주
+            logger.info(
+                f"🔄 취소 재시도 스킵 (주문 이미 삭제) - "
+                f"original_order_id={failed_order.original_order_id}"
+            )
+            failed_order.status = 'completed'
+            db.session.commit()
+            return {'success': True, 'message': '주문 이미 삭제됨'}
+
+        # 최대 재시도 횟수 체크
+        MAX_RETRY_COUNT = 5
+        if failed_order.retry_count >= MAX_RETRY_COUNT:
+            failed_order.status = 'removed'
+            db.session.commit()
+            logger.warning(
+                f"⚠️ 취소 재시도 최종 실패 (5회 초과) - "
+                f"order_id={failed_order.original_order_id}"
+            )
+            return {
+                'success': False,
+                'error': f'Maximum retry count exceeded ({MAX_RETRY_COUNT})'
+            }
+
+        # 2. OrderManager를 통해 취소 재시도
+        try:
+            from app.services.trading.order_manager import OrderManager
+            order_manager = OrderManager()
+
+            result = order_manager.cancel_order(
+                order_id=open_order.exchange_order_id,
+                symbol=open_order.symbol,
+                account_id=open_order.strategy_account.account.id,
+                open_order=open_order
+            )
+
+            if result.get('success'):
+                failed_order.status = 'completed'
+                db.session.commit()
+
+                logger.info(
+                    f"✅ 취소 재시도 성공 - "
+                    f"order_id={failed_order.original_order_id}"
+                )
+
+                return {'success': True, 'message': '취소 성공'}
+            else:
+                # 재시도 실패 - retry_count 증가
+                failed_order.retry_count += 1
+                failed_order.exchange_error = self._sanitize_exchange_error(
+                    result.get('error')
+                )
+
+                if failed_order.retry_count >= MAX_RETRY_COUNT:
+                    failed_order.status = 'removed'
+                    logger.warning(
+                        f"⚠️ 취소 재시도 최종 실패 (5회 초과) - "
+                        f"order_id={failed_order.original_order_id}"
+                    )
+
+                db.session.commit()
+
+                return {
+                    'success': False,
+                    'message': f"취소 실패 (재시도 {failed_order.retry_count}회)"
+                }
+
+        except Exception as e:
+            logger.error(
+                f"❌ 취소 재시도 중 예외 - "
+                f"order_id={failed_order.original_order_id}, error={e}"
+            )
+
+            failed_order.retry_count += 1
+            if failed_order.retry_count >= MAX_RETRY_COUNT:
+                failed_order.status = 'removed'
+
+            db.session.commit()
+
+            return {'success': False, 'message': str(e)}
 
     def remove_failed_order(self, failed_order_id: int) -> bool:
         """

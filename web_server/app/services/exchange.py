@@ -990,8 +990,42 @@ class ExchangeService:
                     }
 
             except OrderNotFound as e:
+                # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3a
                 # 주문이 이미 취소되었거나 없음 → 성공으로 간주
-                logger.info(f"ℹ️ 주문이 이미 취소됨 또는 없음: {order_id}")
+                logger.warning(
+                    f"⚠️ 취소 성공 (already_cancelled) - "
+                    f"market_type={market_type}, symbol={symbol}, order_id={order_id}"
+                )
+
+                # 🆕 Phase 3a: 방어 로직 - fetch_order()로 1회 재확인
+                # WHY: OrderNotFound가 두 가지 경우 발생
+                # 1) 주문이 진짜 취소됨 (정상) 2) 잘못된 market_type으로 조회 (오류)
+                # fetch_order() 재확인으로 두 경우를 구분하여 고아 주문 방지
+                try:
+                    verification = self.fetch_order(
+                        account=account,
+                        symbol=symbol,
+                        order_id=order_id,
+                        market_type=market_type
+                    )
+
+                    if verification and verification.get('success'):
+                        # 실제로 주문이 존재함 → market_type 오류 의심
+                        logger.warning(
+                            f"⚠️ CRITICAL: OrderNotFound이지만 주문 존재 - "
+                            f"market_type 오류 의심 - "
+                            f"order_id={order_id}, symbol={symbol}, market_type={market_type}"
+                        )
+                        return {
+                            'success': False,
+                            'error': 'Order exists but not found in specified market',
+                            'error_type': 'market_type_mismatch',
+                            'retry_count': retry_count
+                        }
+                except Exception as verify_error:
+                    logger.debug(f"재확인 실패 (예상된 동작): {verify_error}")
+
+                # 재확인 통과 → 진짜 취소됨
                 return {
                     'success': True,
                     'result': {'already_cancelled': True},

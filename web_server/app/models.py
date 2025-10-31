@@ -819,10 +819,23 @@ class OrderFillEvent(db.Model):
 # Phase 1: 즉시 주문 실행 시스템 (Immediate Order Execution)
 # ============================================
 
+# @FEAT:orphan-order-prevention @COMP:model @TYPE:core @PHASE:2
+# FailedOrder operation types - 실패한 작업 유형 구분 (CREATE: 주문 생성 실패, CANCEL: 주문 취소 실패)
+class FailedOrderOperation:
+    """FailedOrder operation types - Operation type constants for failed order tracking"""
+    CREATE = 'CREATE'  # 주문 생성 실패 - 교환소 API 실패로 주문 생성 불가
+    CANCEL = 'CANCEL'  # 주문 취소 실패 - 취소 명령 실패 또는 예외 발생
+
+
 class FailedOrder(db.Model):
     """실패한 주문 기록 테이블
 
     @FEAT:immediate-order-execution @COMP:model @TYPE:core
+    @FEAT:orphan-order-prevention @COMP:model @TYPE:core @PHASE:2
+
+    Phase 2 (2025-10-31): 취소 실패 추적 기능 추가
+    - operation_type: CREATE (생성 실패) 또는 CANCEL (취소 실패)
+    - original_order_id: 취소 실패 시 거래소 주문 ID
 
     거래소 API 호출 실패로 즉시 실행되지 못한 주문을 기록합니다.
     배치 주문 처리 시 우선순위에 따라 재시도됩니다.
@@ -830,6 +843,7 @@ class FailedOrder(db.Model):
     상태:
     - pending_retry: 재시도 대기 중
     - removed: 제거됨 (사용자 요청 또는 최대 재시도 초과)
+    - completed: 재시도 성공 (Phase 2: 취소 실패 성공 시)
     """
     __tablename__ = 'failed_orders'
 
@@ -855,10 +869,15 @@ class FailedOrder(db.Model):
     # Symbol, side, quantity, price, stop_price, market_type 등 포함
     # Phase 2: 최대 크기 제한 검토 필요 (권장 2KB 이하, 과도한 정보 저장 방지)
 
+    # @FEAT:orphan-order-prevention @COMP:model @TYPE:core @PHASE:2
+    # Phase 2: 취소 실패 추적을 위한 필드 확장 (CREATE/CANCEL 작업 유형 구분)
+    operation_type = db.Column(db.String(20), nullable=False, default='CREATE', index=True)  # CREATE: 생성 실패, CANCEL: 취소 실패
+    original_order_id = db.Column(db.String(100), nullable=True)  # 취소 실패 시 거래소 주문 ID 보존 (재시도용)
+
     # 재시도 관리
-    status = db.Column(db.String(20), default='pending_retry', nullable=False)  # pending_retry, removed
+    status = db.Column(db.String(20), default='pending_retry', nullable=False)  # pending_retry, removed, completed
     retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수 기록
-    # Phase 2: 최대 재시도 횟수 제한 예정 (권장 5회 이상 실패 시 automatic removal)
+    # Phase 2: 최대 재시도 횟수 제한 (5회 이상 실패 시 automatic removal)
 
     # 메타데이터
     webhook_id = db.Column(db.String(100), nullable=True)  # 웹훅 추적용 ID

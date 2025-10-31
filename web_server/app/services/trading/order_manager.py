@@ -71,8 +71,17 @@ class OrderManager:
             }
 
     # @FEAT:order-tracking @COMP:service @TYPE:core
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3a
     # @DATA:OrderStatus.CANCELLING - DB-first 패턴 (Phase 2: 2025-10-30)
-    def cancel_order(self, order_id: str, symbol: str, account_id: int) -> Dict[str, Any]:
+    # @DATA:market_type 정확도 - Phase 3a (2025-10-31)
+    def cancel_order(
+        self,
+        order_id: str,
+        symbol: str,
+        account_id: int,
+        strategy_account_id: Optional[int] = None,
+        open_order: Optional[OpenOrder] = None
+    ) -> Dict[str, Any]:
         """주문 취소 (DB-First 패턴)
 
         WHY: 타임아웃 시 orphan order 방지. DB 상태를 먼저 변경하여 백그라운드 정리 가능.
@@ -91,36 +100,23 @@ class OrderManager:
         Args:
             order_id: 거래소 주문 ID
             symbol: 심볼
-            account_id: 계정 ID
+            account_id: 계정 ID (레거시 호환성)
+            strategy_account_id: 전략 계정 ID (Optional, open_order와 함께 사용 시 무시됨)
+            open_order: OpenOrder 객체 (Optional, 제공 시 추가 조회 생략 및 정확한 market_type 사용)
 
         Returns:
             Dict with success, error, error_type
         """
         try:
             # ============================================================
-            # STEP 0: Validation
+            # STEP 0: Validation (Phase 3a: open_order 우선 사용)
             # ============================================================
-            account = Account.query.get(account_id)
-            if not account:
-                return {
-                    'success': False,
-                    'error': '계정을 찾을 수 없습니다',
-                    'error_type': 'account_error'
-                }
 
-            # 계정의 전략을 통해 market_type 확인
-            strategy_account = StrategyAccount.query.filter_by(
-                account_id=account_id
-            ).first()
-
-            market_type = 'spot'  # 기본값
-            if strategy_account and strategy_account.strategy:
-                market_type = strategy_account.strategy.market_type.lower()
-
-            # OpenOrder 조회
-            open_order = OpenOrder.query.filter_by(
-                exchange_order_id=order_id
-            ).first()
+            # 🆕 Phase 3a: open_order 인자 우선 사용 (추가 조회 불필요)
+            if not open_order:
+                open_order = OpenOrder.query.filter_by(
+                    exchange_order_id=order_id
+                ).first()
 
             if not open_order:
                 return {
@@ -136,6 +132,18 @@ class OrderManager:
                     'error': '이미 취소 처리 중입니다',
                     'error_type': 'already_cancelling'
                 }
+
+            # ✅ Phase 3a: 정확한 market_type (open_order에서 직접 가져오기)
+            strategy_account = open_order.strategy_account
+            if not strategy_account or not strategy_account.account:
+                return {
+                    'success': False,
+                    'error': 'StrategyAccount를 찾을 수 없습니다',
+                    'error_type': 'account_error'
+                }
+
+            account = strategy_account.account
+            market_type = open_order.market_type or strategy_account.strategy.market_type.lower()
 
             # ============================================================
             # STEP 1: DB 상태를 CANCELLING으로 먼저 변경
@@ -269,6 +277,21 @@ class OrderManager:
                         f"(error: {error_msg[:50]}...)"
                     )
 
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+                    # Phase 2: 취소 실패 추적 - exchange API 실패 시 FailedOrder 생성
+                    try:
+                        from app.services.trading.failed_order_manager import failed_order_manager
+                        failed_order_manager.create_failed_cancellation(
+                            order=open_order,
+                            exchange_error=result.get('error')
+                        )
+                    except Exception as fe:
+                        # Non-blocking: FailedOrder 생성 실패는 치명적이지 않음 (취소 실패는 이미 발생)
+                        logger.error(
+                            f"⚠️ FailedOrder 생성 실패 (취소 실패는 이미 발생) - "
+                            f"order_id={order_id}, error={fe}"
+                        )
+
                     return result
 
             except Exception as e:
@@ -314,6 +337,25 @@ class OrderManager:
                             'verified': True
                         }
 
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+                    # Phase 3b.2: Race Condition S5.2 - 취소 중 체결된 주문 처리
+                    elif verification_result == 'filled':
+                        # 거래소에서 체결됨 확인 → DB 삭제
+                        logger.info(
+                            f"✅ 재확인: 거래소에서 체결됨 확인 → DB 삭제: {order_id}"
+                        )
+                        db.session.delete(open_order)
+                        db.session.commit()
+
+                        return {
+                            'success': True,
+                            'order_id': order_id,
+                            'symbol': symbol,
+                            'already_filled': True,
+                            'error_type': 'already_filled',
+                            'message': '주문이 체결되어 DB에서 제거됨'
+                        }
+
                     elif verification_result == 'active':
                         # 거래소에서 여전히 활성 상태 → OPEN 복원
                         error_msg = sanitize_error_message(str(e))
@@ -324,6 +366,20 @@ class OrderManager:
                         logger.warning(
                             f"⚠️ 재확인: 거래소에서 활성 확인 → {old_status} 복원: {order_id}"
                         )
+
+                        # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+                        # Phase 2: 예외 발생 시에도 FailedOrder 생성 (verification_result='active'일 때)
+                        try:
+                            from app.services.trading.failed_order_manager import failed_order_manager
+                            failed_order_manager.create_failed_cancellation(
+                                order=open_order,
+                                exchange_error=str(e)
+                            )
+                        except Exception as fe:
+                            logger.error(
+                                f"⚠️ FailedOrder 생성 실패 (예외 발생 후) - "
+                                f"order_id={order_id}, error={fe}"
+                            )
 
                         return {
                             'success': False,
@@ -373,12 +429,12 @@ class OrderManager:
         """1회 재확인: 거래소에서 주문 상태 확인
 
         WHY: 거래소 API 타임아웃 시 실제 취소 여부 확인. CANCELLING 상태 orphan 방지.
-        Edge Cases: 네트워크 오류 → 'unknown', FILLED 상태 → 'unknown'
+        Edge Cases: 네트워크 오류 → 'unknown', FILLED 상태 → 'filled' (Phase 3b.2)
         Side Effects: 거래소 API 1회 호출 (fetch_order)
         Performance: 거래소 API 응답 시간 (보통 100-500ms)
-        Debugging: 로그 "⚠️ 주문 상태 조회 실패" 또는 "⚠️ 예상치 못한 주문 상태"
+        Debugging: 로그 "⚠️ 주문 상태 조회 실패" 또는 "✅ 주문 체결 확인 (Race Condition)"
 
-        Phase 2 (cancel_order 예외 처리) + Phase 4 (백그라운드 정리)에서 재사용.
+        Phase 2 (cancel_order 예외 처리) + Phase 3b.2 (Race S5.2) + Phase 4 (백그라운드 정리)에서 재사용.
 
         Args:
             account: 거래소 계정
@@ -389,6 +445,7 @@ class OrderManager:
         Returns:
             'cancelled': 거래소에서 취소됨 확인
             'active': 거래소에서 여전히 활성 상태
+            'filled': 거래소에서 체결됨 확인 (Phase 3b.2 추가)
             'unknown': 확인 실패 (네트워크 오류 등)
         """
         try:
@@ -414,7 +471,14 @@ class OrderManager:
             if status in ['NEW', 'OPEN', 'PENDING', 'PARTIALLY_FILLED']:
                 return 'active'
 
-            # 기타 (예: FILLED)
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.2: 체결 상태 처리 (Race Condition S5.2)
+            # 일부 거래소는 소문자 status 반환 가능 (defensive coding)
+            if status in ['FILLED', 'CLOSED', 'closed', 'filled']:
+                logger.info(f"✅ 주문 체결 확인 (Race S5.2): order_id={order_id}, status={status}")
+                return 'filled'
+
+            # 기타 (예상치 못한 상태)
             logger.warning(f"⚠️ 예상치 못한 주문 상태: {status} (order_id={order_id})")
             return 'unknown'
 
@@ -565,11 +629,12 @@ class OrderManager:
                     'error_type': 'permission_error'
                 }
 
-            # 기존 cancel_order 메서드 재사용
+            # 기존 cancel_order 메서드 재사용 (Phase 3a: open_order 전달)
             result = self.service.cancel_order(
                 order_id=order_id,
                 symbol=open_order.symbol,
-                account_id=open_order.strategy_account.account.id
+                account_id=open_order.strategy_account.account.id,
+                open_order=open_order  # 🆕 Phase 3a: 정확한 market_type 사용
             )
 
             if result['success']:
@@ -692,10 +757,13 @@ class OrderManager:
                                   account_id: Optional[int] = None,
                                   symbol: Optional[str] = None,
                                   side: Optional[str] = None,
-                                  timing_context: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                                  timing_context: Optional[Dict[str, float]] = None,
+                                  snapshot_threshold: Optional[datetime] = None) -> Dict[str, Any]:
         """사용자 권한 기준의 미체결 주문 일괄 취소 (Phase 5 이후)
 
         @FEAT:order-cancel @COMP:service @TYPE:core
+        @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+        @DATA:webhook_received_at - Snapshot 기반 조회 (Phase 3b.1: 2025-10-31)
 
         ⚠️ Race Condition 방지: 심볼별 Lock 획득 후 OpenOrder 취소 (Issue #9)
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -708,6 +776,12 @@ class OrderManager:
         - User-Scoped (포지션 페이지): user_id=current_user.id (현재 유저만)
         - Strategy-Scoped (웹훅): user_id=account.user_id (각 구독자별 루프 호출)
 
+        Phase 3b.1: Snapshot 기반 조회
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        snapshot_threshold 제공 시 해당 시점 이전의 주문만 조회 (Scenario S3.1 해결)
+        - webhook_received_at <= snapshot_threshold (웹훅 경로 주문)
+        - OR (webhook_received_at IS NULL AND created_at <= snapshot_threshold) (수동 주문)
+
         Args:
             user_id: 사용자 ID (포지션: current_user.id, 웹훅: account.user_id)
             strategy_id: 전략 ID
@@ -715,16 +789,39 @@ class OrderManager:
             symbol: 심볼 필터 (None=전체, "BTC/USDT"=특정 심볼)
             side: 주문 방향 필터 (None=전체, "BUY"/"SELL"=특정 방향, 대소문자 무관)
             timing_context: 웹훅 타이밍 정보 (웹훅: {'webhook_received_at': timestamp})
+            snapshot_threshold: Snapshot 기준 시각 (Phase 3b.1, None=미사용)
 
         Returns:
             Dict[str, Any]: {
                 'success': bool,
                 'cancelled_orders': List[Dict],  # OpenOrder 취소 목록 (PendingOrder 없음)
+                    # 각 항목 형식: {
+                    #     'order_id': str,
+                    #     'symbol': str,
+                    #     'account_id': int,
+                    #     'strategy_id': int,
+                    #     'already_filled': bool (선택)  # Phase 3b.2: Race S5.2로 체결된 주문
+                    # }
                 'failed_orders': List[Dict],      # 실패 목록
+                    # 각 항목 형식: {
+                    #     'order_id': str,
+                    #     'reason': str,
+                    #     'already_filled': bool (선택)  # Race Condition 인지
+                    # }
                 'total_processed': int,
                 'filter_conditions': List[str],
                 'message': str
             }
+
+        WHY:
+            already_filled 플래그는 Race Condition S5.2 대응 (Phase 3b.2)
+            - 취소 시도 중 거래소가 주문 체결 시 True로 설정
+            - 실패 주문과 구분하여 자동 재시도 정책 적용 가능
+
+        Edge Cases:
+            1. Race Condition S5.2: 취소 중 체결되어 DB에서 삭제됨 (already_filled=True)
+            2. both-NULL 상황: webhook_received_at=NULL & created_at > threshold
+               → 취소 제외됨 (웹훅 지연 주문으로 간주)
 
         Note:
             Phase 5 이후 모든 주문은 즉시 거래소에 실행되므로 PendingOrder 로직은 제거됨.
@@ -744,6 +841,16 @@ class OrderManager:
             # 타이밍 컨텍스트 초기화
             if timing_context is None:
                 timing_context = {}
+
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.1: Snapshot threshold 추출 (timing_context에서)
+            if not snapshot_threshold and timing_context and 'webhook_received_at' in timing_context:
+                webhook_received_at_unix = timing_context['webhook_received_at']
+                snapshot_threshold = datetime.fromtimestamp(webhook_received_at_unix)
+                logger.info(
+                    f"📸 CANCEL_ALL_ORDER Snapshot 모드 - "
+                    f"threshold={snapshot_threshold.isoformat()}"
+                )
 
             cancel_started_at = time.time()
 
@@ -780,6 +887,21 @@ class OrderManager:
                 open_query = open_query.filter(OpenOrder.symbol == symbol)
             if side:
                 open_query = open_query.filter(OpenOrder.side == side.upper())
+
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.1: Snapshot 필터 추가 (Scenario S3.1 해결)
+            if snapshot_threshold:
+                # webhook_received_at <= snapshot_threshold (웹훅 경로 주문)
+                # OR (webhook_received_at IS NULL AND created_at <= snapshot_threshold) (수동 주문)
+                open_query = open_query.filter(
+                    db.or_(
+                        OpenOrder.webhook_received_at <= snapshot_threshold,
+                        db.and_(
+                            OpenOrder.webhook_received_at.is_(None),
+                            OpenOrder.created_at <= snapshot_threshold
+                        )
+                    )
+                )
 
             # 모든 영향받는 계정 추출
             affected_account_ids = set()
@@ -838,6 +960,14 @@ class OrderManager:
             # OpenOrder 조회
             target_orders = open_query.all()
 
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.1: Snapshot 개수 로그
+            if snapshot_threshold:
+                logger.info(
+                    f"📸 CANCEL_ALL_ORDER Snapshot: {len(target_orders)}개 주문 "
+                    f"(기준 시각: {snapshot_threshold.isoformat()})"
+                )
+
             if not target_orders:
                 logger.info(
                     f"No orders to cancel for user {user_id}"
@@ -854,6 +984,9 @@ class OrderManager:
 
             cancelled_orders: List[Dict[str, Any]] = []
             failed_orders: List[Dict[str, Any]] = []
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.2: 'filled' 카운터 추가 (통계 개선)
+            filled_count = 0
 
             logger.info(
                 f"🔄 OpenOrder 취소 시작 - 사용자: {user_id}, {len(target_orders)}개"
@@ -876,10 +1009,12 @@ class OrderManager:
                     continue
 
                 try:
+                    # ✅ Phase 3a: open_order 전달 (추가 조회 불필요)
                     cancel_result = self.service.cancel_order(
                         order_id=open_order.exchange_order_id,
                         symbol=open_order.symbol,
-                        account_id=account.id
+                        account_id=account.id,
+                        open_order=open_order  # 🆕 추가
                     )
 
                     order_summary = {
@@ -890,6 +1025,10 @@ class OrderManager:
                     }
 
                     if cancel_result.get('success'):
+                        # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+                        # Phase 3b.2: 'already_filled' 체크하여 filled_count 증가
+                        if cancel_result.get('already_filled'):
+                            filled_count += 1
                         cancelled_orders.append(order_summary)
                     else:
                         failed_orders.append({
@@ -912,6 +1051,11 @@ class OrderManager:
             total_cancelled = len(cancelled_orders)
             total_failed = len(failed_orders)
             total_processed = total_cancelled + total_failed
+
+            # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3b
+            # Phase 3b.2: 'filled' 통계 로그 추가
+            if filled_count > 0:
+                logger.info(f"[CANCEL_ALL] {filled_count}개 주문 이미 체결됨 (Race S5.2)")
 
             logger.info(
                 f"✅ CANCEL_ALL 완료 - 사용자: {user_id}, "
@@ -1158,8 +1302,8 @@ class OrderManager:
             db.session.rollback()
             logger.error("OpenOrder 상태 업데이트 실패: %s", exc)
 
-    # @FEAT:webhook-order @COMP:job @TYPE:core
-    # @DATA:OrderStatus.PENDING - PENDING 주문 정리 (Phase 2: 2025-10-30)
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:4
+    # Phase 4: PENDING 주문 정리 - 120초 이상 PENDING 상태 주문을 FAILED로 전환
     def _cleanup_stuck_pending_orders(self) -> None:
         """
         정리 작업: PENDING 상태로 120초 이상 멈춘 주문을 FAILED로 강제 전환
@@ -1217,7 +1361,8 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ PENDING 주문 정리 실패: {e}")
 
-    # @FEAT:order-tracking @COMP:service @TYPE:helper
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:4
+    # Phase 4: CANCELLING 주문 정리 - 거래소 상태 재확인 후 동기화
     def _cleanup_orphan_cancelling_orders(self) -> None:
         """
         정리 작업: CANCELLING 상태로 300초 이상 멈춘 주문을 거래소 상태 재확인 후 처리
@@ -1375,7 +1520,8 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ CANCELLING 주문 정리 실패: {e}")
 
-    # @FEAT:order-tracking @COMP:job @TYPE:core
+    # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:5
+    # Phase 5: DB-거래소 상태 일관성 검증 및 자동 동기화 (29초 주기)
     def update_open_orders_status(self) -> None:
         """백그라운드 작업: 모든 미체결 주문의 상태를 거래소와 동기화 (Phase 3: 배치 쿼리 최적화)
 
@@ -1741,10 +1887,12 @@ class OrderManager:
                 f"삭제={total_deleted}, 실패={total_failed}"
             )
 
-            # Step 5: PENDING 주문 정리 (Phase 2)
+            # @FEAT:orphan-order-prevention @PHASE:4
+            # Step 5: PENDING 주문 정리 (Phase 4)
             self._cleanup_stuck_pending_orders()
 
-            # Step 6: CANCELLING 주문 정리 (Phase 4: 2025-10-30)
+            # @FEAT:orphan-order-prevention @PHASE:4
+            # Step 6: CANCELLING 주문 정리 (Phase 4)
             self._cleanup_orphan_cancelling_orders()
 
         except Exception as e:
