@@ -868,22 +868,167 @@ class ExchangeService:
                 'error_type': 'execution_error'
             }
 
+    # @FEAT:order-tracking @COMP:service @TYPE:integration
+    def cancel_order_with_retry(
+        self,
+        account: Account,
+        order_id: str,
+        symbol: str,
+        market_type: str = 'spot',
+        max_retries: int = 3,
+        timeout: float = 10.0
+    ) -> Dict[str, Any]:
+        """주문 취소 (재시도 메커니즘 포함)
+
+        WHY: 일시적 네트워크 오류/타임아웃 극복으로 주문 취소 성공률 향상
+        Edge Cases: OrderNotFound (성공 처리), 재시도 불가 오류 (즉시 반환)
+        Side Effects: 거래소 API 최대 3회 호출, 재시도 간 1/2/4초 지연
+        Performance: 최대 지연 7초 (1+2+4), 성공 시 즉시 반환
+        Debugging: 로그에서 재시도 횟수(attempt), 백오프 시간 추적
+
+        Args:
+            account: 거래소 계정
+            order_id: 주문 ID
+            symbol: 심볼 (예: BTC/USDT)
+            market_type: 마켓 타입 (spot, future 등)
+            max_retries: 최대 재시도 횟수 (기본 3회)
+            timeout: 요청 타임아웃 (초, 기본 10초)
+
+        Returns:
+            Dict with:
+                - success: bool
+                - result: dict (성공 시)
+                - error: str (실패 시)
+                - error_type: str (실패 시)
+                - retry_count: int (재시도 횟수)
+
+        Pattern:
+        1. 최대 max_retries 회 시도
+        2. RequestTimeout/NetworkError → Exponential backoff 재시도
+        3. OrderNotFound → 성공 처리 (이미 취소됨)
+        4. 기타 예외 → 즉시 반환 (재시도 불가)
+        """
+        import ccxt
+
+        retry_count = 0
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                client = self.get_exchange_client(account)
+                if not client:
+                    return {
+                        'success': False,
+                        'error': '거래소 클라이언트 없음',
+                        'error_type': 'client_error',
+                        'retry_count': retry_count
+                    }
+
+                self.rate_limiter.acquire_slot(account.exchange, 'order')
+
+                # ccxt timeout 설정
+                client.timeout = timeout * 1000  # milliseconds
+
+                result = client.cancel_order(order_id, symbol, market_type)
+
+                logger.info(
+                    f"✅ 주문 취소 성공: {order_id} "
+                    f"(attempt={attempt + 1}/{max_retries}, retries={retry_count})"
+                )
+
+                return {
+                    'success': True,
+                    'result': result,
+                    'retry_count': retry_count
+                }
+
+            except ccxt.RequestTimeout as e:
+                retry_count += 1
+                last_error = str(e)
+
+                logger.warning(
+                    f"⏱️ 주문 취소 타임아웃: {order_id} "
+                    f"(attempt={attempt + 1}/{max_retries}, timeout={timeout}s)"
+                )
+
+                if attempt < max_retries - 1:
+                    # 지수 백오프: 1초, 2초, 4초
+                    backoff_delay = 2 ** attempt
+                    logger.info(f"🔄 재시도 대기: {backoff_delay}초")
+                    time.sleep(backoff_delay)
+                else:
+                    logger.error(f"❌ 주문 취소 최종 실패 (타임아웃): {order_id}")
+                    return {
+                        'success': False,
+                        'error': f'Timeout after {max_retries} attempts: {last_error}',
+                        'error_type': 'timeout',
+                        'retry_count': retry_count
+                    }
+
+            except ccxt.NetworkError as e:
+                retry_count += 1
+                last_error = str(e)
+
+                logger.warning(
+                    f"🌐 주문 취소 네트워크 오류: {order_id} "
+                    f"(attempt={attempt + 1}/{max_retries})"
+                )
+
+                if attempt < max_retries - 1:
+                    backoff_delay = 2 ** attempt
+                    logger.info(f"🔄 재시도 대기: {backoff_delay}초")
+                    time.sleep(backoff_delay)
+                else:
+                    logger.error(f"❌ 주문 취소 최종 실패 (네트워크): {order_id}")
+                    return {
+                        'success': False,
+                        'error': f'Network error after {max_retries} attempts: {last_error}',
+                        'error_type': 'network',
+                        'retry_count': retry_count
+                    }
+
+            except ccxt.OrderNotFound as e:
+                # 주문이 이미 취소되었거나 없음 → 성공으로 간주
+                logger.info(f"ℹ️ 주문이 이미 취소됨 또는 없음: {order_id}")
+                return {
+                    'success': True,
+                    'result': {'already_cancelled': True},
+                    'retry_count': retry_count
+                }
+
+            except Exception as e:
+                # 재시도 불가능한 오류 (예: InvalidOrder, InsufficientFunds 등)
+                logger.error(f"❌ 주문 취소 실패 (재시도 불가): {order_id} - {e}")
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'error_type': 'non_retryable',
+                    'retry_count': retry_count
+                }
+
+        # 모든 재시도 실패 (여기 도달하면 timeout/network 예외 처리에서 return 누락)
+        return {
+            'success': False,
+            'error': last_error or 'All retry attempts failed',
+            'error_type': 'retry_exhausted',
+            'retry_count': retry_count
+        }
+
     def cancel_order(self, account: Account, order_id: str, symbol: str,
                     market_type: str = 'spot') -> Dict[str, Any]:
-        """주문 취소"""
-        try:
-            client = self.get_exchange_client(account)
-            if not client:
-                return {'success': False, 'error': '거래소 클라이언트 없음'}
+        """주문 취소 (레거시 호환성, 재시도 없음)
 
-            self.rate_limiter.acquire_slot(account.exchange, 'order')
-
-            result = client.cancel_order(order_id, symbol, market_type)
-            return {'success': True, 'result': result}
-
-        except Exception as e:
-            logger.error(f"주문 취소 실패: {e}")
-            return {'success': False, 'error': str(e)}
+        레거시 코드 호환성을 위한 래퍼 함수입니다.
+        새 코드에서는 cancel_order_with_retry()를 직접 사용하는 것을 권장합니다.
+        """
+        return self.cancel_order_with_retry(
+            account=account,
+            order_id=order_id,
+            symbol=symbol,
+            market_type=market_type,
+            max_retries=1,  # 레거시: 재시도 없음
+            timeout=10.0
+        )
 
     def get_open_orders(self, account: Account, symbol: Optional[str] = None,
                        market_type: str = 'spot') -> Dict[str, Any]:

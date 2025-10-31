@@ -152,13 +152,15 @@ class OrderManager:
 
             try:
                 # ============================================================
-                # STEP 2: 거래소 API 호출 (타임아웃/재시도는 Phase 3에서 추가)
+                # STEP 2: 거래소 API 호출 (Phase 3: 타임아웃 10초 + 재시도 3회)
                 # ============================================================
-                result = exchange_service.cancel_order(
+                result = exchange_service.cancel_order_with_retry(
                     account=account,
                     order_id=order_id,
                     symbol=symbol,
-                    market_type=market_type
+                    market_type=market_type,
+                    max_retries=3,
+                    timeout=10.0
                 )
 
                 # ============================================================
