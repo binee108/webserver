@@ -277,6 +277,21 @@ class OrderManager:
                         f"(error: {error_msg[:50]}...)"
                     )
 
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+                    # Phase 2: 취소 실패 추적 - exchange API 실패 시 FailedOrder 생성
+                    try:
+                        from app.services.trading.failed_order_manager import failed_order_manager
+                        failed_order_manager.create_failed_cancellation(
+                            order=open_order,
+                            exchange_error=result.get('error')
+                        )
+                    except Exception as fe:
+                        # Non-blocking: FailedOrder 생성 실패는 치명적이지 않음 (취소 실패는 이미 발생)
+                        logger.error(
+                            f"⚠️ FailedOrder 생성 실패 (취소 실패는 이미 발생) - "
+                            f"order_id={order_id}, error={fe}"
+                        )
+
                     return result
 
             except Exception as e:
@@ -332,6 +347,20 @@ class OrderManager:
                         logger.warning(
                             f"⚠️ 재확인: 거래소에서 활성 확인 → {old_status} 복원: {order_id}"
                         )
+
+                        # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:2
+                        # Phase 2: 예외 발생 시에도 FailedOrder 생성 (verification_result='active'일 때)
+                        try:
+                            from app.services.trading.failed_order_manager import failed_order_manager
+                            failed_order_manager.create_failed_cancellation(
+                                order=open_order,
+                                exchange_error=str(e)
+                            )
+                        except Exception as fe:
+                            logger.error(
+                                f"⚠️ FailedOrder 생성 실패 (예외 발생 후) - "
+                                f"order_id={order_id}, error={fe}"
+                            )
 
                         return {
                             'success': False,

@@ -64,13 +64,12 @@
 - **db-first-orphan-prevention** - DB-first 패턴으로 orphan order 방지 (PENDING 상태 + cleanup job) [`@COMP:service,job`] → [docs](features/webhook-order-processing.md#5-phase-32-db-first-orphan-prevention-2025-10-30)
 - **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
 - **cancel-order-db-first-orphan-prevention** - 주문 취소 시 고아 주문 방지 (DB-First 패턴, Phase 1-4 완료) [`@FEAT:cancel-order-db-first`] [`@COMP:constant,model,migration,service`] → [docs](features/webhook-order-processing.md#phase-33-database-schema-for-cancel-orphan-prevention-2025-10-30)
-- **orphan-order-prevention-market-type** - market_type 정확도 개선으로 고아 주문 90%+ 감소 (Phase 3a) [`@FEAT:orphan-order-prevention`] [`@COMP:service`] → [docs](features/orphan-order-prevention.md)
+- **orphan-order-prevention** - 고아 주문 방지 통합 솔루션 (Phase 3a: market_type 정확도, Phase 1-2: DB 재시도 + 취소 실패 추적) [`@COMP:service,config,model`] → [docs](features/orphan-order-prevention.md)
 - **auto-migration** - 자동 마이그레이션 시스템 (schema_migrations 추적, SQLAlchemy 패턴 필수) [`@COMP:util,job`] → [docs](features/auto-migration.md)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)
 - **securities-token** - 한국투자증권 토큰 관리 (자동 갱신) [`@COMP:service`] → [docs](features/securities-token.md)
-- **orphan-order-prevention** - DB 트랜잭션 보장으로 고아 주문 방지 (Phase 1: 3회 재시도, 95% 예방) [`@COMP:service,config`] → [docs](features/orphan-order-prevention.md)
 
 ### 📢 Notifications & Admin
 - **telegram-notification** - 사용자별/전역 텔레그램 봇 알림 (우선순위 기반 선택, 9가지 알림 타입) [`@COMP:service`] → [docs](features/telegram-notification.md)
@@ -86,6 +85,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-10-31 | Orphan Order Prevention (FailedOrder Extension) | ✅ Phase 2 | models.py, failed_order_manager.py, order_manager.py | operation_type/original_order_id 필드, 취소 실패 추적, _retry_cancellation() 로직 |
 | 2025-10-31 | Orphan Order Prevention (market_type) | ✅ Phase 3a | order_manager.py, exchange.py | cancel_order() 시그니처 확장, market_type 정확도 개선, already_cancelled 방어 로직 |
 | 2025-10-31 | Auto Migration System | ✅ Complete | cli/helpers/migration.py, docs/ | SQLAlchemy 패턴 자동 실행, 호환성 가이드 |
 | 2025-10-31 | Cancel Order DB-First | ✅ Phase 1-4 | constants.py, models.py, exchange.py, order_manager.py | CANCELLING 상태, Retry, Background Cleanup 완료 |
