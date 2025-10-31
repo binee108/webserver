@@ -196,10 +196,13 @@ function getErrorMessage(responseJson, fallback = '알 수 없는 오류가 발�
 }
 
 // handleApiResponse helper function
+// @FEAT:api-integration @COMP:util @TYPE:core
+// WHY: 구조화된 에러 객체({error: {message}})에서 메시지를 올바르게 추출하여
+//      "[object Object]" 버그 해결. getErrorMessage 유틸리티 사용으로 일관성 확보.
 function handleApiResponse(response) {
     if (!response.ok) {
         return response.json().then(data => {
-            throw new Error(data.error || data.message || 'API 요청 실패');
+            throw new Error(getErrorMessage(data, 'API 요청 실패'));
         });
     }
     return response.json();
