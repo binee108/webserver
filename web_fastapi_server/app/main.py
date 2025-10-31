@@ -13,7 +13,7 @@ import asyncio
 from app.config import settings
 from app.core.middleware import setup_middleware
 from app.db.session import close_db
-from app.api.v1 import cancel_queue
+from app.api.v1 import api_router
 from app.tasks.cancel_queue_processor import (
     start_cancel_queue_processor,
     stop_cancel_queue_processor,
@@ -102,10 +102,9 @@ async def ping():
 
 
 # API 라우터 등록
-app.include_router(cancel_queue.router, prefix="/api/v1")
+app.include_router(api_router)
 
-# Phase 3+ 라우터 (예정)
-# app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
+# Phase 5+ 라우터 (예정)
 # app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
 # app.include_router(strategies.router, prefix="/api/v1", tags=["Strategies"])
 # app.include_router(accounts.router, prefix="/api/v1", tags=["Accounts"])

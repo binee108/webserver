@@ -69,3 +69,10 @@ class OrderException(AppException):
 
     def __init__(self, message: str = "Order processing error", details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=400, details=details)
+
+
+class WebhookException(AppException):
+    """웹훅 처리 관련 예외"""
+
+    def __init__(self, message: str = "Webhook processing error", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, status_code=400, details=details)

@@ -127,6 +127,54 @@ Cancel Queue 개별 조회
 #### DELETE `/api/v1/cancel-queue/{cancel_id}`
 Cancel Queue 항목 삭제 (관리자용)
 
+### Webhook 엔드포인트 (Phase 4)
+
+#### POST `/api/v1/webhook`
+외부 트레이딩 신호 수신 (TradingView, 커스텀 봇)
+
+**지원 주문 타입 (Phase 4)**:
+- `MARKET`: 시장가 즉시 실행 (병렬 처리)
+- `CANCEL`: 미체결 주문 취소 (Cancel Queue 진입)
+
+**요청 예시**:
+```json
+{
+  "group_name": "my-strategy",
+  "token": "abc123...",
+  "action": "trading_signal",
+  "order_type": "MARKET",
+  "side": "BUY",
+  "symbol": "BTC/USDT",
+  "quantity": 0.001
+}
+```
+
+**응답 예시**:
+```json
+{
+  "success": true,
+  "action": "trading_signal",
+  "strategy": "My Strategy",
+  "message": "웹훅 처리 완료 - 성공: 3, 실패: 0",
+  "results": [...],
+  "summary": {
+    "total_accounts": 3,
+    "successful_orders": 3,
+    "failed_orders": 0,
+    "success_rate": 100.0
+  },
+  "performance_metrics": {
+    "total_processing_time_ms": 150.5,
+    "validation_time_ms": 5.2,
+    "execution_time_ms": 120.0
+  }
+}
+```
+
+**타임아웃**: 10초 (초과 시 HTTP 200 + error 응답)
+
+**상세 가이드**: [docs/WEBHOOK.md](docs/WEBHOOK.md)
+
 ## 프로젝트 구조
 
 ```
@@ -147,15 +195,34 @@ web_fastapi_server/
 │   │
 │   ├── models/              # SQLAlchemy 모델
 │   │   ├── cancel_queue.py          # 취소 대기열 모델
-│   │   └── strategy_order_log.py    # 전략별 주문 로그 모델
+│   │   ├── strategy_order_log.py    # 전략별 주문 로그 모델
+│   │   ├── user.py                  # 사용자 모델 (Phase 4)
+│   │   ├── strategy.py              # 전략 모델 (Phase 4)
+│   │   ├── account.py               # 계좌 모델 (Phase 4)
+│   │   └── strategy_account.py      # 전략-계좌 연결 모델 (Phase 4)
 │   │
-│   ├── api/                 # API 라우터 (Phase 2+)
+│   ├── api/                 # API 라우터
 │   │   └── v1/
+│   │       ├── cancel_queue.py      # Cancel Queue API (Phase 2)
+│   │       └── webhook.py           # Webhook API (Phase 4)
 │   │
-│   ├── schemas/             # Pydantic 스키마 (Phase 2+)
-│   ├── services/            # 비즈니스 로직 (Phase 2+)
-│   ├── exchanges/           # 거래소 어댑터 (Phase 3+)
-│   └── tasks/               # 백그라운드 작업 (Phase 6+)
+│   ├── schemas/             # Pydantic 스키마
+│   │   ├── cancel_queue.py          # Cancel Queue 스키마 (Phase 2)
+│   │   └── webhook.py               # Webhook 스키마 (Phase 4)
+│   │
+│   ├── services/            # 비즈니스 로직
+│   │   ├── cancel_queue_service.py  # Cancel Queue 서비스 (Phase 2)
+│   │   └── webhook_service.py       # Webhook 서비스 (Phase 4)
+│   │
+│   ├── exchanges/           # 거래소 어댑터 (Phase 3)
+│   │   ├── base.py                  # 기본 인터페이스
+│   │   ├── binance.py               # Binance 어댑터
+│   │   ├── bybit.py                 # Bybit 어댑터
+│   │   ├── upbit.py                 # Upbit 어댑터
+│   │   └── utils/                   # HTTP Client, Rate Limiter
+│   │
+│   └── tasks/               # 백그라운드 작업
+│       └── cancel_queue_processor.py # Cancel Queue 처리기 (Phase 2)
 │
 ├── alembic/                 # 마이그레이션 스크립트
 │   ├── env.py               # 비동기 마이그레이션 설정
@@ -284,17 +351,20 @@ alembic downgrade -1
 - Cancel Queue API 엔드포인트
 - Mock Exchange Service
 
-### Phase 3: 비동기 거래소 어댑터 ✅ (현재)
+### Phase 3: 비동기 거래소 어댑터 ✅
 - Binance, Bybit, Upbit 비동기 구현
 - httpx 기반 HTTP 클라이언트
 - 에러 처리 및 재시도 (500 에러 포함)
 - Rate Limiting (거래소별)
 - 통일된 데이터 형식
 
-### Phase 4: 웹훅 처리 엔드포인트 (예정)
-- MARKET/CANCEL vs Limit/Stop 분기
-- 최저 레이턴시 최적화
-- 백그라운드 DB 저장
+### Phase 4: 웹훅 처리 엔드포인트 ✅ (현재)
+- MARKET/CANCEL 주문 처리 (Phase 4 범위)
+- 비동기 병렬 실행 (asyncio.gather)
+- 10초 타임아웃 (asyncio.wait_for)
+- 백그라운드 DB 저장 (BackgroundTasks)
+- 토큰 기반 인증 (소유자 + 구독자)
+- Pydantic 자동 검증
 
 ### Phase 5: 전략별 무손실 주문 실행 (예정)
 - 전략의 모든 계정에 독립 실행
@@ -317,6 +387,7 @@ alembic downgrade -1
 - **[설정 문서](docs/CONFIGURATION.md)**: 환경 변수 상세 설명 및 사용법
 - **[Cancel Queue 문서](docs/CANCEL_QUEUE.md)**: Cancel Queue 시스템 상세 가이드 (Phase 2)
 - **[거래소 어댑터 문서](docs/EXCHANGES.md)**: Binance, Bybit, Upbit 어댑터 가이드 (Phase 3)
+- **[웹훅 API 문서](docs/WEBHOOK.md)**: 웹훅 처리 엔드포인트 가이드 (Phase 4)
 - **[API 문서](http://localhost:8000/docs)**: Swagger UI (서버 실행 후)
 
 ## 환경 변수
@@ -387,5 +458,5 @@ uvicorn app.main:app --port 8001
 ---
 
 **최종 업데이트**: 2025-10-31
-**버전**: 1.0.0-alpha (Phase 3)
+**버전**: 1.0.0-alpha (Phase 4)
 **문의**: FastAPI 리팩토링 프로젝트

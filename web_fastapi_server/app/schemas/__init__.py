@@ -1,17 +1,5 @@
 """
-Schemas 모듈
+Pydantic Schemas
 
-Pydantic 스키마 (Request/Response 검증)
+Request/Response 데이터 검증 및 직렬화
 """
-
-from app.schemas.cancel_queue import (
-    CancelQueueCreate,
-    CancelQueueResponse,
-    CancelRequestResponse,
-)
-
-__all__ = [
-    "CancelQueueCreate",
-    "CancelQueueResponse",
-    "CancelRequestResponse",
-]
