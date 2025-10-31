@@ -70,6 +70,115 @@ grep -r "@DATA:error_message" --include="*.py" web_server/app/
 
 ---
 
+## 20251030_add_cancelling_state.py
+
+**날짜**: 2025-10-30
+**Feature**: cancel-order-db-first-orphan-prevention (Phase 1: State Management)
+**목적**: 주문 취소 시 고아 주문 방지를 위한 CANCELLING 상태 및 cancel_attempted_at 필드 추가
+
+### 변경 사항
+
+#### 1. 컬럼 추가
+- **컬럼명**: `cancel_attempted_at`
+- **타입**: `timestamp without time zone`
+- **Nullable**: `TRUE` (기존 주문 호환성)
+- **용도**: 주문 취소 시도 시각 기록 (타임아웃 감지, 디버깅)
+- **Comment**: "Timestamp when order cancellation was initiated (for timeout detection and debugging)"
+
+#### 2. 인덱스 추가
+- **인덱스명**: `idx_open_orders_cancelling_cleanup`
+- **컬럼**: `(status, cancel_attempted_at)`
+- **조건**: `WHERE status = 'CANCELLING'`
+- **용도**: 백그라운드 정리 작업 쿼리 최적화 (120초 초과 CANCELLING 주문 검색)
+
+### 실행 방법
+
+#### Upgrade
+```bash
+# 환경 변수 설정
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_NAME=trading_system
+export DB_USER=trader
+export DB_PASSWORD=your_password
+
+# 마이그레이션 실행
+python migrations/20251030_add_cancelling_state.py --upgrade
+```
+
+**예상 출력**:
+```
+🔧 Starting migration: Add CANCELLING state and cancel_attempted_at...
+  → Adding cancel_attempted_at column...
+  → Creating index on (status, cancel_attempted_at)...
+  ✅ cancel_attempted_at column verified
+  ✅ Index idx_open_orders_cancelling_cleanup verified
+✅ Migration completed successfully!
+```
+
+#### 검증
+```bash
+# 컬럼 확인
+psql -d trading_system -c "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'open_orders' AND column_name = 'cancel_attempted_at';"
+
+# 예상 출력:
+#  column_name        | data_type                   | is_nullable
+# --------------------+-----------------------------+-------------
+#  cancel_attempted_at| timestamp without time zone | YES
+
+# 인덱스 확인
+psql -d trading_system -c "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'open_orders' AND indexname = 'idx_open_orders_cancelling_cleanup';"
+
+# 예상 출력:
+#  indexname                       | indexdef
+# ---------------------------------+---------------------------------------
+#  idx_open_orders_cancelling_cleanup | CREATE INDEX idx_open_orders_cancelling_cleanup ON public.open_orders USING btree (status, cancel_attempted_at) WHERE ((status)::text = 'CANCELLING'::text)
+```
+
+#### Downgrade
+```bash
+# 롤백 실행
+python migrations/20251030_add_cancelling_state.py --downgrade
+```
+
+**안전성 확인**:
+- CANCELLING 상태 주문 존재 여부 확인
+- 존재 시 사용자 확인 후 롤백 진행
+
+**예상 출력**:
+```
+🔄 Rolling back migration: Remove CANCELLING state support...
+⚠️  WARNING: 0 orders currently in CANCELLING state!
+  → Dropping index idx_open_orders_cancelling_cleanup...
+  → Dropping cancel_attempted_at column...
+✅ Rollback completed successfully!
+```
+
+### 의존성
+
+- **선행 마이그레이션**: `20251030_add_error_message_field.py`
+- **후속 Phase**: Phase 2 (Core Cancel Logic), Phase 4 (Background Cleanup)
+
+### 영향 범위
+
+- **테이블**: `open_orders`
+- **서비스**: Phase 2 이후 `order_manager.py`, 백그라운드 정리 작업
+- **하위 호환성**: 기존 주문 데이터에 영향 없음 (nullable 필드)
+
+### 롤백 시나리오
+
+1. **즉시 롤백 가능**: CANCELLING 상태 주문이 없는 경우
+2. **주의 필요**: Phase 2 구현 후 CANCELLING 주문 존재 시
+   - 롤백 전 모든 CANCELLING 주문을 수동으로 OPEN 또는 CANCELLED로 전환 필요
+
+### 성능 영향
+
+- **인덱스 크기**: Partial Index로 CANCELLING 상태만 인덱스 포함 → 최소 오버헤드
+- **쿼리 성능**: 백그라운드 정리 작업 쿼리 최적화 (Full Table Scan → Index Scan)
+- **디스크 사용량**: 컬럼 추가로 약 8 bytes/row 증가 (timestamp)
+
+---
+
 ## Migration Workflow
 
 ### 마이그레이션 적용

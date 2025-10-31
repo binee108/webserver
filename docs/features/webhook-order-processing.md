@@ -817,6 +817,252 @@ grep -r "@DATA:error_message" --include="*.py" web_server/app/
 
 ---
 
+### Phase 3.3: Database Schema for Cancel Orphan Prevention (2025-10-30)
+
+**Feature**: `cancel-order-db-first-orphan-prevention` (Phase 1: State Management)
+
+#### 목적
+주문 취소 시 고아 주문 방지를 위한 데이터베이스 스키마 및 상태 관리 인프라 구축. 주문 생성의 `PENDING` 상태와 대칭되는 `CANCELLING` 상태를 추가하여 DB-First 패턴의 기반 마련.
+
+#### 배경
+
+**현재 문제점**:
+- 주문 **생성**: DB-First 패턴 (PENDING → OPEN/FAILED) ✅
+- 주문 **취소**: Exchange-First 패턴 (거래소 API → DB 삭제) ❌
+- 패턴 불일치로 취소 시에만 고아 주문 위험 존재
+
+**고아 주문 시나리오**:
+```
+1. 사용자 주문 취소 요청
+2. 거래소 API 호출 → 타임아웃
+3. 실제로는 취소되었지만 응답 못 받음
+4. DB의 OpenOrder 그대로 유지 (고아 주문)
+5. 사용자는 계속 "미체결"로 보임
+```
+
+#### 구현 내용
+
+##### 1. CANCELLING 상태 추가
+
+**파일**: `web_server/app/constants.py:820`
+
+```python
+class OrderStatus:
+    PENDING = 'PENDING'      # @DATA:OrderStatus.PENDING - Pre-exchange API call state (order creation)
+    CANCELLING = 'CANCELLING'  # @DATA:OrderStatus.CANCELLING - Pre-exchange API call state (order cancellation)
+    OPEN = 'OPEN'
+    FAILED = 'FAILED'
+    CANCELLED = 'CANCELLED'
+    # ... (기존 상태들)
+```
+
+**설계 의도**:
+- **PENDING과 대칭**: 주문 생성(PENDING)과 취소(CANCELLING)의 일관된 패턴
+- **임시 상태**: 거래소 API 호출 전 DB 기록용 상태
+- **백그라운드 정리 대상**: `OPEN_STATUSES`에 포함되어 자동 모니터링
+
+**상태 그룹 업데이트**:
+```python
+# Line 832
+OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED, CANCELLING]  # @FEAT:cancel-order-db-first
+```
+
+**UI 필터링**:
+```python
+# Line 1014: get_open_statuses_for_ui()
+return [cls.NEW, cls.OPEN, cls.PARTIALLY_FILLED]  # CANCELLING 제외 (임시 상태)
+```
+
+**기능 구분**:
+- `get_open_statuses()`: 백그라운드 작업용 (CANCELLING 포함)
+- `get_active_statuses()`: PENDING + OPEN_STATUSES (모든 활성 상태)
+- `get_open_statuses_for_ui()`: UI 표시용 (PENDING, CANCELLING 제외)
+
+##### 2. cancel_attempted_at 필드 추가
+
+**파일**: `web_server/app/models.py:398`
+
+```python
+# @FEAT:cancel-order-db-first @COMP:model @TYPE:core
+# @DATA:cancel_attempted_at - 주문 취소 시도 시각 (디버깅 및 백그라운드 정리용)
+# Used for: (1) Debugging stuck CANCELLING orders, (2) Background cleanup timeout detection
+cancel_attempted_at = db.Column(db.DateTime, nullable=True)
+```
+
+**용도**:
+1. **타임아웃 감지**: 백그라운드 작업이 120초 초과 CANCELLING 주문을 자동 정리
+2. **디버깅**: 취소 실패 원인 추적 (`error_message`와 함께 사용)
+3. **모니터링**: 취소 작업 소요 시간 분석
+
+**Nullable 설계**:
+- 기존 주문 호환성 유지
+- 취소 시도한 주문만 값 기록
+
+##### 3. 데이터베이스 마이그레이션
+
+**파일**: `web_server/migrations/20251030_add_cancelling_state.py`
+
+**마이그레이션 내용**:
+1. `cancel_attempted_at` 컬럼 추가 (timestamp without time zone, nullable)
+2. PostgreSQL COMMENT 추가 (스키마 문서화)
+3. 인덱스 생성: `idx_open_orders_cancelling_cleanup`
+   - 컬럼: `(status, cancel_attempted_at)`
+   - WHERE 조건: `status = 'CANCELLING'`
+   - 용도: 백그라운드 정리 작업 쿼리 최적화
+
+**마이그레이션 특징**:
+- **Idempotent**: 재실행 안전 (`IF NOT EXISTS` 사용)
+- **Downgrade 지원**: 안전한 롤백 (CANCELLING 상태 주문 존재 여부 확인)
+- **안전성 검증**: 업그레이드/다운그레이드 후 컬럼 및 인덱스 검증
+
+**실행 방법**:
+```bash
+# Upgrade
+python migrations/20251030_add_cancelling_state.py --upgrade
+
+# Verification
+psql -d trading_system -c "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'open_orders' AND column_name = 'cancel_attempted_at';"
+
+# Index verification
+psql -d trading_system -c "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'open_orders' AND indexname = 'idx_open_orders_cancelling_cleanup';"
+
+# Downgrade (if needed)
+python migrations/20251030_add_cancelling_state.py --downgrade
+```
+
+#### 아키텍처 설계
+
+##### 상태 전환 다이어그램 (Phase 2 구현 예정)
+
+```
+주문 생성 (DB-First):
+  [사용자 요청] → PENDING → [거래소 API] → OPEN/FAILED
+
+주문 취소 (DB-First - Phase 2 구현 예정):
+  [사용자 요청] → CANCELLING → [거래소 API] → CANCELLED/OPEN
+```
+
+##### 대칭적 설계
+
+| 작업 | 임시 상태 | 성공 상태 | 실패 상태 | 백그라운드 정리 |
+|------|----------|----------|----------|----------------|
+| 주문 생성 | PENDING | OPEN | FAILED | 120초 초과 → FAILED |
+| 주문 취소 | CANCELLING | CANCELLED | OPEN (복원) | 120초 초과 → OPEN (Phase 4) |
+
+##### 상태 필터링 전략
+
+```python
+# 백그라운드 작업 (주문 상태 업데이트, 정리 작업)
+active_statuses = OrderStatus.get_active_statuses()
+# → [PENDING, NEW, OPEN, PARTIALLY_FILLED, CANCELLING]
+
+# UI 표시 (사용자에게 보이는 미체결 주문)
+ui_statuses = OrderStatus.get_open_statuses_for_ui()
+# → [NEW, OPEN, PARTIALLY_FILLED]
+# PENDING, CANCELLING은 임시 상태로 숨김
+```
+
+#### 코드 태그
+
+**검색 가능한 태그**:
+```bash
+# 모든 관련 코드 찾기
+grep -r "@FEAT:cancel-order-db-first" --include="*.py"
+
+# 컴포넌트별 검색
+grep -r "@COMP:constant" --include="*.py" | grep cancel-order-db-first
+grep -r "@COMP:model" --include="*.py" | grep cancel-order-db-first
+grep -r "@COMP:migration" --include="*.py" | grep cancel-order-db-first
+
+# 데이터 필드 검색
+grep -r "@DATA:OrderStatus.CANCELLING" --include="*.py"
+grep -r "@DATA:cancel_attempted_at" --include="*.py"
+```
+
+#### 영향 범위
+
+**변경된 파일**:
+- `constants.py`: +12 줄 (CANCELLING 상태, docstring 업데이트)
+- `models.py`: +5 줄 (cancel_attempted_at 필드)
+- `migrations/20251030_add_cancelling_state.py`: +184 줄 (신규)
+
+**의존성**:
+- Phase 2: Core Cancel Logic (DB-First 패턴 구현)
+- Phase 3: Retry & Resilience Mechanisms (타임아웃, 재시도)
+- Phase 4: Background Cleanup Job (CANCELLING 정리)
+
+**영향받는 서비스** (Phase 2 이후):
+- `order_manager.py`: 취소 로직 리팩토링
+- `exchange.py`: 타임아웃 및 재시도 추가
+- 백그라운드 작업: CANCELLING 정리 작업 추가
+
+#### 테스트 전략 (Phase 1 범위)
+
+**Unit Tests**:
+```python
+# test_order_status.py
+def test_cancelling_in_open_statuses():
+    """OPEN_STATUSES가 CANCELLING 포함"""
+    assert 'CANCELLING' in OrderStatus.OPEN_STATUSES
+    assert OrderStatus.get_open_statuses() == ['NEW', 'OPEN', 'PARTIALLY_FILLED', 'CANCELLING']
+
+def test_cancelling_excluded_from_ui():
+    """UI용 필터는 CANCELLING 제외"""
+    ui_statuses = OrderStatus.get_open_statuses_for_ui()
+    assert 'CANCELLING' not in ui_statuses
+    assert ui_statuses == ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+
+def test_is_open_with_cancelling():
+    """is_open()이 CANCELLING을 True로 반환"""
+    assert OrderStatus.is_open('CANCELLING') is True
+
+def test_active_statuses_includes_cancelling():
+    """get_active_statuses()가 CANCELLING 포함"""
+    active = OrderStatus.get_active_statuses()
+    assert 'CANCELLING' in active
+    assert 'PENDING' in active
+```
+
+**Migration Tests**:
+```bash
+# 업그레이드 테스트
+python migrations/20251030_add_cancelling_state.py --upgrade
+# Expected: cancel_attempted_at 컬럼, idx_open_orders_cancelling_cleanup 인덱스 생성
+
+# 모델 검증
+python -c "from app.models import OpenOrder; print(OpenOrder.cancel_attempted_at)"
+# Expected: <sqlalchemy.orm.attributes.InstrumentedAttribute object>
+
+# 다운그레이드 테스트
+python migrations/20251030_add_cancelling_state.py --downgrade
+# Expected: 컬럼 및 인덱스 제거
+```
+
+#### 다음 단계 (Phase 2-4)
+
+**Phase 2: Core Cancel Logic**
+- `order_manager.cancel_order()` 함수를 DB-First 패턴으로 리팩토링
+- 상태 전환: CANCELLING → CANCELLED/OPEN
+- 예외 처리: 하이브리드 방식 (1회 재확인 + 백그라운드)
+
+**Phase 3: Retry & Resilience**
+- 거래소 API 타임아웃 설정 (10초)
+- 지수 백오프 재시도 (최대 3회: 1초, 2초, 4초)
+- 재시도 가능한 오류 판별
+
+**Phase 4: Background Cleanup**
+- `_cleanup_orphan_cancelling_orders()` 함수 추가
+- 120초 초과 CANCELLING 주문 자동 정리
+- 거래소 상태 재확인 후 CANCELLED 또는 OPEN으로 전환
+
+#### 참고 문서
+
+- **주문 생성 DB-First 패턴**: `core.py:243-397`
+- **백그라운드 정리 작업**: `order_manager.py:799-854` (`_cleanup_stuck_pending_orders`)
+- **관련 기능**: Phase 3.1 (error_message 필드), Phase 3.2 (DB-first orphan prevention)
+
+---
+
 ## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
