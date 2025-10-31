@@ -71,8 +71,17 @@ class OrderManager:
             }
 
     # @FEAT:order-tracking @COMP:service @TYPE:core
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3a
     # @DATA:OrderStatus.CANCELLING - DB-first 패턴 (Phase 2: 2025-10-30)
-    def cancel_order(self, order_id: str, symbol: str, account_id: int) -> Dict[str, Any]:
+    # @DATA:market_type 정확도 - Phase 3a (2025-10-31)
+    def cancel_order(
+        self,
+        order_id: str,
+        symbol: str,
+        account_id: int,
+        strategy_account_id: Optional[int] = None,
+        open_order: Optional[OpenOrder] = None
+    ) -> Dict[str, Any]:
         """주문 취소 (DB-First 패턴)
 
         WHY: 타임아웃 시 orphan order 방지. DB 상태를 먼저 변경하여 백그라운드 정리 가능.
@@ -91,36 +100,23 @@ class OrderManager:
         Args:
             order_id: 거래소 주문 ID
             symbol: 심볼
-            account_id: 계정 ID
+            account_id: 계정 ID (레거시 호환성)
+            strategy_account_id: 전략 계정 ID (Optional, open_order와 함께 사용 시 무시됨)
+            open_order: OpenOrder 객체 (Optional, 제공 시 추가 조회 생략 및 정확한 market_type 사용)
 
         Returns:
             Dict with success, error, error_type
         """
         try:
             # ============================================================
-            # STEP 0: Validation
+            # STEP 0: Validation (Phase 3a: open_order 우선 사용)
             # ============================================================
-            account = Account.query.get(account_id)
-            if not account:
-                return {
-                    'success': False,
-                    'error': '계정을 찾을 수 없습니다',
-                    'error_type': 'account_error'
-                }
 
-            # 계정의 전략을 통해 market_type 확인
-            strategy_account = StrategyAccount.query.filter_by(
-                account_id=account_id
-            ).first()
-
-            market_type = 'spot'  # 기본값
-            if strategy_account and strategy_account.strategy:
-                market_type = strategy_account.strategy.market_type.lower()
-
-            # OpenOrder 조회
-            open_order = OpenOrder.query.filter_by(
-                exchange_order_id=order_id
-            ).first()
+            # 🆕 Phase 3a: open_order 인자 우선 사용 (추가 조회 불필요)
+            if not open_order:
+                open_order = OpenOrder.query.filter_by(
+                    exchange_order_id=order_id
+                ).first()
 
             if not open_order:
                 return {
@@ -136,6 +132,18 @@ class OrderManager:
                     'error': '이미 취소 처리 중입니다',
                     'error_type': 'already_cancelling'
                 }
+
+            # ✅ Phase 3a: 정확한 market_type (open_order에서 직접 가져오기)
+            strategy_account = open_order.strategy_account
+            if not strategy_account or not strategy_account.account:
+                return {
+                    'success': False,
+                    'error': 'StrategyAccount를 찾을 수 없습니다',
+                    'error_type': 'account_error'
+                }
+
+            account = strategy_account.account
+            market_type = open_order.market_type or strategy_account.strategy.market_type.lower()
 
             # ============================================================
             # STEP 1: DB 상태를 CANCELLING으로 먼저 변경
@@ -565,11 +573,12 @@ class OrderManager:
                     'error_type': 'permission_error'
                 }
 
-            # 기존 cancel_order 메서드 재사용
+            # 기존 cancel_order 메서드 재사용 (Phase 3a: open_order 전달)
             result = self.service.cancel_order(
                 order_id=order_id,
                 symbol=open_order.symbol,
-                account_id=open_order.strategy_account.account.id
+                account_id=open_order.strategy_account.account.id,
+                open_order=open_order  # 🆕 Phase 3a: 정확한 market_type 사용
             )
 
             if result['success']:
@@ -876,10 +885,12 @@ class OrderManager:
                     continue
 
                 try:
+                    # ✅ Phase 3a: open_order 전달 (추가 조회 불필요)
                     cancel_result = self.service.cancel_order(
                         order_id=open_order.exchange_order_id,
                         symbol=open_order.symbol,
-                        account_id=account.id
+                        account_id=account.id,
+                        open_order=open_order  # 🆕 추가
                     )
 
                     order_summary = {
