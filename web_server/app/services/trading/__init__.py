@@ -1,4 +1,4 @@
-
+# @FEAT:order-cancellation @COMP:service @TYPE:integration
 """High-level trading service interface composed of modular components."""
 
 from __future__ import annotations
@@ -203,8 +203,23 @@ class TradingService:
             stop_price=stop_price,
         )
 
-    def cancel_order(self, order_id: str, symbol: str, account_id: int) -> Dict[str, Any]:
-        return self.order_manager.cancel_order(order_id, symbol, account_id)
+    def cancel_order(
+        self,
+        order_id: str,
+        symbol: str,
+        account_id: int,
+        strategy_account_id: Optional[int] = None,
+        open_order: Optional['OpenOrder'] = None
+    ) -> Dict[str, Any]:
+        """Facade for OrderManager.cancel_order - Issue #27 Phase 3a Fix
+
+        Synchronize cancel_order signature with OrderManager implementation.
+        Added open_order param (Phase 3a) to use accurate market_type without
+        extra DB queries and enable proper cancellation across spot/margin/futures.
+        """
+        return self.order_manager.cancel_order(
+            order_id, symbol, account_id, strategy_account_id, open_order
+        )
 
     def cancel_order_by_user(self, order_id: str, user_id: int) -> Dict[str, Any]:
         return self.order_manager.cancel_order_by_user(order_id, user_id)

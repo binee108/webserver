@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed - Issue #27: order-cancellation 기능 복구
+
+**Issue #27**: TradingService.cancel_order() 파라미터 불일치로 웹 UI 주문 취소 실패
+
+- **Phase 3a 파라미터 누락 수정**: strategy_account_id, open_order 파라미터 추가
+  - Facade 패턴 일관성 복원 (TradingService → OrderManager 시그니처 동기화)
+  - open_order 파라미터로 정확한 market_type 사용 (DB 추가 조회 불필요)
+  - spot/margin/futures 시장 타입별 올바른 주문 취소 지원
+- **File**: web_server/app/services/trading/__init__.py:206-216
+- **Related**: cancel_order_by_user(), cancel_all_orders_by_user() (Phase 3a 이미 적용됨)
+
 ### Added - run.py CLI 마이그레이션 (Phase 1-4)
 
 #### Phase 1: 모듈 구조 생성
