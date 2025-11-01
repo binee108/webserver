@@ -66,17 +66,42 @@ class Settings(BaseSettings):
         le=60,
         description="MARKET 주문 타임아웃 (초)"
     )
+
+    # Cancel Queue Worker Configuration (Phase 2)
+    cancel_queue_poll_interval: int = Field(
+        default=5,
+        env="CANCEL_QUEUE_POLL_INTERVAL",
+        ge=1,
+        le=60,
+        description="Cancel Queue Worker polling 간격 (초)"
+    )
+    cancel_queue_batch_size: int = Field(
+        default=100,
+        env="CANCEL_QUEUE_BATCH_SIZE",
+        ge=10,
+        le=1000,
+        description="Cancel Queue 한 번에 처리할 최대 개수"
+    )
+    cancel_queue_max_retries: int = Field(
+        default=5,
+        env="CANCEL_QUEUE_MAX_RETRIES",
+        ge=1,
+        le=10,
+        description="Cancel Queue 최대 재시도 횟수"
+    )
+
+    # Legacy (Phase 1 compatibility)
     CANCEL_QUEUE_INTERVAL: int = Field(
         default=10,
         ge=5,
         le=60,
-        description="Cancel Queue 처리 간격 (초)"
+        description="Cancel Queue 처리 간격 (초) - Legacy"
     )
     MAX_CANCEL_RETRIES: int = Field(
         default=5,
         ge=1,
         le=10,
-        description="최대 취소 재시도 횟수"
+        description="최대 취소 재시도 횟수 - Legacy"
     )
 
     # Exchange API Keys (Phase 3)

@@ -344,12 +344,13 @@ alembic downgrade -1
 - SQLAlchemy 2.0 비동기 설정
 - 새로운 테이블 (cancel_queue, strategy_order_logs)
 
-### Phase 2: 취소 대기열 시스템 ✅
-- PENDING 주문 취소 처리
-- 재시도 메커니즘 (exponential backoff)
-- 백그라운드 작업
-- Cancel Queue API 엔드포인트
-- Mock Exchange Service
+### Phase 2: 취소 대기열 시스템 ✅ (완료)
+- ✅ PENDING 주문 취소 처리
+- ✅ 재시도 메커니즘 (exponential backoff: 1분 → 2분 → 4분 → 8분 → 16분)
+- ✅ 백그라운드 워커 (주기적 polling, 거래소별 병렬 처리)
+- ✅ Cancel Queue API 엔드포인트
+- ✅ SELECT FOR UPDATE로 중복 처리 방지
+- ✅ 에러 분류 (Retriable vs Non-Retriable)
 
 ### Phase 3: 비동기 거래소 어댑터 ✅
 - Binance, Bybit, Upbit 비동기 구현
@@ -385,7 +386,7 @@ alembic downgrade -1
 
 - **[모델 문서](docs/MODELS.md)**: CancelQueue, StrategyOrderLog 상세 API
 - **[설정 문서](docs/CONFIGURATION.md)**: 환경 변수 상세 설명 및 사용법
-- **[Cancel Queue 문서](docs/CANCEL_QUEUE.md)**: Cancel Queue 시스템 상세 가이드 (Phase 2)
+- **[Cancel Queue Worker 문서](docs/CANCEL_QUEUE_WORKER.md)**: Cancel Queue Worker 상세 가이드 (Phase 2) ✅
 - **[거래소 어댑터 문서](docs/EXCHANGES.md)**: Binance, Bybit, Upbit 어댑터 가이드 (Phase 3)
 - **[웹훅 API 문서](docs/WEBHOOK.md)**: 웹훅 처리 엔드포인트 가이드 (Phase 4)
 - **[API 문서](http://localhost:8000/docs)**: Swagger UI (서버 실행 후)
@@ -400,8 +401,11 @@ alembic downgrade -1
 | `REDIS_URL` | Redis 연결 URL | `redis://localhost:6379/0` |
 | `DB_POOL_SIZE` | DB 커넥션 풀 크기 | `20` |
 | `MARKET_ORDER_TIMEOUT` | MARKET 주문 타임아웃 (초) | `10` |
-| `CANCEL_QUEUE_INTERVAL` | Cancel Queue 처리 간격 (초) | `10` |
-| `MAX_CANCEL_RETRIES` | 최대 취소 재시도 횟수 | `5` |
+| **Cancel Queue Worker (Phase 2)** | | |
+| `CANCEL_QUEUE_POLL_INTERVAL` | Cancel Queue polling 간격 (초) | `5` |
+| `CANCEL_QUEUE_BATCH_SIZE` | 한 번에 처리할 최대 큐 아이템 수 | `100` |
+| `CANCEL_QUEUE_MAX_RETRIES` | 최대 취소 재시도 횟수 | `5` |
+| **Exchange Adapters (Phase 3)** | | |
 | `BINANCE_API_KEY` | Binance API Key | (Phase 3) |
 | `BINANCE_API_SECRET` | Binance API Secret | (Phase 3) |
 | `BYBIT_API_KEY` | Bybit API Key | (Phase 3) |

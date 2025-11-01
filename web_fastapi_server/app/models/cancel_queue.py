@@ -8,6 +8,8 @@ PENDING 상태 주문의 취소 요청을 추적하여 고아 주문을 방지�
 2. PENDING → OPEN 전환 시 → Cancel Queue 확인 후 즉시 취소 시도
 3. 취소 실패 시 → 재시도 (retry_count 증가, next_retry_at 설정)
 4. 최대 재시도 횟수 초과 시 → status: FAILED
+
+@FEAT:cancel-queue @COMP:model @TYPE:core
 """
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
@@ -19,7 +21,11 @@ from app.db.base import Base
 
 
 class CancelQueue(Base):
-    """주문 취소 대기열 모델"""
+    """
+    주문 취소 대기열 모델
+
+    @FEAT:cancel-queue @COMP:model @TYPE:core
+    """
 
     __tablename__ = "cancel_queue"
 
@@ -47,6 +53,23 @@ class CancelQueue(Base):
         nullable=False,
         index=True,
         comment="계정 ID"
+    )
+
+    # 주문 정보 (Phase 2: Worker에서 사용)
+    symbol: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="거래 심볼 (예: BTC/USDT)"
+    )
+    exchange_order_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="거래소 주문 ID"
+    )
+    exchange: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="거래소 (예: binance, bybit, upbit)"
     )
 
     # 취소 요청 정보

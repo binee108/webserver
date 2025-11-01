@@ -14,10 +14,7 @@ from app.config import settings
 from app.core.middleware import setup_middleware
 from app.db.session import close_db
 from app.api.v1 import api_router
-from app.tasks.cancel_queue_processor import (
-    start_cancel_queue_processor,
-    stop_cancel_queue_processor,
-)
+from app.services.background import CancelQueueWorker
 
 # 로깅 설정
 logging.basicConfig(
@@ -32,6 +29,8 @@ async def lifespan(app: FastAPI):
     """
     애플리케이션 생명주기 관리
 
+    Phase 2: Cancel Queue Worker 통합
+
     startup: 앱 시작 시 실행
     shutdown: 앱 종료 시 실행
     """
@@ -41,8 +40,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"🔧 Debug Mode: {settings.DEBUG}")
     logger.info(f"🌐 CORS Origins: {settings.CORS_ORIGINS}")
 
-    # Cancel Queue 백그라운드 작업 시작
-    cancel_queue_task = await start_cancel_queue_processor()
+    # Phase 2: Cancel Queue Worker 시작
+    worker = CancelQueueWorker(poll_interval=settings.cancel_queue_poll_interval)
+    await worker.start()
+
+    # Store worker in app state for access
+    app.state.cancel_queue_worker = worker
+
     logger.info("✅ Background tasks started")
 
     yield
@@ -50,8 +54,8 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Shutting down FastAPI Trading Bot Server...")
 
-    # Cancel Queue 백그라운드 작업 종료
-    await stop_cancel_queue_processor(cancel_queue_task)
+    # Phase 2: Cancel Queue Worker 종료
+    await worker.stop()
 
     # DB 연결 종료
     await close_db()
