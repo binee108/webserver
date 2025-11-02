@@ -3,17 +3,24 @@
 웹훅 처리 서비스 모듈
 
 이 모듈은 외부 웹훅 요청(TradingView 등)을 수신하여 검증, 라우팅, 처리하는 핵심 로직을 담당합니다.
+
+동시성 제어:
+- WebhookLockManager를 사용하여 동일 전략+심볼의 웹훅을 직렬화 처리
+- Race Condition 방지 (주문 생성/취소 충돌 방지)
+- 다른 전략/심볼은 병렬 처리하여 성능 유지
 """
 
 import logging
 import time
 from typing import Dict, Any, Optional
 from datetime import datetime
+from contextlib import contextmanager
 
 from app import db
 from app.models import Strategy, WebhookLog
 from app.services.utils import normalize_webhook_data
 from app.services.exchange import exchange_service
+from app.services.webhook_lock_manager import webhook_lock_manager
 from app.constants import MarketType, Exchange, OrderType
 from app.utils.logging_security import get_secure_logger
 
@@ -113,9 +120,57 @@ class WebhookService:
 
         return strategy
 
+    # @FEAT:webhook-concurrency @COMP:service @TYPE:core
+    @contextmanager
+    def _acquire_strategy_lock(self, strategy_id: int, symbol: str):
+        """
+        전략+심볼 Lock 획득 (모든 주문 작업 직렬화)
+
+        동일 전략+심볼의 웹훅을 순차 처리하여 Race Condition 방지.
+        단일 주문, 배치 주문, 취소 작업, 테스트 모드 모두 이 Lock을 사용.
+
+        Args:
+            strategy_id (int): 전략 ID
+            symbol (str): 거래 심볼 (예: "BTC/USDT")
+
+        Raises:
+            WebhookError: Lock 획득 타임아웃 (30초 초과)
+
+        Example:
+            with self._acquire_strategy_lock(strategy.id, "BTC/USDT"):
+                # 주문 작업 수행
+                result = trading_service.process_trading_signal(...)
+        """
+        try:
+            with webhook_lock_manager.acquire_webhook_lock(
+                strategy_id=strategy_id,
+                symbols=[symbol],
+                timeout=30
+            ):
+                yield
+        except TimeoutError as e:
+            logger.error(f"❌ Lock 획득 타임아웃 - 전략: {strategy_id}, 심볼: {symbol}")
+            raise WebhookError(f"웹훅 처리 대기 시간 초과: {str(e)}")
+
     # @FEAT:webhook-order @COMP:service @TYPE:core
     def process_webhook(self, webhook_data: Dict[str, Any], webhook_received_at: Optional[float] = None) -> Dict[str, Any]:
-        """웹훅 데이터 처리 메인 함수"""
+        """
+        웹훅 데이터 처리 메인 함수
+
+        동시성 제어:
+            동일 전략+심볼의 웹훅은 WebhookLockManager를 통해 순차 처리됩니다.
+            Lock 타임아웃: 30초 (WEBHOOK_LOCK_TIMEOUT 환경변수로 설정 가능)
+
+        Args:
+            webhook_data (Dict[str, Any]): 웹훅 데이터
+            webhook_received_at (Optional[float]): 웹훅 수신 시각 (Unix timestamp)
+
+        Returns:
+            Dict[str, Any]: 처리 결과
+
+        Raises:
+            WebhookError: 웹훅 처리 실패 (검증 실패, Lock 타임아웃 등)
+        """
         # 웹훅 수신 시간 기록 (표준화된 변수명)
         if webhook_received_at is None:
             webhook_received_at = time.time()
@@ -147,6 +202,11 @@ class WebhookService:
             if not group_name:
                 raise WebhookError("group_name이 필요합니다")
 
+            # 🔒 Symbol 조기 검증 (Lock 키 생성에 필수)
+            symbol = normalized_data.get('symbol')
+            if not symbol:
+                raise WebhookError("symbol이 필요합니다")
+
             # 🧪 테스트 모드 검증 우회
             test_mode = normalized_data.get("test_mode", False)
             if test_mode:
@@ -161,21 +221,21 @@ class WebhookService:
                         self.is_active = True
                         self.user = None
                 strategy = TestStrategy()
-                # 바로 거래 처리로 이동
-                # 거래 신호는 trading_service로 위임
-                from app.services.trading import trading_service
-                # order_type 변수 정의 (테스트 모드에서 필요)
+
                 # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
                 if not normalized_data.get('batch_mode'):
                     self._validate_order_type_params(normalized_data)
 
+                # 🔒 테스트 모드에도 Lock 적용 (Race Condition 방지)
+                from app.services.trading import trading_service
+                with self._acquire_strategy_lock(strategy.id, symbol):
+                    # 배치 모드 감지 및 라우팅
+                    if normalized_data.get("batch_mode"):
+                        result = trading_service.process_batch_trading_signal(normalized_data)
+                    else:
+                        # 기존 단일 주문 처리
+                        result = trading_service.process_trading_signal(normalized_data)
 
-                # 배치 모드 감지 및 라우팅
-                if normalized_data.get("batch_mode"):
-                    result = trading_service.process_batch_trading_signal(normalized_data)
-                else:
-                    # 기존 단일 주문 처리
-                    result = trading_service.process_trading_signal(normalized_data)
                 webhook_log.status = "success"
                 webhook_log.message = str(result)
                 self.session.commit()
@@ -184,226 +244,235 @@ class WebhookService:
             # 전략 조회 및 토큰 검증 (단일 소스)
             strategy = self._validate_strategy_token(group_name, token)
 
-            # 웹훅 타입 확인
-            order_type = normalized_data.get('order_type', '')
+            # 🔒 Lock 획득 (모든 주문 작업 직렬화)
+            with self._acquire_strategy_lock(strategy.id, symbol):
+                # 웹훅 타입 확인
+                order_type = normalized_data.get('order_type', '')
 
-            # 거래 처리 시작 시점 기록
-            trade_started_at = time.time()
+                # 거래 처리 시작 시점 기록
+                trade_started_at = time.time()
 
-            if order_type == OrderType.CANCEL_ALL_ORDER:
-                # Strategy의 market_type 기반 취소 로직 분기
-                market_type = strategy.market_type or MarketType.SPOT
+                # ========== CANCEL_ALL_ORDER 처리 (Lock 보호됨) ==========
+                if order_type == OrderType.CANCEL_ALL_ORDER:
+                    # Strategy의 market_type 기반 취소 로직 분기
+                    market_type = strategy.market_type or MarketType.SPOT
 
-                if MarketType.is_crypto(market_type):
-                    result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
+                    if MarketType.is_crypto(market_type):
+                        result = self.process_cancel_all_orders(normalized_data, webhook_received_at)
+                    else:
+                        result = self._cancel_securities_orders(strategy, normalized_data, webhook_received_at)
+
+                # ========== CANCEL 처리 (Lock 보호됨) ==========
+                elif order_type == OrderType.CANCEL:
+                    result = self.process_cancel_order(normalized_data, webhook_received_at)
+
+                # ========== 일반 주문 처리 (Lock 보호됨) ==========
                 else:
-                    result = self._cancel_securities_orders(strategy, normalized_data, webhook_received_at)
+                    # Strategy의 market_type 기반 거래 처리 분기
+                    market_type = strategy.market_type or MarketType.SPOT
 
-            elif order_type == OrderType.CANCEL:
-                result = self.process_cancel_order(normalized_data, webhook_received_at)
-            else:
-                # Strategy의 market_type 기반 거래 처리 분기
-                market_type = strategy.market_type or MarketType.SPOT
+                    if MarketType.is_crypto(market_type):
+                        # 크립토: 기존 로직
+                        from app.services.trading import trading_service
 
-                if MarketType.is_crypto(market_type):
-                    # 크립토: 기존 로직
-                    # 거래 신호는 trading_service로 위임
-                    from app.services.trading import trading_service
-                    # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
-                    if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
-                        self._validate_order_type_params(normalized_data)
+                        # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
+                        if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
+                            self._validate_order_type_params(normalized_data)
 
-                    # 타이밍 컨텍스트 준비
-                    timing_context = {
-                        'webhook_received_at': webhook_received_at,
-                        'webhook_validated_at': webhook_validated_at,
-                        'trade_started_at': trade_started_at
-                    }
-
-                    # 전략 정보를 거래 데이터에 추가
-                    normalized_data['strategy_id'] = strategy.id
-                    normalized_data['strategy_name'] = strategy.name
-                    normalized_data['market_type'] = market_type  # Strategy에서 가져온 market_type 주입
-
-                    # 🆕 Phase 4: 배치 크기 제한 (10초 안전 마진)
-                    BATCH_SIZE_LIMIT = 30
-
-                    # 🆕 주문 정규화: 단일 → 배치 (비파괴적)
-                    is_batch = 'orders' in normalized_data
-
-                    if is_batch:
-                        # 배치 크기 체크
-                        orders = normalized_data.get('orders', [])
-                        if len(orders) > BATCH_SIZE_LIMIT:
-                            logger.error(f"❌ 배치 크기 초과: {len(orders)}개 (최대: {BATCH_SIZE_LIMIT}개)")
-                            raise WebhookError(f'Order limit exceeded (max: {BATCH_SIZE_LIMIT}, received: {len(orders)})')
-
-                        # 🆕 Phase 4: 우선순위별 분류 (@FEAT:immediate-execution @COMP:service @TYPE:core)
-                        #
-                        # 배치 우선순위 분류 전략:
-                        # ========================
-                        # - HIGH_PRIORITY: CANCEL_ALL_ORDER, MARKET
-                        #   ├─ 목적: 즉시 실행 필수 (포지션 정리, 시장가 체결)
-                        #   └─ 처리: 배치1에서 먼저 실행 (원래 포지션 영향 차단)
-                        #
-                        # - LOW_PRIORITY: LIMIT, STOP
-                        #   ├─ 목적: 조건부 체결 (지정가 대기, 조건부 실행)
-                        #   └─ 처리: 배치2에서 나중에 실행 (배치1 성공 보장)
-                        #
-                        # Phase 1 classify_priority 패턴과 일치:
-                        # - EXTREME/HIGH (고우선순위) → 배치1
-                        # - MEDIUM/LOW (저우선순위) → 배치2
-                        #
-                        # 부분 실패 격리 효과:
-                        # - 배치1 실패 → 롤백, 배치2 계속 실행
-                        # - 배치2 실패 → 롤백, 배치1 커밋 유지 (부분 성공 보장)
-                        from app.constants import ORDER_TYPE_GROUPS
-
-                        high_priority = []  # CANCEL_ALL_ORDER, MARKET
-                        low_priority = []   # LIMIT, STOP
-
-                        for order in orders:
-                            order_type = order.get('order_type', '').upper()
-
-                            # 고우선순위: 즉시 체결 필요 (포지션 정리, 시장가)
-                            if order_type == OrderType.CANCEL_ALL_ORDER or order_type == OrderType.MARKET:
-                                high_priority.append(order)
-                            # 저우선순위: 조건부 체결 (지정가, 스탑)
-                            elif order_type in ORDER_TYPE_GROUPS.get('LIMIT', []) or order_type in ORDER_TYPE_GROUPS.get('STOP', []):
-                                low_priority.append(order)
-                            else:
-                                # 기타 타입은 low_priority로 분류
-                                low_priority.append(order)
-
-                        logger.info(f"📦 배치 주문 우선순위 분류 - 고우선순위: {len(high_priority)}개, 저우선순위: {len(low_priority)}개")
-
-                        # 🆕 Phase 4: 독립 트랜잭션 패턴 (@FEAT:immediate-execution @COMP:service @TYPE:core)
-                        #
-                        # 트랜잭션 경계 설계:
-                        # ===================
-                        # - 배치1 트랜잭션 (고우선순위):
-                        #   ├─ process_batch_trading_signal() 호출
-                        #   ├─ db.session.commit() → 배치1 독립 커밋
-                        #   └─ Exception → db.session.rollback() (명시적)
-                        #
-                        # - 배치2 트랜잭션 (저우선순위):
-                        #   ├─ process_batch_trading_signal() 호출
-                        #   ├─ db.session.commit() → 배치2 독립 커밋
-                        #   └─ Exception → db.session.rollback() (배치1과 독립)
-                        #
-                        # 부분 실패 격리 (Phase 3 교훈 반영):
-                        # - 배치1 실패 → 배치1 롤백, 배치2는 계속 실행
-                        # - 배치2 실패 → 배치2 롤백, 배치1 커밋 유지
-                        # - 모든 Exception 경로에서 명시적 rollback() 호출
-                        #
-                        # 응답 구성:
-                        # - HTTP 200 OK (TradingView 재전송 방지)
-                        # - summary: {succeeded: 배치1+배치2, failed: 배치1+배치2}
-                        # - 클라이언트는 batch1_*/batch2_* 로 세부 결과 확인 가능
-                        #
-                        # 예시 흐름:
-                        #   웹훅 → 배치1: CANCEL 1개, MARKET 2개 → 성공 3개, 배치1 커밋
-                        #        → 배치2: LIMIT 3개, STOP 1개 → 실패 4개, 배치2 롤백
-                        #        → 응답: {succeeded: 3, failed: 4} + HTTP 200 OK
-
-                        # 🆕 Phase 4: 배치1 실행 (고우선순위: CANCEL_ALL_ORDER + MARKET)
-                        batch1_results = {'succeeded': 0, 'failed': 0, 'errors': []}
-                        if high_priority:
-                            try:
-                                logger.info(f"⚡ 배치1 실행 시작 - {len(high_priority)}개 주문")
-                                result1 = trading_service.core.process_batch_trading_signal(
-                                    {**normalized_data, 'orders': high_priority},
-                                    timing_context
-                                )
-                                db.session.commit()  # 배치1 독립 커밋
-
-                                # 결과 집계
-                                summary1 = result1.get('summary', {})
-                                batch1_results['succeeded'] = summary1.get('successful_orders', 0)
-                                batch1_results['failed'] = summary1.get('failed_orders', 0)
-
-                                if batch1_results['succeeded'] > 0:
-                                    logger.info(f"✅ 배치1 완료 - 성공: {batch1_results['succeeded']}개")
-                                if batch1_results['failed'] > 0:
-                                    logger.warning(f"⚠️ 배치1 실패 - 실패: {batch1_results['failed']}개")
-
-                            except Exception as e:
-                                db.session.rollback()  # 명시적 롤백 (Phase 3 교훈)
-                                logger.error(f"❌ 배치1 실행 실패: {e}")
-                                batch1_results['failed'] = len(high_priority)
-                                batch1_results['errors'].append(str(e))
-
-                        # 🆕 Phase 4: 배치2 실행 (저우선순위: LIMIT + STOP) - 배치1과 독립
-                        batch2_results = {'succeeded': 0, 'failed': 0, 'errors': []}
-                        if low_priority:
-                            try:
-                                logger.info(f"📋 배치2 실행 시작 - {len(low_priority)}개 주문")
-                                result2 = trading_service.core.process_batch_trading_signal(
-                                    {**normalized_data, 'orders': low_priority},
-                                    timing_context
-                                )
-                                db.session.commit()  # 배치2 독립 커밋
-
-                                # 결과 집계
-                                summary2 = result2.get('summary', {})
-                                batch2_results['succeeded'] = summary2.get('successful_orders', 0)
-                                batch2_results['failed'] = summary2.get('failed_orders', 0)
-
-                                if batch2_results['succeeded'] > 0:
-                                    logger.info(f"✅ 배치2 완료 - 성공: {batch2_results['succeeded']}개")
-                                if batch2_results['failed'] > 0:
-                                    logger.warning(f"⚠️ 배치2 실패 - 실패: {batch2_results['failed']}개")
-
-                            except Exception as e:
-                                db.session.rollback()  # 명시적 롤백
-                                logger.error(f"❌ 배치2 실행 실패: {e}")
-                                batch2_results['failed'] = len(low_priority)
-                                batch2_results['errors'].append(str(e))
-
-                        # 🆕 Phase 4: 결과 병합
-                        total = len(orders)
-                        succeeded = batch1_results['succeeded'] + batch2_results['succeeded']
-                        failed = batch1_results['failed'] + batch2_results['failed']
-
-                        # @FEAT:webhook-order @COMP:service @TYPE:core
-                        # @DATA:successful_orders,failed_orders - 배치 통계 필드명 (2025-10-30 통일)
-                        result = {
-                            'action': 'trading_signal',
-                            'strategy': strategy.name,
-                            'success': succeeded > 0,  # 1개라도 성공하면 success: true
-                            'summary': {
-                                'total_orders': total,
-                                'successful_orders': succeeded,
-                                'failed_orders': failed,
-                                'batch1_succeeded': batch1_results['succeeded'],
-                                'batch1_failed': batch1_results['failed'],
-                                'batch2_succeeded': batch2_results['succeeded'],
-                                'batch2_failed': batch2_results['failed']
-                            },
-                            'results': []
+                        # 타이밍 컨텍스트 준비
+                        timing_context = {
+                            'webhook_received_at': webhook_received_at,
+                            'webhook_validated_at': webhook_validated_at,
+                            'trade_started_at': trade_started_at
                         }
 
-                        logger.info(f"📊 배치 처리 완료 - 전체: {total}개, 성공: {succeeded}개, 실패: {failed}개")
+                        # 전략 정보를 거래 데이터에 추가
+                        normalized_data['strategy_id'] = strategy.id
+                        normalized_data['strategy_name'] = strategy.name
+                        normalized_data['market_type'] = market_type  # Strategy에서 가져온 market_type 주입
+
+                        # 🆕 Phase 4: 배치 크기 제한 (10초 안전 마진)
+                        BATCH_SIZE_LIMIT = 30
+
+                        # 🆕 주문 정규화: 단일 → 배치 (비파괴적)
+                        is_batch = 'orders' in normalized_data
+
+                        if is_batch:
+                            # 배치 크기 체크
+                            orders = normalized_data.get('orders', [])
+                            if len(orders) > BATCH_SIZE_LIMIT:
+                                logger.error(f"❌ 배치 크기 초과: {len(orders)}개 (최대: {BATCH_SIZE_LIMIT}개)")
+                                raise WebhookError(f'Order limit exceeded (max: {BATCH_SIZE_LIMIT}, received: {len(orders)})')
+
+                            # 🆕 Phase 4: 우선순위별 분류 (@FEAT:immediate-execution @COMP:service @TYPE:core)
+                            #
+                            # 배치 우선순위 분류 전략:
+                            # ========================
+                            # - HIGH_PRIORITY: CANCEL_ALL_ORDER, MARKET
+                            #   ├─ 목적: 즉시 실행 필수 (포지션 정리, 시장가 체결)
+                            #   └─ 처리: 배치1에서 먼저 실행 (원래 포지션 영향 차단)
+                            #
+                            # - LOW_PRIORITY: LIMIT, STOP
+                            #   ├─ 목적: 조건부 체결 (지정가 대기, 조건부 실행)
+                            #   └─ 처리: 배치2에서 나중에 실행 (배치1 성공 보장)
+                            #
+                            # Phase 1 classify_priority 패턴과 일치:
+                            # - EXTREME/HIGH (고우선순위) → 배치1
+                            # - MEDIUM/LOW (저우선순위) → 배치2
+                            #
+                            # 부분 실패 격리 효과:
+                            # - 배치1 실패 → 롤백, 배치2 계속 실행
+                            # - 배치2 실패 → 롤백, 배치1 커밋 유지 (부분 성공 보장)
+                            from app.constants import ORDER_TYPE_GROUPS
+
+                            high_priority = []  # CANCEL_ALL_ORDER, MARKET
+                            low_priority = []   # LIMIT, STOP
+
+                            for order in orders:
+                                order_type_inner = order.get('order_type', '').upper()
+
+                                # 고우선순위: 즉시 체결 필요 (포지션 정리, 시장가)
+                                if order_type_inner == OrderType.CANCEL_ALL_ORDER or order_type_inner == OrderType.MARKET:
+                                    high_priority.append(order)
+                                # 저우선순위: 조건부 체결 (지정가, 스탑)
+                                elif order_type_inner in ORDER_TYPE_GROUPS.get('LIMIT', []) or order_type_inner in ORDER_TYPE_GROUPS.get('STOP', []):
+                                    low_priority.append(order)
+                                else:
+                                    # 기타 타입은 low_priority로 분류
+                                    low_priority.append(order)
+
+                            logger.info(f"📦 배치 주문 우선순위 분류 - 고우선순위: {len(high_priority)}개, 저우선순위: {len(low_priority)}개")
+
+                            # 🆕 Phase 4: 독립 트랜잭션 패턴 (@FEAT:immediate-execution @COMP:service @TYPE:core)
+                            #
+                            # 트랜잭션 경계 설계:
+                            # ===================
+                            # - 배치1 트랜잭션 (고우선순위):
+                            #   ├─ process_batch_trading_signal() 호출
+                            #   ├─ db.session.commit() → 배치1 독립 커밋
+                            #   └─ Exception → db.session.rollback() (명시적)
+                            #
+                            # - 배치2 트랜잭션 (저우선순위):
+                            #   ├─ process_batch_trading_signal() 호출
+                            #   ├─ db.session.commit() → 배치2 독립 커밋
+                            #   └─ Exception → db.session.rollback() (배치1과 독립)
+                            #
+                            # 부분 실패 격리 (Phase 3 교훈 반영):
+                            # - 배치1 실패 → 배치1 롤백, 배치2는 계속 실행
+                            # - 배치2 실패 → 배치2 롤백, 배치1 커밋 유지
+                            # - 모든 Exception 경로에서 명시적 rollback() 호출
+                            #
+                            # 응답 구성:
+                            # - HTTP 200 OK (TradingView 재전송 방지)
+                            # - summary: {succeeded: 배치1+배치2, failed: 배치1+배치2}
+                            # - 클라이언트는 batch1_*/batch2_* 로 세부 결과 확인 가능
+                            #
+                            # 예시 흐름:
+                            #   웹훅 → 배치1: CANCEL 1개, MARKET 2개 → 성공 3개, 배치1 커밋
+                            #        → 배치2: LIMIT 3개, STOP 1개 → 실패 4개, 배치2 롤백
+                            #        → 응답: {succeeded: 3, failed: 4} + HTTP 200 OK
+
+                            # 🆕 Phase 4: 배치1 실행 (고우선순위: CANCEL_ALL_ORDER + MARKET)
+                            batch1_results = {'succeeded': 0, 'failed': 0, 'errors': []}
+                            if high_priority:
+                                try:
+                                    logger.info(f"⚡ 배치1 실행 시작 - {len(high_priority)}개 주문")
+                                    result1 = trading_service.core.process_batch_trading_signal(
+                                        {**normalized_data, 'orders': high_priority},
+                                        timing_context
+                                    )
+                                    db.session.commit()  # 배치1 독립 커밋
+
+                                    # 결과 집계
+                                    summary1 = result1.get('summary', {})
+                                    batch1_results['succeeded'] = summary1.get('successful_orders', 0)
+                                    batch1_results['failed'] = summary1.get('failed_orders', 0)
+
+                                    if batch1_results['succeeded'] > 0:
+                                        logger.info(f"✅ 배치1 완료 - 성공: {batch1_results['succeeded']}개")
+                                    if batch1_results['failed'] > 0:
+                                        logger.warning(f"⚠️ 배치1 실패 - 실패: {batch1_results['failed']}개")
+
+                                except Exception as e:
+                                    db.session.rollback()  # 명시적 롤백 (Phase 3 교훈)
+                                    logger.error(f"❌ 배치1 실행 실패: {e}")
+                                    batch1_results['failed'] = len(high_priority)
+                                    batch1_results['errors'].append(str(e))
+
+                            # 🆕 Phase 4: 배치2 실행 (저우선순위: LIMIT + STOP) - 배치1과 독립
+                            batch2_results = {'succeeded': 0, 'failed': 0, 'errors': []}
+                            if low_priority:
+                                try:
+                                    logger.info(f"📋 배치2 실행 시작 - {len(low_priority)}개 주문")
+                                    result2 = trading_service.core.process_batch_trading_signal(
+                                        {**normalized_data, 'orders': low_priority},
+                                        timing_context
+                                    )
+                                    db.session.commit()  # 배치2 독립 커밋
+
+                                    # 결과 집계
+                                    summary2 = result2.get('summary', {})
+                                    batch2_results['succeeded'] = summary2.get('successful_orders', 0)
+                                    batch2_results['failed'] = summary2.get('failed_orders', 0)
+
+                                    if batch2_results['succeeded'] > 0:
+                                        logger.info(f"✅ 배치2 완료 - 성공: {batch2_results['succeeded']}개")
+                                    if batch2_results['failed'] > 0:
+                                        logger.warning(f"⚠️ 배치2 실패 - 실패: {batch2_results['failed']}개")
+
+                                except Exception as e:
+                                    db.session.rollback()  # 명시적 롤백
+                                    logger.error(f"❌ 배치2 실행 실패: {e}")
+                                    batch2_results['failed'] = len(low_priority)
+                                    batch2_results['errors'].append(str(e))
+
+                            # 🆕 Phase 4: 결과 병합
+                            total = len(orders)
+                            succeeded = batch1_results['succeeded'] + batch2_results['succeeded']
+                            failed = batch1_results['failed'] + batch2_results['failed']
+
+                            # @FEAT:webhook-order @COMP:service @TYPE:core
+                            # @DATA:successful_orders,failed_orders - 배치 통계 필드명 (2025-10-30 통일)
+                            result = {
+                                'action': 'trading_signal',
+                                'strategy': strategy.name,
+                                'success': succeeded > 0,  # 1개라도 성공하면 success: true
+                                'summary': {
+                                    'total_orders': total,
+                                    'successful_orders': succeeded,
+                                    'failed_orders': failed,
+                                    'batch1_succeeded': batch1_results['succeeded'],
+                                    'batch1_failed': batch1_results['failed'],
+                                    'batch2_succeeded': batch2_results['succeeded'],
+                                    'batch2_failed': batch2_results['failed']
+                                },
+                                'results': []
+                            }
+
+                            logger.info(f"📊 배치 처리 완료 - 전체: {total}개, 성공: {succeeded}개, 실패: {failed}개")
+
+                        # ========== 단일 주문 처리 (Lock 보호됨) ==========
+                        else:
+                            logger.info(f"📝 단일 주문 처리")
+                            result = trading_service.core.process_trading_signal(normalized_data, timing_context)
+
+                        # 거래 결과 분석
+                        result = self._analyze_trading_result(result, normalized_data)
+
+                    elif MarketType.is_securities(market_type):
+                        # 증권: 신규 로직 (Lock 보호됨)
+                        # 타이밍 컨텍스트 준비
+                        timing_context = {
+                            'webhook_received_at': webhook_received_at,
+                            'webhook_validated_at': webhook_validated_at,
+                            'trade_started_at': trade_started_at
+                        }
+                        result = self._process_securities_order(strategy, normalized_data, timing_context)
 
                     else:
-                        logger.info(f"📝 단일 주문 처리")
-                        result = trading_service.core.process_trading_signal(normalized_data, timing_context)
+                        raise WebhookError(f"지원하지 않는 market_type: {market_type}")
 
-                    # 🆕 거래 신호 처리 결과 분석 및 로깅
-                    self._analyze_trading_result(result, normalized_data)
-
-                elif MarketType.is_securities(market_type):
-                    # 증권: 신규 로직
-                    # 타이밍 컨텍스트 준비
-                    timing_context = {
-                        'webhook_received_at': webhook_received_at,
-                        'webhook_validated_at': webhook_validated_at,
-                        'trade_started_at': trade_started_at
-                    }
-                    result = self._process_securities_order(strategy, normalized_data, timing_context)
-
-                else:
-                    raise WebhookError(f"지원하지 않는 market_type: {market_type}")
+            # Lock 해제 (context manager 자동 처리)
 
             # 성공 시 로그 업데이트 (모든 타이밍 정보 저장)
             webhook_log.status = 'success'

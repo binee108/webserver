@@ -1,8 +1,8 @@
 # Webhook Concurrency Fix
 
 **Feature ID**: webhook-concurrency-fix
-**Phase**: Phase 1 - WebhookLockManager 구현
-**Status**: Phase 1 Step 5 (Documentation)
+**Phase**: Phase 1-2 완료
+**Status**: Phase 2 Step 5 (Documentation)
 **Date**: 2025-11-02
 
 ---
@@ -102,9 +102,85 @@ with webhook_lock_manager.acquire_webhook_lock(
 
 ---
 
+## Phase 2: webhook_service.py 통합
+
+### 개요
+WebhookLockManager를 webhook_service.py의 모든 주문 처리 경로에 통합하여 완전한 동시성 제어를 실현합니다.
+
+### 구현 변경사항
+
+#### 1. Lock 래퍼 메서드 추가 (Lines 119-148)
+
+`_acquire_strategy_lock()` context manager를 추가하여 Lock 로직을 중앙화했습니다.
+
+**특징:**
+- `@contextmanager` 데코레이터로 자동 Lock 해제 보장
+- TimeoutError → WebhookError 변환 (도메인 에러 제공)
+- 30초 타임아웃 (WEBHOOK_LOCK_TIMEOUT 환경변수)
+- 단일 소스 원칙 준수 (DRY)
+
+#### 2. Symbol 조기 검증 (Lines 184-187)
+
+Lock 획득 전에 symbol 필드를 검증하여 명확한 에러 메시지를 제공합니다.
+
+**효과:**
+- Lock 타임아웃 에러로 오도되지 않음
+- 조기 실패로 불필요한 Lock 대기 방지
+
+#### 3. 통합 Lock 적용 (Line 227부터)
+
+모든 주문 처리 경로를 하나의 Lock 컨텍스트로 보호합니다.
+
+**보호되는 경로:**
+- CANCEL_ALL_ORDER (Crypto)
+- CANCEL_ALL_ORDER (Securities)
+- CANCEL
+- 배치 주문 (CANCEL_ALL+MARKET, LIMIT+STOP)
+- 단일 주문
+
+### 동작 예시
+
+**동일 전략+심볼 직렬화:**
+```
+T0: 웹훅1 (Strategy 1, BTC/USDT, 배치 3개) → Lock 획득 성공
+T0.5: 웹훅2 (Strategy 1, BTC/USDT, 단일) → Lock 대기 중
+T2.5: 웹훅1 완료 → Lock 해제
+T2.5: 웹훅2 Lock 획득 → 대기 시간: 2.0초
+```
+
+**다른 심볼 병렬 처리:**
+```
+T0: 웹훅1 (Strategy 1, BTC/USDT) → Lock 획득
+T0: 웹훅2 (Strategy 1, ETH/USDT) → Lock 획득 (다른 Lock)
+→ 두 웹훅 동시 처리 (병렬)
+```
+
+### 성능 영향
+
+| 시나리오 | Lock 영향 | 처리 시간 |
+|---------|----------|----------|
+| 동일 strategy+symbol (직렬화) | Lock 대기 발생 | 기존 대비 +100% (순차 처리) |
+| 다른 strategy/symbol (병렬) | Lock 대기 없음 | 기존과 동일 (병렬 유지) |
+
+### 환경변수
+
+| 변수 | 기본값 | 설명 | 권장 범위 |
+|------|--------|------|----------|
+| `WEBHOOK_LOCK_TIMEOUT` | 30 | Lock 획득 타임아웃 (초) | 10-120 |
+| `MAX_WEBHOOK_LOCKS` | 1000 | Lock pool 최대 크기 | 100-10000 |
+
+### 로깅
+
+| 이벤트 | 레벨 | 메시지 | 위치 |
+|--------|------|--------|------|
+| Lock 획득 성공 | DEBUG | `🔒 Acquired lock for strategy_X_symbol_Y (waited 0.05s)` | webhook_lock_manager.py |
+| 대기 시간 5초 이상 | WARNING | `⏱️ Lock waited 6.23s for strategy_X_symbol_Y` | webhook_lock_manager.py |
+| Lock 타임아웃 | ERROR | `❌ Lock 획득 타임아웃 - 전략: X, 심볼: Y` | webhook_service.py |
+
+---
+
 ## 다음 Phase
 
-**Phase 2**: `webhook_service.py` 통합
 **Phase 3**: 기능 테스트 (`.test/test_webhook_concurrency.py`)
 
 ---
