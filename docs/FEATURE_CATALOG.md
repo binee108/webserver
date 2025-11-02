@@ -23,6 +23,7 @@
 
 ### 🔄 Core Trading
 - **webhook-order** - 웹훅 수신, 토큰 검증, 주문 처리 [`@COMP:service,route`] → [docs](features/webhook-order-processing.md)
+- **webhook-concurrency-fix** - 웹훅 동시 처리 Lock 관리, (strategy_id, symbol) 단위 직렬화 [`@COMP:service`] → [docs](features/webhook_concurrency_fix.md)
 - **immediate-order-execution** - 웹훅 주문 즉시 실행 및 FailedOrder 관리 UI [`@COMP:service,route,ui`] → [docs](features/immediate-order-execution.md)
 - **order-tracking** - 주문 상태 추적 및 WebSocket 실시간 감시 [`@COMP:service`] → [docs](features/order-tracking.md)
 - **order-queue** - 대기열 관리 및 동적 재정렬 (v2.2 Side별 분리) [`@COMP:service`] → [docs](features/order-queue-system.md)
@@ -92,6 +93,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-02 | Webhook Concurrency Fix | ✅ Phase 1 | webhook_lock_manager.py | WebhookLockManager 구현, Race Condition 방지 |
 | 2025-10-31 | Orphan Order Prevention (Logging) | ✅ Phase 6 | - | Phase 1-5 통합 로깅 완료 (189 log points) |
 | 2025-10-31 | Orphan Order Prevention (Consistency Check) | ✅ Phase 5 | order_manager.py | DB-거래소 상태 일관성 검증 태그 추가 (29초 주기) |
 | 2025-10-31 | Orphan Order Prevention (Cleanup) | ✅ Phase 4 | order_manager.py | PENDING/CANCELLING 백그라운드 정리 태그 추가 |
