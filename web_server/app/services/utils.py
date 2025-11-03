@@ -128,8 +128,22 @@ def _suggest_symbol_format(symbol_input: str) -> str:
     return None
 
 # @FEAT:webhook-order @COMP:validation @TYPE:validation
+# @REFACTOR:2025-11-03 - Removed batch_mode field assignment (Phase 2)
 def normalize_webhook_data(webhook_data: dict) -> dict:
-    """웹훅 데이터의 필드명을 표준화 (order_type은 정확한 필드명만 허용)"""
+    """
+    웹훅 데이터의 필드명을 표준화합니다 (order_type은 정확한 필드명만 허용).
+
+    배치 모드 감지:
+        'orders' 필드 존재 여부로 배치 모드를 판단합니다.
+        @PRINCIPLE: batch_mode 파생 필드를 생성하지 않습니다 (단일 소스 원칙)
+        @REFACTOR:2025-11-03 - batch_mode 필드 할당 제거 (Phase 2)
+
+    Args:
+        webhook_data: 웹훅 입력 데이터
+
+    Returns:
+        정규화된 데이터 (batch_mode 파생 필드 없음, 'orders' 필드로만 배치 감지)
+    """
     normalized = {}
 
     # 필드명 매핑 (소문자 키 -> 표준 키)
@@ -200,8 +214,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         # 필터링: strategy_account_id (전략 격리) + symbol (필수) + side (선택적)
 
     # 🆕 배치 주문 감지 및 처리 (새로운 포맷)
+    # @REFACTOR:2025-11-03 - Batch mode detected via 'orders' field only (no batch_mode assignment)
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
-        normalized['batch_mode'] = True
         normalized['orders'] = []
 
         # 상위 레벨 공통 필드 (폴백 지원): symbol만
@@ -299,8 +313,6 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         normalized.pop('price', None)
         normalized.pop('qty_per', None)
         normalized.pop('side', None)
-    else:
-        normalized['batch_mode'] = False
 
     # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 및 orders 제외)
     for key, value in webhook_data.items():
@@ -309,6 +321,9 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
             key.lower() not in ['ordertype', 'orderType'] and
             key != 'orders'):
             normalized[key] = value
+
+    # @REFACTOR:2025-11-03 - Batch mode field assignment removed (Phase 2)
+    # Detection is now exclusively via 'orders' field presence (single source of truth)
 
     # 값들을 내부 로직에 맞게 표준화
     if 'order_type' in normalized and isinstance(normalized['order_type'], str):
