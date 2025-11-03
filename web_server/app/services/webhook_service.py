@@ -456,8 +456,9 @@ class WebhookService:
                             logger.info(f"📝 단일 주문 처리")
                             result = trading_service.core.process_trading_signal(normalized_data, timing_context)
 
-                        # 거래 결과 분석
-                        result = self._analyze_trading_result(result, normalized_data)
+                        # @FEAT:webhook-order - 거래 결과 분석 및 로깅 (result 보존, 재할당 금지)
+                        # NOTE: _analyze_trading_result()는 result를 수정하지 않음 (로깅만 수행)
+                        self._analyze_trading_result(result, normalized_data)
 
                     elif MarketType.is_securities(market_type):
                         # 증권: 신규 로직 (Lock 보호됨)
@@ -550,10 +551,21 @@ class WebhookService:
 
     # @FEAT:webhook-order @COMP:service @TYPE:helper
     # @DATA:successful_orders,failed_orders - 소비자 필드명 파싱 (Phase 2: 2025-10-30)
-    def _analyze_trading_result(self, result: Dict[str, Any], webhook_data: Dict[str, Any]):
+    def _analyze_trading_result(self, result: Dict[str, Any], webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """거래 신호 처리 결과 분석 및 로깅
 
-        필드명 통일: successful_orders / failed_orders (Phase 1+2 전역 일관성)
+        WHY: 거래 결과를 구조화되게 분석하여 운영 상황 파악 (성공/실패 집계 및 상세 로깅)
+
+        Returns:
+            Dict[str, Any]: 원본 result 딕셔너리 (로깅 부작용만 발생, 값 수정 없음)
+
+        Edge Cases:
+            - result가 None이거나 필수 필드 누락: 안전한 .get() 사용으로 처리
+            - 예외 발생 시: 로깅하고 원본 result 반환 (상위 처리에 영향 없음)
+
+        Side Effects:
+            - logger.info/warning/error로 처리 결과 로깅
+            - 계좌별 거래 상태, 심볼 제한 등 상세 정보 기록
         """
         try:
             strategy_name = result.get('strategy', 'UNKNOWN')
@@ -605,6 +617,8 @@ class WebhookService:
 
         except Exception as e:
             logger.error(f"거래 결과 분석 중 오류: {str(e)}")
+
+        return result
 
     # ⚠️ SSE 이벤트 발송은 trading_service에서 중앙화됨 - 이 메서드는 더 이상 사용하지 않음
 
