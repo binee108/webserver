@@ -138,6 +138,10 @@ class TradingSystemCLI:
         """도움말 출력
 
         사용 가능한 명령어와 옵션을 표시합니다.
+
+        주요 명령어 옵션:
+        - clean: --all (모든 프로젝트 정리), --full (SSL/로그 포함)
+        - stop: --all (모든 프로젝트 중지)
         """
         from .helpers.printer import Colors
 
@@ -156,6 +160,8 @@ class TradingSystemCLI:
   logs        - Docker 로그 조회
   status      - 시스템 상태 확인
   clean       - 시스템 정리 (컨테이너/볼륨)
+                --all: 모든 webserver 프로젝트 정리
+                --full: SSL 인증서 및 로그도 함께 정리
   setup       - 초기 환경 설정
   ls          - 실행 중인 프로젝트 목록
 
@@ -165,7 +171,11 @@ class TradingSystemCLI:
 예제:
   python run.py start
   python run.py logs -f app
-  python run.py clean --all
+  python run.py clean                    # 현재 프로젝트만 정리
+  python run.py clean --all              # 모든 webserver 프로젝트 정리
+  python run.py clean --full             # 현재 프로젝트 + SSL/로그 정리
+  python run.py clean --all --full       # 모든 프로젝트 + SSL/로그 정리
+  python run.py clean webserver_dev      # 특정 프로젝트만 정리
   python run.py setup --env production
 
 상세 도움말:
