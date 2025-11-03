@@ -1063,6 +1063,62 @@ python migrations/20251030_add_cancelling_state.py --downgrade
 
 ---
 
+## 부록 A: 배치 모드 감지 (2025-11-03)
+
+### ❌ 금지 사항: `batch_mode` 파생 필드 생성
+
+**원칙**: 배치 모드는 **`'orders'` 필드 존재 여부로만 판단**합니다. 절대 `batch_mode` 같은 파생 필드를 생성하지 마세요.
+
+**이유**:
+- 단일 소스 원칙(Single Source of Truth) 위반
+- 중복 데이터로 인한 불일치 위험
+- 유지보수 복잡도 증가
+
+### ✅ 올바른 구현 패턴
+
+```python
+# ✅ 올바른 방식: 'orders' 필드로 직접 판단
+if 'orders' in normalized_data:
+    # 배치 모드 처리
+    result = trading_service.process_batch_trading_signal(normalized_data)
+else:
+    # 단일 주문 처리
+    result = trading_service.process_trading_signal(normalized_data)
+```
+
+```python
+# ❌ 잘못된 방식: 파생 필드 생성 (금지!)
+batch_mode = 'orders' in normalized_data  # 중복된 정보!
+if batch_mode:
+    # ...
+```
+
+### 📍 코드 위치
+
+| 파일 | 라인 | 설명 |
+|------|------|------|
+| `webhook_service.py` | 227-239 | 테스트 모드에서의 배치 감지 |
+| `webhook_service.py` | 284-288 | 정상 모드에서의 배치 감지 |
+| `webhook_service.py` | 306 | 배치 크기 체크 |
+
+### 🔍 검색 명령어
+
+```bash
+# 배치 모드 감지 코드 찾기
+grep -n "'orders' in" web_server/app/services/webhook_service.py
+
+# 금지 패턴 확인 (결과 없어야 정상)
+grep -n "batch_mode\s*=" web_server/app/services/
+```
+
+### 📜 역사적 배경
+
+**2025-11-03 이전**: `batch_mode` 파생 필드가 `utils.py`에서 생성되어 `webhook_service.py`에서 사용됨
+**문제점**: `'orders' in webhook_data`와 `batch_mode = True`가 100% 동기화되는 중복 정보
+**해결**: `batch_mode` 필드를 완전히 제거하고, `'orders'` 필드 존재 여부로 직접 판단
+
+---
+
 ## 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
@@ -1113,5 +1169,5 @@ grep -r "'orders' in" web_server/app/services/webhook_service.py
 
 ---
 
-*Last Updated: 2025-11-03 (Phase 1: Remove batch_mode Redundancy)*
-*Version: 3.1.1 (Phase 1: Removed batch_mode Redundancy)*
+*Last Updated: 2025-11-03 (부록 A: 배치 모드 감지 원칙 추가 + Phase 1: Remove batch_mode Redundancy)*
+*Version: 3.2.0 (batch_mode 필드 제거, 단일 소스 원칙 강화)*

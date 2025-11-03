@@ -153,6 +153,9 @@ class WebhookService:
             raise WebhookError(f"웹훅 처리 대기 시간 초과: {str(e)}")
 
     # @FEAT:webhook-order @COMP:service @TYPE:core
+    # @REFACTOR:2025-11-03 - Removed batch_mode redundancy
+    # @PRINCIPLE: Single source of truth - detect batch mode by 'orders' field presence only
+    # WHY: batch_mode was a derived field (redundant), causes maintenance confusion
     def process_webhook(self, webhook_data: Dict[str, Any], webhook_received_at: Optional[float] = None) -> Dict[str, Any]:
         """
         웹훅 데이터 처리 메인 함수
@@ -223,14 +226,18 @@ class WebhookService:
                 strategy = TestStrategy()
 
                 # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
-                if not normalized_data.get('batch_mode'):
+                # Batch mode detected via 'orders' field presence (single source of truth)
+                # @PRINCIPLE: Never create batch_mode field - check 'orders' presence directly
+                # @HISTORICAL: batch_mode was a redundant derived field, removed in 2025-11-03 refactoring
+                if 'orders' not in normalized_data:
                     self._validate_order_type_params(normalized_data)
 
                 # 🔒 테스트 모드에도 Lock 적용 (Race Condition 방지)
                 from app.services.trading import trading_service
                 with self._acquire_strategy_lock(strategy.id, symbol):
-                    # 배치 모드 감지 및 라우팅
-                    if normalized_data.get("batch_mode"):
+                    # Batch mode: process multiple orders; Single mode: process one order
+                    # @PRINCIPLE: Detect batch mode by 'orders' field presence (single source of truth)
+                    if 'orders' in normalized_data:
                         result = trading_service.process_batch_trading_signal(normalized_data)
                     else:
                         # 기존 단일 주문 처리
@@ -276,7 +283,10 @@ class WebhookService:
                         from app.services.trading import trading_service
 
                         # 주문 타입별 필수 파라미터 검증 (배치 모드가 아닌 경우만)
-                        if not normalized_data.get('batch_mode') and OrderType.is_trading_type(order_type):
+                        # Skip validation for batch mode (orders field present)
+                        # @PRINCIPLE: Single source of truth - check 'orders' field instead of batch_mode
+                        # @HISTORICAL: batch_mode was a redundant derived field, removed in 2025-11-03 refactoring
+                        if 'orders' not in normalized_data and OrderType.is_trading_type(order_type):
                             self._validate_order_type_params(normalized_data)
 
                         # 타이밍 컨텍스트 준비
