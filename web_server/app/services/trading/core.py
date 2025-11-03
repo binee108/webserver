@@ -179,6 +179,7 @@ class TradingCore:
             price: 가격 (지정가 주문시)
             stop_price: 스탑 가격 (스탑 주문시)
             strategy_account_override: 특정 전략 계좌로 거래를 강제할 때 사용
+            timing_context: 타이밍 측정 딕셔너리 (webhook_received_at: Unix timestamp)
 
         Returns:
             거래 실행 결과
@@ -539,6 +540,13 @@ class TradingCore:
             filled_decimal = fill_summary.get('filled_quantity', Decimal('0'))
             average_decimal = fill_summary.get('average_price', Decimal('0'))
 
+            # @FEAT:webhook-order @COMP:service @TYPE:core
+            # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
+            # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+            webhook_received_at_dt = None
+            if timing_context and 'webhook_received_at' in timing_context:
+                webhook_received_at_dt = datetime.fromtimestamp(timing_context['webhook_received_at'])
+
             # OpenOrder 레코드 생성 (미체결 주문인 경우)
             open_order_result = self.service.order_manager.create_open_order_record(
                 strategy_account=strategy_account,
@@ -548,7 +556,8 @@ class TradingCore:
                 order_type=order_type,
                 quantity=adjusted_quantity,
                 price=adjusted_price,
-                stop_price=adjusted_stop_price
+                stop_price=adjusted_stop_price,
+                webhook_received_at=webhook_received_at_dt  # ✅ Added for Snapshot query
             )
             if open_order_result['success']:
                 logger.info(f"📝 미체결 주문 OpenOrder 저장: {order_result.get('order_id')}")
@@ -1243,7 +1252,10 @@ class TradingCore:
                             'params': {'stopPrice': Decimal('...')}
                         },
                         ...
-                    ]
+                    ],
+                    'timing_context': {  # Snapshot 쿼리용 webhook_received_at 포함
+                        'webhook_received_at': float (Unix timestamp)
+                    }
                 },
                 ...
             }
@@ -1337,10 +1349,13 @@ class TradingCore:
 
             # 계좌별 그룹화 저장 (주문이 있는 경우만)
             if account_orders:
+                # @FEAT:webhook-order @COMP:service @TYPE:helper
+                # timing_context 배치 플로우 전달: webhook_received_at 추출용
                 orders_by_account[account.id] = {
                     'account': account,
                     'strategy_account': sa,
-                    'orders': account_orders
+                    'orders': account_orders,
+                    'timing_context': timing_context  # ✅ Pass timing_context through batch flow
                 }
 
         logger.info(
@@ -1669,7 +1684,7 @@ class TradingCore:
         - Rate limiting: account_id passed to exchange_service for Phase 0 integration
 
         Args:
-            account_data: {'account': Account, 'strategy_account': StrategyAccount, 'orders': List[Dict]}
+            account_data: {'account': Account, 'strategy_account': StrategyAccount, 'orders': List[Dict], 'timing_context': Optional[Dict] - 타이밍 정보 (webhook_received_at 포함)}
             market_type: 'SPOT' or 'FUTURES'
             strategy: Strategy 객체
             trading_orders: [(original_idx, order), ...] 원본 인덱스 매핑용
@@ -1682,6 +1697,9 @@ class TradingCore:
         account = account_data['account']
         strategy_account = account_data['strategy_account']
         exchange_orders = account_data['orders']
+        # @FEAT:webhook-order @COMP:service @TYPE:helper
+        # timing_context 배치 실행 단계 추출: webhook_received_at을 OpenOrder에 저장
+        timing_context = account_data.get('timing_context')  # ✅ Extract timing_context
         results = []
 
         logger.info(
@@ -1802,7 +1820,13 @@ class TradingCore:
                             })
                             continue
 
-                    # OpenOrder 저장
+                    # @FEAT:webhook-order @COMP:service @TYPE:core
+                    # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
+                    # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+                    webhook_received_at_dt = None
+                    if timing_context and 'webhook_received_at' in timing_context:
+                        webhook_received_at_dt = datetime.fromtimestamp(timing_context['webhook_received_at'])
+
                     open_order_result = self.service.order_manager.create_open_order_record(
                         strategy_account=account_data['strategy_account'],
                         order_result=order_data,
@@ -1811,7 +1835,8 @@ class TradingCore:
                         order_type=direct_order['type'],
                         quantity=direct_order['amount'],
                         price=direct_order.get('price'),
-                        stop_price=direct_order.get('params', {}).get('stopPrice')
+                        stop_price=direct_order.get('params', {}).get('stopPrice'),
+                        webhook_received_at=webhook_received_at_dt  # ✅ Added for Snapshot query
                     )
 
                     if open_order_result['success']:
