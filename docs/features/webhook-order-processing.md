@@ -1071,5 +1071,47 @@ python migrations/20251030_add_cancelling_state.py --downgrade
 
 ---
 
-*Last Updated: 2025-10-30 (Phase 3.1: Database & Security Enhancements)*
-*Version: 3.1.0 (Phase 3.1: Error Message Sanitization + Phase 1-2: Statistics Field Consistency)*
+## 부록 A: 배치 모드 감지 (Batch Mode Detection)
+
+### 원칙 및 구현
+
+**단일 소스 원칙 (Single Source of Truth):**
+- ❌ **금지**: `batch_mode` 파생 필드 생성
+- ✅ **필수**: `'orders'` 필드 존재 여부로 직접 판단
+
+### 코드 패턴
+
+**위치**: `web_server/app/services/webhook_service.py`
+
+**구현**:
+```python
+# @PRINCIPLE: Never create batch_mode field - check 'orders' presence directly
+# @HISTORICAL: batch_mode was a redundant derived field, removed in 2025-11-03 refactoring
+
+# 테스트 모드 검증
+if 'orders' not in normalized_data:
+    self._validate_order_type_params(normalized_data)
+
+# 배치 vs 단일 라우팅
+if 'orders' in normalized_data:
+    result = trading_service.process_batch_trading_signal(normalized_data)
+else:
+    result = trading_service.process_trading_signal(normalized_data)
+```
+
+### 유지보수 주의사항
+
+**반복 방지 (2025-11-03)**:
+- `batch_mode` 필드는 `'orders'` 필드 존재 여부를 이중 표현하는 중복 파생 필드였음
+- 검증과 라우팅 모두 `'orders'` 필드 존재 여부로 통일하여 제거
+- 향후 수정자는 이 단일 소스 원칙을 반드시 유지할 것
+
+**검색 명령**:
+```bash
+grep -r "'orders' in" web_server/app/services/webhook_service.py
+```
+
+---
+
+*Last Updated: 2025-11-03 (Phase 1: Remove batch_mode Redundancy)*
+*Version: 3.1.1 (Phase 1: Removed batch_mode Redundancy)*
