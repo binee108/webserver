@@ -846,10 +846,11 @@ class OrderManager:
             # Phase 3b.1: Snapshot threshold 추출 (timing_context에서)
             if not snapshot_threshold and timing_context and 'webhook_received_at' in timing_context:
                 webhook_received_at_unix = timing_context['webhook_received_at']
-                snapshot_threshold = datetime.fromtimestamp(webhook_received_at_unix)
+                # UTC 변환: 전체 시스템이 UTC 기반이므로 utcfromtimestamp 사용 (일관성)
+                snapshot_threshold = datetime.utcfromtimestamp(webhook_received_at_unix)
                 logger.info(
                     f"📸 CANCEL_ALL_ORDER Snapshot 모드 - "
-                    f"threshold={snapshot_threshold.isoformat()}"
+                    f"threshold={snapshot_threshold.isoformat()} (UTC)"
                 )
 
             cancel_started_at = time.time()

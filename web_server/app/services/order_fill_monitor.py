@@ -363,10 +363,16 @@ class OrderFillMonitor:
             # FILLED는 기존 로직 유지 (다른 경로에서 이미 이벤트 발송됨)
             db.session.delete(open_order)
             logger.info(f"🗑️ OpenOrder 삭제 완료 - order_id={open_order.exchange_order_id}, status={status}")
+        elif status == 'NEW':
+            # NEW 상태: 주문 생성 직후의 정상 상태, 추가 처리 불필요
+            # WebSocket이 주문 생성을 감지했지만 상태 변경은 없음
+            open_order.is_processing = False
+            logger.debug(f"📝 NEW 상태 확인 - order_id={open_order.exchange_order_id} (처리 플래그 해제)")
         else:
-            # 예상치 못한 상태 (방어적 프로그래밍)
-            logger.warning(f"⚠️ 예상치 못한 주문 상태 - status={status}, order_id={open_order.exchange_order_id}")
-            db.session.delete(open_order)
+            # 예상치 못한 상태 (OPEN, PENDING_NEW 등)
+            logger.warning(f"⚠️ 처리되지 않은 주문 상태 - status={status}, order_id={open_order.exchange_order_id}")
+            # ⚠️ 삭제하지 않고 플래그만 해제 (다음 주기에 재처리)
+            open_order.is_processing = False
 
     # @FEAT:order-tracking @COMP:service @TYPE:core
     def _update_order_in_db(self, order_info: Dict[str, Any], commit: bool = True):
