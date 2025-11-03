@@ -543,9 +543,10 @@ class TradingCore:
             # @FEAT:webhook-order @COMP:service @TYPE:core
             # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
             # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+            # UTC 변환: 전체 시스템이 UTC 기반이므로 utcfromtimestamp 사용
             webhook_received_at_dt = None
             if timing_context and 'webhook_received_at' in timing_context:
-                webhook_received_at_dt = datetime.fromtimestamp(timing_context['webhook_received_at'])
+                webhook_received_at_dt = datetime.utcfromtimestamp(timing_context['webhook_received_at'])
 
             # OpenOrder 레코드 생성 (미체결 주문인 경우)
             open_order_result = self.service.order_manager.create_open_order_record(
@@ -1823,9 +1824,10 @@ class TradingCore:
                     # @FEAT:webhook-order @COMP:service @TYPE:core
                     # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
                     # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+                    # UTC 변환: 전체 시스템이 UTC 기반이므로 utcfromtimestamp 사용
                     webhook_received_at_dt = None
                     if timing_context and 'webhook_received_at' in timing_context:
-                        webhook_received_at_dt = datetime.fromtimestamp(timing_context['webhook_received_at'])
+                        webhook_received_at_dt = datetime.utcfromtimestamp(timing_context['webhook_received_at'])
 
                     open_order_result = self.service.order_manager.create_open_order_record(
                         strategy_account=account_data['strategy_account'],
