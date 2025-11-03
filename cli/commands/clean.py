@@ -34,28 +34,60 @@ class CleanCommand(BaseCommand):
         """시스템 정리 실행
 
         Args:
-            args (list): ['--all'] 등 옵션
-                        --all: 모든 데이터 삭제 (SSL, 로그 포함)
+            args (list): ['--all'] 또는 ['--full'] 또는 ['project_name'] 등
+                        --all: 모든 webserver 프로젝트 정리
+                        --full: SSL/로그도 함께 정리 (현재 프로젝트 또는 --all과 조합)
                         project_name: 특정 프로젝트만 정리
 
         Returns:
             int: 종료 코드
         """
-        # 특정 프로젝트 정리
+        # 옵션 파싱 (독립적으로)
+        clean_all_projects = '--all' in args      # 모든 프로젝트 정리
+        clean_ssl_logs = '--full' in args         # SSL/로그도 정리
+
+        # 특정 프로젝트 정리 (프로젝트명이 첫 번째 인자일 때)
         if args and not args[0].startswith('--'):
-            return self._clean_specific_project(args[0])
+            project_name = args[0]
 
-        # 전체 시스템 정리
-        all_data = '--all' in args
+            # --full 옵션은 특정 프로젝트 정리 시 무시 (경고 출력)
+            if clean_ssl_logs:
+                self.printer.print_status(
+                    "⚠️  특정 프로젝트 정리 시 --full 옵션은 무시됩니다. (SSL/로그는 모든 프로젝트가 공유)",
+                    "warning"
+                )
 
+            return self._clean_specific_project(project_name)
+
+        # --all 옵션: 모든 프로젝트 정리
+        if clean_all_projects:
+            # Phase 3에서 구현 예정
+            self.printer.print_status("--all 옵션은 Phase 3에서 구현 예정입니다.", "info")
+            return 1
+
+        # 기본: 현재 프로젝트만 정리
+        return self._clean_current_project(clean_ssl_logs)
+
+    def _clean_current_project(self, clean_ssl_logs: bool = False) -> int:
+        """현재 프로젝트 정리
+
+        Args:
+            clean_ssl_logs (bool): SSL 인증서 및 로그 파일도 함께 삭제할지 여부
+
+        Returns:
+            int: 종료 코드 (0=성공, 1=실패)
+        """
         try:
+            # 프로젝트명 추론
+            project_name = self._infer_project_name()
+
             self.printer.print_status("시스템 완전 정리를 시작합니다...", "warning")
 
             # 상세한 경고 메시지
             print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 항목들이 완전히 삭제됩니다:{Colors.RESET}")
             print(f"{Colors.RED}  • 모든 데이터베이스 데이터 (사용자, 거래기록, 설정 등){Colors.RESET}")
 
-            if all_data:
+            if clean_ssl_logs:
                 print(f"{Colors.RED}  • SSL 인증서 파일 (./certs/ 디렉토리){Colors.RESET}")
                 print(f"{Colors.RED}  • 로그 파일 (./web_server/logs/ 디렉토리){Colors.RESET}")
 
@@ -70,18 +102,15 @@ class CleanCommand(BaseCommand):
                 self.printer.print_status("작업이 취소되었습니다.", "info")
                 return 0
 
-            # 프로젝트명 추론
-            project_name = self._infer_project_name()
-
             # 1. Docker 컨테이너, 볼륨, 이미지 삭제
             self._clean_docker_resources(project_name)
 
-            # 2. SSL 인증서 삭제 (--all 옵션 시)
-            if all_data:
+            # 2. SSL 인증서 삭제 (--full 옵션 시)
+            if clean_ssl_logs:
                 self._clean_ssl_certificates()
 
-            # 3. 로그 파일 삭제 (--all 옵션 시)
-            if all_data:
+            # 3. 로그 파일 삭제 (--full 옵션 시)
+            if clean_ssl_logs:
                 self._clean_logs()
 
             # 4. Docker 시스템 정리
