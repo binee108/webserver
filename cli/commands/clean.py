@@ -34,28 +34,58 @@ class CleanCommand(BaseCommand):
         """시스템 정리 실행
 
         Args:
-            args (list): ['--all'] 등 옵션
-                        --all: 모든 데이터 삭제 (SSL, 로그 포함)
+            args (list): ['--all'] 또는 ['--full'] 또는 ['project_name'] 등
+                        --all: 모든 webserver 프로젝트 정리
+                        --full: SSL/로그도 함께 정리 (현재 프로젝트 또는 --all과 조합)
                         project_name: 특정 프로젝트만 정리
 
         Returns:
             int: 종료 코드
         """
-        # 특정 프로젝트 정리
+        # 옵션 파싱 (독립적으로)
+        clean_all_projects = '--all' in args      # 모든 프로젝트 정리
+        clean_ssl_logs = '--full' in args         # SSL/로그도 정리
+
+        # 특정 프로젝트 정리 (프로젝트명이 첫 번째 인자일 때)
         if args and not args[0].startswith('--'):
-            return self._clean_specific_project(args[0])
+            project_name = args[0]
 
-        # 전체 시스템 정리
-        all_data = '--all' in args
+            # --full 옵션은 특정 프로젝트 정리 시 무시 (경고 출력)
+            if clean_ssl_logs:
+                self.printer.print_status(
+                    "⚠️  특정 프로젝트 정리 시 --full 옵션은 무시됩니다. (SSL/로그는 모든 프로젝트가 공유)",
+                    "warning"
+                )
 
+            return self._clean_specific_project(project_name)
+
+        # --all 옵션: 모든 프로젝트 정리
+        if clean_all_projects:
+            return self._clean_all_projects(clean_ssl_logs)
+
+        # 기본: 현재 프로젝트만 정리
+        return self._clean_current_project(clean_ssl_logs)
+
+    def _clean_current_project(self, clean_ssl_logs: bool = False) -> int:
+        """현재 프로젝트 정리
+
+        Args:
+            clean_ssl_logs (bool): SSL 인증서 및 로그 파일도 함께 삭제할지 여부
+
+        Returns:
+            int: 종료 코드 (0=성공, 1=실패)
+        """
         try:
+            # 프로젝트명 추론
+            project_name = self._infer_project_name()
+
             self.printer.print_status("시스템 완전 정리를 시작합니다...", "warning")
 
             # 상세한 경고 메시지
             print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 항목들이 완전히 삭제됩니다:{Colors.RESET}")
             print(f"{Colors.RED}  • 모든 데이터베이스 데이터 (사용자, 거래기록, 설정 등){Colors.RESET}")
 
-            if all_data:
+            if clean_ssl_logs:
                 print(f"{Colors.RED}  • SSL 인증서 파일 (./certs/ 디렉토리){Colors.RESET}")
                 print(f"{Colors.RED}  • 로그 파일 (./web_server/logs/ 디렉토리){Colors.RESET}")
 
@@ -70,18 +100,15 @@ class CleanCommand(BaseCommand):
                 self.printer.print_status("작업이 취소되었습니다.", "info")
                 return 0
 
-            # 프로젝트명 추론
-            project_name = self._infer_project_name()
-
             # 1. Docker 컨테이너, 볼륨, 이미지 삭제
             self._clean_docker_resources(project_name)
 
-            # 2. SSL 인증서 삭제 (--all 옵션 시)
-            if all_data:
+            # 2. SSL 인증서 삭제 (--full 옵션 시)
+            if clean_ssl_logs:
                 self._clean_ssl_certificates()
 
-            # 3. 로그 파일 삭제 (--all 옵션 시)
-            if all_data:
+            # 3. 로그 파일 삭제 (--full 옵션 시)
+            if clean_ssl_logs:
                 self._clean_logs()
 
             # 4. Docker 시스템 정리
@@ -93,6 +120,99 @@ class CleanCommand(BaseCommand):
         except Exception as e:
             self.printer.print_status(f"시스템 정리 실패: {e}", "error")
             return 1
+
+    def _clean_all_projects(self, clean_ssl_logs: bool = False) -> int:
+        """모든 webserver 프로젝트 정리
+
+        Args:
+            clean_ssl_logs (bool): SSL 인증서 및 로그 파일도 함께 삭제할지 여부
+
+        Returns:
+            int: 종료 코드 (0=모두 성공, 1=일부 실패)
+        """
+        self.printer.print_status("모든 webserver 프로젝트 정리를 시작합니다...", "warning")
+
+        # 모든 webserver 프로젝트 조회 (BaseCommand 메서드 사용)
+        projects = super()._get_all_webserver_projects()
+
+        if not projects:
+            self.printer.print_status("실행 중인 webserver 프로젝트가 없습니다.", "info")
+            return 0
+
+        # 상세한 경고 메시지
+        print(f"\n{Colors.RED}{Colors.BOLD}⚠️  경고: 다음 프로젝트들이 완전히 삭제됩니다:{Colors.RESET}")
+        for project in projects:
+            print(f"{Colors.RED}  • {project}{Colors.RESET}")
+        print(f"{Colors.RED}  • 모든 데이터베이스 데이터 (사용자, 거래기록, 설정 등){Colors.RESET}")
+        print(f"{Colors.RED}  • Docker 이미지 (재빌드 필요){Colors.RESET}")
+        print(f"{Colors.RED}  • Docker 볼륨 및 네트워크{Colors.RESET}")
+
+        if clean_ssl_logs:
+            print(f"{Colors.RED}  • SSL 인증서 파일 (./certs/ 디렉토리){Colors.RESET}")
+            print(f"{Colors.RED}  • 로그 파일 (./web_server/logs/ 디렉토리){Colors.RESET}")
+
+        print(f"\n{Colors.YELLOW}이 작업은 되돌릴 수 없습니다!{Colors.RESET}\n")
+
+        # 확인 메시지
+        confirm = input(f"{Colors.RED}정말로 {len(projects)}개 프로젝트를 모두 삭제하시겠습니까? (yes/no): {Colors.RESET}")
+
+        if confirm.lower() not in ['yes', 'y']:
+            self.printer.print_status("작업이 취소되었습니다.", "info")
+            return 0
+
+        # 각 프로젝트 정리 (Best-effort)
+        failed_projects = []
+        cleaned_count = 0
+
+        for project in projects:
+            try:
+                self.printer.print_status(f"  → {project} 정리 중...", "info")
+
+                # docker compose down --rmi all -v 실행
+                self.docker.run_command(
+                    self.docker.compose_cmd + ['-p', project, 'down', '--rmi', 'all', '-v'],
+                    cwd=self.root_dir
+                )
+
+                cleaned_count += 1
+                self.printer.print_status(f"  ✓ {project} 정리 완료", "success")
+
+            except subprocess.CalledProcessError as e:
+                # 이미지 삭제 실패 시 볼륨만이라도 삭제 시도
+                try:
+                    self.printer.print_status(f"  ⚠️  {project} 이미지 삭제 실패, 볼륨만 정리 시도...", "warning")
+                    self.docker.run_command(
+                        self.docker.compose_cmd + ['-p', project, 'down', '-v'],
+                        cwd=self.root_dir
+                    )
+                    cleaned_count += 1
+                    self.printer.print_status(f"  ✓ {project} 부분 정리 완료 (이미지 제외)", "success")
+                except subprocess.CalledProcessError:
+                    self.printer.print_status(f"  ✗ {project} 정리 실패", "error")
+                    failed_projects.append(project)
+            except Exception as e:
+                self.printer.print_status(f"  ✗ {project} 정리 중 오류: {e}", "error")
+                failed_projects.append(project)
+
+        # SSL/로그 정리 (--full 옵션 시)
+        if clean_ssl_logs:
+            self._clean_ssl_certificates()
+            self._clean_logs()
+
+        # Docker 시스템 정리
+        self._clean_docker_system()
+
+        # 결과 요약
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        if failed_projects:
+            self.printer.print_status(
+                f"⚠️  {cleaned_count}/{len(projects)}개 프로젝트 정리 완료 (실패: {', '.join(failed_projects)})",
+                "warning"
+            )
+            return 1
+        else:
+            self.printer.print_status(f"✅ {cleaned_count}개 프로젝트가 모두 정리되었습니다!", "success")
+            return 0
 
     def _clean_specific_project(self, project_name: str) -> int:
         """특정 프로젝트 정리
