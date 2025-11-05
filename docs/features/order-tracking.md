@@ -281,7 +281,34 @@ T+10.1s: PendingOrder SSE 발송 (10초 지연) ✅
 
 ---
 
-## 9. 유지보수 가이드
+## 9. 백그라운드 주문 정리 (Background Order Cleanup)
+
+**용도**: 29초 주기로 abandoned/expired 주문을 정리하고 SSE 이벤트 발송
+
+**처리 로직** (order_manager.py - 2개 경로):
+```
+경로 1: fetch_order() - 거래소 단건 조회
+  → CANCELED/CANCELLED/EXPIRED/REJECTED 상태 감지
+  → OpenOrder DELETE 전 SSE 이벤트 발송 (client 실시간 업데이트)
+
+경로 2: batch query() - 다중 상태 조회
+  → 완료 상태 (FILLED/CANCELED/EXPIRED) 감지
+  → 취소/만료만 SSE 발송 (FILLED 제외)
+  → OpenOrder DELETE
+```
+
+**SSE 이벤트 발송 시점**: DB 삭제 **전** (데이터 정합성)
+
+**에러 처리**: 이벤트 발송 실패는 무시 (정리 계속 진행)
+- 로그: `⚠️ SSE 이벤트 발송 실패 (무시)`
+
+**영향 범위** (Issue #35 해결):
+- 포지션 페이지의 열린 주문 리스트 즉시 업데이트
+- 만료된 주문이 UI에서 사라지지 않던 문제 해결
+
+---
+
+## 10. 유지보수 가이드
 
 ### 주의사항
 
@@ -313,7 +340,7 @@ T+10.1s: PendingOrder SSE 발송 (10초 지연) ✅
 
 ---
 
-## 10. 트러블슈팅
+## 11. 트러블슈팅
 
 ### 문제 1: 주문 상태 업데이트 안 됨
 
@@ -367,7 +394,7 @@ eventSource.onerror = () => {
 
 ---
 
-## 11. 관련 문서
+## 12. 관련 문서
 
 - [아키텍처 개요](../ARCHITECTURE.md)
 - [웹훅 주문 처리](./webhook-order-processing.md)
@@ -376,7 +403,7 @@ eventSource.onerror = () => {
 
 ---
 
-## 12. 핵심 구현 파일
+## 13. 핵심 구현 파일
 
 **grep 검색**:
 ```bash
@@ -400,5 +427,5 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:integration"
 
 ---
 
-*Last Updated: 2025-10-30*
-*Version: 2.2.0 (FailedOrder, 심볼 변환, event_emitter 메서드 동기화)*
+*Last Updated: 2025-11-05*
+*Version: 2.3.0 (Background cleanup SSE events, Issue #35 해결)*

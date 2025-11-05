@@ -1953,6 +1953,20 @@ class OrderManager:
                                                 f"order_id={locked_order.exchange_order_id}, "
                                                 f"symbol={locked_order.symbol}"
                                             )
+
+                                            # SSE 이벤트 발송 (DB 삭제 전)
+                                            try:
+                                                self.service.event_emitter.emit_order_cancelled_or_expired_event(
+                                                    open_order=locked_order,
+                                                    status=final_status
+                                                )
+                                            except Exception as sse_error:
+                                                logger.warning(
+                                                    f"⚠️ SSE 이벤트 발송 실패 (무시): "
+                                                    f"order_id={locked_order.exchange_order_id}, "
+                                                    f"error={sse_error}"
+                                                )
+
                                             db.session.delete(locked_order)
                                             total_deleted += 1
 
@@ -2029,6 +2043,21 @@ class OrderManager:
                                         f"order_id={locked_order.exchange_order_id}, "
                                         f"symbol={locked_order.symbol}, status={status}"
                                     )
+
+                                    # SSE 이벤트 발송 (취소/만료만, DB 삭제 전)
+                                    if status in ['CANCELED', 'CANCELLED', 'EXPIRED']:
+                                        try:
+                                            self.service.event_emitter.emit_order_cancelled_or_expired_event(
+                                                open_order=locked_order,
+                                                status=status
+                                            )
+                                        except Exception as sse_error:
+                                            logger.warning(
+                                                f"⚠️ SSE 이벤트 발송 실패 (무시): "
+                                                f"order_id={locked_order.exchange_order_id}, "
+                                                f"error={sse_error}"
+                                            )
+
                                     db.session.delete(locked_order)
                                     total_deleted += 1
                                 elif status in ['PARTIALLY_FILLED']:

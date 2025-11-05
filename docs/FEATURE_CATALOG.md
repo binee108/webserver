@@ -94,6 +94,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
 | 2025-11-05 | Order Cancellation Error Handling | ✅ Phase 1 | order_manager.py | Binance Error -2011 (Unknown order) 처리: 재조회 → 정합성 복구 또는 FailedOrder 추가 (Issue #32) |
 | 2025-11-05 | LIMIT Order Fill Processing Bug Fix | ✅ Phase 1 | order_manager.py | Binance FILLED 주문 fetch_order() 개별 조회로 Trade/Position 누락 버그 해결 (Issue #30) |
 | 2025-11-02 | Webhook Concurrency Fix | ✅ Phase 1 | webhook_lock_manager.py | WebhookLockManager 구현, Race Condition 방지 |
