@@ -281,6 +281,40 @@ T+10.1s: PendingOrder SSE 발송 (10초 지연) ✅
 
 ---
 
+## 8.5. Issue #36 해결: Scheduler FILLED 경로의 OpenOrder 삭제 로직 (2025-11-05)
+
+### 문제
+백그라운드 스케줄러(`update_open_orders_status`, 29초 주기)가 FILLED 주문을 감지하면 체결 처리(Trade/Position 생성)는 수행하지만, OpenOrder 삭제를 누락하여 완료된 주문이 "열린 주문"에 계속 표시됨.
+
+### 원인
+- WebSocket 경로: FILLED 감지 → `_finalize_order_update()` → OpenOrder 삭제 ✅
+- Scheduler 경로: FILLED 감지 → `_process_scheduler_fill()` → **삭제 누락** ❌
+
+### 해결책
+**위치:** `order_manager.py:1938-1964`
+
+```python
+# @FEAT:order-tracking @FEAT:limit-order-fill-processing @COMP:job @TYPE:core
+if fill_summary.get('success'):
+    try:
+        db.session.delete(locked_order)
+        logger.info("🗑️ OpenOrder 삭제 완료 (Scheduler FILLED)")
+    except Exception as e:
+        logger.warning(f"⚠️ OpenOrder 삭제 실패 (이미 삭제됨?): {e}")
+```
+
+### 레이스 컨디션 방지
+- `with_for_update(skip_locked=True)`: 동시 처리 직렬화
+- `is_processing` 플래그: 중복 처리 방지
+- 예외 처리: WebSocket 우선 삭제 시 조용히 건너뜀
+
+### 영향
+- Scheduler 체결 처리 완료도 100% (삭제 포함)
+- 사용자 UI: 완료된 주문이 "열린 주문"에 미표시
+- 관련 이슈: #30 (fetch_order 개별 조회)
+
+---
+
 ## 9. 유지보수 가이드
 
 ### 주의사항
@@ -400,5 +434,5 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:integration"
 
 ---
 
-*Last Updated: 2025-10-30*
-*Version: 2.2.0 (FailedOrder, 심볼 변환, event_emitter 메서드 동기화)*
+*Last Updated: 2025-11-05*
+*Version: 2.3.0 (Issue #36 Scheduler FILLED path OpenOrder deletion, related issues #30)*
