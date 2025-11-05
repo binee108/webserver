@@ -1750,14 +1750,110 @@ class OrderManager:
                             )
 
                             if not exchange_order:
-                                # 거래소에 없음 → 이미 체결/취소됨 → 삭제
-                                logger.info(
-                                    f"🗑️ OpenOrder 삭제 (거래소에 없음): "
-                                    f"order_id={locked_order.exchange_order_id}, "
-                                    f"symbol={locked_order.symbol}"
-                                )
-                                db.session.delete(locked_order)
-                                total_deleted += 1
+                                # ============================================================
+                                # @FEAT:order-tracking @COMP:service @TYPE:core @ISSUE:30
+                                # @DEPS:exchange-api
+                                # LIMIT Order Fill Processing Bug Fix (Issue #30)
+                                # ============================================================
+                                # 문제: Binance get_open_orders()는 FILLED 주문을 반환하지 않음.
+                                #       백그라운드 스케줄러가 배치 쿼리에서 찾지 못한 주문을
+                                #       확인 없이 삭제하여 Trade/Position 기록이 미생성됨.
+                                #
+                                # 원인: Binance API 정상 동작 - get_open_orders()는
+                                #       NEW/PARTIALLY_FILLED만 반환, FILLED는 응답에서 제외.
+                                #
+                                # 해결: fetch_order()로 개별 조회하여 최종 상태 확인:
+                                #       - FILLED → _process_scheduler_fill() 호출
+                                #       - CANCELED/EXPIRED/REJECTED → 안전 삭제
+                                #       - NEW/OPEN 등 → 주문 유지, 다음 사이클 재시도
+                                #       - 네트워크 에러 → Fail-safe: 주문 유지
+                                # ============================================================
+
+                                # Step 1: 배치 쿼리에서 찾지 못한 주문 → 개별 조회로 최종 상태 확인
+                                # Binance API의 get_open_orders()는 NEW/PARTIALLY_FILLED만 반환.
+                                # FILLED 주문은 응답에 없으므로 fetch_order()로 최종 확인 필수.
+                                try:
+                                    final_order = exchange_service.fetch_order(
+                                        account=account,
+                                        symbol=locked_order.symbol,
+                                        order_id=locked_order.exchange_order_id,
+                                        market_type=locked_order.market_type or 'spot'
+                                    )
+
+                                    if final_order and final_order.get('success'):
+                                        final_status = final_order.get('status', '').upper()
+
+                                        # Step 2: FILLED 상태 → 체결 처리 (Trade/Position 생성)
+                                        # _process_scheduler_fill()을 호출하여 정상적인 체결 처리 수행.
+                                        if final_status == 'FILLED':
+                                            logger.info(
+                                                f"✅ 체결 감지 (배치 미포함, Scheduler): "
+                                                f"order_id={locked_order.exchange_order_id}, "
+                                                f"symbol={locked_order.symbol}"
+                                            )
+                                            fill_summary = self._process_scheduler_fill(
+                                                locked_order, final_order, account
+                                            )
+                                            if fill_summary.get('success'):
+                                                logger.info(
+                                                    f"✅ 체결 처리 완료: order_id={locked_order.exchange_order_id}, "
+                                                    f"trade_id={fill_summary.get('trade_id')}"
+                                                )
+                                            else:
+                                                logger.error(
+                                                    f"❌ 체결 처리 실패: order_id={locked_order.exchange_order_id}, "
+                                                    f"error={fill_summary.get('error')}"
+                                                )
+                                                # 체결 처리 실패 시 주문 유지 (플래그 해제 후 재시도)
+                                                locked_order.is_processing = False
+                                                locked_order.processing_started_at = None
+                                                total_failed += 1
+                                                continue
+
+                                        # Step 3: CANCELED/EXPIRED/REJECTED → 안전 삭제
+                                        # 최종 상태가 종료 상태인 경우 OpenOrder 삭제.
+                                        elif final_status in ['CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED']:
+                                            logger.info(
+                                                f"🗑️ OpenOrder 삭제 ({final_status}): "
+                                                f"order_id={locked_order.exchange_order_id}, "
+                                                f"symbol={locked_order.symbol}"
+                                            )
+                                            db.session.delete(locked_order)
+                                            total_deleted += 1
+
+                                        # Step 4: 기타 상태 (NEW/OPEN 등) → 주문 유지
+                                        # 예상치 못한 상태는 로그 후 다음 사이클 재시도.
+                                        else:
+                                            logger.warning(
+                                                f"⚠️ 예상치 못한 주문 상태: order_id={locked_order.exchange_order_id}, "
+                                                f"status={final_status}, 주문 유지"
+                                            )
+                                            locked_order.is_processing = False
+                                            locked_order.processing_started_at = None
+
+                                    else:
+                                        # Step 5: fetch_order 실패 (주문이 거래소에 없음) → 안전 삭제
+                                        # 거래소에 주문이 존재하지 않으면 삭제 안전.
+                                        logger.info(
+                                            f"🗑️ OpenOrder 삭제 (거래소에 주문 없음): "
+                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"symbol={locked_order.symbol}"
+                                        )
+                                        db.session.delete(locked_order)
+                                        total_deleted += 1
+
+                                except Exception as e:
+                                    # Step 6: 네트워크 에러 등 → Fail-safe: 주문 유지
+                                    # 불확실한 경우 주문을 유지하여 데이터 손실 방지, 다음 사이클 재시도.
+                                    logger.warning(
+                                        f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
+                                        f"order_id={locked_order.exchange_order_id}, "
+                                        f"error={type(e).__name__}: {str(e)}"
+                                    )
+                                    # 주문 유지 (삭제하지 않음)
+                                    locked_order.is_processing = False
+                                    locked_order.processing_started_at = None
+                                    total_failed += 1
                             else:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
