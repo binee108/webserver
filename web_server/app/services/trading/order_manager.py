@@ -70,10 +70,11 @@ class OrderManager:
                 'error_type': 'order_error'
             }
 
-    # @FEAT:order-tracking @COMP:service @TYPE:core
-    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @PHASE:3a
-    # @DATA:OrderStatus.CANCELLING - DB-first 패턴 (Phase 2: 2025-10-30)
-    # @DATA:market_type 정확도 - Phase 3a (2025-10-31)
+    # @FEAT:order-cancellation @COMP:service @TYPE:core
+    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core
+    # Issue #32: Binance Error -2011 (Unknown order) 처리 추가
+    # 취소 실패 시 fetch_order()로 주문 상태 재조회하여 DB 정합성 자동 복구
+    # Phase 4 (2025-11-05): -2011 감지 → fetch_order 재조회 → 정합성 복구 또는 FailedOrder 추가
     def cancel_order(
         self,
         order_id: str,
@@ -85,17 +86,22 @@ class OrderManager:
         """주문 취소 (DB-First 패턴)
 
         WHY: 타임아웃 시 orphan order 방지. DB 상태를 먼저 변경하여 백그라운드 정리 가능.
-        Edge Cases: 중복 취소(already_cancelling), 주문 없음(order_not_found), race condition(재조회)
-        Side Effects: DB commit (CANCELLING 상태), SSE 이벤트, 거래소 API 호출
-        Performance: 정상 1×commit, 실패/예외 2×commit, 재조회 최대 2회
+        Edge Cases: 중복 취소(already_cancelling), 주문 없음(order_not_found), race condition(재조회),
+                   Binance Error -2011(Unknown order, 즉시 체결 LIMIT 주문 취소 시 발생)
+        Side Effects: DB commit (CANCELLING 상태), SSE 이벤트, 거래소 API 호출 (최대 2회)
+        Performance: 정상 1×commit, 실패/예외 2×commit, -2011 특수 처리 시 1×fetch_order 추가
         Debugging: 로그에서 🔄→✅/⚠️/❌ 이모지로 경로 추적
 
         Pattern:
         1. DB 상태를 CANCELLING으로 먼저 변경
         2. 거래소 API 호출 (타임아웃/재시도는 Phase 3)
         3. 성공 시: CANCELLING → CANCELLED (DB 삭제)
-        4. 실패 시: CANCELLING → OPEN (원래 상태 복원)
-        5. 예외 시: 하이브리드 처리 (1회 재확인 + 백그라운드)
+        4. 실패 시 (일반 오류): CANCELLING → OPEN (원래 상태 복원)
+        5. 실패 시 (Error -2011): 주문 상태 재조회 →
+           FILLED/CANCELED/EXPIRED → DB 삭제 (정합성 복구)
+           NEW/OPEN/PARTIALLY_FILLED → FailedOrder 추가 (자동 재시도)
+           조회 실패 → 안전하게 DB 정리
+        6. 예외 시: 하이브리드 처리 (1회 재확인 + 백그라운드)
 
         Args:
             order_id: 거래소 주문 ID
@@ -105,7 +111,19 @@ class OrderManager:
             open_order: OpenOrder 객체 (Optional, 제공 시 추가 조회 생략 및 정확한 market_type 사용)
 
         Returns:
-            Dict with success, error, error_type
+            Dict[str, Any] with keys:
+                success (bool): 취소 성공 여부
+                order_id (str): 주문 ID (성공 시)
+                symbol (str): 심볼 (성공 시)
+                error (str): 오류 메시지 (실패 시)
+                error_type (str): 오류 분류
+                    'order_not_found' - 주문 없음
+                    'already_cancelling' - 이미 취소 중
+                    'cancel_verification_failed' - 거래소 취소 미확인
+                    'pending_retry' - FailedOrder 추가됨 (재시도 대기)
+                    'cancel_error' - 예외 발생
+                action (str): 최종 조치 ('removed' = DB 삭제됨)
+                message (str): 추가 설명
         """
         try:
             # ============================================================
@@ -268,6 +286,123 @@ class OrderManager:
                         logger.warning(f"⚠️ 주문이 이미 삭제됨 (race condition): {order_id}")
                         return result
 
+                    # ============================================================
+                    # STEP 4.1: Binance Error -2011 (Unknown order) 특수 처리
+                    # ============================================================
+                    # Issue #32: 즉시 체결 LIMIT 주문 취소 시 -2011 발생 → 주문 상태 재조회
+                    if '-2011' in error_msg or 'Unknown order' in error_msg:
+                        logger.info(
+                            f"🔍 Binance Error -2011 감지 → 주문 상태 재조회: {order_id}"
+                        )
+
+                        # 주문 최종 상태 조회
+                        fetched_order = exchange_service.fetch_order(
+                            account=account,
+                            symbol=symbol,
+                            order_id=order_id,
+                            market_type=market_type
+                        )
+
+                        if fetched_order and fetched_order.get('success'):
+                            final_status = fetched_order.get('status', '').upper()
+
+                            # Case 1: 이미 종료된 주문 → DB 정리 (정상 처리)
+                            if final_status in ['FILLED', 'CANCELED', 'EXPIRED']:
+                                logger.info(
+                                    f"✅ 주문 이미 종료 ({final_status}) → DB 삭제: {order_id}"
+                                )
+
+                                # Race condition 방어: 다시 조회
+                                open_order = OpenOrder.query.filter_by(
+                                    exchange_order_id=order_id
+                                ).first()
+
+                                if open_order:
+                                    db.session.delete(open_order)
+                                    db.session.commit()
+
+                                    # SSE 알림 (주문 삭제 이벤트)
+                                    try:
+                                        if self.service and hasattr(self.service, 'event_emitter'):
+                                            self.service.event_emitter.emit_order_cancelled_event(
+                                                order_id=order_id,
+                                                symbol=symbol,
+                                                account_id=account.id
+                                            )
+                                    except Exception as emit_error:
+                                        logger.warning(f"⚠️ SSE 이벤트 발송 실패: {emit_error}")
+
+                                return {
+                                    'success': True,
+                                    'message': f'Order already {final_status}',
+                                    'action': 'removed'
+                                }
+
+                            # Case 2: 아직 열린 주문 → FailedOrder 추가 (재시도 필요)
+                            elif final_status in ['NEW', 'OPEN', 'PARTIALLY_FILLED']:
+                                logger.warning(
+                                    f"⚠️ 취소 실패하지만 주문 존재 ({final_status}) "
+                                    f"→ FailedOrder 추가 (재시도 대기): {order_id}"
+                                )
+
+                                # TODO (Phase 2 고려사항): PARTIALLY_FILLED 케이스는 filled_quantity 확인 필요
+                                # 현재는 재시도 큐에 추가하여 재취소 시도 (최소 구현)
+                                # Phase 2에서 fetch_order() 결과의 filled_quantity로 Trade 생성 로직 추가 검토
+
+                                # CANCELLING → 원래 상태 복원
+                                open_order = OpenOrder.query.filter_by(
+                                    exchange_order_id=order_id
+                                ).first()
+
+                                if open_order:
+                                    open_order.status = old_status
+                                    open_order.error_message = error_msg
+                                    db.session.commit()
+
+                                    # FailedOrder 큐에 추가
+                                    try:
+                                        from app.services.trading.failed_order_manager import failed_order_manager
+                                        failed_order_manager.create_failed_cancellation(
+                                            order=open_order,
+                                            exchange_error=error_msg
+                                        )
+                                    except Exception as fe:
+                                        logger.error(
+                                            f"⚠️ FailedOrder 생성 실패 - "
+                                            f"order_id={order_id}, error={fe}"
+                                        )
+
+                                return {
+                                    'success': False,
+                                    'error': error_msg,
+                                    'error_type': 'pending_retry'
+                                }
+
+                        # Case 3: 조회 실패 또는 주문 없음 → 안전하게 삭제
+                        else:
+                            logger.warning(
+                                f"⚠️ 주문 조회 실패 또는 거래소에 없음 → DB 정리: {order_id}"
+                            )
+
+                            open_order = OpenOrder.query.filter_by(
+                                exchange_order_id=order_id
+                            ).first()
+
+                            if open_order:
+                                db.session.delete(open_order)
+                                db.session.commit()
+
+                            return {
+                                'success': True,
+                                'message': 'Order not found on exchange (cleaned up)',
+                                'action': 'removed'
+                            }
+
+                    # ============================================================
+                    # STEP 4.2: 기존 로직 (다른 오류 처리: -1021 Timestamp, -2015 Invalid API-key 등)
+                    # ============================================================
+                    # NOTE: Binance Error -2011 케이스는 위에서 이미 return으로 종료되므로,
+                    # 이 아래 코드는 다른 오류 케이스에만 자동 실행됨
                     open_order.status = old_status
                     open_order.error_message = error_msg
                     db.session.commit()
