@@ -30,6 +30,7 @@
 - **trade-execution** - 거래 실행 및 체결 처리 [`@COMP:service`] → [docs](features/trade-execution.md)
 - **limit-order-fill-processing** - LIMIT 주문 체결 자동 업데이트 (WebSocket + Scheduler) [`@COMP:service`] → [docs](features/order-tracking.md)
 - **pending-order-sse** - PendingOrder 생성/삭제 SSE 발송 [`@COMP:service`] → [docs](features/order-tracking.md)
+- **order-cancellation** - 주문 취소 (DB-First 패턴, Binance Error -2011 처리) [`@COMP:service`] → [docs](features/order-cancellation.md)
 
 ### 💰 Position & Capital
 - **position-tracking** - 포지션 관리, 평균가 계산, 손익 추적 [`@COMP:service`] → [docs](features/position-tracking.md)
@@ -93,6 +94,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-05 | Order Cancellation Error Handling | ✅ Phase 1 | order_manager.py | Binance Error -2011 (Unknown order) 처리: 재조회 → 정합성 복구 또는 FailedOrder 추가 (Issue #32) |
 | 2025-11-05 | LIMIT Order Fill Processing Bug Fix | ✅ Phase 1 | order_manager.py | Binance FILLED 주문 fetch_order() 개별 조회로 Trade/Position 누락 버그 해결 (Issue #30) |
 | 2025-11-02 | Webhook Concurrency Fix | ✅ Phase 1 | webhook_lock_manager.py | WebhookLockManager 구현, Race Condition 방지 |
 | 2025-10-31 | Orphan Order Prevention (Logging) | ✅ Phase 6 | - | Phase 1-5 통합 로깅 완료 (189 log points) |
@@ -225,6 +227,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-31*
+*Last Updated: 2025-11-05*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
-*Total Lines: ~210 (목표 범위 내)*
+*Total Lines: ~215 (목표 범위 내)*
