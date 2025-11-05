@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.constants import OrderEventType, OrderStatus, OrderType
 from app.models import OpenOrder, Strategy, StrategyAccount
@@ -30,6 +30,7 @@ class EventEmitter:
         side: str,
         quantity: Decimal,
         order_result: Dict[str, object],
+        suppress_toast: bool = False,  # 배치 주문 시 개별 토스트 억제
     ) -> None:
         """Emit a unified trading order event via the SSE event service."""
         try:
@@ -92,6 +93,7 @@ class EventEmitter:
                     'name': account.name,
                     'exchange': account.exchange,
                 },
+                suppress_toast=suppress_toast,  # Phase 1에서 추가된 필드에 전달
             )
             event_service.emit_order_event(event)
             logger.debug(
@@ -238,6 +240,7 @@ class EventEmitter:
         side: str,
         quantity: Decimal,
         order_result: Dict[str, object],
+        suppress_toast: bool = False,  # 배치 주문 시 개별 토스트 억제
     ) -> None:
         """Emit context-aware order events based on the current order state."""
         logger.info("🚀 스마트 이벤트 발송 시작: %s %s %s", symbol, side, quantity)
@@ -305,7 +308,7 @@ class EventEmitter:
 
         # 그 다음 이벤트 발행
         for event_type, event_quantity in events_to_emit:
-            self.emit_trading_event(event_type, strategy, symbol, side, event_quantity, order_result)
+            self.emit_trading_event(event_type, strategy, symbol, side, event_quantity, order_result, suppress_toast=suppress_toast)
             logger.debug(
                 "📡 스마트 이벤트 발송: %s - %s %s %s",
                 event_type,

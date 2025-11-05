@@ -1861,7 +1861,8 @@ class TradingCore:
                         direct_order['symbol'],
                         direct_order['side'],
                         direct_order['amount'],
-                        order_data
+                        order_data,
+                        suppress_toast=True  # 배치 주문: 개별 토스트 억제, 배치 요약만 표시
                     )
 
                     # Phase 2: Track event metadata for batch SSE aggregation
