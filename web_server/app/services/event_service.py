@@ -52,6 +52,7 @@ class OrderEvent:
     stop_price: float = None  # Stop 가격 (STOP 주문 전용, 선택적 필드)
     # 계좌 정보 (중첩 구조)
     account: Dict[str, Any] = None
+    suppress_toast: bool = False  # Suppress individual toast for batch orders
 
 # @FEAT:event-sse @COMP:model @TYPE:core
 @dataclass

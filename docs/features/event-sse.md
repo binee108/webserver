@@ -132,7 +132,7 @@ class EventService:
 ### OrderEvent (주문 이벤트)
 **이벤트 타입**: `order_created`, `order_filled`, `order_cancelled`, `order_updated`, `trade_executed`
 
-**필드**: `event_type`, `order_id`, `symbol`, `strategy_id`, `user_id`, `side`, `quantity`, `price`, `status`, `timestamp`, `order_type`, `stop_price`, `account`
+**필드**: `event_type`, `order_id`, `symbol`, `strategy_id`, `user_id`, `side`, `quantity`, `price`, `status`, `timestamp`, `order_type`, `stop_price`, `account`, `suppress_toast` (배치 주문 토스트 억제 플래그, 기본값: False)
 
 **계좌 정보 (account 필드 - 중첩 구조)**:
 ```python
