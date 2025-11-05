@@ -214,9 +214,10 @@ class RealtimeOpenOrdersManager {
             switch (eventType) {
                 case 'order_created':
                     this.upsertOrder(data);
+                    // Check suppress_toast flag before showing toast
                     // Show toast only for OpenOrder (exchange orders), not PendingOrder (queue)
                     // PendingOrder is internal queue state - no user notification needed
-                    if (data.source === 'open_order') {
+                    if (data.source === 'open_order' && !data.suppress_toast) {
                         this.showOrderNotification(eventType, data);
                     }
                     break;
@@ -224,9 +225,10 @@ class RealtimeOpenOrdersManager {
                 case 'order_filled':
                 case 'order_cancelled':
                     this.removeOrder(data.order_id);
+                    // Check suppress_toast flag before showing toast
                     // Show toast only for OpenOrder completion/cancellation
                     // PendingOrder removal is not a user-relevant action
-                    if (data.source === 'open_order') {
+                    if (data.source === 'open_order' && !data.suppress_toast) {
                         this.showOrderNotification(eventType, data);
                     }
                     break;
