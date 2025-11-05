@@ -132,7 +132,12 @@ class EventService:
 ### OrderEvent (주문 이벤트)
 **이벤트 타입**: `order_created`, `order_filled`, `order_cancelled`, `order_updated`, `trade_executed`
 
-**필드**: `event_type`, `order_id`, `symbol`, `strategy_id`, `user_id`, `side`, `quantity`, `price`, `status`, `timestamp`, `order_type`, `stop_price`, `account`, `suppress_toast` (배치 주문 토스트 억제 플래그, 기본값: False)
+**필드**: `event_type`, `order_id`, `symbol`, `strategy_id`, `user_id`, `side`, `quantity`, `price`, `status`, `timestamp`, `order_type`, `stop_price`, `account`, `suppress_toast`
+
+**suppress_toast 플래그**:
+- `False` (기본값): 개별 주문 이벤트마다 클라이언트가 토스트 표시
+- `True`: 배치 처리 중에는 클라이언트가 개별 토스트 억제하고, 배치 요약만 표시
+- **도입 배경**: 100+ 주문 처리 시 토스트 스팸 방지 (Phase 2a 추가, Phase 2c 클라이언트 구현)
 
 **계좌 정보 (account 필드 - 중첩 구조)**:
 ```python
@@ -409,7 +414,7 @@ from app.services.trading.event_emitter import EventEmitter
 
 emitter = EventEmitter(service=trading_service)
 
-# 스마트 이벤트 발송 (주문 상태에 따라 자동으로 이벤트 결정)
+# 단일 주문: suppress_toast 기본값 사용 (토스트 표시)
 emitter.emit_order_events_smart(
     strategy=strategy,
     symbol='BTC/USDT',
@@ -423,6 +428,23 @@ emitter.emit_order_events_smart(
         'order_type': 'MARKET',
         'account_id': account.id
     }
+)
+
+# 배치 주문: suppress_toast=True로 개별 토스트 억제 (Phase 2c)
+emitter.emit_order_events_smart(
+    strategy=strategy,
+    symbol='BTC/USDT',
+    side='BUY',
+    quantity=Decimal('0.001'),
+    order_result={
+        'order_id': '12345',
+        'status': 'FILLED',
+        'filled_quantity': 0.001,
+        'average_price': 95000.0,
+        'order_type': 'MARKET',
+        'account_id': account.id
+    },
+    suppress_toast=True  # 배치 처리 중 토스트 스팸 방지
 )
 
 # 배치 주문 이벤트 (집계)
@@ -515,7 +537,8 @@ curl -k -X POST http://localhost:5000/api/webhook \
 - **`get_statistics()`**: 관리자용 연결 통계 (활성 클라이언트 수, 이벤트 큐 크기)
 
 ### EventEmitter 메서드
-- **`emit_trading_event(event_type, strategy, symbol, side, quantity, order_result)`**: 주문 이벤트 발송, account_id 검증
+- **`emit_trading_event(event_type, strategy, symbol, side, quantity, order_result, suppress_toast=False)`**:
+  주문 이벤트 발송, account_id 검증, suppress_toast 플래그로 배치 중 토스트 억제
 - **`emit_order_events_smart(strategy, symbol, side, quantity, order_result)`**: 주문 상태에 따라 자동 이벤트 타입 선택
 - **`emit_order_batch_update(user_id, strategy_id, batch_results)`**: 배치 주문 결과 집계 후 발송
 
