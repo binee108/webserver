@@ -1934,6 +1934,34 @@ class OrderManager:
                                                     f"✅ 체결 처리 완료: order_id={locked_order.exchange_order_id}, "
                                                     f"trade_id={fill_summary.get('trade_id')}"
                                                 )
+
+                                                # ============================================================
+                                                # @FEAT:order-tracking @FEAT:limit-order-fill-processing @COMP:job @TYPE:core
+                                                # Issue #36: Scheduler FILLED 경로에서 OpenOrder 삭제 로직 추가
+                                                # 배경: 백그라운드 스케줄러가 FILLED 감지 시 체결 처리는 수행하지만
+                                                #       OpenOrder 삭제를 누락하여 체결된 주문이 "열린 주문"에 계속 표시됨.
+                                                # 해결: WebSocket 경로(order_fill_monitor.py:362-365)와 동일한 삭제 로직 적용.
+                                                # 레이스 컨디션 방지:
+                                                # - locked_order는 이미 with_for_update(skip_locked=True)로 잠금 획득
+                                                # - WebSocket이 먼저 삭제한 경우 중복 처리 없음 (skip_locked로 건너뜀)
+                                                # - 따라서 이 코드 경로에 도달한 주문은 안전하게 삭제 가능
+                                                # ============================================================
+                                                try:
+                                                    db.session.delete(locked_order)
+                                                    logger.info(
+                                                        f"🗑️ OpenOrder 삭제 완료 (Scheduler FILLED): "
+                                                        f"order_id={locked_order.exchange_order_id}, status=FILLED"
+                                                    )
+                                                    total_deleted += 1
+                                                except Exception as delete_error:
+                                                    # 레이스 컨디션: WebSocket이 이미 삭제한 경우
+                                                    logger.warning(
+                                                        f"⚠️ OpenOrder 삭제 실패 (이미 삭제됨?): "
+                                                        f"order_id={locked_order.exchange_order_id}, "
+                                                        f"error={type(delete_error).__name__}: {str(delete_error)}"
+                                                    )
+                                                    # 삭제 실패는 치명적이지 않으므로 계속 진행
+                                                    # (체결 처리는 완료되었고, OpenOrder는 이미 제거된 상태)
                                             else:
                                                 logger.error(
                                                     f"❌ 체결 처리 실패: order_id={locked_order.exchange_order_id}, "
