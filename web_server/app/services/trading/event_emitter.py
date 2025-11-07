@@ -282,7 +282,8 @@ class EventEmitter:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, filled_quantity))
             else:
                 events_to_emit.append((OrderEventType.ORDER_UPDATED, quantity))
-                new_filled = filled_quantity - existing_order.filled_quantity
+                # TypeError 방지: existing_order.filled_quantity는 db.Float이므로 Decimal 변환 필수
+                new_filled = Decimal(str(filled_quantity)) - Decimal(str(existing_order.filled_quantity))
                 if new_filled > 0:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, new_filled))
 
@@ -292,7 +293,8 @@ class EventEmitter:
                 events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
             else:
                 # 기존 주문: 남은 수량 체결 이벤트
-                remaining = quantity - existing_order.filled_quantity
+                # TypeError 방지: existing_order.filled_quantity는 db.Float이므로 Decimal 변환 필수
+                remaining = quantity - Decimal(str(existing_order.filled_quantity))
                 # Issue #37: FILLED 상태에서는 remaining이 0이라도 이벤트 발송
                 # (Scheduler 경로에서 DB 업데이트 타이밍으로 remaining=0이 됨)
                 if remaining > 0:
