@@ -102,6 +102,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-07 | STOP_MARKET SSE Event Fix | ✅ Phase 1 | exchange.py | Issue #40: Exchange Layer 응답에 `limit_price`, `stop_price` 필드 추가 (STOP_MARKET/STOP_LIMIT SSE 정상화) |
 | 2025-11-07 | Failed Order Decimal JSON Serialization | ✅ Phase 1 | failed_order_manager.py | Issue #39: create_failed_order() order_params Decimal→float 변환 (PostgreSQL JSON 호환성) |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
 | 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
