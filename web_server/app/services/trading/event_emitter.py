@@ -288,11 +288,18 @@ class EventEmitter:
 
         elif status == OrderStatus.FILLED:
             if not existing_order:
+                # 새 주문: 전체 수량 체결 이벤트
                 events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
             else:
+                # 기존 주문: 남은 수량 체결 이벤트
                 remaining = quantity - existing_order.filled_quantity
+                # Issue #37: FILLED 상태에서는 remaining이 0이라도 이벤트 발송
+                # (Scheduler 경로에서 DB 업데이트 타이밍으로 remaining=0이 됨)
                 if remaining > 0:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, remaining))
+                else:
+                    # remaining이 0 또는 음수인 경우 전체 수량으로 프론트엔드 업데이트 보장
+                    events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
 
         elif status == OrderStatus.CANCELLED:
             events_to_emit.append((OrderEventType.ORDER_CANCELLED, quantity))

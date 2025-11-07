@@ -342,6 +342,54 @@ if fill_summary.get('success'):
 
 ---
 
+## 8.7. Issue #37 해결: Scheduler 경로 FILLED 이벤트 발송 (2025-11-07)
+
+**용도**: Scheduler의 `update_open_order_status()` 호출 시 SSE 이벤트 발송 보장
+
+**문제**:
+- Scheduler가 FILLED 주문을 감지할 때 SSE 이벤트가 발송되지 않음
+- `emit_order_events_smart()`에서 `remaining > 0` 조건으로 인해 이벤트 미발송
+
+**원인 분석**:
+```
+Scheduler 경로:
+  1. update_open_order_status() 호출 (DB 업데이트)
+  2. SQLAlchemy ORM 세션 객체 참조로 existing_order.filled_quantity 자동 업데이트
+  3. remaining = quantity - existing_order.filled_quantity = 0
+  4. if remaining > 0: 조건 실패 → 이벤트 미발송
+
+WebSocket 경로:
+  1. on_order_update() 수신
+  2. REST API 검증 후 filled_quantity 확인 (DB 미업데이트)
+  3. remaining > 0 → 이벤트 정상 발송
+```
+
+**해결책** (event_emitter.py Lines 289-302):
+```python
+elif status == OrderStatus.FILLED:
+    if not existing_order:
+        events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
+    else:
+        remaining = quantity - existing_order.filled_quantity
+        if remaining > 0:
+            events_to_emit.append((OrderEventType.ORDER_FILLED, remaining))
+        else:
+            # remaining이 0 또는 음수인 경우 전체 수량으로 프론트엔드 업데이트 보장
+            events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
+```
+
+**특징**:
+- `remaining <= 0` 케이스 처리로 Scheduler 경로 지원
+- 레이스 컨디션 방어 (`remaining < 0` 시에도 정상 작동)
+- WebSocket 경로 호환성 유지 (기존 동작 변경 없음)
+
+**영향 범위** (Issue #37 해결):
+- Scheduler가 감지한 FILLED 주문 → SSE 이벤트 발송 ✅
+- 프론트엔드 "열린 주문" 리스트가 새로고침 없이 자동 업데이트
+- 두 경로(WebSocket + Scheduler) SSE 이벤트 발송 일원화
+
+---
+
 ## 9. 유지보수 가이드
 
 ### 주의사항

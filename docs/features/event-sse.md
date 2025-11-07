@@ -468,6 +468,16 @@ emitter.emit_order_batch_update(
 **이유**: 방어적 프로그래밍 - 첫 번째 검증은 빠른 실패, 두 번째는 race condition 방지
 **참고**: `_emit_to_user()`에서 Strategy 활성화 여부도 확인하므로 이벤트 발송 전 조기 종료 효율적
 
+### Issue #37 해결: Scheduler 경로 FILLED 이벤트 발송
+**문제**: Scheduler가 FILLED 주문을 감지할 때 SSE 이벤트가 발송되지 않음
+**원인**: `emit_order_events_smart()`에서 `remaining > 0` 조건으로 인해 `remaining=0`일 때 이벤트 미발송
+- Scheduler 경로에서 `update_open_order_status()` 호출로 DB가 먼저 업데이트
+- SQLAlchemy ORM 세션 객체 참조로 `existing_order.filled_quantity` 자동 업데이트
+- `remaining = quantity - existing_order.filled_quantity = 0` → 조건 실패
+**해결**: `event_emitter.py` Lines 289-302 수정
+- `remaining <= 0`일 때 `else` 블록 추가하여 `quantity`로 이벤트 발송
+- 레이스 컨디션 방어 (`remaining < 0` 케이스)
+
 ---
 
 ## 11. 트러블슈팅 (Troubleshooting)
