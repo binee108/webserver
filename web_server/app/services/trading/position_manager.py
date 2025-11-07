@@ -723,10 +723,16 @@ class PositionManager:
                 'open_orders': []
             }
 
-    # @FEAT:position-tracking @COMP:service @TYPE:core
+    # @FEAT:position-tracking @COMP:service @TYPE:core @ISSUE:38
     def _update_position(self, strategy_account_id: int, symbol: str, side: str,
                         quantity: Decimal, price: Decimal) -> Dict[str, Any]:
-        """포지션 업데이트 (평균가 계산 + 실현 손익 산출)"""
+        """포지션 업데이트 (평균가 계산 + 실현 손익 산출 + Row-Level Locking)
+
+        WebSocket과 Scheduler가 동일 포지션을 동시 업데이트할 때
+        수량 손실을 방지합니다 (Issue #38: Trade Race Condition Fix).
+
+        @FEAT:position-tracking @COMP:service @TYPE:core @ISSUE:38
+        """
         try:
             strategy_account = StrategyAccount.query.get(strategy_account_id)
             if not strategy_account:
@@ -737,19 +743,44 @@ class PositionManager:
                     'error_type': 'position_error'
                 }
 
+            # Row-Level Lock 획득 (skip_locked=True)
+            # 참조: order_manager.py - OpenOrder 락 패턴
             position = StrategyPosition.query.filter_by(
                 strategy_account_id=strategy_account_id,
                 symbol=symbol
-            ).first()
+            ).with_for_update(skip_locked=True).first()
 
             if not position:
-                position = StrategyPosition(
+                # 두 가지 경우:
+                # 1. 포지션이 실제로 없음 (첫 Trade)
+                # 2. 다른 스레드가 락 보유 중 (lock contention)
+
+                # 락 없이 다시 조회 (존재 여부만 확인)
+                position_exists = StrategyPosition.query.filter_by(
                     strategy_account_id=strategy_account_id,
-                    symbol=symbol,
-                    quantity=0,
-                    entry_price=0
-                )
-                db.session.add(position)
+                    symbol=symbol
+                ).count() > 0
+
+                if position_exists:
+                    # 케이스 2: 락 경합 - graceful skip (블로킹 없음)
+                    logger.warning(
+                        f"⏭️ 포지션 업데이트 스킵 (락 경합): "
+                        f"symbol={symbol}, strategy_account_id={strategy_account_id}"
+                    )
+                    return {
+                        'success': True,
+                        'skipped': True,
+                        'reason': 'lock_contention'
+                    }
+                else:
+                    # 케이스 1: 새 포지션 생성 필요
+                    position = StrategyPosition(
+                        strategy_account_id=strategy_account_id,
+                        symbol=symbol,
+                        quantity=0,
+                        entry_price=0
+                    )
+                    db.session.add(position)
 
             current_qty = to_decimal(position.quantity)
             current_price = to_decimal(position.entry_price)
@@ -836,7 +867,10 @@ class PositionManager:
                 db.session.delete(position)
                 logger.info(f"포지션 완전 청산으로 삭제: {symbol}")
             else:
-                logger.info(f"포지션 업데이트 완료: {symbol} -> {new_qty} @ {new_price}")
+                logger.info(
+                    f"✅ 포지션 업데이트 완료 (락 획득): "
+                    f"symbol={symbol}, qty={previous_qty} → {new_qty} @ {new_price}"
+                )
 
             db.session.commit()
 

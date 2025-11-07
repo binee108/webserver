@@ -94,6 +94,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-07 | Position Row-Level Locking (Issue #38 Phase 2) | ✅ Phase 2 | position_manager.py | Position 업데이트에 Row-Level Lock 추가 (`with_for_update(skip_locked=True)`). Lock 경합 시 graceful skip으로 블로킹 방지. OpenOrder 패턴 따름. |
 | 2025-11-07 | Trade Duplicate Prevention (Issue #38 Phase 1) | ✅ Phase 1 | models.py, record_manager.py | Trade 모델에 UNIQUE 제약 `(strategy_account_id, exchange_order_id)` 추가. WebSocket과 Scheduler 동시 처리 시 중복 생성 차단: Application-level 체크 → DB-level 제약 → IntegrityError graceful handling |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
 | 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
