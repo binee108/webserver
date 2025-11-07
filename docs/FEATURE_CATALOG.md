@@ -88,6 +88,14 @@
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
 - **webhook-token** - 웹훅 토큰 관리 (복사 버튼, 재발행) [`@COMP:ui-helper`] → [docs](features/webhook-order-processing.md)
 
+### ⚙️ CLI & Infrastructure
+- **cli-migration** - CLI 시스템 마이그레이션 및 명령 통합
+  - **delete_db** - 워크트리/프로젝트 루트 컨텍스트별 데이터베이스 삭제 [`@COMP:route`] [`@TYPE:core`] → [docs](cli-migration.md)
+    - 실행 컨텍스트 자동 감지 (`.worktree` 경로 패턴)
+    - 삭제 대상: `postgres_data/`, `*.db`, `flask_session/`
+    - Symlink 안전 처리 (링크 자체만 삭제)
+    - 'yes' 전체 입력 확인 프롬프트 (CleanCommand와 다른 엄격한 정책)
+
 ---
 
 ## Recent Updates (Last 30 Days)

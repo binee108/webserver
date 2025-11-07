@@ -16,7 +16,7 @@ from .config import SystemConfig
 from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper, MigrationHelper
 from .commands import (
     StartCommand, StopCommand, RestartCommand, LogsCommand,
-    StatusCommand, CleanCommand, SetupCommand, ListCommand
+    StatusCommand, CleanCommand, SetupCommand, ListCommand, DeleteDbCommand
 )
 
 
@@ -86,6 +86,9 @@ class TradingSystemCLI:
         # ListCommand
         list_cmd = ListCommand(self.printer, self.docker)
 
+        # DeleteDbCommand
+        delete_db_cmd = DeleteDbCommand(self.printer, self.root_dir)
+
         return {
             'start': start_cmd,
             'stop': stop_cmd,
@@ -95,6 +98,7 @@ class TradingSystemCLI:
             'clean': clean_cmd,
             'setup': setup_cmd,
             'ls': list_cmd,  # ls 명령어 추가
+            'delete_db': delete_db_cmd,
         }
 
     def run(self, args: list) -> int:
@@ -154,16 +158,17 @@ class TradingSystemCLI:
   python run.py <명령어> [옵션]
 
 명령어:
-  start       - 시스템 시작
-  stop        - 시스템 중지
-  restart     - 시스템 재시작
-  logs        - Docker 로그 조회
-  status      - 시스템 상태 확인
   clean       - 시스템 정리 (컨테이너/볼륨)
                 --all: 모든 webserver 프로젝트 정리
                 --full: SSL 인증서 및 로그도 함께 정리
-  setup       - 초기 환경 설정
+  delete_db   - 데이터베이스 삭제 (워크트리/루트 자동 감지)
+  logs        - Docker 로그 조회
   ls          - 실행 중인 프로젝트 목록
+  restart     - 시스템 재시작
+  setup       - 초기 환경 설정
+  start       - 시스템 시작
+  status      - 시스템 상태 확인
+  stop        - 시스템 중지
 
 옵션:
   -h, --help  - 도움말 표시
