@@ -21,6 +21,37 @@ class EventEmitter:
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:event-sse @COMP:service @TYPE:helper
+    def _map_event_to_status(self, event_type: str, order_result: Dict[str, object]) -> str:
+        """이벤트 타입을 주문 상태 값으로 매핑
+
+        @FEAT:event-sse @COMP:service @TYPE:helper
+
+        Args:
+            event_type: 이벤트 타입 (order_filled, order_cancelled, trade_executed 등)
+            order_result: 주문 결과 딕셔너리 (fallback용 status 포함 가능)
+
+        Returns:
+            str: 매핑된 상태 값 (FILLED, CANCELLED, UNKNOWN 등)
+
+        Examples:
+            >>> _map_event_to_status('order_filled', {})
+            'FILLED'
+            >>> _map_event_to_status('ORDER_CANCELLED', {})
+            'CANCELLED'
+            >>> _map_event_to_status('unknown', {'status': 'PENDING'})
+            'PENDING'
+        """
+        event_type_lower = event_type.lower()
+
+        if event_type_lower in ('order_filled', 'trade_executed'):
+            return 'FILLED'
+        elif event_type_lower == 'order_cancelled':
+            return 'CANCELLED'
+        else:
+            # 알 수 없는 이벤트 타입: order_result의 status 사용 (안전한 fallback)
+            return order_result.get('status', 'UNKNOWN')
+
     # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_trading_event(
         self,
@@ -84,7 +115,9 @@ class EventEmitter:
                 side=side.upper(),
                 quantity=float(quantity),
                 price=price,
-                status='FILLED' if event_type == 'trade_executed' else order_result.get('status', 'UNKNOWN'),
+                # @FEAT:event-sse @TYPE:core - 이벤트 타입을 주문 상태로 일관되게 매핑
+                # order_filled/order_cancelled 이벤트는 _map_event_to_status()로 올바른 상태 결정
+                status=self._map_event_to_status(event_type, order_result),
                 timestamp=datetime.utcnow().isoformat(),
                 order_type=order_result.get('order_type', 'MARKET'),
                 stop_price=stop_price_value,
