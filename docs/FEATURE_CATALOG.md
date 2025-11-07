@@ -94,6 +94,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-07 | Failed Order Decimal JSON Serialization | ✅ Phase 1 | failed_order_manager.py | Issue #39: create_failed_order() order_params Decimal→float 변환 (PostgreSQL JSON 호환성) |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
 | 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
 | 2025-11-05 | Order Cancellation Error Handling | ✅ Phase 1 | order_manager.py | Binance Error -2011 (Unknown order) 처리: 재조회 → 정합성 복구 또는 FailedOrder 추가 (Issue #32) |
