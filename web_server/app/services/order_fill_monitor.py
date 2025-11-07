@@ -299,8 +299,22 @@ class OrderFillMonitor:
     # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:helper
     def _convert_order_info_to_result(self, order_info: dict, open_order: OpenOrder) -> dict:
         """
-        공통 로직: order_info → order_result 포맷 변환
-        Phase 1, 2에서 공유
+        order_info → order_result 포맷 변환 (공통 로직, Phase 1-2 공유)
+
+        Exchange API 응답을 표준 order_result 형식으로 변환합니다.
+
+        Returns:
+            dict: {
+                'order_id': 거래소 주문 ID,
+                'status': 주문 상태,
+                'filled_quantity': 체결 수량,
+                'average_price': 평균 체결가,
+                'side': 매수/매도,
+                'order_type': 주문 유형,
+                'account_id': 계정 ID (Issue #37)
+            }
+
+        Note: account_id는 SSE 이벤트 발송을 위한 필수 필드입니다.
         """
         return {
             'order_id': order_info.get('exchange_order_id'),
@@ -308,7 +322,8 @@ class OrderFillMonitor:
             'filled_quantity': order_info.get('filled_quantity'),
             'average_price': order_info.get('average_price'),
             'side': order_info.get('side') or open_order.side,
-            'order_type': order_info.get('order_type') or open_order.order_type
+            'order_type': order_info.get('order_type') or open_order.order_type,
+            'account_id': open_order.strategy_account.account_id  # Issue #37: SSE 이벤트 발송을 위한 필수 필드
         }
 
     # @FEAT:order-tracking @FEAT:limit-order @FEAT:event-sse @COMP:service @TYPE:core
