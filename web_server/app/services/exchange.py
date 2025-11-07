@@ -568,6 +568,11 @@ class ExchangeService:
                 quantity
             )
 
+            # @FEAT:webhook-order @FEAT:event-sse @COMP:exchange @TYPE:integration
+            # Price fields for SSE real-time updates:
+            # - average_price: Binance's 'price' field (limit price or avg execution price)
+            # - limit_price: Explicit limit price for LIMIT/STOP_LIMIT orders (None for MARKET)
+            # - stop_price: Trigger price for STOP_MARKET/STOP_LIMIT orders (None for LIMIT/MARKET)
             return {
                 'success': True,
                 'order_id': order_result.id,
@@ -576,6 +581,8 @@ class ExchangeService:
                 'original_status': order_result.status,  # 원본 거래소 상태
                 'filled_quantity': order_result.filled,
                 'average_price': order_result.price,
+                'limit_price': order_result.price,  # 🆕 지정가 (LIMIT/STOP_LIMIT용)
+                'stop_price': order_result.stop_price,  # 🆕 스톱 가격 (STOP_MARKET/STOP_LIMIT용)
                 'adjusted_quantity': processed_params['quantity'],  # 조정된 수량
                 'adjusted_price': processed_params.get('price'),  # 조정된 가격
                 'adjusted_stop_price': processed_params.get('stop_price'),  # 조정된 스톱 가격
