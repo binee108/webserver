@@ -40,8 +40,32 @@ class QuantityCalculator:
         exchange: str = 'BINANCE',
         market_type: str = 'FUTURES',
     ) -> Optional[Decimal]:
-        """Resolve an effective price for the supplied order parameters."""
+        """Resolve an effective price for the supplied order parameters.
+
+        Price Priority (Updated for MARKET ONLY):
+        1. MARKET + price provided → Use webhook-provided price
+        2. LIMIT orders + price required → Use price parameter
+        3. STOP orders + stop_price required → Use stop_price parameter
+        4. Fallback → Use local cache price (price_cache or exchange_service)
+
+        @PRINCIPLE: Webhook-provided price takes precedence over cache (accuracy improvement)
+        @HISTORICAL: Previously, MARKET orders always used cache price
+        @CHANGE: MARKET can now use webhook-provided price (optional)
+        @CRITICAL: STOP_MARKET unchanged - always uses stop_price (no price support)
+        """
         from app.constants import OrderType  # Local import to avoid circular deps
+
+        # ✅ NEW: MARKET 주문만 웹훅 제공 price 우선 사용
+        # @PRINCIPLE: 웹훅 송신자가 더 정확한 가격을 알고 있다고 가정
+        # @USE_CASE: TradingView가 최신 시장가를 알고 있어 더 정확한 수량 계산 가능
+        # @CRITICAL: STOP_MARKET은 여기서 제외 (기존 동작 유지)
+        if order_type == OrderType.MARKET:
+            if price is not None:
+                logger.info(
+                    "💰 MARKET 주문: 웹훅 제공 가격 사용 (수량 계산 정확도 향상) - %s",
+                    price
+                )
+                return Decimal(str(price))
 
         if OrderType.requires_price(order_type) and price is not None:
             logger.debug("📊 %s 주문: 지정가 %s 사용", order_type, price)
