@@ -11,6 +11,7 @@ from .status import StatusCommand
 from .clean import CleanCommand
 from .setup import SetupCommand
 from .list import ListCommand
+from .delete_db import DeleteDbCommand
 
 __all__ = [
     'BaseCommand',
@@ -22,4 +23,5 @@ __all__ = [
     'CleanCommand',
     'SetupCommand',
     'ListCommand',
+    'DeleteDbCommand',
 ]
