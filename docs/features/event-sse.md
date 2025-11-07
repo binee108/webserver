@@ -470,13 +470,22 @@ emitter.emit_order_batch_update(
 
 ### Issue #37 해결: Scheduler 경로 FILLED 이벤트 발송
 **문제**: Scheduler가 FILLED 주문을 감지할 때 SSE 이벤트가 발송되지 않음
-**원인**: `emit_order_events_smart()`에서 `remaining > 0` 조건으로 인해 `remaining=0`일 때 이벤트 미발송
-- Scheduler 경로에서 `update_open_order_status()` 호출로 DB가 먼저 업데이트
-- SQLAlchemy ORM 세션 객체 참조로 `existing_order.filled_quantity` 자동 업데이트
-- `remaining = quantity - existing_order.filled_quantity = 0` → 조건 실패
-**해결**: `event_emitter.py` Lines 289-302 수정
-- `remaining <= 0`일 때 `else` 블록 추가하여 `quantity`로 이벤트 발송
-- 레이스 컨디션 방어 (`remaining < 0` 케이스)
+
+**근본 원인**:
+1. **Decimal 타입 안전성** (PARTIALLY_FILLED, FILLED 경로):
+   - `existing_order.filled_quantity`는 SQLAlchemy `db.Float` 타입으로 Python float 반환
+   - float과 Decimal 직접 연산 시 TypeError 발생
+
+2. **Scheduler 경로 레이스 컨디션** (FILLED 경로):
+   - Scheduler가 `update_open_order_status()` 호출로 DB 먼저 업데이트
+   - SQLAlchemy ORM 세션 객체가 `existing_order.filled_quantity` 자동 반영
+   - `remaining = quantity - existing_order.filled_quantity = 0` → 이벤트 미발송
+
+**해결책**: `event_emitter.py` Lines 285-304 수정
+- **Line 285-286** (PARTIALLY_FILLED): `Decimal(str(filled_quantity)) - Decimal(str(existing_order.filled_quantity))` 안전한 타입 변환
+- **Line 296-297** (FILLED): 동일한 Decimal 변환으로 타입 안전성 확보
+- **Line 298-304** (FILLED edge case): `remaining <= 0`일 때 `else` 블록으로 전체 `quantity`로 이벤트 발송하여 프론트엔드 업데이트 보장
+- **Line 303-304**: 레이스 컨디션 방어 (`remaining < 0` 케이스 포함)
 
 ---
 
