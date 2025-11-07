@@ -94,6 +94,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-07 | Trade Duplicate Prevention (Issue #38 Phase 1) | ✅ Phase 1 | models.py, record_manager.py | Trade 모델에 UNIQUE 제약 `(strategy_account_id, exchange_order_id)` 추가. WebSocket과 Scheduler 동시 처리 시 중복 생성 차단: Application-level 체크 → DB-level 제약 → IntegrityError graceful handling |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
 | 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
 | 2025-11-05 | Order Cancellation Error Handling | ✅ Phase 1 | order_manager.py | Binance Error -2011 (Unknown order) 처리: 재조회 → 정합성 복구 또는 FailedOrder 추가 (Issue #32) |
@@ -230,6 +231,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-05*
+*Last Updated: 2025-11-07*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
 *Total Lines: ~215 (목표 범위 내)*
