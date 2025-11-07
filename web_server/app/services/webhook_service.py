@@ -42,6 +42,16 @@ class WebhookService:
     def _validate_order_type_params(self, normalized_data: Dict[str, Any]) -> None:
         """주문 타입별 필수 파라미터 검증 (단일 소스)
 
+        MARKET 주문:
+            - price: 선택적 (제공 시 수량 계산에 사용, 미제공 시 캐시 가격 사용)
+            - stop_price: 무시됨 (제거)
+
+        LIMIT 주문:
+            - price: 필수
+
+        STOP/STOP_MARKET 주문:
+            - stop_price: 필수
+
         Args:
             normalized_data: 정규화된 웹훅 데이터
 
@@ -62,14 +72,20 @@ class WebhookService:
                 raise WebhookError(f"{order_type} 주문에는 price가 필수입니다")
             logger.info(f"✅ {order_type} 주문 price 검증 완료: {normalized_data.get('price')}")
 
-        # MARKET 주문은 price나 stop_price 불필요
+        # ✅ MARKET 주문: price 선택적 허용 (수량 계산 개선)
+        # @PRINCIPLE: MARKET 주문은 price 필드를 제거하지 않음 (웹훅 제공 가격 우선 사용)
+        # @HISTORICAL: 기존에는 price를 pop()으로 제거 → 캐시 가격만 사용
+        # @CHANGED: 2025-11-07 - price 제공 시 수량 계산에 활용 가능하도록 변경
         if order_type == OrderType.MARKET:
             if normalized_data.get('stop_price'):
                 logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다: {normalized_data.get('stop_price')}")
                 normalized_data.pop('stop_price', None)
+
+            # ✅ MARKET: price 필드 유지 (제거하지 않음)
             if normalized_data.get('price'):
-                logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다: {normalized_data.get('price')}")
-                normalized_data.pop('price', None)
+                logger.info(f"💰 MARKET 주문: 웹훅 제공 price 사용 예정 (수량 계산용) - {normalized_data.get('price')}")
+            else:
+                logger.debug(f"📊 MARKET 주문: price 미제공, 로컬 캐시 가격 사용 예정")
 
     # @FEAT:webhook-order @COMP:validation @TYPE:validation
     def _validate_strategy_token(self, group_name: str, token: str) -> Strategy:

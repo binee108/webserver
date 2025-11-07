@@ -323,7 +323,7 @@ except Exception:
 | 주문 타입 | price | stop_price | 처리 |
 |-----------|-------|------------|------|
 | `LIMIT` | ✅ 필수 | ❌ 불필요 | 지정가 주문 |
-| `MARKET` | ❌ 제거 | ❌ 제거 | 시장가 주문 (제공 시 경고 후 제거) |
+| `MARKET` | ✅ 선택적 | ❌ 제거 | 시장가 주문 (웹훅 가격 우선, 캐시 가격 폴백) |
 | `STOP_LIMIT` | ✅ 필수 | ✅ 필수 | 스톱 리밋 주문 |
 
 **에러**:
@@ -496,15 +496,21 @@ result = trading_service.core.process_trading_signal(normalized_data, timing_con
 
 ---
 
-### 6.4. MARKET 주문에서 price/stop_price 자동 제거
-**WHY**: 거래소 API는 MARKET 주문에 price 파라미터를 허용하지 않음. 사용자 실수 방지.
+### 6.4. MARKET 주문에서 stop_price 제거 및 price 유지 (2025-11-07 변경)
+**WHY**: 웹훅에서 제공한 가격을 수량 계산에 활용하기 위해 price는 유지하되, 거래소 API 비호환 필드인 stop_price만 제거합니다.
 
 **구현**:
 ```python
 if order_type == OrderType.MARKET:
+    if normalized_data.get('stop_price'):
+        logger.warning(f"⚠️ MARKET 주문에서 stop_price는 무시됩니다")
+        normalized_data.pop('stop_price', None)
+
+    # price 필드 유지 (제거하지 않음)
     if normalized_data.get('price'):
-        logger.warning(f"⚠️ MARKET 주문에서 price는 무시됩니다")
-        normalized_data.pop('price', None)
+        logger.info(f"💰 MARKET 주문: 웹훅 제공 price 사용 예정 (수량 계산용)")
+    else:
+        logger.debug(f"📊 MARKET 주문: price 미제공, 로컬 캐시 가격 사용 예정")
 ```
 
 ---
