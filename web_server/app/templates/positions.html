@@ -653,7 +653,24 @@ async function cancelAllOpenOrders() {
     }
 }
 
-// 포지션 청산
+/**
+ * @FEAT:position-tracking @COMP:route @TYPE:integration
+ * Close position by ID
+ *
+ * WHY: API sends close request. Backend broadcasts SSE position_closed event
+ * (~100ms delay). Toast notification triggered by SSE flow, NOT here.
+ *
+ * FLOW:
+ * 1. closePosition() → API POST /api/positions/{id}/close
+ * 2. Backend processes → SSE broadcasts position_closed event
+ * 3. handlePositionUpdate() → showPositionNotification() → toast shown (once)
+ * 4. removePosition() → checkEmptyPositions() (UI update only)
+ *
+ * ANTI-PATTERN PREVENTED:
+ * ❌ DO NOT: Show toast on success (let SSE event trigger it)
+ * ✅ DO: Show toast only on API error (failure case)
+ * ✅ DO: Wait for SSE notification (100ms delay acceptable for UX)
+ */
 function closePosition(positionId) {
     if (confirm('정말로 이 포지션을 청산하시겠습니까?')) {
         fetch(`/api/positions/${positionId}/close`, {
@@ -666,8 +683,7 @@ function closePosition(positionId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                showToast('포지션 청산 요청이 전송되었습니다.', 'success');
-                // SSE를 통해 자동으로 업데이트될 예정이므로 새로고침하지 않음
+                // SSE position_closed event triggers toast notification (~100ms), no duplicate needed
             } else {
                 showToast('포지션 청산 중 오류가 발생했습니다: ' + data.error, 'error');
             }
