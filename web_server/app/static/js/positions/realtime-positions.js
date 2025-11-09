@@ -1,4 +1,5 @@
 /**
+ * @FEAT:position-tracking @COMP:service @TYPE:core
  * Real-time Positions Manager
  * 포지션 관련 실시간 업데이트를 처리하는 모듈
  * SSE를 통한 포지션 이벤트 처리 및 DOM 업데이트
@@ -58,21 +59,27 @@ class RealtimePositionsManager {
     
     /**
      * Register SSE event handlers
+     *
+     * WHY: SSEManager broadcasts events through eventBus. Avoid registering duplicate
+     * handlers in multiple places - receive events through the single SSE channel only.
+     *
+     * EVENT FLOW (for duplicate prevention):
+     * 1. SSE sends position_update → SSEManager.on('position_update')
+     * 2. SSEManager broadcasts via eventBus → RealtimePositionsManager.on()
+     * 3. RealtimePositionsManager.handlePositionUpdate() → showPositionNotification()
+     *    (toast shown here, only once)
+     *
+     * ANTI-PATTERN PREVENTED:
+     * ❌ DO NOT: Listen to eventBus AND register separate SSE listeners
+     * ❌ DO NOT: Show toast in multiple places (registerEventHandlers, checkEmptyPositions, etc.)
      */
     registerEventHandlers() {
         if (!this.sseManager) return;
-        
-        // Position events
+
+        // Position events (SSEManager already broadcasts via eventBus, avoid duplicate handling)
         this.sseManager.on('position_update', (data) => {
             this.handlePositionUpdate(data);
         });
-        
-        // Listen to event bus events
-        if (this.eventBus) {
-            this.eventBus.on('sse:position_update', (data) => {
-                this.handlePositionUpdate(data);
-            });
-        }
     }
     
     /**
@@ -363,14 +370,21 @@ class RealtimePositionsManager {
     
     /**
      * Check if positions table is empty
+     *
+     * WHY: Called after position removal to update UI. Toast notification
+     * is ALREADY triggered by showPositionNotification() in handlePositionUpdate()
+     * during the position_closed event. This function updates DOM only.
+     *
+     * FLOW: position_closed event → handlePositionUpdate() → removePosition()
+     *  → checkEmptyPositions() → showEmptyPositionsState() (UI update, NO toast)
+     *
+     * NOTE: Do NOT show toast here. Toast is shown once in handlePositionUpdate().
      */
     checkEmptyPositions() {
         const positionRows = document.querySelectorAll('tr[data-position-id]');
         if (positionRows.length === 0) {
             this.showEmptyPositionsState();
-            if (window.showToast) {
-                window.showToast('모든 포지션이 청산되었습니다.', 'success');
-            }
+            // Toast notification already triggered by showPositionNotification() in handlePositionUpdate()
         }
     }
     
