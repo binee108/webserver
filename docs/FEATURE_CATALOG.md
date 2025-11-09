@@ -88,6 +88,14 @@
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
 - **webhook-token** - 웹훅 토큰 관리 (복사 버튼, 재발행) [`@COMP:ui-helper`] → [docs](features/webhook-order-processing.md)
 
+### ⚙️ CLI & Infrastructure
+- **cli-migration** - CLI 시스템 마이그레이션 및 명령 통합
+  - **delete_db** - 워크트리/프로젝트 루트 컨텍스트별 데이터베이스 삭제 [`@COMP:route`] [`@TYPE:core`] → [docs](cli-migration.md)
+    - 실행 컨텍스트 자동 감지 (`.worktree` 경로 패턴)
+    - 삭제 대상: `postgres_data/`, `*.db`, `flask_session/`
+    - Symlink 안전 처리 (링크 자체만 삭제)
+    - 'yes' 전체 입력 확인 프롬프트 (CleanCommand와 다른 엄격한 정책)
+
 ---
 
 ## Recent Updates (Last 30 Days)
@@ -97,6 +105,8 @@
 | 2025-11-09 | Race Condition Monitoring (Issue #38 Phase 4.2.1) | ✅ Phase 4.2.1 | record_manager.py, position_manager.py | 구조화된 로그 추가: `RACE_CONDITION_DETECTED` 키워드로 duplicate Trade 및 Position lock skip 이벤트 모니터링. Pipe-separated format (CloudWatch 호환). |
 | 2025-11-07 | Position Row-Level Locking (Issue #38 Phase 2) | ✅ Phase 2 | position_manager.py | Position 업데이트에 Row-Level Lock 추가 (`with_for_update(skip_locked=True)`). Lock 경합 시 graceful skip으로 블로킹 방지. OpenOrder 패턴 따름. |
 | 2025-11-07 | Trade Duplicate Prevention (Issue #38 Phase 1) | ✅ Phase 1 | models.py, record_manager.py | Trade 모델에 UNIQUE 제약 `(strategy_account_id, exchange_order_id)` 추가. WebSocket과 Scheduler 동시 처리 시 중복 생성 차단: Application-level 체크 → DB-level 제약 → IntegrityError graceful handling |
+| 2025-11-07 | STOP_MARKET SSE Event Fix | ✅ Phase 1 | exchange.py | Issue #40: Exchange Layer 응답에 `limit_price`, `stop_price` 필드 추가 (STOP_MARKET/STOP_LIMIT SSE 정상화) |
+| 2025-11-07 | Failed Order Decimal JSON Serialization | ✅ Phase 1 | failed_order_manager.py | Issue #39: create_failed_order() order_params Decimal→float 변환 (PostgreSQL JSON 호환성) |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
 | 2025-11-05 | Background Order Cleanup SSE Events | ✅ Complete | order_manager.py | 포지션 페이지 실시간 업데이트 (취소/만료 주문) - Issue #35 해결 |
 | 2025-11-05 | Order Cancellation Error Handling | ✅ Phase 1 | order_manager.py | Binance Error -2011 (Unknown order) 처리: 재조회 → 정합성 복구 또는 FailedOrder 추가 (Issue #32) |
@@ -233,6 +243,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-07*
+*Last Updated: 2025-11-09*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
 *Total Lines: ~215 (목표 범위 내)*

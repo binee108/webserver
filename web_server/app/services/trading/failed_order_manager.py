@@ -110,7 +110,17 @@ class FailedOrderManager:
             market_type=order_params.get('market_type', 'FUTURES'),
             reason=reason[:100],  # 최대 100자
             exchange_error=sanitized_error,
-            order_params=order_params,
+            # Issue #39: Decimal → float 변환 (PostgreSQL JSON 직렬화 호환)
+            # Pattern: create_failed_cancellation() 참조 (동일한 변환 로직)
+            order_params={
+                'symbol': order_params.get('symbol'),
+                'side': order_params.get('side'),
+                'order_type': order_params.get('order_type'),
+                'quantity': float(order_params.get('quantity')) if order_params.get('quantity') else None,
+                'price': float(order_params.get('price')) if order_params.get('price') else None,
+                'stop_price': float(order_params.get('stop_price')) if order_params.get('stop_price') else None,
+                'market_type': order_params.get('market_type', 'FUTURES')
+            },
             status='pending_retry',
             retry_count=0
         )
