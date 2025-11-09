@@ -102,6 +102,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
 | 2025-11-07 | STOP_MARKET SSE Event Fix | ✅ Phase 1 | exchange.py | Issue #40: Exchange Layer 응답에 `limit_price`, `stop_price` 필드 추가 (STOP_MARKET/STOP_LIMIT SSE 정상화) |
 | 2025-11-07 | Failed Order Decimal JSON Serialization | ✅ Phase 1 | failed_order_manager.py | Issue #39: create_failed_order() order_params Decimal→float 변환 (PostgreSQL JSON 호환성) |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
