@@ -179,12 +179,32 @@ class RecordManager:
                 }
 
             except IntegrityError as e:
-                # ✅ DB-level 중복 방지 (Race Condition 대응)
+                # DB-level 중복 방지 (Race Condition 대응) @ISSUE:38
+                # models.Trade의 UNIQUE 제약 (strategy_account_id, exchange_order_id) 위반
+                # WebSocket과 Scheduler가 동일 주문을 동시 처리할 때 발생 가능
+                # 처리 흐름: Rollback → 기존 Trade 조회 → 기존 Trade ID 반환 (멱등성 보장)
                 if 'unique_order_per_account' in str(e).lower() or 'duplicate' in str(e).lower():
                     db.session.rollback()
+
+                    # @FEAT:race-condition-monitoring @COMP:service @TYPE:core @ISSUE:38
+                    # Structured monitoring log: duplicate Trade creation detected via UNIQUE constraint
+                    # Format: Pipe-separated key=value for CloudWatch Logs Insights parsing
+                    logger.warning(
+                        f"RACE_CONDITION_DETECTED | "
+                        f"event=duplicate_trade | "
+                        f"order_id={order_id} | "
+                        f"symbol={symbol} | "
+                        f"side={side_upper} | "
+                        f"quantity={quantity_float} | "
+                        f"price={price_float} | "
+                        f"strategy_account_id={strategy_account.id} | "
+                        f"defense=unique_constraint | "
+                        f"source=record_manager"
+                    )
                     logger.info(
-                        f"✅ 중복 Trade 방지 (DB-level): order_id={order_id}, "
-                        f"error={str(e)}"
+                        f"🔒 동시 Trade 생성 충돌 감지 (UNIQUE 제약): "
+                        f"exchange_order_id={order_id}, "
+                        f"strategy_account_id={strategy_account.id}"
                     )
 
                     # 이미 생성된 레코드 조회

@@ -330,7 +330,20 @@ class StrategyPosition(db.Model):
         return f'<StrategyPosition {self.symbol}: {self.quantity}>'
 
 class Trade(db.Model):
-    """거래 기록 테이블"""
+    """거래 기록 테이블
+
+    WebSocket과 Scheduler가 동일한 주문 체결을 동시 처리할 때 Trade 중복 생성을 방지합니다.
+    (strategy_account_id, exchange_order_id) UNIQUE 제약으로 DB-level 원자성 보장합니다.
+
+    Race Condition 방어 전략:
+    1. Application-level: 기존 Trade 조회 (빠른 체크)
+    2. DB-level: UNIQUE 제약 (동시 INSERT 차단)
+    3. IntegrityError handling: 기존 Trade 반환 (멱등성 보장)
+
+    Related: Issue #38 - Trade 중복 생성 및 Position 수량 오류
+
+    @FEAT:order-tracking @COMP:model @TYPE:core @ISSUE:38
+    """
     __tablename__ = 'trades'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -347,6 +360,12 @@ class Trade(db.Model):
     fee = db.Column(db.Float, nullable=True)  # 거래 수수료
     is_entry = db.Column(db.Boolean, nullable=True)  # 진입/청산 여부
     market_type = db.Column(db.String(10), nullable=False, default=MarketType.SPOT)  # 마켓 타입: SPOT 또는 FUTURES
+
+    # UNIQUE 제약 조건: 계정당 주문 ID 중복 방지 (Race Condition 대응)
+    __table_args__ = (
+        db.UniqueConstraint('strategy_account_id', 'exchange_order_id',
+                          name='unique_order_per_account'),
+    )
 
     def __repr__(self):
         return f'<Trade {self.symbol} {self.side} {self.quantity} @ {self.price} ({self.market_type})>'

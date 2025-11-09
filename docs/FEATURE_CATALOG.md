@@ -103,6 +103,9 @@
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
+| 2025-11-09 | Race Condition Monitoring (Issue #38 Phase 4.2.1) | ✅ Phase 4.2.1 | record_manager.py, position_manager.py | 구조화된 로그 추가: `RACE_CONDITION_DETECTED` 키워드로 duplicate Trade 및 Position lock skip 이벤트 모니터링. Pipe-separated format (CloudWatch 호환). |
+| 2025-11-07 | Position Row-Level Locking (Issue #38 Phase 2) | ✅ Phase 2 | position_manager.py | Position 업데이트에 Row-Level Lock 추가 (`with_for_update(skip_locked=True)`). Lock 경합 시 graceful skip으로 블로킹 방지. OpenOrder 패턴 따름. |
+| 2025-11-07 | Trade Duplicate Prevention (Issue #38 Phase 1) | ✅ Phase 1 | models.py, record_manager.py | Trade 모델에 UNIQUE 제약 `(strategy_account_id, exchange_order_id)` 추가. WebSocket과 Scheduler 동시 처리 시 중복 생성 차단: Application-level 체크 → DB-level 제약 → IntegrityError graceful handling |
 | 2025-11-07 | STOP_MARKET SSE Event Fix | ✅ Phase 1 | exchange.py | Issue #40: Exchange Layer 응답에 `limit_price`, `stop_price` 필드 추가 (STOP_MARKET/STOP_LIMIT SSE 정상화) |
 | 2025-11-07 | Failed Order Decimal JSON Serialization | ✅ Phase 1 | failed_order_manager.py | Issue #39: create_failed_order() order_params Decimal→float 변환 (PostgreSQL JSON 호환성) |
 | 2025-11-07 | Scheduler FILLED Path SSE Events | ✅ Phase 1 | event_emitter.py | Scheduler 경로 FILLED 이벤트 발송 보장: remaining=0 케이스 처리 (Issue #37) |
@@ -241,6 +244,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-05*
+*Last Updated: 2025-11-09*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
 *Total Lines: ~215 (목표 범위 내)*
