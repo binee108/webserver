@@ -185,6 +185,22 @@ class RecordManager:
                 # 처리 흐름: Rollback → 기존 Trade 조회 → 기존 Trade ID 반환 (멱등성 보장)
                 if 'unique_order_per_account' in str(e).lower() or 'duplicate' in str(e).lower():
                     db.session.rollback()
+
+                    # @FEAT:race-condition-monitoring @COMP:service @TYPE:core @ISSUE:38
+                    # Structured monitoring log: duplicate Trade creation detected via UNIQUE constraint
+                    # Format: Pipe-separated key=value for CloudWatch Logs Insights parsing
+                    logger.warning(
+                        f"RACE_CONDITION_DETECTED | "
+                        f"event=duplicate_trade | "
+                        f"order_id={order_id} | "
+                        f"symbol={symbol} | "
+                        f"side={side_upper} | "
+                        f"quantity={quantity_float} | "
+                        f"price={price_float} | "
+                        f"strategy_account_id={strategy_account.id} | "
+                        f"defense=unique_constraint | "
+                        f"source=record_manager"
+                    )
                     logger.info(
                         f"🔒 동시 Trade 생성 충돌 감지 (UNIQUE 제약): "
                         f"exchange_order_id={order_id}, "

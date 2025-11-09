@@ -763,9 +763,20 @@ class PositionManager:
 
                 if position_exists:
                     # 케이스 2: 락 경합 - graceful skip (블로킹 없음)
+                    # @FEAT:race-condition-monitoring @COMP:service @TYPE:core @ISSUE:38
+                    # Structured monitoring log: Position lock contention detected (skip_locked applied)
+                    # Format: Pipe-separated key=value for CloudWatch Logs Insights parsing
                     logger.warning(
-                        f"⏭️ 포지션 업데이트 스킵 (락 경합): "
-                        f"symbol={symbol}, strategy_account_id={strategy_account_id}"
+                        f"RACE_CONDITION_DETECTED | "
+                        f"event=position_lock_skip | "
+                        f"order_id=N/A | "
+                        f"symbol={symbol} | "
+                        f"side={side} | "
+                        f"quantity={quantity} | "
+                        f"price={price} | "
+                        f"strategy_account_id={strategy_account_id} | "
+                        f"defense=row_lock_skip | "
+                        f"source=position_manager"
                     )
                     return {
                         'success': True,
