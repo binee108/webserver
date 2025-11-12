@@ -2030,6 +2030,14 @@ class OrderManager:
                                                 f"✅ OpenOrder 업데이트 완료: order_id={locked_order.exchange_order_id}, "
                                                 f"order_type=LIMIT, stop_price=None, 다음 사이클에서 추적 재개"
                                             )
+
+                                            # 성공 시 캐시 초기화
+                                            if locked_order.exchange_order_id in self.fetch_failure_cache:
+                                                del self.fetch_failure_cache[locked_order.exchange_order_id]
+                                                logger.debug(
+                                                    f"🧹 fetch_failure_cache 정리: order_id={locked_order.exchange_order_id}"
+                                                )
+
                                             total_updated += 1
                                             continue  # 이 주문은 처리 완료, 다른 상태 체크 스킵
 
@@ -2202,12 +2210,12 @@ class OrderManager:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
 
-                                # Phase 2: 변환된 LIMIT 주문 추적 로그
+                                # Phase 2: LIMIT 주문 추적 로그
                                 # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
                                 # Phase 1에서 STOP_LIMIT → LIMIT으로 변환된 주문이 배치 쿼리에 포함되는지 확인
                                 if locked_order.order_type == 'LIMIT' and status in ['NEW', 'OPEN', 'PARTIALLY_FILLED']:
                                     logger.debug(
-                                        f"📍 변환된 LIMIT 주문 배치 조회 확인: order_id={locked_order.exchange_order_id}, "
+                                        f"📍 LIMIT 주문 배치 조회 확인: order_id={locked_order.exchange_order_id}, "
                                         f"symbol={locked_order.symbol}, status={status}, "
                                         f"price={locked_order.price}"
                                     )
@@ -2413,12 +2421,11 @@ class OrderManager:
                 market_type=locked_order.strategy_account.strategy.market_type
             )
 
-            # Phase 2: 체결 처리 완료 로그 (변환된 주문 추적용)
+            # Phase 2: 체결 처리 완료 로그 (LIMIT 주문 추적용)
             if locked_order.order_type == 'LIMIT' and fill_summary.get('success'):
-                logger.info(
-                    f"✅ 변환된 LIMIT 주문 체결 처리 완료: "
+                logger.debug(
+                    f"✅ LIMIT 주문 체결 처리 완료: "
                     f"order_id={locked_order.exchange_order_id}, "
-                    f"원래 타입: STOP_LIMIT (활성화됨), "
                     f"trade_id={fill_summary.get('trade_id')}"
                 )
 
