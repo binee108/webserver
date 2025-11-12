@@ -146,7 +146,16 @@ class QuantityCalculator:
         stop_price: Optional[Decimal] = None,
         side: Optional[str] = None,
     ) -> Decimal:
-        """Return the order quantity derived from allocated capital."""
+        """Return the order quantity derived from allocated capital.
+
+        Args:
+            qty_per: Allocation percentage. Positive values (>0) for entry orders
+                     (no upper limit, supports leverage >100%). Negative values (<0)
+                     trigger position liquidation logic.
+
+        Returns:
+            Decimal: Calculated order quantity, or Decimal('0') if validation fails.
+        """
         try:
             qty_per_decimal = Decimal(str(qty_per))
 
@@ -163,10 +172,6 @@ class QuantityCalculator:
                     stop_price=stop_price,
                     side=side
                 )
-
-            if qty_per_decimal > 100:
-                logger.error("qty_per 범위 오류: %s%% (0-100 필요)", qty_per_decimal)
-                return Decimal('0')
 
             if qty_per_decimal == 0:
                 return Decimal('0')
@@ -272,8 +277,12 @@ class QuantityCalculator:
         stop_price: Optional[Decimal] = None,
         side: Optional[str] = None,
     ) -> Decimal:
-        """Convert qty_per into an absolute quantity for entry or exit."""
-        # NOTE: 현재 미사용 - 향후 청산 로직에 활용 예정
+        """Convert qty_per into an absolute quantity for entry or exit.
+
+        Handles both positive qty_per (entry orders, unlimited %) and negative
+        qty_per (position liquidation, capped at -100%).
+        """
+        # NOTE: 청산 로직에서 사용 중 (calculate_order_quantity Line 154-165 참조)
         try:
             qty_per_decimal = Decimal(str(qty_per))
         except (InvalidOperation, ValueError, TypeError) as exc:
@@ -308,10 +317,6 @@ class QuantityCalculator:
                 raise QuantityCalculationError('스탑 가격 형식이 올바르지 않습니다.') from exc
 
         if qty_per_decimal > 0:
-            if qty_per_decimal > Decimal('100'):
-                logger.error("qty_per 범위 오류: %s%% (0-100 범위 필요)", qty_per_decimal)
-                raise QuantityCalculationError('수량 비율은 0~100% 사이여야 합니다.')
-
             quantity = self.calculate_order_quantity(
                 strategy_account=strategy_account,
                 qty_per=qty_per_decimal,
