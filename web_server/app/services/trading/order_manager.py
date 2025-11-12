@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +38,12 @@ class OrderManager:
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
         self.db = db.session  # SQLAlchemy session for queries
+
+        # Phase 2: STOP_LIMIT fetch_order 실패 추적 캐시
+        # @FEAT:stop-limit-activation @COMP:service @TYPE:helper @ISSUE:45
+        # fetch_order() 연속 3회 실패 감지용 메모리 캐시
+        # 형식: {order_id: failure_count}
+        self.fetch_failure_cache: Dict[str, int] = {}
 
     def create_order(self, strategy_id: int, symbol: str, side: str,
                     quantity: Decimal, order_type: str = 'MARKET',
@@ -1717,6 +1723,120 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ CANCELLING 주문 정리 실패: {e}")
 
+    # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:helper
+    # Phase 3: STOP 주문 활성화 감지 헬퍼 함수 (거래소 중립적 - Option C)
+    def _handle_stop_order_activation(self, locked_order, exchange_order_dict):
+        """
+        STOP 주문 활성화 처리 (거래소 중립적 - Option C: Graceful Degradation)
+
+        Exchange 계층에서 정규화된 is_stop_order_activated 필드를 사용하여
+        활성화 여부를 판단하고, DB 업데이트를 수행합니다.
+
+        Option C Strategy:
+        - is_activated == True: Exchange 계층이 감지 (캐시 Hit)
+        - is_activated == None: 캐시 미스, fallback 로직 수행
+        - is_activated == False: 미활성화 (현재 미사용)
+
+        Args:
+            locked_order: OpenOrder 인스턴스 (with_for_update)
+            exchange_order_dict: Exchange 계층이 반환한 정규화된 dict
+
+        Returns:
+            bool: 활성화 처리 완료 여부
+        """
+        is_activated = exchange_order_dict.get('is_stop_order_activated')
+
+        if is_activated is True:
+            # Exchange 계층이 활성화 감지함 (캐시 Hit)
+            logger.info(
+                f"✅ STOP 주문 활성화 감지 (Exchange): order_id={locked_order.exchange_order_id}, "
+                f"stop_price={locked_order.stop_price} 도달, "
+                f"order_type={locked_order.order_type}→{exchange_order_dict.get('order_type')}"
+            )
+
+            # DB 업데이트
+            locked_order.order_type = exchange_order_dict.get('order_type')
+            locked_order.stop_price = None
+
+            if exchange_order_dict.get('limit_price'):
+                locked_order.price = exchange_order_dict.get('limit_price')
+
+            locked_order.is_processing = False
+            locked_order.processing_started_at = None
+
+            db.session.flush()
+            return True
+
+        elif is_activated is None:
+            # Option C: Graceful Degradation - 캐시 미스 시 fallback
+            # Exchange 계층이 None 반환 → order_manager가 직접 비교
+            if locked_order.order_type == 'STOP_LIMIT' and exchange_order_dict.get('order_type') == 'LIMIT':
+                logger.info(
+                    f"✅ STOP_LIMIT 활성화 감지 (Fallback): order_id={locked_order.exchange_order_id}, "
+                    f"stop_price={locked_order.stop_price} 도달, LIMIT으로 변환"
+                )
+
+                locked_order.order_type = 'LIMIT'
+                locked_order.stop_price = None
+
+                if exchange_order_dict.get('limit_price'):
+                    locked_order.price = exchange_order_dict.get('limit_price')
+
+                locked_order.is_processing = False
+                locked_order.processing_started_at = None
+
+                db.session.flush()
+                return True
+
+        return False
+
+    # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:helper
+    # Phase 6.1: LIMIT 또는 활성화된 STOP_LIMIT 처리 판단 헬퍼 함수
+    def _should_track_as_limit(self, order: Union[Dict[str, Any], 'OpenOrder']) -> bool:
+        """
+        LIMIT 주문 또는 활성화된 STOP_LIMIT을 LIMIT으로 처리할지 판단
+
+        활성화된 STOP_LIMIT 주문은 거래소 내부적으로 LIMIT 주문과 동일하게
+        동작하므로, 동일한 추적 로직을 적용합니다.
+
+        Args:
+            order: Order 인스턴스 또는 dict (정규화된 Exchange 응답)
+
+        Returns:
+            bool: LIMIT으로 처리해야 하면 True
+
+        Examples:
+            >>> order = {'order_type': 'LIMIT', ...}
+            >>> _should_track_as_limit(order)
+            True
+
+            >>> order = {'order_type': 'STOP_LIMIT', 'is_stop_order_activated': True}
+            >>> _should_track_as_limit(order)
+            True
+
+            >>> order = {'order_type': 'STOP_LIMIT', 'is_stop_order_activated': False}
+            >>> _should_track_as_limit(order)
+            False
+
+            >>> order = {'order_type': 'MARKET', ...}
+            >>> _should_track_as_limit(order)
+            False
+
+            >>> # Fallback scenario: is_activated=None (캐시 미스)
+            >>> order = {'order_type': 'LIMIT', 'is_stop_order_activated': None}
+            >>> _should_track_as_limit(order)
+            True  # order_type='LIMIT'이므로 활성화 상태와 무관
+        """
+        # dict 또는 Order 인스턴스 모두 처리
+        order_type = order.get('order_type') if isinstance(order, dict) else order.order_type
+        is_activated = order.get('is_stop_order_activated') if isinstance(order, dict) else getattr(order, 'is_stop_order_activated', None)
+
+        # LIMIT 주문이거나, 활성화된 STOP_LIMIT 주문
+        return (
+            order_type == 'LIMIT' or
+            (order_type == 'STOP_LIMIT' and is_activated is True)
+        )
+
     # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:5
     # Phase 5: DB-거래소 상태 일관성 검증 및 자동 동기화 (29초 주기)
     def update_open_orders_status(self) -> None:
@@ -1919,6 +2039,15 @@ class OrderManager:
                         f"거래소 주문 수={len(exchange_orders_map)}, DB 주문 수={len(db_orders)}"
                     )
 
+                    # Phase 2: 배치 쿼리 검증 강화
+                    # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+                    # 배치 쿼리 결과 DEBUG 로그 추가 (Phase 1에서 변환된 LIMIT 주문 포함 여부 확인)
+                    logger.debug(
+                        f"📊 배치 쿼리 결과 상세: account={account.name}, "
+                        f"거래소 응답 주문 수={len(exchange_orders_map)}개, "
+                        f"DB 미추적 주문 감지 시 fetch_order() 개별 조회 수행 준비 완료"
+                    )
+
                     # Step 3-5: DB 주문과 거래소 응답 비교
                     for db_order in db_orders:
                         try:
@@ -1947,18 +2076,22 @@ class OrderManager:
 
                             if not exchange_order:
                                 # ============================================================
-                                # @FEAT:order-tracking @COMP:service @TYPE:core @ISSUE:30
+                                # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:30,45
                                 # @DEPS:exchange-api
                                 # LIMIT Order Fill Processing Bug Fix (Issue #30)
+                                # STOP_LIMIT Activation Detection (Issue #45)
                                 # ============================================================
                                 # 문제: Binance get_open_orders()는 FILLED 주문을 반환하지 않음.
-                                #       백그라운드 스케줄러가 배치 쿼리에서 찾지 못한 주문을
-                                #       확인 없이 삭제하여 Trade/Position 기록이 미생성됨.
+                                #       또한 STOP_LIMIT 주문이 활성화되면 LIMIT으로 변환되는데,
+                                #       배치 쿼리에서 찾지 못한 주문을 확인 없이 삭제하여
+                                #       Trade/Position 기록이 미생성됨.
                                 #
                                 # 원인: Binance API 정상 동작 - get_open_orders()는
                                 #       NEW/PARTIALLY_FILLED만 반환, FILLED는 응답에서 제외.
+                                #       STOP_LIMIT 활성화 시 order_type이 LIMIT으로 변환됨.
                                 #
                                 # 해결: fetch_order()로 개별 조회하여 최종 상태 확인:
+                                #       - STOP_LIMIT 활성화(→LIMIT) → order_type 업데이트, 주문 유지
                                 #       - FILLED → _process_scheduler_fill() 호출
                                 #       - CANCELED/EXPIRED/REJECTED → 안전 삭제
                                 #       - NEW/OPEN 등 → 주문 유지, 다음 사이클 재시도
@@ -1968,6 +2101,7 @@ class OrderManager:
                                 # Step 1: 배치 쿼리에서 찾지 못한 주문 → 개별 조회로 최종 상태 확인
                                 # Binance API의 get_open_orders()는 NEW/PARTIALLY_FILLED만 반환.
                                 # FILLED 주문은 응답에 없으므로 fetch_order()로 최종 확인 필수.
+                                # STOP_LIMIT 활성화 후 LIMIT으로 변환되는 경우도 감지 필요.
                                 try:
                                     final_order = exchange_service.fetch_order(
                                         account=account,
@@ -1978,6 +2112,55 @@ class OrderManager:
 
                                     if final_order and final_order.get('success'):
                                         final_status = final_order.get('status', '').upper()
+
+                                        # ============================================================
+                                        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:core
+                                        # Phase 3: STOP 주문 활성화 감지 (거래소 중립적 - fetch_order 경로)
+                                        # ============================================================
+                                        # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
+                                        # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
+                                        activation_handled = self._handle_stop_order_activation(locked_order, final_order)
+
+                                        # LIMIT 또는 활성화된 STOP_LIMIT 추적 시작 (활성화 직후 즉시 처리)
+                                        if self._should_track_as_limit(final_order):
+                                            # 활성화 직후 FILLED 상태인 경우 즉시 체결 처리
+                                            if final_status == 'FILLED':
+                                                logger.info(
+                                                    f"✅ 체결 완료 감지: order_id={locked_order.exchange_order_id}, "
+                                                    f"side={locked_order.side}, symbol={locked_order.symbol}, "
+                                                    f"type={final_order.get('order_type')}, "
+                                                    f"activation_handled={activation_handled}"
+                                                )
+
+                                                # OpenOrder 삭제
+                                                db.session.delete(locked_order)
+                                                db.session.commit()
+                                                total_deleted += 1
+                                                continue
+
+                                            # LIMIT 추적 로직 (기존 배치 쿼리 경로와 동일)
+                                            if locked_order.price:
+                                                limit_price = locked_order.price
+                                                current_price = final_order.get('current_price')
+
+                                                if current_price and limit_price:
+                                                    logger.debug(
+                                                        f"📍 LIMIT 추적 시작: order_id={locked_order.exchange_order_id}, "
+                                                        f"limit={limit_price}, current={current_price}, "
+                                                        f"type={final_order.get('order_type')}, "
+                                                        f"is_activated={final_order.get('is_stop_order_activated')}, "
+                                                        f"activation_handled={activation_handled}"
+                                                    )
+
+                                            # 성공 시 캐시 초기화
+                                            if locked_order.exchange_order_id in self.fetch_failure_cache:
+                                                del self.fetch_failure_cache[locked_order.exchange_order_id]
+                                                logger.debug(
+                                                    f"🧹 fetch_failure_cache 정리: order_id={locked_order.exchange_order_id}"
+                                                )
+
+                                            total_updated += 1
+                                            continue  # 이 주문은 처리 완료, 다른 상태 체크 스킵
 
                                         # Step 2: FILLED 상태 → 체결 처리 (Trade/Position 생성)
                                         # _process_scheduler_fill()을 호출하여 정상적인 체결 처리 수행.
@@ -2083,11 +2266,63 @@ class OrderManager:
                                 except Exception as e:
                                     # Step 6: 네트워크 에러 등 → Fail-safe: 주문 유지
                                     # 불확실한 경우 주문을 유지하여 데이터 손실 방지, 다음 사이클 재시도.
-                                    logger.warning(
-                                        f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
-                                        f"order_id={locked_order.exchange_order_id}, "
-                                        f"error={type(e).__name__}: {str(e)}"
-                                    )
+
+                                    # Phase 2: STOP_LIMIT fetch_order 연속 실패 감지 및 Telegram 알림
+                                    # @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+                                    if locked_order.order_type == 'STOP_LIMIT':
+                                        # 실패 횟수 추적
+                                        order_id = locked_order.exchange_order_id
+                                        current_failure_count = self.fetch_failure_cache.get(order_id, 0) + 1
+                                        self.fetch_failure_cache[order_id] = current_failure_count
+
+                                        logger.warning(
+                                            f"⚠️ STOP_LIMIT 활성화 감지 실패 (fetch_order 실패 {current_failure_count}/3): "
+                                            f"order_id={order_id}, "
+                                            f"stop_price={locked_order.stop_price}, "
+                                            f"error={type(e).__name__}: {str(e)}"
+                                        )
+
+                                        # 연속 3회 실패 시 ERROR 로그 + Telegram 알림
+                                        if current_failure_count >= 3:
+                                            error_msg = (
+                                                f"CRITICAL: STOP_LIMIT 활성화 감지 실패, "
+                                                f"order_id={order_id}, "
+                                                f"수동 확인 필요"
+                                            )
+                                            logger.error(error_msg)
+
+                                            # Telegram 알림 전송
+                                            try:
+                                                if self.service and hasattr(self.service, 'notify_service'):
+                                                    self.service.notify_service.send_telegram(
+                                                        title="⚠️ Issue #45: STOP_LIMIT 활성화 감지 실패",
+                                                        message=(
+                                                            f"Order ID: {order_id}\n"
+                                                            f"Stop Price: {locked_order.stop_price}\n"
+                                                            f"상태: fetch_order 3회 연속 실패, 수동 확인 필요"
+                                                        ),
+                                                        level="ERROR"
+                                                    )
+                                                else:
+                                                    logger.warning(
+                                                        f"⚠️ Telegram 알림 전송 불가 (notify_service 미사용): "
+                                                        f"order_id={order_id}"
+                                                    )
+                                            except Exception as notify_error:
+                                                logger.warning(
+                                                    f"⚠️ Telegram 알림 전송 실패 (계속 진행): "
+                                                    f"order_id={order_id}, error={notify_error}"
+                                                )
+
+                                            # 캐시 초기화 (재알림 방지)
+                                            self.fetch_failure_cache[order_id] = 0
+                                    else:
+                                        logger.warning(
+                                            f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
+                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"error={type(e).__name__}: {str(e)}"
+                                        )
+
                                     # 주문 유지 (삭제하지 않음)
                                     locked_order.is_processing = False
                                     locked_order.processing_started_at = None
@@ -2095,6 +2330,29 @@ class OrderManager:
                             else:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
+
+                                # ============================================================
+                                # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:core
+                                # Phase 3: STOP 주문 활성화 감지 (거래소 중립적 - 배치 쿼리 경로)
+                                # ============================================================
+                                # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
+                                # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
+                                activation_handled = self._handle_stop_order_activation(locked_order, exchange_order)
+
+                                # LIMIT 또는 활성화된 STOP_LIMIT 추적 시작/재개
+                                if self._should_track_as_limit(exchange_order):
+                                    if locked_order.price:
+                                        limit_price = locked_order.price
+                                        current_price = exchange_order.get('current_price')
+
+                                        if current_price and limit_price:
+                                            logger.debug(
+                                                f"📍 LIMIT 추적 확인: order_id={locked_order.exchange_order_id}, "
+                                                f"limit={limit_price}, current={current_price}, "
+                                                f"type={exchange_order.get('order_type')}, "
+                                                f"is_activated={exchange_order.get('is_stop_order_activated')}, "
+                                                f"activation_handled={activation_handled}"
+                                            )
 
                                 # @FEAT:order-tracking @COMP:job @TYPE:core
                                 # Phase 2: 체결 처리 추가 (FILLED/PARTIALLY_FILLED)
@@ -2276,6 +2534,17 @@ class OrderManager:
             # ✅ 공통 로직: order_info → order_result 포맷 변환
             order_result = self._convert_exchange_order_to_result(exchange_order, locked_order)
 
+            # Phase 2: 변환된 LIMIT 주문 체결 처리 로그 강화
+            # @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+            # STOP_LIMIT에서 변환된 LIMIT 주문도 이 경로로 체결 처리됨
+            if locked_order.order_type == 'LIMIT':
+                logger.debug(
+                    f"📊 LIMIT 주문 체결 처리: order_id={locked_order.exchange_order_id}, "
+                    f"symbol={locked_order.symbol}, "
+                    f"filled_quantity={exchange_order.get('filled_quantity')}, "
+                    f"average_price={exchange_order.get('average_price')}"
+                )
+
             fill_summary = trading_service.position_manager.process_order_fill(
                 strategy_account=locked_order.strategy_account,
                 order_id=locked_order.exchange_order_id,
@@ -2285,6 +2554,14 @@ class OrderManager:
                 order_result=order_result,
                 market_type=locked_order.strategy_account.strategy.market_type
             )
+
+            # Phase 2: 체결 처리 완료 로그 (LIMIT 주문 추적용)
+            if locked_order.order_type == 'LIMIT' and fill_summary.get('success'):
+                logger.debug(
+                    f"✅ LIMIT 주문 체결 처리 완료: "
+                    f"order_id={locked_order.exchange_order_id}, "
+                    f"trade_id={fill_summary.get('trade_id')}"
+                )
 
             return fill_summary
 

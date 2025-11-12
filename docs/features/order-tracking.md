@@ -461,6 +461,239 @@ Optimistic INSERT:
 
 ---
 
+## 8.9. Issue #45 해결: STOP_LIMIT 활성화 감지 및 추적 (2025-11-12 Phase 1, 2, 3)
+
+### 문제
+STOP_LIMIT 주문이 stop_price 도달로 활성화되면, 거래소에서 자동으로 LIMIT 주문으로 변환됩니다. 그러나 시스템의 `update_open_orders_status()` 배치 쿼리는 `order_type=STOP_LIMIT`으로 검색하기 때문에, 변환된 LIMIT 주문을 찾지 못하고 "취소됨"으로 오판하여 삭제하고 있었습니다. 그 결과 거래소에는 LIMIT 주문이 대기 중이지만 시스템에서는 추적이 불가능한 고아 주문(orphan order)이 발생했습니다.
+
+### Phase 1: STOP_LIMIT 활성화 감지 (ed09503)
+**위치**: `order_manager.py:1963-2070` (STOP_LIMIT 활성화 감지 로직)
+
+**구현 내용**:
+```python
+# Step 1: 배치 쿼리에서 찾지 못한 주문 → fetch_order() 개별 조회
+if not exchange_order:
+    final_order = exchange_service.fetch_order(...)
+
+    # Step 1-A: STOP_LIMIT 활성화 감지
+    if locked_order.order_type == 'STOP_LIMIT' and final_order_type == 'LIMIT':
+        logger.info(f"✅ STOP_LIMIT 활성화 감지: stop_price={stop_price} 도달")
+        # order_type: STOP_LIMIT → LIMIT
+        # stop_price: None (활성화 후 불필요)
+        # OpenOrder 유지 (삭제하지 않음)
+```
+
+**해결 결과**:
+- STOP_LIMIT 활성화 시 시스템이 order_type을 LIMIT으로 업데이트
+- 변환된 LIMIT 주문이 배치 쿼리에 정상 포함
+- 다음 사이클에서 지속적으로 추적 가능
+
+### Phase 2: 활성화 후 LIMIT 추적 강화 (c7a1171)
+**위치**: `order_manager.py:1836-1920` (배치 쿼리), `order_manager.py:1984-2035` (FILLED 처리)
+
+**검증 내용**:
+1. **배치 쿼리**: 활성화된 LIMIT 주문이 다음 배치 쿼리에서 정상 조회됨 확인
+2. **체결 처리**: FILLED 감지 시 `_process_scheduler_fill()` 호출로 Trade/Position 생성 확인
+3. **로깅**: INFO 레벨로 STOP_LIMIT 활성화 감지, 체결 완료 메시지 출력
+
+**해결 결과**:
+- 활성화된 LIMIT 주문의 지속적 추적 보장
+- 체결 시 Trade/Position 정상 생성
+- Issue #30과 일관된 처리 패턴 적용
+
+### Phase 3: STOP_MARKET 안정성 확인 및 문서화 (현재)
+**특징**: STOP_MARKET 주문은 활성화 즉시 MARKET 실행되어 즉시 체결되므로 Issue #45 문제가 발생하지 않습니다. (Phase 3에서 검증 완료)
+
+**처리 흐름**:
+1. stop_price 도달 → 거래소가 즉시 MARKET 실행
+2. MARKET 주문 → 즉시 FILLED 상태
+3. FILLED → 배치 쿼리 또는 WebSocket에서 감지
+4. OpenOrder 삭제, Trade/Position 생성
+
+**Impact**: STOP_MARKET은 Issue #45 영향 없음, 코드 변경 불필요
+
+---
+
+## 9. 주문 타입별 처리 흐름 (Order Type Processing Flows)
+
+### 9.1. MARKET Order (즉시 체결)
+
+**특징**:
+- 발송 직후 거래소에서 즉시 체결
+- FILLED 상태로 변환
+- 배치 쿼리: 응답 제외 (FILLED는 배치에 미포함)
+- WebSocket: 1회 이벤트 → 즉시 체결 감지
+
+**처리 흐름**:
+```
+1. OrderManager.execute(MARKET)
+   ↓
+2. 거래소 즉시 응답: FILLED
+   ↓
+3. OpenOrder INSERT + WebSocket 구독 시작
+   ↓
+4. WebSocket 이벤트: FILLED 감지
+   ↓
+5. _finalize_order_update() 호출
+   ├─ Trade/TradeExecution 생성
+   ├─ StrategyPosition 업데이트
+   └─ OpenOrder 삭제
+   ↓
+6. SSE 이벤트 발송 (프론트엔드 업데이트)
+```
+
+**Issue #45와의 관계**: 영향 없음 (즉시 체결로 추적 손실 불가능)
+
+---
+
+### 9.2. LIMIT Order (조건부 체결)
+
+**특징**:
+- 가격 조건 만족 시 체결
+- 미체결 상태: NEW → PARTIALLY_FILLED (부분 체결)
+- 배치 쿼리: 정상 포함 (NEW/PARTIALLY_FILLED 검색)
+- WebSocket: 부분/완전 체결 시 반복 이벤트
+
+**처리 흐름**:
+```
+1. OrderManager.execute(LIMIT)
+   ↓
+2. 거래소 응답: NEW (대기 상태)
+   ↓
+3. OpenOrder INSERT (status=NEW)
+   ↓
+4. 배치 쿼리: 29초마다 상태 동기화
+   └─ order_type=LIMIT → 정상 검색
+   ↓
+5. WebSocket 이벤트: 부분/완전 체결
+   ├─ PARTIALLY_FILLED → filled_quantity 업데이트
+   └─ FILLED → Trade 생성
+   ↓
+6. 체결 완료: OpenOrder 삭제
+```
+
+**Issue #45와의 관계**: 영향 없음 (배치 쿼리에 정상 포함)
+
+---
+
+### 9.3. STOP_LIMIT Order (활성화 후 조건부 체결) ⭐ Issue #45 핵심
+
+**특징**:
+- Phase 1: 대기 상태 (stop_price 미도달)
+  - 거래소: NEW 상태 유지, order_type=STOP_LIMIT
+  - 배치 쿼리: order_type=STOP_LIMIT로 검색 ✅
+
+- Phase 2: 활성화 상태 (stop_price 도달)
+  - 거래소: order_type 자동 변환 (STOP_LIMIT → LIMIT)
+  - **문제 (Issue #45)**: 배치 쿼리가 order_type=STOP_LIMIT로 검색하므로 찾을 수 없음
+  - **해결 (Phase 1)**: `fetch_order()` 개별 조회로 LIMIT 변환 감지 → order_type 업데이트
+
+- Phase 3: 체결 대기 (limit_price 조건 대기)
+  - 거래소: LIMIT 주문으로 처리, NEW/PARTIALLY_FILLED 상태
+  - 배치 쿼리: 업데이트된 order_type=LIMIT으로 검색 ✅
+  - 체결: FILLED → Trade 생성
+
+**처리 흐름**:
+```
+1. OrderManager.execute(STOP_LIMIT)
+   ├─ stop_price=50000 (손절 가격)
+   └─ limit_price=49900 (지정가)
+   ↓
+2. 거래소 응답: NEW (대기), order_type=STOP_LIMIT
+   ↓
+3. OpenOrder INSERT (order_type=STOP_LIMIT)
+   ↓
+4. 배치 쿼리: order_type=STOP_LIMIT로 검색 ✅
+   ↓
+5. [stop_price 도달 시점]
+   ↓
+6. 거래소: order_type 변환 (STOP_LIMIT → LIMIT)
+   ↓
+7. 배치 쿼리: order_type=STOP_LIMIT로 검색
+   └─ ❌ 찾을 수 없음!
+   ↓
+8. fetch_order() 개별 조회 (Phase 1 해결)
+   ├─ 거래소 응답: order_type=LIMIT 확인
+   ├─ 시스템: order_type 업데이트 (STOP_LIMIT → LIMIT)
+   └─ OpenOrder 유지 (삭제하지 않음)
+   ↓
+9. 다음 배치 쿼리: order_type=LIMIT로 검색 ✅
+   ↓
+10. WebSocket 또는 배치 쿼리: FILLED 감지
+   ↓
+11. Trade/Position 생성
+```
+
+**로깅**:
+- INFO: "✅ STOP_LIMIT 활성화 감지: stop_price=50000 도달, LIMIT으로 변환"
+- DEBUG: "🔍 개별 조회 실행: order_id=12345"
+- WARNING: "fetch_order 실패, 다음 사이클 재시도"
+- ERROR: "CRITICAL: STOP_LIMIT 활성화 감지 실패 (연속 3회), 수동 확인 필요"
+
+**Issue #45 해결 요약**:
+- ✅ Phase 1: STOP_LIMIT 활성화 감지 구현 (fetch_order 개별 조회)
+- ✅ Phase 2: 활성화 후 LIMIT 추적 강화 (배치 쿼리 검증)
+- ✅ Phase 3: 주문 타입별 처리 흐름 문서화
+
+---
+
+### 9.4. STOP_MARKET Order (활성화 즉시 체결)
+
+**특징**:
+- stop_price 도달 → 즉시 MARKET 실행
+- MARKET 실행 → 즉시 FILLED (미체결 상태 없음)
+- 배치 쿼리: FILLED이므로 응답에 없음
+- WebSocket: 1회 이벤트로 즉시 체결 감지
+
+**처리 흐름**:
+```
+1. OrderManager.execute(STOP_MARKET)
+   └─ stop_price=50000 (손절 가격)
+   ↓
+2. 거래소 응답: NEW (대기), order_type=STOP_MARKET
+   ↓
+3. OpenOrder INSERT (order_type=STOP_MARKET)
+   ↓
+4. 배치 쿼리: order_type=STOP_MARKET로 검색 ✅
+   ↓
+5. [stop_price 도달 시점]
+   ↓
+6. 거래소: 즉시 MARKET 실행 → 즉시 FILLED
+   ↓
+7. WebSocket 이벤트: FILLED 감지 (즉시)
+   ├─ Trade/TradeExecution 생성
+   ├─ StrategyPosition 업데이트
+   └─ OpenOrder 삭제
+   ↓
+8. SSE 이벤트 발송 (프론트엔드 업데이트)
+```
+
+**특징: Issue #45 영향 없음**
+- STOP_LIMIT: 활성화 → LIMIT 변환 → **미체결 가능** → 추적 손실 위험 ⚠️
+- STOP_MARKET: 활성화 → **즉시 체결** → 추적 손실 불가능 ✅
+
+**로깅**:
+- INFO: "🔄 STOP_MARKET 주문 활성화: stop_price=50000 도달, 즉시 MARKET 실행"
+- INFO: "✅ STOP_MARKET 체결 완료: quantity=1.0, price=49950"
+
+**결론**: STOP_MARKET은 Issue #45 영향 없음, 코드 변경 불필요, 기존 로직으로 완벽 처리
+
+---
+
+### 비교표: 주문 타입별 처리 특징
+
+| 항목 | MARKET | LIMIT | STOP_LIMIT | STOP_MARKET |
+|------|--------|-------|-----------|------------|
+| **체결 시점** | 즉시 | 조건 도달 | 조건 도달 후 | 즉시 |
+| **미체결 상태** | 없음 | 가능 | 가능 | 없음 |
+| **배치 쿼리** | 미포함(FILLED) | ✅ 포함 | ✅ 대기, ✅ 활성화* | 미포함(FILLED) |
+| **Issue #45** | 무관 | 무관 | **⚠️ 영향** | **✅ 무영향** |
+| **활성화 처리** | - | - | fetch_order 감지 | 즉시 MARKET |
+
+*Phase 1 해결: fetch_order() 개별 조회로 LIMIT 변환 감지
+
+---
+
 ## 9. 유지보수 가이드
 
 ### 주의사항
@@ -580,5 +813,5 @@ grep -r "@FEAT:order-tracking" --include="*.py" | grep "@TYPE:integration"
 
 ---
 
-*Last Updated: 2025-11-05*
-*Version: 2.3.0 (Issue #36 Scheduler FILLED path OpenOrder deletion, Issue #35 Background cleanup SSE events)*
+*Last Updated: 2025-11-12*
+*Version: 2.4.0 (Issue #45 STOP_LIMIT Activation Detection Phase 1/2/3, Order Type Processing Flows Documentation)*
