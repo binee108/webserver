@@ -47,11 +47,11 @@ def upgrade(engine):
 
             # 아래는 기존 테이블 생성 로직...
 
-        # ============================================
-        # 1. PendingOrder 테이블 생성
-        # ============================================
-        print('📝 pending_orders 테이블 생성 중...')
-        conn.execute(text("""
+            # ============================================
+            # 1. PendingOrder 테이블 생성
+            # ============================================
+            print('📝 pending_orders 테이블 생성 중...')
+            conn.execute(text("""
             CREATE TABLE IF NOT EXISTS pending_orders (
                 -- 식별자
                 id SERIAL PRIMARY KEY,
@@ -77,30 +77,30 @@ def upgrade(engine):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """))
+            """))
 
-        # 인덱스 생성
-        print('📊 pending_orders 인덱스 생성 중...')
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_pending_account_symbol
-            ON pending_orders(account_id, symbol);
-        """))
+            # 인덱스 생성
+            print('📊 pending_orders 인덱스 생성 중...')
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_pending_account_symbol
+                ON pending_orders(account_id, symbol);
+            """))
 
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_pending_priority_sort
-            ON pending_orders(account_id, symbol, priority, sort_price DESC, created_at ASC);
-        """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_pending_priority_sort
+                ON pending_orders(account_id, symbol, priority, sort_price DESC, created_at ASC);
+            """))
 
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_pending_strategy
-            ON pending_orders(strategy_account_id);
-        """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_pending_strategy
+                ON pending_orders(strategy_account_id);
+            """))
 
-        # ============================================
-        # 2. OrderFillEvent 테이블 생성
-        # ============================================
-        print('📝 order_fill_events 테이블 생성 중...')
-        conn.execute(text("""
+            # ============================================
+            # 2. OrderFillEvent 테이블 생성
+            # ============================================
+            print('📝 order_fill_events 테이블 생성 중...')
+            conn.execute(text("""
             CREATE TABLE IF NOT EXISTS order_fill_events (
                 -- 식별자
                 id SERIAL PRIMARY KEY,
@@ -123,32 +123,32 @@ def upgrade(engine):
                 processed BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT NOW()
             );
-        """))
+            """))
 
-        # 인덱스 생성
-        print('📊 order_fill_events 인덱스 생성 중...')
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_fill_order_id
-            ON order_fill_events(exchange_order_id);
-        """))
+            # 인덱스 생성
+            print('📊 order_fill_events 인덱스 생성 중...')
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_fill_order_id
+                ON order_fill_events(exchange_order_id);
+            """))
 
-        # 부분 인덱스: processed = FALSE인 레코드만 인덱싱 (PostgreSQL 최적화)
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_fill_unprocessed_time
-            ON order_fill_events(event_time DESC)
-            WHERE processed = FALSE;
-        """))
+            # 부분 인덱스: processed = FALSE인 레코드만 인덱싱 (PostgreSQL 최적화)
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_fill_unprocessed_time
+                ON order_fill_events(event_time DESC)
+                WHERE processed = FALSE;
+            """))
 
-        # 전체 인덱스 (호환성 유지)
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_fill_processed
-            ON order_fill_events(processed, event_time);
-        """))
+            # 전체 인덱스 (호환성 유지)
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_fill_processed
+                ON order_fill_events(processed, event_time);
+            """))
 
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_fill_account_symbol
-            ON order_fill_events(account_id, symbol);
-        """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_fill_account_symbol
+                ON order_fill_events(account_id, symbol);
+            """))
 
             # 트랜잭션 커밋
             trans.commit()
