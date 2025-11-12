@@ -51,6 +51,19 @@ def upgrade(engine):
 
             # 아래는 기존 테이블 생성 로직...
 
+            # 참조 테이블 존재 여부 확인
+            result = conn.execute(text("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_name IN ('accounts', 'strategy_accounts')
+            """))
+            ref_tables_count = result.scalar()
+
+            if ref_tables_count < 2:
+                print(f'ℹ️  참조 테이블이 없습니다 ({ref_tables_count}/2). 외래 키 없이 테이블 생성 (초기 설치).')
+                print('    → db.create_all()이 외래 키를 포함한 전체 스키마를 생성합니다.')
+                trans.rollback()
+                return
+
             # ============================================
             # 1. PendingOrder 테이블 생성
             # ============================================
