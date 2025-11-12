@@ -39,6 +39,12 @@ class OrderManager:
         self.service = service
         self.db = db.session  # SQLAlchemy session for queries
 
+        # Phase 2: STOP_LIMIT fetch_order 실패 추적 캐시
+        # @FEAT:stop-limit-activation @COMP:service @TYPE:helper @ISSUE:45
+        # fetch_order() 연속 3회 실패 감지용 메모리 캐시
+        # 형식: {order_id: failure_count}
+        self.fetch_failure_cache: Dict[str, int] = {}
+
     def create_order(self, strategy_id: int, symbol: str, side: str,
                     quantity: Decimal, order_type: str = 'MARKET',
                     price: Optional[Decimal] = None,
@@ -1919,6 +1925,15 @@ class OrderManager:
                         f"거래소 주문 수={len(exchange_orders_map)}, DB 주문 수={len(db_orders)}"
                     )
 
+                    # Phase 2: 배치 쿼리 검증 강화
+                    # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+                    # 배치 쿼리 결과 DEBUG 로그 추가 (Phase 1에서 변환된 LIMIT 주문 포함 여부 확인)
+                    logger.debug(
+                        f"📊 배치 쿼리 결과 상세: account={account.name}, "
+                        f"거래소 응답 주문 수={len(exchange_orders_map)}개, "
+                        f"DB 미추적 주문 감지 시 fetch_order() 개별 조회 수행 준비 완료"
+                    )
+
                     # Step 3-5: DB 주문과 거래소 응답 비교
                     for db_order in db_orders:
                         try:
@@ -2123,14 +2138,55 @@ class OrderManager:
                                     # Step 6: 네트워크 에러 등 → Fail-safe: 주문 유지
                                     # 불확실한 경우 주문을 유지하여 데이터 손실 방지, 다음 사이클 재시도.
 
-                                    # STOP_LIMIT 특수 처리: 활성화 감지 실패 시 로깅 및 알림
+                                    # Phase 2: STOP_LIMIT fetch_order 연속 실패 감지 및 Telegram 알림
+                                    # @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
                                     if locked_order.order_type == 'STOP_LIMIT':
+                                        # 실패 횟수 추적
+                                        order_id = locked_order.exchange_order_id
+                                        current_failure_count = self.fetch_failure_cache.get(order_id, 0) + 1
+                                        self.fetch_failure_cache[order_id] = current_failure_count
+
                                         logger.warning(
-                                            f"⚠️ STOP_LIMIT 활성화 감지 실패 (다음 사이클 재시도): "
-                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"⚠️ STOP_LIMIT 활성화 감지 실패 (fetch_order 실패 {current_failure_count}/3): "
+                                            f"order_id={order_id}, "
                                             f"stop_price={locked_order.stop_price}, "
                                             f"error={type(e).__name__}: {str(e)}"
                                         )
+
+                                        # 연속 3회 실패 시 ERROR 로그 + Telegram 알림
+                                        if current_failure_count >= 3:
+                                            error_msg = (
+                                                f"CRITICAL: STOP_LIMIT 활성화 감지 실패, "
+                                                f"order_id={order_id}, "
+                                                f"수동 확인 필요"
+                                            )
+                                            logger.error(error_msg)
+
+                                            # Telegram 알림 전송
+                                            try:
+                                                if self.service and hasattr(self.service, 'notify_service'):
+                                                    self.service.notify_service.send_telegram(
+                                                        title="⚠️ Issue #45: STOP_LIMIT 활성화 감지 실패",
+                                                        message=(
+                                                            f"Order ID: {order_id}\n"
+                                                            f"Stop Price: {locked_order.stop_price}\n"
+                                                            f"상태: fetch_order 3회 연속 실패, 수동 확인 필요"
+                                                        ),
+                                                        level="ERROR"
+                                                    )
+                                                else:
+                                                    logger.warning(
+                                                        f"⚠️ Telegram 알림 전송 불가 (notify_service 미사용): "
+                                                        f"order_id={order_id}"
+                                                    )
+                                            except Exception as notify_error:
+                                                logger.warning(
+                                                    f"⚠️ Telegram 알림 전송 실패 (계속 진행): "
+                                                    f"order_id={order_id}, error={notify_error}"
+                                                )
+
+                                            # 캐시 초기화 (재알림 방지)
+                                            self.fetch_failure_cache[order_id] = 0
                                     else:
                                         logger.warning(
                                             f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
@@ -2145,6 +2201,16 @@ class OrderManager:
                             else:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
+
+                                # Phase 2: 변환된 LIMIT 주문 추적 로그
+                                # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+                                # Phase 1에서 STOP_LIMIT → LIMIT으로 변환된 주문이 배치 쿼리에 포함되는지 확인
+                                if locked_order.order_type == 'LIMIT' and status in ['NEW', 'OPEN', 'PARTIALLY_FILLED']:
+                                    logger.debug(
+                                        f"📍 변환된 LIMIT 주문 배치 조회 확인: order_id={locked_order.exchange_order_id}, "
+                                        f"symbol={locked_order.symbol}, status={status}, "
+                                        f"price={locked_order.price}"
+                                    )
 
                                 # @FEAT:order-tracking @COMP:job @TYPE:core
                                 # Phase 2: 체결 처리 추가 (FILLED/PARTIALLY_FILLED)
@@ -2326,6 +2392,17 @@ class OrderManager:
             # ✅ 공통 로직: order_info → order_result 포맷 변환
             order_result = self._convert_exchange_order_to_result(exchange_order, locked_order)
 
+            # Phase 2: 변환된 LIMIT 주문 체결 처리 로그 강화
+            # @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
+            # STOP_LIMIT에서 변환된 LIMIT 주문도 이 경로로 체결 처리됨
+            if locked_order.order_type == 'LIMIT':
+                logger.debug(
+                    f"📊 LIMIT 주문 체결 처리: order_id={locked_order.exchange_order_id}, "
+                    f"symbol={locked_order.symbol}, "
+                    f"filled_quantity={exchange_order.get('filled_quantity')}, "
+                    f"average_price={exchange_order.get('average_price')}"
+                )
+
             fill_summary = trading_service.position_manager.process_order_fill(
                 strategy_account=locked_order.strategy_account,
                 order_id=locked_order.exchange_order_id,
@@ -2335,6 +2412,15 @@ class OrderManager:
                 order_result=order_result,
                 market_type=locked_order.strategy_account.strategy.market_type
             )
+
+            # Phase 2: 체결 처리 완료 로그 (변환된 주문 추적용)
+            if locked_order.order_type == 'LIMIT' and fill_summary.get('success'):
+                logger.info(
+                    f"✅ 변환된 LIMIT 주문 체결 처리 완료: "
+                    f"order_id={locked_order.exchange_order_id}, "
+                    f"원래 타입: STOP_LIMIT (활성화됨), "
+                    f"trade_id={fill_summary.get('trade_id')}"
+                )
 
             return fill_summary
 
