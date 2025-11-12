@@ -31,6 +31,7 @@
 - **limit-order-fill-processing** - LIMIT 주문 체결 자동 업데이트 (WebSocket + Scheduler) [`@COMP:service`] → [docs](features/order-tracking.md)
 - **pending-order-sse** - PendingOrder 생성/삭제 SSE 발송 [`@COMP:service`] → [docs](features/order-tracking.md)
 - **order-cancellation** - 주문 취소 (DB-First 패턴, Binance Error -2011 처리) [`@COMP:service`] → [docs](features/order-cancellation.md)
+- **stop-limit-activation** - STOP_LIMIT 주문 활성화 감지 및 추적 (Issue #45) [`@COMP:service`] → [docs](features/order-tracking.md)
 
 ### 💰 Position & Capital
 - **position-tracking** - 포지션 관리, 평균가 계산, 손익 추적 [`@COMP:service`] → [docs](features/position-tracking.md)

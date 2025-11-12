@@ -1947,18 +1947,22 @@ class OrderManager:
 
                             if not exchange_order:
                                 # ============================================================
-                                # @FEAT:order-tracking @COMP:service @TYPE:core @ISSUE:30
+                                # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:30,45
                                 # @DEPS:exchange-api
                                 # LIMIT Order Fill Processing Bug Fix (Issue #30)
+                                # STOP_LIMIT Activation Detection (Issue #45)
                                 # ============================================================
                                 # 문제: Binance get_open_orders()는 FILLED 주문을 반환하지 않음.
-                                #       백그라운드 스케줄러가 배치 쿼리에서 찾지 못한 주문을
-                                #       확인 없이 삭제하여 Trade/Position 기록이 미생성됨.
+                                #       또한 STOP_LIMIT 주문이 활성화되면 LIMIT으로 변환되는데,
+                                #       배치 쿼리에서 찾지 못한 주문을 확인 없이 삭제하여
+                                #       Trade/Position 기록이 미생성됨.
                                 #
                                 # 원인: Binance API 정상 동작 - get_open_orders()는
                                 #       NEW/PARTIALLY_FILLED만 반환, FILLED는 응답에서 제외.
+                                #       STOP_LIMIT 활성화 시 order_type이 LIMIT으로 변환됨.
                                 #
                                 # 해결: fetch_order()로 개별 조회하여 최종 상태 확인:
+                                #       - STOP_LIMIT 활성화(→LIMIT) → order_type 업데이트, 주문 유지
                                 #       - FILLED → _process_scheduler_fill() 호출
                                 #       - CANCELED/EXPIRED/REJECTED → 안전 삭제
                                 #       - NEW/OPEN 등 → 주문 유지, 다음 사이클 재시도
@@ -1968,6 +1972,7 @@ class OrderManager:
                                 # Step 1: 배치 쿼리에서 찾지 못한 주문 → 개별 조회로 최종 상태 확인
                                 # Binance API의 get_open_orders()는 NEW/PARTIALLY_FILLED만 반환.
                                 # FILLED 주문은 응답에 없으므로 fetch_order()로 최종 확인 필수.
+                                # STOP_LIMIT 활성화 후 LIMIT으로 변환되는 경우도 감지 필요.
                                 try:
                                     final_order = exchange_service.fetch_order(
                                         account=account,
@@ -1978,6 +1983,40 @@ class OrderManager:
 
                                     if final_order and final_order.get('success'):
                                         final_status = final_order.get('status', '').upper()
+                                        final_order_type = final_order.get('order_type', '').upper()
+
+                                        # ============================================================
+                                        # @FEAT:stop-limit-activation @ISSUE:45
+                                        # Step 1-A: STOP_LIMIT 활성화 감지 (배치 미포함 → LIMIT 변환)
+                                        # ============================================================
+                                        # STOP_LIMIT 주문이 stop_price 도달로 활성화되면
+                                        # 거래소에서 자동으로 LIMIT 주문으로 변환됨.
+                                        # 배치 쿼리에서 찾을 수 없고, fetch_order()로 확인하면 type=LIMIT
+                                        if locked_order.order_type == 'STOP_LIMIT' and final_order_type == 'LIMIT':
+                                            logger.info(
+                                                f"✅ STOP_LIMIT 활성화 감지 성공: order_id={locked_order.exchange_order_id}, "
+                                                f"stop_price={locked_order.stop_price} 도달, LIMIT으로 변환"
+                                            )
+
+                                            # order_type 업데이트: STOP_LIMIT → LIMIT
+                                            locked_order.order_type = 'LIMIT'
+                                            # stop_price는 활성화 후 불필요
+                                            locked_order.stop_price = None
+                                            # limit_price 업데이트 (거래소에서 받은 price)
+                                            if final_order.get('limit_price'):
+                                                locked_order.price = final_order.get('limit_price')
+
+                                            # 처리 플래그 해제
+                                            locked_order.is_processing = False
+                                            locked_order.processing_started_at = None
+                                            db.session.flush()
+
+                                            logger.info(
+                                                f"✅ OpenOrder 업데이트 완료: order_id={locked_order.exchange_order_id}, "
+                                                f"order_type=LIMIT, stop_price=None, 다음 사이클에서 추적 재개"
+                                            )
+                                            total_updated += 1
+                                            continue  # 이 주문은 처리 완료, 다른 상태 체크 스킵
 
                                         # Step 2: FILLED 상태 → 체결 처리 (Trade/Position 생성)
                                         # _process_scheduler_fill()을 호출하여 정상적인 체결 처리 수행.
@@ -2083,11 +2122,22 @@ class OrderManager:
                                 except Exception as e:
                                     # Step 6: 네트워크 에러 등 → Fail-safe: 주문 유지
                                     # 불확실한 경우 주문을 유지하여 데이터 손실 방지, 다음 사이클 재시도.
-                                    logger.warning(
-                                        f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
-                                        f"order_id={locked_order.exchange_order_id}, "
-                                        f"error={type(e).__name__}: {str(e)}"
-                                    )
+
+                                    # STOP_LIMIT 특수 처리: 활성화 감지 실패 시 로깅 및 알림
+                                    if locked_order.order_type == 'STOP_LIMIT':
+                                        logger.warning(
+                                            f"⚠️ STOP_LIMIT 활성화 감지 실패 (다음 사이클 재시도): "
+                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"stop_price={locked_order.stop_price}, "
+                                            f"error={type(e).__name__}: {str(e)}"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"⚠️ 주문 상태 확인 실패 (다음 사이클 재시도): "
+                                            f"order_id={locked_order.exchange_order_id}, "
+                                            f"error={type(e).__name__}: {str(e)}"
+                                        )
+
                                     # 주문 유지 (삭제하지 않음)
                                     locked_order.is_processing = False
                                     locked_order.processing_started_at = None
