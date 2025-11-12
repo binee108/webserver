@@ -31,7 +31,7 @@
 - **limit-order-fill-processing** - LIMIT 주문 체결 자동 업데이트 (WebSocket + Scheduler) [`@COMP:service`] → [docs](features/order-tracking.md)
 - **pending-order-sse** - PendingOrder 생성/삭제 SSE 발송 [`@COMP:service`] → [docs](features/order-tracking.md)
 - **order-cancellation** - 주문 취소 (DB-First 패턴, Binance Error -2011 처리) [`@COMP:service`] → [docs](features/order-cancellation.md)
-- **stop-limit-activation** - STOP_LIMIT 주문 활성화 감지 및 추적 (Issue #45) [`@COMP:service`] → [docs](features/order-tracking.md)
+- **stop-limit-activation** - Exchange-agnostic STOP_LIMIT 활성화 감지 및 추적 (Issue #45, Phase 1-3) [`@COMP:model,exchange,service`] → [docs](features/exchange-agnostic-stop-activation.md)
 
 ### 💰 Position & Capital
 - **position-tracking** - 포지션 관리, 평균가 계산, 손익 추적 [`@COMP:service`] → [docs](features/position-tracking.md)
@@ -103,7 +103,6 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
-| 2025-11-12 | STOP_LIMIT 활성화 감지 (Issue #45 Phase 1/2/3) | ✅ Phase 3 | order_manager.py, order-tracking.md | Phase 1: STOP_LIMIT 활성화 감지 (fetch_order 개별 조회), Phase 2: 활성화 후 LIMIT 추적 강화, Phase 3: 주문 타입별 처리 흐름 문서화 |
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
 | 2025-11-09 | Race Condition Monitoring (Issue #38 Phase 4.2.1) | ✅ Phase 4.2.1 | record_manager.py, position_manager.py | 구조화된 로그 추가: `RACE_CONDITION_DETECTED` 키워드로 duplicate Trade 및 Position lock skip 이벤트 모니터링. Pipe-separated format (CloudWatch 호환). |
 | 2025-11-07 | Position Row-Level Locking (Issue #38 Phase 2) | ✅ Phase 2 | position_manager.py | Position 업데이트에 Row-Level Lock 추가 (`with_for_update(skip_locked=True)`). Lock 경합 시 graceful skip으로 블로킹 방지. OpenOrder 패턴 따름. |
@@ -246,6 +245,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-12*
+*Last Updated: 2025-11-09*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
-*Total Lines: ~220 (목표 범위 내)*
+*Total Lines: ~215 (목표 범위 내)*
