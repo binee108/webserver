@@ -133,6 +133,7 @@
 | 2025-10-23 | Circuit Breaker | ✅ Phase 2 | order_manager.py | 거래소별 Gradual Recovery |
 | 2025-10-23 | Worktree Conflict Resolution | ✅ Complete | run.py | 서비스 충돌 자동 해결 |
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
+| 2025-11-13 | Order Quantity Restriction Removal | ✅ Completed | quantity_calculator.py, webhook_message_format.md, capital-management.md | Issue #46: qty_per > 100% validation 제거, Futures 레버리지 거래 지원 (양수 qty_per 무제한, 청산 -100% 상한 유지) |
 
 ---
 
