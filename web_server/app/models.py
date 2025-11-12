@@ -834,6 +834,56 @@ class OrderFillEvent(db.Model):
         return f'<OrderFillEvent order={self.exchange_order_id} status={self.status} qty={self.filled_quantity}>'
 
 
+class PendingOrder(db.Model):
+    """대기열 주문 테이블
+
+    거래소 열린 주문 제한에 대응하는 대기열 시스템.
+    제한 초과로 즉시 실행되지 못한 주문을 우선순위 순서대로 보관합니다.
+    """
+    __tablename__ = 'pending_orders'
+
+    # 식별자
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    strategy_account_id = db.Column(db.Integer, db.ForeignKey('strategy_accounts.id'), nullable=False)
+
+    # 주문 정보
+    symbol = db.Column(db.String(20), nullable=False)
+    side = db.Column(db.String(10), nullable=False)  # BUY, SELL
+    order_type = db.Column(db.String(20), nullable=False)  # MARKET, LIMIT, STOP_LIMIT, STOP_MARKET
+    price = db.Column(db.Numeric(20, 8), nullable=True)  # 지정가 가격
+    stop_price = db.Column(db.Numeric(20, 8), nullable=True)  # Stop 가격
+    quantity = db.Column(db.Numeric(20, 8), nullable=False)  # 주문 수량
+
+    # 우선순위 계산
+    priority = db.Column(db.Integer, nullable=False)  # 우선순위 (낮을수록 먼저 실행)
+    sort_price = db.Column(db.Numeric(20, 8), nullable=True)  # 정렬용 가격
+
+    # 메타데이터
+    market_type = db.Column(db.String(10), nullable=False)  # SPOT, FUTURES
+    reason = db.Column(db.String(50), nullable=False, default='QUEUE_LIMIT')  # 대기 이유
+    retry_count = db.Column(db.Integer, default=0, nullable=False)  # 재시도 횟수
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # 웹훅 수신 시각 보존 (PendingOrder → OpenOrder 전환 시 타임스탬프 유지)
+    webhook_received_at = db.Column(db.DateTime, nullable=False)
+
+    # 관계 설정
+    account = db.relationship('Account', backref='pending_orders')
+    strategy_account = db.relationship('StrategyAccount', backref='pending_orders')
+
+    # 인덱스
+    __table_args__ = (
+        db.Index('idx_pending_account_symbol', 'account_id', 'symbol'),
+        db.Index('idx_pending_priority_sort', 'account_id', 'symbol', 'priority', 'sort_price', 'created_at'),
+        db.Index('idx_pending_strategy', 'strategy_account_id'),
+    )
+
+    def __repr__(self):
+        return f'<PendingOrder {self.symbol} {self.side} {self.order_type} priority={self.priority}>'
+
+
 # ============================================
 # Phase 1: 즉시 주문 실행 시스템 (Immediate Order Execution)
 # ============================================
