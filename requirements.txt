@@ -8,6 +8,10 @@
 # Database connectivity (for delete_db and migration commands)
 sqlalchemy>=2.0.0,<3.0.0
 
+# PostgreSQL driver (required by SQLAlchemy for database migrations)
+# Uses psycopg2-binary for easy installation without C dependencies
+psycopg2-binary>=2.9.0
+
 # All other dependencies are Python standard library modules:
 # - argparse (built-in)
 # - getpass (built-in)
