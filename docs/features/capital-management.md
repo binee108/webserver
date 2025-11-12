@@ -270,3 +270,44 @@
 | 거래 기록 (자본 추적) | `record_manager.py` | - | @FEAT:capital-management |
 
 *Last Updated: 2025-10-30*
+
+---
+
+## qty_per 제한 해제 (2025-11-13 업데이트)
+
+### 변경 사항
+- **이전**: qty_per 범위 제한 0-100%
+- **현재**: 양수 qty_per 무제한 (레버리지 거래 지원)
+- **청산 로직**: 음수 qty_per는 여전히 -100% 상한 유지 (안전 장치)
+
+### 수량 계산 공식
+```
+quantity = (allocated_capital × qty_per% ÷ price) × leverage
+```
+
+**예시**:
+- allocated_capital = 1000 USDT
+- qty_per = 200 (200%)
+- price = 50000 USDT (BTC)
+- leverage = 10x
+
+```
+quantity = (1000 × 2 ÷ 50000) × 10 = 0.4 BTC
+total_exposure = 0.4 BTC × 50000 = 20000 USDT (20배 익스포저)
+```
+
+### 적용 거래소
+- Binance Futures
+- Bybit Futures
+- 거래소별 최대 레버리지 한도 적용
+
+### 제한 사항
+- 거래소의 증거금 요구사항 및 최대 주문 크기 제한 적용
+- 계좌 자본 부족 시 주문 거부 (거래소 레벨)
+- qty_per=0은 여전히 수량 0 반환
+
+**관련 이슈**: #46 - qty_per > 100% validation removal
+**코드**: `quantity_calculator.py`
+- Line 216-223: 수량 계산 공식 (양수 qty_per 무제한)
+- Line 342-348: 청산 로직 (음수 qty_per -100% 상한)
+- Issue #46: 진입 주문 validation 제약 제거
