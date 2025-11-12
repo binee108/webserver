@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
@@ -1790,6 +1790,53 @@ class OrderManager:
 
         return False
 
+    # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:helper
+    # Phase 6.1: LIMIT 또는 활성화된 STOP_LIMIT 처리 판단 헬퍼 함수
+    def _should_track_as_limit(self, order: Union[Dict[str, Any], 'OpenOrder']) -> bool:
+        """
+        LIMIT 주문 또는 활성화된 STOP_LIMIT을 LIMIT으로 처리할지 판단
+
+        활성화된 STOP_LIMIT 주문은 거래소 내부적으로 LIMIT 주문과 동일하게
+        동작하므로, 동일한 추적 로직을 적용합니다.
+
+        Args:
+            order: Order 인스턴스 또는 dict (정규화된 Exchange 응답)
+
+        Returns:
+            bool: LIMIT으로 처리해야 하면 True
+
+        Examples:
+            >>> order = {'order_type': 'LIMIT', ...}
+            >>> _should_track_as_limit(order)
+            True
+
+            >>> order = {'order_type': 'STOP_LIMIT', 'is_stop_order_activated': True}
+            >>> _should_track_as_limit(order)
+            True
+
+            >>> order = {'order_type': 'STOP_LIMIT', 'is_stop_order_activated': False}
+            >>> _should_track_as_limit(order)
+            False
+
+            >>> order = {'order_type': 'MARKET', ...}
+            >>> _should_track_as_limit(order)
+            False
+
+            >>> # Fallback scenario: is_activated=None (캐시 미스)
+            >>> order = {'order_type': 'LIMIT', 'is_stop_order_activated': None}
+            >>> _should_track_as_limit(order)
+            True  # order_type='LIMIT'이므로 활성화 상태와 무관
+        """
+        # dict 또는 Order 인스턴스 모두 처리
+        order_type = order.get('order_type') if isinstance(order, dict) else order.order_type
+        is_activated = order.get('is_stop_order_activated') if isinstance(order, dict) else getattr(order, 'is_stop_order_activated', None)
+
+        # LIMIT 주문이거나, 활성화된 STOP_LIMIT 주문
+        return (
+            order_type == 'LIMIT' or
+            (order_type == 'STOP_LIMIT' and is_activated is True)
+        )
+
     # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:5
     # Phase 5: DB-거래소 상태 일관성 검증 및 자동 동기화 (29초 주기)
     def update_open_orders_status(self) -> None:
@@ -2072,11 +2119,38 @@ class OrderManager:
                                         # ============================================================
                                         # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
                                         # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
-                                        if self._handle_stop_order_activation(locked_order, final_order):
-                                            logger.info(
-                                                f"✅ OpenOrder 업데이트 완료: order_id={locked_order.exchange_order_id}, "
-                                                f"order_type={locked_order.order_type}, stop_price=None, 다음 사이클에서 추적 재개"
-                                            )
+                                        activation_handled = self._handle_stop_order_activation(locked_order, final_order)
+
+                                        # LIMIT 또는 활성화된 STOP_LIMIT 추적 시작 (활성화 직후 즉시 처리)
+                                        if self._should_track_as_limit(final_order):
+                                            # 활성화 직후 FILLED 상태인 경우 즉시 체결 처리
+                                            if final_status == 'FILLED':
+                                                logger.info(
+                                                    f"✅ 체결 완료 감지: order_id={locked_order.exchange_order_id}, "
+                                                    f"side={locked_order.side}, symbol={locked_order.symbol}, "
+                                                    f"type={final_order.get('order_type')}, "
+                                                    f"activation_handled={activation_handled}"
+                                                )
+
+                                                # OpenOrder 삭제
+                                                db.session.delete(locked_order)
+                                                db.session.commit()
+                                                total_deleted += 1
+                                                continue
+
+                                            # LIMIT 추적 로직 (기존 배치 쿼리 경로와 동일)
+                                            if locked_order.price:
+                                                limit_price = locked_order.price
+                                                current_price = final_order.get('current_price')
+
+                                                if current_price and limit_price:
+                                                    logger.debug(
+                                                        f"📍 LIMIT 추적 시작: order_id={locked_order.exchange_order_id}, "
+                                                        f"limit={limit_price}, current={current_price}, "
+                                                        f"type={final_order.get('order_type')}, "
+                                                        f"is_activated={final_order.get('is_stop_order_activated')}, "
+                                                        f"activation_handled={activation_handled}"
+                                                    )
 
                                             # 성공 시 캐시 초기화
                                             if locked_order.exchange_order_id in self.fetch_failure_cache:
@@ -2263,17 +2337,22 @@ class OrderManager:
                                 # ============================================================
                                 # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
                                 # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
-                                self._handle_stop_order_activation(locked_order, exchange_order)
+                                activation_handled = self._handle_stop_order_activation(locked_order, exchange_order)
 
-                                # Phase 2: LIMIT 주문 추적 로그
-                                # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
-                                # Phase 1에서 STOP_LIMIT → LIMIT으로 변환된 주문이 배치 쿼리에 포함되는지 확인
-                                if locked_order.order_type == 'LIMIT' and status in ['NEW', 'OPEN', 'PARTIALLY_FILLED']:
-                                    logger.debug(
-                                        f"📍 LIMIT 주문 배치 조회 확인: order_id={locked_order.exchange_order_id}, "
-                                        f"symbol={locked_order.symbol}, status={status}, "
-                                        f"price={locked_order.price}"
-                                    )
+                                # LIMIT 또는 활성화된 STOP_LIMIT 추적 시작/재개
+                                if self._should_track_as_limit(exchange_order):
+                                    if locked_order.price:
+                                        limit_price = locked_order.price
+                                        current_price = exchange_order.get('current_price')
+
+                                        if current_price and limit_price:
+                                            logger.debug(
+                                                f"📍 LIMIT 추적 확인: order_id={locked_order.exchange_order_id}, "
+                                                f"limit={limit_price}, current={current_price}, "
+                                                f"type={exchange_order.get('order_type')}, "
+                                                f"is_activated={exchange_order.get('is_stop_order_activated')}, "
+                                                f"activation_handled={activation_handled}"
+                                            )
 
                                 # @FEAT:order-tracking @COMP:job @TYPE:core
                                 # Phase 2: 체결 처리 추가 (FILLED/PARTIALLY_FILLED)

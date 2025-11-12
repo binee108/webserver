@@ -294,6 +294,74 @@ assert manager._handle_stop_order_activation(okx_order)
 
 ---
 
+## Phase 6.1: Helper 함수 추출 (코드 재사용 개선)
+
+### 배경
+
+Phase 1-3에서 구현한 활성화 감지 시스템은 배치 쿼리 경로와 개별 fetch_order 경로에서 동일한 로직이 중복되어 있었습니다.
+
+### 문제
+
+- 배치 쿼리 경로 (`update_open_orders_status`)와 개별 조회 경로 (`fetch_order`)에서 LIMIT 처리 조건이 중복
+- 각 경로에서 `order_type == 'LIMIT'` 조건을 별도로 체크
+- 유지보수 복잡성: 비즈니스 규칙 변경 시 2곳 수정 필요
+
+### 해결책
+
+#### 1. `_should_track_as_limit()` Helper 함수 추가
+
+**위치**: `order_manager.py` Line 1795
+
+```python
+def _should_track_as_limit(self, order: Union[Dict[str, Any], 'OpenOrder']) -> bool:
+    """LIMIT 또는 활성화된 STOP_LIMIT을 LIMIT으로 처리할지 판단"""
+    order_type = order.get('order_type') if isinstance(order, dict) else order.order_type
+    is_activated = order.get('is_stop_order_activated') if isinstance(order, dict) else getattr(order, 'is_stop_order_activated', None)
+
+    return (
+        order_type == 'LIMIT' or
+        (order_type == 'STOP_LIMIT' and is_activated is True)
+    )
+```
+
+**책임**: 조건 판단만 수행 (Single Responsibility Principle)
+
+#### 2. 2개 경로에서 Helper 함수 재사용
+
+**배치 쿼리 경로** (Line 2338):
+```python
+activation_handled = self._handle_stop_order_activation(locked_order, exchange_order)
+
+# Helper 함수 사용
+if self._should_track_as_limit(exchange_order):
+    # LIMIT 추적 로직
+    if locked_order.price:
+        limit_price = locked_order.price
+        current_price = exchange_order.get('current_price')
+        # ...
+```
+
+**개별 조회 경로** (Line 2120):
+```python
+activation_handled = self._handle_stop_order_activation(locked_order, final_order)
+
+# Helper 함수 사용 + 활성화 직후 FILLED 즉시 처리
+if self._should_track_as_limit(final_order):
+    if final_order.get('status') == 'FILLED':
+        logger.info(f"✅ 체결 완료 감지: activation_handled={activation_handled}")
+        db.session.delete(locked_order)
+        # ...
+```
+
+### 개선 효과
+
+1. **코드 중복 제거**: LIMIT 처리 조건이 2곳 → 1개 Helper 함수로 통합
+2. **유지보수성 향상**: 비즈니스 규칙 변경 시 Helper 함수 1곳만 수정
+3. **처리 지연 제거**: 개별 조회 경로에서 활성화 직후 FILLED 즉시 감지 (기존 29초 지연 제거)
+4. **명시적 추상화**: "활성화된 STOP_LIMIT = LIMIT" 비즈니스 규칙이 함수명으로 표현
+
+---
+
 ## 코드 전체 구현 체크리스트
 
 ### Phase 1 완료 (Order 모델)
@@ -308,6 +376,11 @@ assert manager._handle_stop_order_activation(okx_order)
 ### Phase 3 완료 (order_manager)
 - [x] `_handle_stop_order_activation()` 구현
 - [x] Exchange 감지 우선, Fallback 자동 처리
+
+### Phase 6.1 완료 (코드 재사용 개선)
+- [x] `_should_track_as_limit()` Helper 함수 추가
+- [x] 배치 쿼리 경로에 Helper 적용
+- [x] 개별 조회 경로에 Helper 적용 + FILLED 즉시 처리
 
 ---
 
