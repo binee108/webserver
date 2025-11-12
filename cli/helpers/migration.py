@@ -61,6 +61,18 @@ class MigrationHelper:
                 )
                 return False
 
+            # 🔍 초기 설치 감지: 핵심 테이블이 있는지 확인
+            if not self._has_existing_tables(postgres_container):
+                self.printer.print_status(
+                    "📦 초기 설치 감지 - 마이그레이션 건너뛰기",
+                    "info"
+                )
+                self.printer.print_status(
+                    "   → Flask의 db.create_all()이 완전한 스키마를 생성합니다",
+                    "info"
+                )
+                return True
+
             # schema_migrations 테이블 생성 (없으면)
             if not self._ensure_migrations_table(postgres_container):
                 return False
@@ -142,6 +154,43 @@ class MigrationHelper:
 
         except subprocess.CalledProcessError:
             return None
+
+    def _has_existing_tables(self, container: str) -> bool:
+        """기존 데이터베이스 테이블 존재 여부 확인
+
+        초기 설치 감지: 핵심 테이블(users, accounts)이 있으면 기존 DB로 판단
+
+        Args:
+            container: PostgreSQL 컨테이너명
+
+        Returns:
+            bool: 핵심 테이블이 존재하면 True (기존 DB), 없으면 False (초기 설치)
+        """
+        check_tables_sql = """
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name IN ('users', 'accounts');
+        """
+
+        try:
+            result = subprocess.run(
+                [
+                    'docker', 'exec', '-i', container,
+                    'psql', '-U', 'trader', '-d', 'trading_system',
+                    '-t', '-c', check_tables_sql
+                ],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # 결과 파싱: 2개 테이블이 모두 있으면 기존 DB
+            count = int(result.stdout.strip())
+            return count >= 1  # users 또는 accounts 하나라도 있으면 기존 DB
+
+        except (subprocess.CalledProcessError, ValueError):
+            # 오류 발생 시 초기 설치로 간주 (안전한 기본값)
+            return False
 
     def _ensure_migrations_table(self, container: str) -> bool:
         """schema_migrations 테이블 생성 (없으면)
