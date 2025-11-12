@@ -29,6 +29,18 @@ def upgrade(engine):
         trans = conn.begin()
 
         try:
+            # Check table existence
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'open_orders'
+                );
+            """))
+            if not result.scalar():
+                print('ℹ️  open_orders table not found. Skipping (initial install).')
+                trans.rollback()
+                return
+
             print("🔧 Starting migration: Add CANCELLING state and cancel_attempted_at...")
 
             # 1. Add cancel_attempted_at column (idempotent)

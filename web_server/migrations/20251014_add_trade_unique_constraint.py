@@ -29,6 +29,18 @@ def upgrade(connection):
         connection: SQLAlchemy connection object
     """
     try:
+        # Check table existence
+        check_table_sql = """
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'trades'
+        );
+        """
+        result = connection.execute(check_table_sql)
+        if not result.scalar():
+            logger.info("ℹ️  trades table not found. Skipping (initial install).")
+            return
+
         logger.info("🔧 Adding UNIQUE constraint to trades table...")
 
         # Check if constraint already exists (idempotent)

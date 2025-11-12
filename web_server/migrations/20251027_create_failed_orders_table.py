@@ -41,19 +41,19 @@ def upgrade(engine):
     with engine.connect() as conn:
         trans = conn.begin()
         try:
-            print('🚀 실패한 주문 기록 테이블 생성 시작...')
-
-            # 기존 테이블 확인
+            # Check table existence
             result = conn.execute(text("""
-                SELECT COUNT(*) FROM information_schema.tables
-                WHERE table_name = 'failed_orders'
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'failed_orders'
+                );
             """))
-            existing_count = result.scalar()
-
-            if existing_count > 0:
-                print('✅ failed_orders 테이블이 이미 존재합니다.')
+            if result.scalar():
+                print('ℹ️  failed_orders table already exists. Skipping.')
                 trans.rollback()
                 return
+
+            print('🚀 실패한 주문 기록 테이블 생성 시작...')
 
             # ============================================
             # 1. FailedOrder 테이블 생성

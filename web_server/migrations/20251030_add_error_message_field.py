@@ -46,6 +46,18 @@ def upgrade(engine):
     with engine.connect() as conn:
         trans = conn.begin()
         try:
+            # Check table existence
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'open_orders'
+                );
+            """))
+            if not result.scalar():
+                print('ℹ️  open_orders table not found. Skipping (initial install).')
+                trans.rollback()
+                return
+
             print('🚀 OpenOrder 테이블 error_message 필드 추가 시작...')
 
             # 기존 필드 확인

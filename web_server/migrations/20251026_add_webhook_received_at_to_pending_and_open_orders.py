@@ -36,6 +36,24 @@ from sqlalchemy import text
 def upgrade(engine):
     """Add webhook_received_at columns"""
     with engine.connect() as conn:
+        # Check table existence
+        result_pending = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'pending_orders'
+            );
+        """))
+        result_open = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'open_orders'
+            );
+        """))
+
+        if not result_pending.scalar() or not result_open.scalar():
+            print('ℹ️  pending_orders or open_orders table not found. Skipping (initial install).')
+            return
+
         # 1. pending_orders에 webhook_received_at 추가 (임시로 nullable)
         conn.execute(text("""
             ALTER TABLE pending_orders

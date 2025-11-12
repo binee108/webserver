@@ -25,6 +25,19 @@ def upgrade(engine):
     trans = conn.begin()
 
     try:
+        # Check table existence
+        result = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'failed_orders'
+            );
+        """))
+        if not result.scalar():
+            print('ℹ️  failed_orders table not found. Skipping (initial install).')
+            trans.rollback()
+            conn.close()
+            return
+
         print("🔄 Step 1: 신규 컬럼 추가 (nullable=True)")
 
         # 1. Add new columns (all nullable initially for safe migration)

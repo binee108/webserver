@@ -54,6 +54,19 @@ def upgrade(engine):
     trans = conn.begin()
 
     try:
+        # Check table existence
+        result = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'failed_orders'
+            );
+        """))
+        if not result.scalar():
+            print('ℹ️  failed_orders table not found. Skipping (initial install).')
+            trans.rollback()
+            conn.close()
+            return
+
         print("🔄 Step 1: operation_type, original_order_id 컬럼 존재 확인")
 
         # Idempotency: Check if columns already exist

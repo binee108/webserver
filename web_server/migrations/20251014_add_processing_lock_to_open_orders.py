@@ -21,6 +21,17 @@ from sqlalchemy import text
 def upgrade(engine):
     """Add is_processing and processing_started_at columns"""
     with engine.connect() as conn:
+        # Check table existence
+        result = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'open_orders'
+            );
+        """))
+        if not result.scalar():
+            print('ℹ️  open_orders table not found. Skipping (initial install).')
+            return
+
         # 1. is_processing 컬럼 추가 (기본값: FALSE)
         conn.execute(text("""
             ALTER TABLE open_orders
