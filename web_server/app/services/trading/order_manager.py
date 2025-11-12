@@ -1723,6 +1723,73 @@ class OrderManager:
             db.session.rollback()
             logger.error(f"❌ CANCELLING 주문 정리 실패: {e}")
 
+    # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:helper
+    # Phase 3: STOP 주문 활성화 감지 헬퍼 함수 (거래소 중립적 - Option C)
+    def _handle_stop_order_activation(self, locked_order, exchange_order_dict):
+        """
+        STOP 주문 활성화 처리 (거래소 중립적 - Option C: Graceful Degradation)
+
+        Exchange 계층에서 정규화된 is_stop_order_activated 필드를 사용하여
+        활성화 여부를 판단하고, DB 업데이트를 수행합니다.
+
+        Option C Strategy:
+        - is_activated == True: Exchange 계층이 감지 (캐시 Hit)
+        - is_activated == None: 캐시 미스, fallback 로직 수행
+        - is_activated == False: 미활성화 (현재 미사용)
+
+        Args:
+            locked_order: OpenOrder 인스턴스 (with_for_update)
+            exchange_order_dict: Exchange 계층이 반환한 정규화된 dict
+
+        Returns:
+            bool: 활성화 처리 완료 여부
+        """
+        is_activated = exchange_order_dict.get('is_stop_order_activated')
+
+        if is_activated is True:
+            # Exchange 계층이 활성화 감지함 (캐시 Hit)
+            logger.info(
+                f"✅ STOP 주문 활성화 감지 (Exchange): order_id={locked_order.exchange_order_id}, "
+                f"stop_price={locked_order.stop_price} 도달, "
+                f"order_type={locked_order.order_type}→{exchange_order_dict.get('order_type')}"
+            )
+
+            # DB 업데이트
+            locked_order.order_type = exchange_order_dict.get('order_type')
+            locked_order.stop_price = None
+
+            if exchange_order_dict.get('limit_price'):
+                locked_order.price = exchange_order_dict.get('limit_price')
+
+            locked_order.is_processing = False
+            locked_order.processing_started_at = None
+
+            db.session.flush()
+            return True
+
+        elif is_activated is None:
+            # Option C: Graceful Degradation - 캐시 미스 시 fallback
+            # Exchange 계층이 None 반환 → order_manager가 직접 비교
+            if locked_order.order_type == 'STOP_LIMIT' and exchange_order_dict.get('order_type') == 'LIMIT':
+                logger.info(
+                    f"✅ STOP_LIMIT 활성화 감지 (Fallback): order_id={locked_order.exchange_order_id}, "
+                    f"stop_price={locked_order.stop_price} 도달, LIMIT으로 변환"
+                )
+
+                locked_order.order_type = 'LIMIT'
+                locked_order.stop_price = None
+
+                if exchange_order_dict.get('limit_price'):
+                    locked_order.price = exchange_order_dict.get('limit_price')
+
+                locked_order.is_processing = False
+                locked_order.processing_started_at = None
+
+                db.session.flush()
+                return True
+
+        return False
+
     # @FEAT:orphan-order-prevention @COMP:job @TYPE:core @PHASE:5
     # Phase 5: DB-거래소 상태 일관성 검증 및 자동 동기화 (29초 주기)
     def update_open_orders_status(self) -> None:
@@ -1998,37 +2065,17 @@ class OrderManager:
 
                                     if final_order and final_order.get('success'):
                                         final_status = final_order.get('status', '').upper()
-                                        final_order_type = final_order.get('order_type', '').upper()
 
                                         # ============================================================
-                                        # @FEAT:stop-limit-activation @ISSUE:45
-                                        # Step 1-A: STOP_LIMIT 활성화 감지 (배치 미포함 → LIMIT 변환)
+                                        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:core
+                                        # Phase 3: STOP 주문 활성화 감지 (거래소 중립적 - fetch_order 경로)
                                         # ============================================================
-                                        # STOP_LIMIT 주문이 stop_price 도달로 활성화되면
-                                        # 거래소에서 자동으로 LIMIT 주문으로 변환됨.
-                                        # 배치 쿼리에서 찾을 수 없고, fetch_order()로 확인하면 type=LIMIT
-                                        if locked_order.order_type == 'STOP_LIMIT' and final_order_type == 'LIMIT':
-                                            logger.info(
-                                                f"✅ STOP_LIMIT 활성화 감지 성공: order_id={locked_order.exchange_order_id}, "
-                                                f"stop_price={locked_order.stop_price} 도달, LIMIT으로 변환"
-                                            )
-
-                                            # order_type 업데이트: STOP_LIMIT → LIMIT
-                                            locked_order.order_type = 'LIMIT'
-                                            # stop_price는 활성화 후 불필요
-                                            locked_order.stop_price = None
-                                            # limit_price 업데이트 (거래소에서 받은 price)
-                                            if final_order.get('limit_price'):
-                                                locked_order.price = final_order.get('limit_price')
-
-                                            # 처리 플래그 해제
-                                            locked_order.is_processing = False
-                                            locked_order.processing_started_at = None
-                                            db.session.flush()
-
+                                        # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
+                                        # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
+                                        if self._handle_stop_order_activation(locked_order, final_order):
                                             logger.info(
                                                 f"✅ OpenOrder 업데이트 완료: order_id={locked_order.exchange_order_id}, "
-                                                f"order_type=LIMIT, stop_price=None, 다음 사이클에서 추적 재개"
+                                                f"order_type={locked_order.order_type}, stop_price=None, 다음 사이클에서 추적 재개"
                                             )
 
                                             # 성공 시 캐시 초기화
@@ -2209,6 +2256,14 @@ class OrderManager:
                             else:
                                 # 상태 확인
                                 status = exchange_order.get('status', '').upper()
+
+                                # ============================================================
+                                # @FEAT:stop-limit-activation @ISSUE:45 @COMP:service @TYPE:core
+                                # Phase 3: STOP 주문 활성화 감지 (거래소 중립적 - 배치 쿼리 경로)
+                                # ============================================================
+                                # Helper 함수 사용: Exchange 계층의 is_stop_order_activated 필드 확인
+                                # Option C: Exchange 감지(캐시) + fallback(order_type 비교)
+                                self._handle_stop_order_activation(locked_order, exchange_order)
 
                                 # Phase 2: LIMIT 주문 추적 로그
                                 # @FEAT:order-tracking @FEAT:stop-limit-activation @COMP:service @TYPE:core @ISSUE:45
