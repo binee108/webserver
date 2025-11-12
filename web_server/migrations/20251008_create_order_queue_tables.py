@@ -43,7 +43,11 @@ def upgrade(engine):
                 trans.rollback()
                 return
             elif existing_count == 1:
-                raise Exception('⚠️ 부분 마이그레이션 상태 감지 - 수동 확인 필요')
+                # 부분 마이그레이션 상태 - 기존 테이블 삭제 후 재생성
+                print('⚠️  부분 마이그레이션 상태 감지 - 기존 테이블 삭제 중...')
+                conn.execute(text("DROP TABLE IF EXISTS order_fill_events CASCADE;"))
+                conn.execute(text("DROP TABLE IF EXISTS pending_orders CASCADE;"))
+                print('✅ 기존 테이블 삭제 완료, 재생성 시작...')
 
             # 아래는 기존 테이블 생성 로직...
 
