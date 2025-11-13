@@ -56,15 +56,28 @@ def upgrade(engine):
         print("✅ Step 1 완료")
         print("\n🔄 Step 2: 기존 데이터 마이그레이션")
 
-        # 2. Migrate existing data
-        # Fetch all existing records
-        result = conn.execute(text("""
-            SELECT id, order_payload, failure_reason, error_message, recovery_status
-            FROM failed_orders
+        # 2. Check if old columns exist (migration idempotency)
+        check_columns = conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'failed_orders'
+            AND column_name IN ('order_payload', 'failure_reason', 'error_message', 'recovery_status')
         """))
 
-        failed_orders = result.fetchall()
-        print(f"📦 마이그레이션 대상: {len(failed_orders)}개 레코드")
+        existing_old_columns = [row[0] for row in check_columns.fetchall()]
+
+        if not existing_old_columns:
+            print("ℹ️  구 컬럼이 존재하지 않습니다. 데이터 마이그레이션 스킵 (이미 완료됨)")
+            failed_orders = []
+        else:
+            # Fetch all existing records
+            result = conn.execute(text("""
+                SELECT id, order_payload, failure_reason, error_message, recovery_status
+                FROM failed_orders
+            """))
+
+            failed_orders = result.fetchall()
+            print(f"📦 마이그레이션 대상: {len(failed_orders)}개 레코드")
 
         for fo in failed_orders:
             fo_id = fo[0]
@@ -124,48 +137,53 @@ def upgrade(engine):
             print(f"  ✅ ID {fo_id}: quantity={quantity}, price={price}, status={status}")
 
         print("✅ Step 2 완료")
-        print("\n🔄 Step 3: NOT NULL 제약조건 추가 (필수 컬럼만)")
 
-        # 3. Add NOT NULL constraints for required fields
-        # symbol, side, order_type are already NOT NULL
-        conn.execute(text("""
-            ALTER TABLE failed_orders
-            ALTER COLUMN quantity SET NOT NULL,
-            ALTER COLUMN reason SET NOT NULL,
-            ALTER COLUMN status SET NOT NULL,
-            ALTER COLUMN order_params SET NOT NULL
-        """))
+        # Step 3 and 4: Only execute if old columns exist
+        if existing_old_columns:
+            print("\n🔄 Step 3: NOT NULL 제약조건 추가 (필수 컬럼만)")
 
-        # Set default values for status if not set
-        conn.execute(text("""
-            ALTER TABLE failed_orders
-            ALTER COLUMN status SET DEFAULT 'pending_retry'
-        """))
+            # 3. Add NOT NULL constraints for required fields
+            # symbol, side, order_type are already NOT NULL
+            conn.execute(text("""
+                ALTER TABLE failed_orders
+                ALTER COLUMN quantity SET NOT NULL,
+                ALTER COLUMN reason SET NOT NULL,
+                ALTER COLUMN status SET NOT NULL,
+                ALTER COLUMN order_params SET NOT NULL
+            """))
 
-        print("✅ Step 3 완료")
-        print("\n🔄 Step 4: 구 컬럼 제거")
+            # Set default values for status if not set
+            conn.execute(text("""
+                ALTER TABLE failed_orders
+                ALTER COLUMN status SET DEFAULT 'pending_retry'
+            """))
 
-        # 4. Drop old columns (no longer needed)
-        conn.execute(text("""
-            ALTER TABLE failed_orders
-            DROP COLUMN IF EXISTS user_id,
-            DROP COLUMN IF EXISTS account_id,
-            DROP COLUMN IF EXISTS pending_order_id,
-            DROP COLUMN IF EXISTS open_order_id,
-            DROP COLUMN IF EXISTS exchange_order_id,
-            DROP COLUMN IF EXISTS failure_stage,
-            DROP COLUMN IF EXISTS failure_reason,
-            DROP COLUMN IF EXISTS error_message,
-            DROP COLUMN IF EXISTS recovery_status,
-            DROP COLUMN IF EXISTS last_exchange_status,
-            DROP COLUMN IF EXISTS order_payload,
-            DROP COLUMN IF EXISTS max_retry,
-            DROP COLUMN IF EXISTS next_retry_at,
-            DROP COLUMN IF EXISTS last_attempt_at,
-            DROP COLUMN IF EXISTS resolved_at
-        """))
+            print("✅ Step 3 완료")
+            print("\n🔄 Step 4: 구 컬럼 제거")
 
-        print("✅ Step 4 완료")
+            # 4. Drop old columns (no longer needed)
+            conn.execute(text("""
+                ALTER TABLE failed_orders
+                DROP COLUMN IF EXISTS user_id,
+                DROP COLUMN IF EXISTS account_id,
+                DROP COLUMN IF EXISTS pending_order_id,
+                DROP COLUMN IF EXISTS open_order_id,
+                DROP COLUMN IF EXISTS exchange_order_id,
+                DROP COLUMN IF EXISTS failure_stage,
+                DROP COLUMN IF EXISTS failure_reason,
+                DROP COLUMN IF EXISTS error_message,
+                DROP COLUMN IF EXISTS recovery_status,
+                DROP COLUMN IF EXISTS last_exchange_status,
+                DROP COLUMN IF EXISTS order_payload,
+                DROP COLUMN IF EXISTS max_retry,
+                DROP COLUMN IF EXISTS next_retry_at,
+                DROP COLUMN IF EXISTS last_attempt_at,
+                DROP COLUMN IF EXISTS resolved_at
+            """))
+
+            print("✅ Step 4 완료")
+        else:
+            print("\n✅ Step 3-4: 스킵 (이미 완료됨)")
         print("\n🔄 Step 5: 인덱스 재생성")
 
         # 5. Recreate indexes (if needed)
