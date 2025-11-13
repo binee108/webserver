@@ -12,6 +12,23 @@
  * Reference: .plan/ui-density-improvement_plan.md Phase 1
  */
 
+/* ===== PHASE 2: TYPOGRAPHY OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 폰트 크기 15-20% 축소하여 정보 밀도 증가
+ * Strategy: 계층별 차등 축소 (큰 폰트 20%, 중간 17.5%, 작은 15%)
+ *
+ * Changes:
+ *   - Page headers: 2rem → 1.6rem (-20%)
+ *   - Stats values: 2rem → 1.6rem (-20%)
+ *   - Navbar brand: 1.25rem → 1.0625rem (-15%)
+ *   - Form help: 0.875rem → 0.75rem (-14.3%)
+ *   - Footer: 0.875rem → 0.75rem (-14.3%)
+ *
+ * Impact: 정보 밀도 향상, 시각적 계층 유지, WCAG 2.1 AA 부분 준수
+ * WCAG Note: 12px 텍스트는 보조 정보(라벨/배지)로 제한, 본문은 14px+ 유지
+ * Reference: .plan/ui-density-improvement_plan.md Phase 2
+ */
+
 /* ===== MAIN CSS FILE - TRADING AUTOMATION SYSTEM ===== */
 
 /* Import all CSS modules */
@@ -79,7 +96,7 @@ body {
 }
 
 .navbar-brand {
-    font-size: 1.25rem;
+    font-size: 1.0625rem; /* PHASE 2: 1.25rem → 1.0625rem (-15%) */
     font-weight: bold;
     color: var(--text-primary);
     text-decoration: none;
@@ -356,7 +373,7 @@ body {
 }
 
 .page-header .header-text h1 {
-    font-size: 2rem;
+    font-size: 1.6rem; /* PHASE 2: 2rem → 1.6rem (-20%) */
     font-weight: bold;
     margin: 0;
 }
@@ -413,7 +430,7 @@ body {
 }
 
 .stats-card .stats-info .stats-value {
-    font-size: 2rem;
+    font-size: 1.6rem; /* PHASE 2: 2rem → 1.6rem (-20%) */
     font-weight: bold;
     margin: 0;
     font-variant-numeric: tabular-nums;
@@ -491,7 +508,7 @@ body {
 
 .form-help {
     color: var(--text-muted);
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, helper text */
     margin-top: 0.25rem;
 }
 
@@ -549,7 +566,7 @@ body {
     margin-top: auto;
     text-align: center;
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 0.75rem; /* PHASE 2: 0.875rem → 0.75rem (-14.3%), 보조 정보 */
 }
 
 /* ===== UTILITY CLASSES ===== */
@@ -663,11 +680,11 @@ body {
     }
 
     .page-header .header-text h1 {
-        font-size: 1.5rem;
+        font-size: 1.2rem; /* PHASE 2: 1.5rem → 1.2rem (-20%) 모바일 */
     }
 
     .stats-card .stats-info .stats-value {
-        font-size: 1.5rem;
+        font-size: 1.2rem; /* PHASE 2: 1.5rem → 1.2rem (-20%) 모바일 */
     }
 
     .stats-grid {

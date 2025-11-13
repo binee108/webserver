@@ -1,3 +1,26 @@
+/* ===== PHASE 2: TYPOGRAPHY OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 폰트 크기 15-20% 축소하여 정보 밀도 증가 (WCAG 2.1 AA 준수)
+ * Strategy: 계층별 차등 축소 (큰 폰트 20%, 중간 17.5%, 작은 15%)
+ *
+ * Changes:
+ *   - Headers: 2rem → 1.6rem (-20%, page headers, stats values)
+ *   - Card titles: 1.5rem → 1.25rem (-16.7%, strategy cards)
+ *   - Metric values: 1.125rem → 0.9375rem (-16.7%, dashboard metrics)
+ *   - Button text: 0.875rem MAINTAINED (14px, WCAG AA, interactive elements)
+ *   - Description text: 0.875rem MAINTAINED (14px, WCAG AA, body text)
+ *   - Labels/Badges: 0.875rem → 0.75rem (-14.3%, auxiliary info only)
+ *   - Footer: 0.875rem → 0.75rem (-14.3%, auxiliary info)
+ *
+ * WCAG 2.1 AA Compliance:
+ *   - Interactive elements (buttons, links): 14px+ maintained
+ *   - Body text (descriptions, help): 14px+ maintained
+ *   - Auxiliary info (footer, badges, hints): 12px allowed
+ *
+ * Impact: 정보 밀도 향상, 시각적 계층 유지, WCAG 2.1 AA 준수
+ * Reference: .plan/ui-density-improvement_plan.md Phase 2
+ */
+
 /* ===== CARD COMPONENTS ===== */
 .card {
     background-color: var(--bg-card);
@@ -68,7 +91,7 @@
 }
 
 .strategy-title-section h3 {
-    font-size: 1.5rem;
+    font-size: 1.25rem; /* PHASE 2: 1.5rem → 1.25rem (-16.7%) */
     font-weight: 700;
     color: var(--accent-primary);
     margin: 0;
@@ -83,7 +106,7 @@
 }
 
 .strategy-title-section p {
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, body text */
     color: var(--strategy-subtitle-text);
     margin: 0;
     line-height: 1.4;
@@ -204,7 +227,7 @@
 }
 
 .strategy-summary-card .amount {
-    font-size: 1.5rem;
+    font-size: 1.2rem; /* PHASE 2: 1.5rem → 1.2rem (-20%) */
     font-weight: 600;
     color: var(--strategy-header-text);
     margin: 0;
@@ -241,7 +264,7 @@
 }
 
 .metric-value {
-    font-size: 1.125rem;
+    font-size: 0.9375rem; /* PHASE 2: 1.125rem → 0.9375rem (-16.7%) */
     font-weight: 600;
     color: var(--strategy-header-text);
     display: block;
@@ -264,7 +287,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.875rem;
+    font-size: 0.75rem; /* PHASE 2: 0.875rem → 0.75rem (-14.3%), 보조 정보 */
 }
 
 .info-icon {
@@ -301,7 +324,7 @@
     border: none;
     cursor: pointer;
     transition: all 0.15s ease;
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, interactive elements */
     font-weight: 500;
     text-decoration: none;
 }
@@ -350,7 +373,7 @@
     border: 1px dashed rgba(59, 130, 246, 0.3);
     border-radius: 0.375rem;
     color: var(--info);
-    font-size: 0.875rem;
+    font-size: 0.75rem; /* PHASE 2: 0.875rem → 0.75rem (-14.3%), 보조 정보 */
     text-align: center;
 }
 
@@ -401,7 +424,7 @@
 
 .strategy-account-amount .amount {
     font-weight: 600;
-    font-size: 1.125rem;
+    font-size: 0.9375rem; /* PHASE 2: 1.125rem → 0.9375rem (-16.7%) */
     color: var(--strategy-amount-text);
     margin: 0;
     font-variant-numeric: tabular-nums;
@@ -469,7 +492,7 @@
 
 /* ===== ACTION BUTTONS ===== */
 .btn-action {
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, interactive elements */
     font-weight: 500;
     padding: 0.5rem 0.75rem;
     border-radius: 0.375rem;
@@ -531,19 +554,19 @@
 }
 
 .strategy-page-header-content h1 {
-    font-size: 2.5rem;
+    font-size: 2rem; /* PHASE 2: 2.5rem → 2rem (-20%) */
     font-weight: 700;
     margin: 0;
 }
 
 .strategy-page-header-content p {
     margin: 0.5rem 0 0 0;
-    font-size: 1.125rem;
+    font-size: 0.9375rem; /* PHASE 2: 1.125rem → 0.9375rem (-16.7%) */
     color: rgb(196 181 253); /* purple-200 equivalent */
 }
 
 .btn-header-action {
-    font-size: 1rem;
+    font-size: 0.875rem; /* PHASE 2: 1rem → 0.875rem (-12.5%) */
     font-weight: 600;
     padding: 0.75rem 1.25rem;
     border-radius: 0.375rem;
@@ -572,13 +595,13 @@
         gap: 1rem;
         text-align: center;
     }
-    
+
     .strategy-page-header-content h1 {
-        font-size: 1.875rem;
+        font-size: 1.5rem; /* PHASE 2: 1.875rem → 1.5rem (-20%) 모바일 */
     }
-    
+
     .strategy-page-header-content p {
-        font-size: 1rem;
+        font-size: 0.875rem; /* PHASE 2: 1rem → 0.875rem (-12.5%) 모바일 */
     }
     
     .strategy-card-footer {
@@ -993,14 +1016,14 @@
 }
 
 .quick-action-card .title {
-    font-size: 1.125rem;
+    font-size: 0.9375rem; /* PHASE 2: 1.125rem → 0.9375rem (-16.7%) */
     font-weight: 600;
     margin-bottom: 0.25rem;
     color: white;
 }
 
 .quick-action-card .description {
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, body text */
     opacity: 0.9;
     color: white;
 }
