@@ -75,6 +75,69 @@ def admin_verification_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# @FEAT:error-warning-logs @COMP:route @TYPE:helper
+def _is_development_mode() -> bool:
+    """
+    환경 감지: 개발 모드 여부 확인
+
+    환경 감지 방식:
+    - .env 파일의 FLASK_ENV 변수 확인
+    - 'production'이 아니면 개발 모드로 간주
+    - python run.py setup --env production으로 설정
+
+    Returns:
+        bool: 개발 모드이면 True, 프로덕션이면 False
+
+    Note:
+        개발 모드에서는 디버깅 API의 인증을 우회하여
+        빠른 오류 확인이 가능합니다.
+    """
+    from flask import current_app
+    env = current_app.config.get('ENV', 'production')
+    return env.lower() not in ['production', 'prod']
+
+# @FEAT:error-warning-logs @COMP:route @TYPE:validation
+def conditional_admin_required(f):
+    """
+    환경별 인증 분기 데코레이터
+
+    개발 모드 (ENV != 'production'):
+        - 인증 완전 우회 (로그인 불필요)
+        - 목적: API 요청으로 빠른 디버깅 지원
+
+    ⚠️ SECURITY WARNING:
+        개발 모드는 인증을 완전히 우회합니다.
+        - 절대 프로덕션 환경에서 ENV != 'production' 설정 금지
+        - 외부 네트워크 노출 시 심각한 보안 위험
+        - 배포 전 반드시 `python run.py setup --env production` 실행 필수
+
+    프로덕션 모드 (ENV = 'production'):
+        - 로그인 필수 (@login_required)
+        - 관리자 권한 필수 (@admin_required 로직)
+        - 보안: 민감한 로그 정보 보호
+
+    Usage:
+        @bp.route('/debug-endpoint')
+        @conditional_admin_required
+        def debug_view():
+            # 개발: 누구나 접근, 프로덕션: 관리자만
+            pass
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if _is_development_mode():
+            # 개발 모드: 인증 우회 (디버깅 편의성)
+            from flask import current_app
+            current_app.logger.warning(
+                f"🔓 [DEV MODE] Authentication bypassed for {f.__name__} "
+                f"(ENV={current_app.config.get('ENV')})"
+            )
+            return f(*args, **kwargs)
+        else:
+            # 프로덕션 모드: 기존 admin_required 데코레이터 재사용
+            return admin_required(f)(*args, **kwargs)
+    return decorated_function
+
 # @FEAT:admin-panel @COMP:route @TYPE:core
 @bp.route('/')
 @login_required
