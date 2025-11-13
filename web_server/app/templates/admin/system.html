@@ -306,7 +306,123 @@
             {% endif %}
         </div>
     </div>
-    
+
+    <!-- @FEAT:error-warning-logs-ui @COMP:template @TYPE:core
+         시스템 오류 및 경고 로그 섹션: 실시간 ERROR/WARNING 모니터링
+         컴포넌트: 헤더, 통계카드(ERROR/WARNING/총계), 필터(레벨/검색/줄수), 로그컨테이너
+         Phase 1 UI - Phase 2에서 JavaScript 구현 예정
+    -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                시스템 오류 및 경고 로그
+            </h2>
+            <p class="text-sm text-secondary mt-1">실시간 ERROR/WARNING 로그 모니터링</p>
+        </div>
+        <div class="p-6">
+            <!-- 통계 카드: errorLogCount/warningLogCount/total24hLogCount (JavaScript에서 동적 업데이트) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <!-- ERROR 로그 카운트 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>ERROR</h3>
+                            <p class="stats-value text-error" id="errorLogCount">0</p>
+                            <p class="stats-subtitle">오류</p>
+                        </div>
+                        <div class="stats-icon bg-error-light">
+                            <svg class="w-6 h-6 text-error" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WARNING 로그 카운트 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>WARNING</h3>
+                            <p class="stats-value text-warning" id="warningLogCount">0</p>
+                            <p class="stats-subtitle">경고</p>
+                        </div>
+                        <div class="stats-icon bg-warning-light">
+                            <svg class="w-6 h-6 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 24시간 총계 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>총계</h3>
+                            <p class="stats-value text-info" id="total24hLogCount">0</p>
+                            <p class="stats-subtitle">로그 수</p>
+                        </div>
+                        <div class="stats-icon bg-info-light">
+                            <svg class="w-6 h-6 text-info" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
+                                <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 1 1 0 000 2H4a1 1 0 100 2h12a1 1 0 100-2h-2a1 1 0 100-2 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 필터 컨트롤: 레벨(ALL/ERROR/WARNING), 검색어, 표시줄수(50/100/200/500), 새로고침버튼 -->
+            <div class="flex items-center space-x-3 flex-wrap gap-y-2 mb-6">
+                <select id="errorWarningLogLevel"
+                        class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                        aria-label="로그 레벨 필터">
+                    <option value="ALL">전체</option>
+                    <option value="ERROR">🔴 ERROR</option>
+                    <option value="WARNING">⚠️ WARNING</option>
+                </select>
+
+                <input type="text"
+                       id="errorWarningLogSearch"
+                       placeholder="검색..."
+                       class="form-input flex-1 min-w-[150px] text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                       aria-label="로그 검색">
+
+                <select id="errorWarningLogLimit"
+                        class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                        aria-label="로그 표시 줄 수">
+                    <option value="50">50줄</option>
+                    <option value="100" selected>100줄</option>
+                    <option value="200">200줄</option>
+                    <option value="500">500줄</option>
+                </select>
+
+                <button onclick="refreshErrorWarningLogs()"
+                        class="btn btn-outline btn-sm"
+                        aria-label="로그 새로고침">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                    </svg>
+                    새로고침
+                </button>
+            </div>
+
+            <!-- 로그 컨테이너: scrollable (max-h-96), role=log, ARIA label포함 (Phase 2에서 실시간 로그 스트림) -->
+            <div class="mt-6">
+                <div id="errorWarningLogContainer"
+                     class="bg-primary rounded-lg p-4 font-mono text-sm max-h-96 overflow-y-auto border border-color"
+                     role="log"
+                     aria-label="시스템 오류 및 경고 로그">
+                    <div class="text-center text-secondary py-4">로그를 불러오는 중...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- / @FEAT:error-warning-logs-ui -->
+
     <!-- 전역 텔레그램 설정 -->
     <div class="card">
         <div class="px-6 py-4 border-b border-color">
