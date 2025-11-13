@@ -1297,27 +1297,16 @@ def get_job_logs(job_id):
         - API 응답의 'tag' 필드는 Optional (null 가능)
 
     Implementation (GitHub Issue #2 해결):
-        UTF-8 Safe Tail Read Algorithm을 사용하여 UnicodeDecodeError 예방:
+        헬퍼 함수를 활용한 안전한 로그 읽기 및 파싱:
 
-        1. 바이너리 모드('rb')로 파일 열기
-           - 이유: 텍스트 모드는 UTF-8 멀티바이트 문자 중간 seek 위험 (약 13% 발생 확률)
-           - 바이너리 모드는 모든 바이트 위치에서 안전함
+        1. validate_log_file_path(): Path Traversal 방어 및 파일 검증
+        2. read_log_tail_utf8_safe(): UTF-8 안전 tail 읽기 (200KB 최적화)
+           - 바이너리 모드, 라인 경계 탐색, errors='replace'
+           - 폴백: 최적화 실패 시 전체 파일 읽기
+        3. parse_log_line(): 정규식 기반 구조화 파싱
+           - timestamp, level, tag, message, file, line 추출
 
-        2. 파일 끝에서 200KB 역방향 seek (성능 최적화)
-           - 대응 로그 줄 수: 약 1000줄 (평균 200B/줄)
-           - 일반 사용 사례에 충분한 양
-
-        3. 라인 경계(\n) 탐색으로 완전한 라인부터 읽기 시작
-           - 최대 1KB 청크 읽기로 첫 번째 \n 위치 탐색
-           - 파일 중간부터 읽을 때 불완전한 라인 제거
-
-        4. decode('utf-8', errors='replace') 사용
-           - 깨진 문자/부분 바이트는 U+FFFD(흰 마름모 '�')로 대체
-           - UnicodeDecodeError 발생 방지
-
-        5. 폴백: 최적화 읽기 실패 시 전체 파일 읽기
-           - UnicodeDecodeError 발생 시 안전 디코딩으로 재시도
-           - 성능 영향: 극히 드물고, 필요시에만 발동
+        상세 구현은 app/utils/log_reader.py 참조
 
     Security:
         - Path Traversal 방어: allowed_log_dir 범위 내 파일만 허용
@@ -1329,8 +1318,11 @@ def get_job_logs(job_id):
     try:
         from flask import current_app
         from app import scheduler
-        import os
-        import re
+        from app.utils.log_reader import (
+            validate_log_file_path,
+            read_log_tail_utf8_safe,
+            parse_log_line
+        )
 
         # Job ID 검증 (화이트리스트)
         valid_job_ids = [job.id for job in scheduler.get_jobs()]
@@ -1344,10 +1336,12 @@ def get_job_logs(job_id):
                 'job_id': job_id
             }), 404
 
-        # 로그 파일 경로 가져오기
+        # 로그 파일 경로 가져오기 및 검증
         log_path = current_app.config.get('LOG_FILE')
-        if not log_path:
-            current_app.logger.error('LOG_FILE 설정이 없습니다.')
+        try:
+            log_path = validate_log_file_path(log_path, current_app)
+        except ValueError:
+            # LOG_FILE 설정 누락
             return jsonify({
                 'success': False,
                 'message': '로그 조회 중 오류가 발생했습니다.',
@@ -1356,15 +1350,8 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 500
-
-        # 절대 경로로 변환 및 검증
-        log_path = os.path.abspath(log_path)
-        log_dir = os.path.dirname(log_path)
-
-        # 허용된 로그 디렉토리 내에 있는지 확인 (Path Traversal 방어)
-        allowed_log_dir = os.path.abspath(os.path.join(current_app.root_path, '..', 'logs'))
-        if not log_path.startswith(allowed_log_dir):
-            current_app.logger.error(f'보안: 허용되지 않은 로그 경로 접근 시도: {log_path}')
+        except PermissionError:
+            # Path traversal 시도
             return jsonify({
                 'success': False,
                 'message': '로그 조회 중 오류가 발생했습니다.',
@@ -1373,9 +1360,8 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 403
-
-        # 파일 존재 확인
-        if not os.path.exists(log_path):
+        except FileNotFoundError:
+            # 로그 파일 없음
             return jsonify({
                 'success': False,
                 'message': '로그 파일을 찾을 수 없습니다.',
@@ -1392,43 +1378,8 @@ def get_job_logs(job_id):
 
         # 로그 파일 읽기 (tail 방식 - UTF-8 안전)
         try:
-            # 🆕 바이너리 모드로 UTF-8 안전성 확보
-            with open(log_path, 'rb') as f:
-                try:
-                    # 파일 끝으로 이동
-                    f.seek(0, 2)
-                    file_size = f.tell()
-
-                    # 대략 평균 라인 길이 200바이트 * 1000줄 = 200KB
-                    read_size = min(file_size, 200000)
-                    start_pos = max(0, file_size - read_size)
-                    f.seek(start_pos)
-
-                    # 🆕 라인 경계 찾기 (멀티바이트 안전)
-                    if start_pos > 0:  # 파일 중간부터 읽기 시작한 경우
-                        # 첫 번째 \n까지 스킵 (불완전한 라인 제거)
-                        chunk = f.read(1024)  # 최대 1KB 읽기
-                        newline_pos = chunk.find(b'\n')
-                        if newline_pos != -1:
-                            # 다음 완전한 라인 시작 위치로 이동
-                            f.seek(start_pos + newline_pos + 1)
-                        else:
-                            # \n을 못 찾으면 처음부터 읽기
-                            f.seek(0)
-
-                    # 🆕 안전 디코딩 (깨진 문자는 � 대체)
-                    raw_bytes = f.read()
-                    content = raw_bytes.decode('utf-8', errors='replace')
-                    lines = content.splitlines(keepends=True)  # 라인 단위로 분할
-
-                except (IOError, OSError, UnicodeDecodeError) as e:  # 🆕 UnicodeDecodeError 추가
-                    current_app.logger.warning(f'로그 파일 최적화 읽기 실패, 전체 읽기로 폴백: {str(e)}')
-                    f.seek(0)
-                    raw_bytes = f.read()
-                    content = raw_bytes.decode('utf-8', errors='replace')
-                    lines = content.splitlines(keepends=True)
-
-        except (IOError, OSError) as e:
+            lines = read_log_tail_utf8_safe(log_path)
+        except OSError as e:
             current_app.logger.error(f'로그 파일 읽기 실패: {str(e)}')
             return jsonify({
                 'success': False,
@@ -1438,22 +1389,6 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 500
-
-        # 로그 파싱 정규식
-        # 실제 로그 포맷 (app/__init__.py line 169):
-        # %(asctime)s %(levelname)s: [TAG] %(message)s [in %(pathname)s:%(lineno)d]
-        # 예시: 2025-10-23 14:08:29,055 INFO: [QUEUE_REBAL] 재정렬 완료 [in /app/queue_rebalancer.py:123]
-        # 🚨 중요: re.VERBOSE 플래그를 절대 추가하지 마세요!
-        # re.VERBOSE는 정규식 내의 리터럴 공백을 모두 무시하여 파싱이 실패합니다.
-        # 테스트 결과: re.VERBOSE 있으면 level="UNKNOWN", 없으면 정상 파싱
-        log_pattern = re.compile(
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ '  # 그룹 1: timestamp
-            r'(\w+): '                                      # 그룹 2: level
-            r'(?:\[([A-Z_]+)\] )?'                         # 그룹 3: tag (선택적)
-            r'(.+?) '                                       # 그룹 4: message
-            r'\[in (.+?):(\d+)\]'                          # 그룹 5,6: file, line
-            # 절대 re.VERBOSE 추가하지 말것! (리터럴 공백 매칭 필수)
-        )
 
         # Job ID → Tag 매핑 조회
         job_tag = JOB_TAG_MAP.get(job_id)
@@ -1469,37 +1404,26 @@ def get_job_logs(job_id):
         for line in lines:
             total_count += 1
 
-            # 정규식 파싱
-            match = log_pattern.match(line.strip())
-            if match:
-                timestamp, log_level, tag, message, file_path, line_num = match.groups()
+            # Phase 3.1 헬퍼 재사용: parse_log_line()으로 구조화 파싱
+            parsed = parse_log_line(line)
 
+            if parsed:
                 # 태그 기반 필터링 (job_tag가 있을 경우)
                 if job_tag:
                     # job_tag: "[QUEUE_REBAL]" (constants.py에서 대괄호 포함)
-                    # tag: "QUEUE_REBAL" (정규식으로 추출, 대괄호 제외)
-                    if tag != job_tag.strip('[]'):  # 대괄호 제거하여 비교
+                    # parsed['tag']: "QUEUE_REBAL" (정규식으로 추출, 대괄호 제외)
+                    if parsed['tag'] != job_tag.strip('[]'):  # 대괄호 제거하여 비교
                         continue  # 다른 작업의 로그는 스킵
 
                 # 로그 레벨 필터
-                if level != 'ALL' and log_level != level:
+                if level != 'ALL' and parsed['level'] != level:
                     continue
 
                 # 검색어 필터
-                if search_term and search_term not in message.lower():
+                if search_term and search_term not in parsed['message'].lower():
                     continue
 
-                # 파일명만 추출 (전체 경로에서)
-                file_name = os.path.basename(file_path)
-
-                parsed_logs.append({
-                    'timestamp': timestamp,
-                    'level': log_level,
-                    'tag': tag,  # 🆕 추가
-                    'message': message.strip(),
-                    'file': file_name,
-                    'line': int(line_num)
-                })
+                parsed_logs.append(parsed)
             else:
                 # 파싱 실패 시 fallback (태그 없는 로그도 포함)
                 if search_term and search_term not in line.lower():
@@ -1508,7 +1432,7 @@ def get_job_logs(job_id):
                 parsed_logs.append({
                     'timestamp': 'N/A',
                     'level': 'UNKNOWN',
-                    'tag': None,  # 🆕 추가
+                    'tag': None,
                     'message': line.strip(),
                     'file': 'N/A',
                     'line': 0
