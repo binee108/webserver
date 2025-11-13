@@ -255,3 +255,6 @@ test_*.py
 
 # Postgres data
 postgres_data/
+
+# Refactoring
+.refactoring/
