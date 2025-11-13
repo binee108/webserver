@@ -29,6 +29,18 @@
  * Reference: .plan/ui-density-improvement_plan.md Phase 2
  */
 
+/* ===== PHASE 3: COMPONENT SPACING OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 카드 패딩, 그리드 간격 축소로 정보 밀도 증가 (보수적 접근)
+ * Strategy:
+ *   - 카드 패딩: 20-33% 축소
+ *   - 그리드 간격: 33% 축소
+ *   - 그리드 최소 너비: 보수적 축소 (350px, 220px)
+ *   - 테이블 패딩: 20% 축소 (가독성 우선)
+ * Mobile: 768px 이하에서 터치 타겟 44px 복원
+ * Reference: .plan/ui-density-improvement_plan.md Phase 3
+ */
+
 /* ===== MAIN CSS FILE - TRADING AUTOMATION SYSTEM ===== */
 
 /* Import all CSS modules */
@@ -407,7 +419,7 @@ body {
     background-color: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 0.75rem;
-    padding: 1.5rem;
+    padding: 1rem; /* PHASE 3: 1.5rem → 1rem (-33%) */
     transition: all 0.3s ease;
 }
 
