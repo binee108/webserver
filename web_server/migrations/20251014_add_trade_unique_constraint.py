@@ -18,6 +18,7 @@ Changes:
 Related Issue: #Critical-Issue-4 (Idempotency Not Guaranteed)
 """
 import logging
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,12 @@ def upgrade(engine):
         trans = connection.begin()
         try:
             # Check table existence
-            check_table_sql = """
+            check_table_sql = text("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_name = 'trades'
             );
-            """
+            """)
             result = connection.execute(check_table_sql)
             if not result.scalar():
                 logger.info("ℹ️  trades table not found. Skipping (initial install).")
@@ -47,13 +48,13 @@ def upgrade(engine):
             logger.info("🔧 Adding UNIQUE constraint to trades table...")
 
             # Check if constraint already exists (idempotent)
-            check_sql = """
+            check_sql = text("""
             SELECT constraint_name
             FROM information_schema.table_constraints
             WHERE table_name='trades'
               AND constraint_name='unique_order_per_account'
               AND constraint_type='UNIQUE';
-            """
+            """)
 
             result = connection.execute(check_sql)
             existing = result.fetchone()
@@ -64,11 +65,11 @@ def upgrade(engine):
                 return
 
             # Add UNIQUE constraint
-            alter_sql = """
+            alter_sql = text("""
             ALTER TABLE trades
             ADD CONSTRAINT unique_order_per_account
             UNIQUE (strategy_account_id, exchange_order_id);
-            """
+            """)
 
             connection.execute(alter_sql)
             logger.info("✅ Successfully added UNIQUE constraint 'unique_order_per_account'")
@@ -99,13 +100,13 @@ def downgrade(engine):
             logger.info("🔧 Removing UNIQUE constraint from trades table...")
 
             # Check if constraint exists
-            check_sql = """
+            check_sql = text("""
             SELECT constraint_name
             FROM information_schema.table_constraints
             WHERE table_name='trades'
               AND constraint_name='unique_order_per_account'
               AND constraint_type='UNIQUE';
-            """
+            """)
 
             result = connection.execute(check_sql)
             existing = result.fetchone()
@@ -116,10 +117,10 @@ def downgrade(engine):
                 return
 
             # Remove UNIQUE constraint
-            drop_sql = """
+            drop_sql = text("""
             ALTER TABLE trades
             DROP CONSTRAINT IF EXISTS unique_order_per_account;
-            """
+            """)
 
             connection.execute(drop_sql)
             logger.info("✅ Successfully removed UNIQUE constraint 'unique_order_per_account'")
@@ -153,7 +154,7 @@ def check_duplicate_trades(connection):
             'duplicates': list of (strategy_account_id, exchange_order_id, count)
         }
     """
-    check_sql = """
+    check_sql = text("""
     SELECT
         strategy_account_id,
         exchange_order_id,
@@ -163,7 +164,7 @@ def check_duplicate_trades(connection):
     HAVING COUNT(*) > 1
     ORDER BY count DESC
     LIMIT 10;
-    """
+    """)
 
     result = connection.execute(check_sql)
     duplicates = result.fetchall()
