@@ -5,6 +5,7 @@ exchange_integrated_service.py 와 capital_service.py를 통합하여
 하나의 일관된 서비스로 제공합니다.
 """
 import logging
+from collections import defaultdict
 from enum import Enum
 from typing import Dict, List, Optional, Union, Any, TYPE_CHECKING
 

@@ -102,6 +102,12 @@
   - 성능 최적화를 위한 캐시 시스템 (24h TTL 시간대 정보, 5m TTL 포맷팅 결과)
   - IE11부터 최신 브라우지까지 완벽 호환성
   - 50+ 주요 시간대 및 DST 지원
+- **admin-timezone-display** - Admin System 페이지 시간대 변환 및 KST 표시 (실시간 업데이트, 로그 시간 변환) [`@COMP:route,util,ui`] → [docs](TIMEZONE_USAGE.md#admin-system-페이지-적용-2025-11-14)
+  - 한국 관리자를 위한 KST 시간 표시
+  - 백그라운드 작업 로그 시간대 변환
+  - 실시간 시간 업데이트 (1초 간격)
+  - 다국어 관리자 지원 (한국어/영문 시간 표시)
+  - 시간대 변환 성능 최적화 및 캐시 시스템
 
 ### 🔐 Authentication & Security
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
@@ -156,6 +162,7 @@
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
 | 2025-11-13 | Binance WebSocket Listen Key Renewal Fix | ✅ Phase 1 | binance_websocket.py | Issue #48: AttributeError 수정 (self.account.api_url → self.BASE_URL), 30분 주기 Listen Key 갱신 안정화 |
 | 2025-11-13 | Order Quantity Restriction Removal | ✅ Completed | quantity_calculator.py, webhook_message_format.md, capital-management.md | Issue #46: qty_per > 100% validation 제거, Futures 레버리지 거래 지원 (양수 qty_per 무제한, 청산 -100% 상한 유지) |
+| 2025-11-14 | Admin System Timezone Conversion | ✅ Phase 2 | admin.py, system.html, timezone.js | 관리자 시스템 페이지 KST 시간 변환 적용, 한국 사용자 경험 개선 (실시간 업데이트, 로그 시간 변환) |
 
 ---
 
@@ -196,7 +203,7 @@
 - **UI & Real-time** (6): toast-system, toast-ux-improvement, event-sse, batch-sse, individual-toast, open-orders-sorting
 - **Strategy & Analytics** (4): strategy-management, strategy-subscription-safety, analytics, account-management
 - **Background Jobs** (3): background-scheduler, background-log-tagging, batch-parallel-processing
-- **System Utilities** (1): timezone-utility
+- **System Utilities** (2): timezone-utility, admin-timezone-display
 - **Infrastructure** (4): worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
 - **Notifications** (2): telegram-notification, admin-panel
 - **Admin & Monitoring** (1): admin-system-log-sorting
