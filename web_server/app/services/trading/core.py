@@ -938,7 +938,15 @@ class TradingCore:
         side = webhook_data.get('side')  # CANCEL_ALL_ORDER는 side 없음
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
         stop_price = to_decimal(webhook_data.get('stop_price')) if webhook_data.get('stop_price') else None
-        qty_per = to_decimal(webhook_data.get('qty_per', 100))
+
+        # qty와 qty_per 추출 (Phase 3: 절대 수량 지원)
+        qty_per = to_decimal(webhook_data.get('qty_per')) if webhook_data.get('qty_per') else None
+        qty = to_decimal(webhook_data.get('qty')) if webhook_data.get('qty') else None
+
+        # qty 또는 qty_per 검증 (CANCEL_ALL_ORDER/CANCEL 제외)
+        if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL']:
+            if qty_per is None and qty is None:
+                raise Exception("qty 또는 qty_per 중 하나는 필수입니다")
 
         # STOP_LIMIT 주문 필수 필드 검증
         if order_type == 'STOP_LIMIT':
@@ -947,8 +955,11 @@ class TradingCore:
             if not price:
                 raise Exception("STOP_LIMIT 주문: price가 필수입니다")
 
-        logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 심볼: {symbol}, "
-                   f"사이드: {side}, 주문타입: {order_type}, 수량비율: {qty_per}%")
+        logger.info(
+            f"거래 신호 처리 시작 - 전략: {group_name}, 심볼: {symbol}, "
+            f"사이드: {side}, 주문타입: {order_type}, "
+            f"수량: qty={qty}, qty_per={qty_per}%"
+        )
 
         # 전략 조회
         strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
@@ -995,7 +1006,7 @@ class TradingCore:
         results = []
         if filtered_accounts:
             results = self._execute_trades_parallel(
-                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, market_type, timing_context
+                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, qty, market_type, timing_context
             )
 
         successful_trades = [r for r in results if r.get('success', False)]
@@ -1043,8 +1054,8 @@ class TradingCore:
     # @FEAT:batch-order-race-condition @FEAT:order-queue @COMP:service @TYPE:core @DEPS:order-tracking,exchange-integration
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str,
                                  side: str, order_type: str, price: Optional[Decimal],
-                                 stop_price: Optional[Decimal], qty_per: Decimal,
-                                 market_type: str,
+                                 stop_price: Optional[Decimal], qty_per: Optional[Decimal],
+                                 qty: Optional[Decimal], market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
         """
         배치 주문 병렬 실행 (타입 그룹별 분리)
@@ -1144,11 +1155,12 @@ class TradingCore:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {}
                 for strategy, account, sa in filtered_accounts:
-                    # qty_per를 실제 주문 수량으로 변환
+                    # qty_per 또는 qty를 실제 주문 수량으로 변환
                     try:
                         calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
                             strategy_account=sa,
                             qty_per=qty_per,
+                            qty=qty,
                             symbol=symbol,
                             order_type=order_type,
                             market_type=market_type,
@@ -1289,15 +1301,24 @@ class TradingCore:
                     symbol = order.get('symbol')
                     side = order.get('side')
                     order_type = order.get('order_type')
-                    qty_per = to_decimal(order.get('qty_per', 100))
+                    qty_per = to_decimal(order.get('qty_per')) if order.get('qty_per') else None
+                    qty = to_decimal(order.get('qty')) if order.get('qty') else None
                     price = to_decimal(order.get('price')) if order.get('price') else None
                     stop_price = to_decimal(order.get('stop_price')) if order.get('stop_price') else None
                     original_index = order.get('original_index')  # ✅ 인덱스 추출
 
-                    # qty_per를 실제 수량으로 변환
+                    # qty 또는 qty_per 검증 (CANCEL_ALL_ORDER/CANCEL 제외)
+                    order_type_inner = order.get('order_type')
+                    if order_type_inner not in ['CANCEL_ALL_ORDER', 'CANCEL']:
+                        if qty_per is None and qty is None:
+                            logger.error(f"배치 주문 {original_index}번째: qty 또는 qty_per 필수")
+                            continue  # 이 주문 스킵
+
+                    # qty_per 또는 qty를 실제 수량으로 변환
                     calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
                         strategy_account=sa,
                         qty_per=qty_per,
+                        qty=qty,
                         symbol=symbol,
                         order_type=order_type,
                         market_type=market_type.lower(),  # 'FUTURES' → 'futures'

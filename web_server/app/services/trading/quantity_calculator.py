@@ -138,7 +138,8 @@ class QuantityCalculator:
     def calculate_order_quantity(
         self,
         strategy_account: StrategyAccount,
-        qty_per: Decimal,
+        qty_per: Optional[Decimal] = None,  # 🆕 None 허용
+        qty: Optional[Decimal] = None,      # 🆕 추가
         symbol: str,
         order_type: str,
         market_type: str = 'futures',
@@ -146,16 +147,79 @@ class QuantityCalculator:
         stop_price: Optional[Decimal] = None,
         side: Optional[str] = None,
     ) -> Decimal:
-        """Return the order quantity derived from allocated capital.
+        """Return the order quantity derived from allocated capital or absolute value.
 
         Args:
             qty_per: Allocation percentage. Positive values (>0) for entry orders
                      (no upper limit, supports leverage >100%). Negative values (<0)
                      trigger position liquidation logic.
+            qty: Absolute quantity (bypasses percentage calculation). Must be positive.
+                 Use qty_per=-100 for liquidation. Overridden by qty_per when both
+                 are provided (qty_per priority).
 
         Returns:
             Decimal: Calculated order quantity, or Decimal('0') if validation fails.
         """
+        # 🆕 Validation: qty 또는 qty_per 중 하나는 필수
+        if qty_per is None and qty is None:
+            logger.error("qty 또는 qty_per 중 하나는 필수입니다")
+            raise ValueError("qty 또는 qty_per 중 하나는 필수입니다")
+
+        # 🆕 Priority: qty_per > qty
+        if qty_per is not None and qty is not None:
+            logger.warning(
+                "⚠️ qty_per (%s%%)와 qty (%s) 둘 다 제공됨. "
+                "qty_per를 우선 사용합니다 (우선순위 정책)",
+                qty_per,
+                qty
+            )
+            # qty_per 로직으로 진행 (기존 코드 경로)
+
+        # 🆕 Case 1: qty 제공 (qty_per 없음) → 절대 수량 직접 사용
+        if qty_per is None and qty is not None:
+            # 🆕 Issue Fix #1: qty 음수 검증 추가 (plan-reviewer 피드백)
+            if qty <= 0:
+                logger.error("qty는 양수여야 합니다: %s. 청산은 qty_per=-100 사용", qty)
+                raise ValueError("qty는 양수여야 합니다. 청산은 qty_per=-100 사용")
+
+            logger.info("🎯 절대 수량 모드: qty=%s (퍼센트 계산 우회)", qty)
+
+            # 검증만 수행 (수량 계산 우회)
+            exchange_name = (
+                strategy_account.account.exchange if strategy_account.account else 'BINANCE'
+            )
+
+            validation = symbol_validator.validate_order_params(
+                exchange=exchange_name,
+                symbol=symbol,
+                market_type=market_type,
+                quantity=qty,
+                price=price or self.determine_order_price(
+                    order_type=order_type,
+                    price=price,
+                    stop_price=stop_price,
+                    symbol=symbol,
+                    exchange=exchange_name,
+                    market_type=market_type,
+                ),
+            )
+
+            if not validation.get('success'):
+                logger.warning(
+                    "❌ 수량 검증 실패 (%s): %s",
+                    validation.get('error_type'),
+                    validation.get('error')
+                )
+                return Decimal('0')
+
+            adjusted_quantity = validation.get('adjusted_quantity', qty)
+            if adjusted_quantity <= 0:
+                logger.warning("❌ 검증된 수량이 0 이하입니다 (symbol=%s qty=%s)", symbol, qty)
+                return Decimal('0')
+
+            return adjusted_quantity
+
+        # 🆕 Case 2: qty_per 제공 (기존 로직)
         try:
             qty_per_decimal = Decimal(str(qty_per))
 
@@ -319,7 +383,8 @@ class QuantityCalculator:
         if qty_per_decimal > 0:
             quantity = self.calculate_order_quantity(
                 strategy_account=strategy_account,
-                qty_per=qty_per_decimal,
+                qty_per=qty_per_decimal,  # 명시적으로 qty_per 전달
+                qty=None,  # qty는 사용하지 않음
                 symbol=symbol,
                 order_type=order_type_normalized,
                 market_type=market_type,
