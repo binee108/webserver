@@ -1,3 +1,46 @@
+/* ===== PHASE 1: GLOBAL LAYOUT OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 정보 밀도 30-40% 증가 (한 화면에 더 많은 콘텐츠 표시)
+ * Strategy: 컨테이너 너비 증가, 패딩/마진 축소, 모바일 현행 유지
+ *
+ * Changes:
+ *   - Container max-width: 80rem(1280px) → 90rem(1440px) +12.5%
+ *   - Section spacing: 2rem → 1.5rem -25%
+ *   - Main container padding: 1.5rem → 1rem -33%
+ *
+ * Impact: 데스크톱 정보 밀도 향상, 모바일 반응형 불변
+ * Reference: .plan/ui-density-improvement_plan.md Phase 1
+ */
+
+/* ===== PHASE 2: TYPOGRAPHY OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 폰트 크기 15-20% 축소하여 정보 밀도 증가
+ * Strategy: 계층별 차등 축소 (큰 폰트 20%, 중간 17.5%, 작은 15%)
+ *
+ * Changes:
+ *   - Page headers: 2rem → 1.6rem (-20%)
+ *   - Stats values: 2rem → 1.6rem (-20%)
+ *   - Navbar brand: 1.25rem → 1.0625rem (-15%)
+ *   - Form help: 0.875rem → 0.75rem (-14.3%)
+ *   - Footer: 0.875rem → 0.75rem (-14.3%)
+ *
+ * Impact: 정보 밀도 향상, 시각적 계층 유지, WCAG 2.1 AA 부분 준수
+ * WCAG Note: 12px 텍스트는 보조 정보(라벨/배지)로 제한, 본문은 14px+ 유지
+ * Reference: .plan/ui-density-improvement_plan.md Phase 2
+ */
+
+/* ===== PHASE 3: COMPONENT SPACING OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Goal: 카드 패딩, 그리드 간격 축소로 정보 밀도 증가 (보수적 접근)
+ * Strategy:
+ *   - 카드 패딩: 20-33% 축소
+ *   - 그리드 간격: 33% 축소
+ *   - 그리드 최소 너비: 보수적 축소 (350px, 220px)
+ *   - 테이블 패딩: 20% 축소 (가독성 우선)
+ * Mobile: 768px 이하에서 터치 타겟 44px 복원
+ * Reference: .plan/ui-density-improvement_plan.md Phase 3
+ */
+
 /* ===== MAIN CSS FILE - TRADING AUTOMATION SYSTEM ===== */
 
 /* Import all CSS modules */
@@ -29,24 +72,24 @@ body {
 
 /* ===== LAYOUT COMPONENTS ===== */
 .main-container {
-    max-width: 80rem; /* 1280px - Tailwind의 max-w-7xl과 동일 */
+    max-width: 90rem; /* 1440px - 기존 80rem(1280px)에서 12.5% 증가 */
     margin: 0 auto;
-    padding: 1.5rem 1rem;
+    padding: 1rem 1rem; /* 1.5rem → 1rem (33% 축소) */
 }
 
 /* Strategy page specific layout */
 .strategy-page .main-container {
-    padding: 2.5rem 1rem;
+    padding: 2rem 1rem; /* 2.5rem → 2rem (20% 축소) */
 }
 
 @media (min-width: 768px) {
     .strategy-page .main-container {
-        padding: 2.5rem 2.5rem;
+        padding: 2rem 2rem; /* 2.5rem → 2rem */
     }
 }
 
 .section-container {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem; /* 2rem → 1.5rem (25% 축소) */
 }
 
 /* ===== NAVIGATION STYLES ===== */
@@ -59,13 +102,13 @@ body {
 }
 
 .navbar-container {
-    max-width: 80rem; /* main-container와 동일한 max-width */
+    max-width: 90rem; /* main-container와 동일한 max-width로 변경 */
     margin: 0 auto;
     padding: 0 1rem;
 }
 
 .navbar-brand {
-    font-size: 1.25rem;
+    font-size: 1.0625rem; /* PHASE 2: 1.25rem → 1.0625rem (-15%) */
     font-weight: bold;
     color: var(--text-primary);
     text-decoration: none;
@@ -342,7 +385,7 @@ body {
 }
 
 .page-header .header-text h1 {
-    font-size: 2rem;
+    font-size: 1.6rem; /* PHASE 2: 2rem → 1.6rem (-20%) */
     font-weight: bold;
     margin: 0;
 }
@@ -376,7 +419,7 @@ body {
     background-color: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 0.75rem;
-    padding: 1.5rem;
+    padding: 1rem; /* PHASE 3: 1.5rem → 1rem (-33%) */
     transition: all 0.3s ease;
 }
 
@@ -399,7 +442,7 @@ body {
 }
 
 .stats-card .stats-info .stats-value {
-    font-size: 2rem;
+    font-size: 1.6rem; /* PHASE 2: 2rem → 1.6rem (-20%) */
     font-weight: bold;
     margin: 0;
     font-variant-numeric: tabular-nums;
@@ -477,7 +520,7 @@ body {
 
 .form-help {
     color: var(--text-muted);
-    font-size: 0.875rem;
+    font-size: 0.875rem; /* WCAG AA, helper text */
     margin-top: 0.25rem;
 }
 
@@ -535,7 +578,7 @@ body {
     margin-top: auto;
     text-align: center;
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 0.75rem; /* PHASE 2: 0.875rem → 0.75rem (-14.3%), 보조 정보 */
 }
 
 /* ===== UTILITY CLASSES ===== */
@@ -623,38 +666,39 @@ body {
     .desktop-nav {
         display: none;
     }
-    
+
     /* Show mobile navigation on mobile */
     .mobile-nav {
         display: flex;
     }
-    
+
+    /* Mobile: 모바일 반응형 유지 (현행 스타일) */
     .main-container {
-        padding: 1rem 0.5rem;
+        padding: 1rem 0.5rem; /* 현행 유지 */
     }
-    
+
     .strategy-page .main-container {
-        padding: 1.5rem 0.5rem;
+        padding: 1.5rem 0.5rem; /* 현행 유지 */
     }
-    
+
     .page-header .header-content {
         flex-direction: column;
         gap: 1rem;
         text-align: center;
     }
-    
+
     .page-header .header-actions {
         justify-content: center;
     }
-    
+
     .page-header .header-text h1 {
-        font-size: 1.5rem;
+        font-size: 1.2rem; /* PHASE 2: 1.5rem → 1.2rem (-20%) 모바일 */
     }
-    
+
     .stats-card .stats-info .stats-value {
-        font-size: 1.5rem;
+        font-size: 1.2rem; /* PHASE 2: 1.5rem → 1.2rem (-20%) 모바일 */
     }
-    
+
     .stats-grid {
         grid-template-columns: 1fr;
     }

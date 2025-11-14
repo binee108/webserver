@@ -1,5 +1,14 @@
+/* ===== PHASE 4-6: DASHBOARD & PAGE-SPECIFIC OPTIMIZATION (2025-11-13) ===== */
+/*
+ * Phase 4: Dashboard chart height optimization
+ * Phase 5: Strategy page badge/account optimization
+ * Phase 6: Responsive maintenance and verification
+ */
+
 /* Dashboard page scoped tweaks */
-.page-dashboard .chart-card { height: 300px; }
+.page-dashboard .chart-card {
+    height: 250px; /* PHASE 4: 300px → 250px (-17%) */
+}
 
 /* Phase 4.4 Phase 2: Dashboard USDT 기준 표시 안내 툴팁 */
 /* 목적: 총 자본이 USDT로 통합 표시됨을 UI상 명확히 표시하기 위해 ℹ️ 아이콘에 hover 효과 추가 */
