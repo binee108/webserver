@@ -78,7 +78,7 @@ load_initial_symbols()
   │       ├─ 캐시 키 생성: f"{EXCHANGE}_{SYMBOL}_{MARKET_TYPE}"
   │       └─ market_info_cache에 저장
   │
-  └─ 검증: BINANCE_BTCUSDT_FUTURES, UPBIT_BTC/KRW_SPOT 확인
+  └─ 초기화 완료: is_initialized 플래그 설정
 ```
 
 ---
