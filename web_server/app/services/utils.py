@@ -160,6 +160,7 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'stop_price': 'stop_price',  # STOP 주문용 Stop 가격
         'stopprice': 'stop_price',   # 대안 필드명
         'qty_per': 'qty_per',
+        'qty': 'qty',                # 🆕 절대 수량 (qty_per 대안)
         'token': 'token',
         'user_token': 'token',
         'params': 'params'           # 🆕 증권/선물옵션용 추가 파라미터
@@ -281,6 +282,10 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                 if 'qty_per' in order:
                     batch_order['qty_per'] = to_decimal(order['qty_per'])
 
+                # 🆕 qty 지원 (절대 수량)
+                if 'qty' in order:
+                    batch_order['qty'] = to_decimal(order['qty'])
+
                 # params 지원 (확장 파라미터)
                 if 'params' in order:
                     batch_order['params'] = order['params']
@@ -300,11 +305,11 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                         f"폴백 정책 변경 (2025-10-08): side는 각 주문에 명시해야 합니다."
                     )
 
-                # qty_per 검증 (CANCEL_ALL_ORDER 제외 필수)
-                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('qty_per'):
+                # 🆕 qty 또는 qty_per 검증 (CANCEL_ALL_ORDER, CANCEL 제외 필수)
+                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('qty_per') and not batch_order.get('qty'):
                     raise ValueError(
-                        f"배치 주문 {idx + 1}번째에 qty_per가 필요합니다. "
-                        f"폴백 정책 변경 (2025-10-08): qty_per는 각 주문에 명시해야 합니다."
+                        f"배치 주문 {idx + 1}번째에 qty 또는 qty_per 중 하나가 필요합니다. "
+                        f"폴백 정책 변경 (2025-10-08): 각 주문에 명시해야 합니다."
                     )
 
                 normalized['orders'].append(batch_order)
