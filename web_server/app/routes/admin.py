@@ -1477,11 +1477,17 @@ def get_job_logs(job_id):
 # @FEAT:error-warning-logs @COMP:route @TYPE:core
 @bp.route('/system/logs/errors-warnings', methods=['GET'])
 @conditional_admin_required
+# @FEAT:admin-system @COMP:route @TYPE:core
 def get_errors_warnings_logs():
-    """
+  """
     ERROR/WARNING 로그 조회 API (디버깅 용도)
 
     시스템 전체의 ERROR 및 WARNING 로그를 빠르게 조회하는 API입니다.
+
+    **중요 변경 사항 (로그 순서 개선):**
+    - 변경 전: 오래된 로그가 상단에 표시됨
+    - 변경 후: 최신 로그가 상단에 표시됨 (사용자 경험 개선)
+    - 기술적 구현: `sorted(..., reverse=True)`를 통한 내림차순 정렬
     개발 모드에서는 인증을 우회하여 디버깅을 편리하게 지원하며,
     프로덕션 모드에서는 관리자 권한을 요구하여 보안을 강화합니다.
 
@@ -1693,8 +1699,16 @@ def get_errors_warnings_logs():
                     'line': 0
                 })
 
-        # limit 적용 (최근 N개 반환)
-        filtered_logs = parsed_logs[-limit:]
+        # @IMPORTANT: 통계 계산은 순서 반전 전에 수행해야 함
+        # 현재 이 함수에는 로그 통계 계산 로직이 없지만,
+        # 향후 추가 시 여기에서 계산해야 함
+        # 예시: error_count = len([log for log in filtered_logs if log['level'] == 'ERROR'])
+
+        # limit 적용 (최근 N개 반환, 가장 오래된 순서)
+        logs_with_limit = parsed_logs[-limit:]
+
+        # @FEAT:admin-system @TYPE:core - 로그 순서 개선: 최신 로그가 상단에 표시되도록 내림차순 정렬
+        filtered_logs = sorted(logs_with_limit, key=lambda x: x['timestamp'], reverse=True)
 
         return jsonify({
             'success': True,
