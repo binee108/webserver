@@ -823,7 +823,7 @@ class ExchangeService:
 
     # @FEAT:exchange-integration @COMP:service @TYPE:core
     def get_balance(self, account: Account, asset: str = 'USDT',
-                    market_type: str = 'spot') -> Dict[str, Any]:
+                    market_type: Union[str, MarketTypeEnum] = 'spot') -> Dict[str, Any]:
         """
         특정 자산 잔고 조회 (편의 메서드)
 
@@ -842,9 +842,27 @@ class ExchangeService:
                 - locked: float - 잠긴 잔액
                 - total: float - 총 잔액
         """
+        # Input validation
+        if not account:
+            logger.error("Account parameter is required")
+            return {'success': False, 'error': 'Account parameter is required'}
+
+        if not asset or not isinstance(asset, str):
+            logger.error(f"Asset must be a non-empty string, got: {asset}")
+            return {'success': False, 'error': 'Asset must be a non-empty string'}
+
+        # MarketTypeEnum normalization for type safety
+        if isinstance(market_type, MarketTypeEnum):
+            normalized_market_type = market_type.value
+        elif MarketTypeEnum.has_value(market_type):
+            normalized_market_type = market_type
+        else:
+            logger.warning(f"Invalid market type: {market_type}, defaulting to 'spot'")
+            normalized_market_type = 'spot'
+
         try:
             # 기존 fetch_balance() 사용
-            balance_result = self.fetch_balance(account, market_type)
+            balance_result = self.fetch_balance(account, normalized_market_type)
 
             if not balance_result['success']:
                 return balance_result
