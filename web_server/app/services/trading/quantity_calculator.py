@@ -138,10 +138,10 @@ class QuantityCalculator:
     def calculate_order_quantity(
         self,
         strategy_account: StrategyAccount,
-        qty_per: Optional[Decimal] = None,  # 🆕 None 허용
-        qty: Optional[Decimal] = None,      # 🆕 추가
         symbol: str,
         order_type: str,
+        qty_per: Optional[Decimal] = None,  # 🆕 None 허용
+        qty: Optional[Decimal] = None,      # 🆕 추가
         market_type: str = 'futures',
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
@@ -150,12 +150,19 @@ class QuantityCalculator:
         """Return the order quantity derived from allocated capital or absolute value.
 
         Args:
+            strategy_account: StrategyAccount instance for the trading strategy.
+            symbol: Trading symbol (e.g., 'BTC/USDT', 'AAPL').
+            order_type: Order type (e.g., 'MARKET', 'LIMIT', 'STOP_MARKET').
             qty_per: Allocation percentage. Positive values (>0) for entry orders
                      (no upper limit, supports leverage >100%). Negative values (<0)
                      trigger position liquidation logic.
             qty: Absolute quantity (bypasses percentage calculation). Must be positive.
                  Use qty_per=-100 for liquidation. Overridden by qty_per when both
                  are provided (qty_per priority).
+            market_type: Market type ('futures' or 'spot'). Default: 'futures'.
+            price: Order price for LIMIT orders.
+            stop_price: Stop price for STOP orders.
+            side: Trade side ('BUY' or 'SELL') for position liquidation.
 
         Returns:
             Decimal: Calculated order quantity, or Decimal('0') if validation fails.
@@ -383,10 +390,10 @@ class QuantityCalculator:
         if qty_per_decimal > 0:
             quantity = self.calculate_order_quantity(
                 strategy_account=strategy_account,
-                qty_per=qty_per_decimal,  # 명시적으로 qty_per 전달
-                qty=None,  # qty는 사용하지 않음
                 symbol=symbol,
                 order_type=order_type_normalized,
+                qty_per=qty_per_decimal,  # 명시적으로 qty_per 전달
+                qty=None,  # qty는 사용하지 않음
                 market_type=market_type,
                 price=price_decimal,
                 stop_price=stop_price_decimal,

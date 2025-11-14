@@ -1159,10 +1159,10 @@ class TradingCore:
                     try:
                         calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
                             strategy_account=sa,
-                            qty_per=qty_per,
-                            qty=qty,
                             symbol=symbol,
                             order_type=order_type,
+                            qty_per=qty_per,
+                            qty=qty,
                             market_type=market_type,
                             price=price,
                             stop_price=stop_price,
@@ -1317,10 +1317,10 @@ class TradingCore:
                     # qty_per 또는 qty를 실제 수량으로 변환
                     calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
                         strategy_account=sa,
-                        qty_per=qty_per,
-                        qty=qty,
                         symbol=symbol,
                         order_type=order_type,
+                        qty_per=qty_per,
+                        qty=qty,
                         market_type=market_type.lower(),  # 'FUTURES' → 'futures'
                         price=price,
                         stop_price=stop_price,
