@@ -15,6 +15,7 @@ from decimal import Decimal
 from datetime import datetime
 from threading import Lock
 from collections import defaultdict
+from enum import Enum
 
 from app.models import Account
 from app.constants import Exchange, MarketType, OrderType
@@ -30,6 +31,27 @@ if TYPE_CHECKING:
     from app.exchanges.securities.base import BaseSecuritiesExchange
 
 logger = logging.getLogger(__name__)
+
+
+# @FEAT:exchange-integration @COMP:service @TYPE:validation
+class MarketTypeEnum(str, Enum):
+    """거래소 마켓 타입 표준화"""
+    SPOT = "spot"
+    FUTURES = "futures"
+
+    @classmethod
+    def has_value(cls, value) -> bool:
+        """유효한 값인지 확인"""
+        return value in cls._value2member_map_
+
+    @classmethod
+    def normalize(cls, value) -> str:
+        """값을 표준 형식으로 정규화"""
+        if isinstance(value, cls):
+            return value.value
+        if cls.has_value(value):
+            return value
+        raise ValueError(f"Invalid market type: {value}")
 
 
 # @FEAT:exchange-integration @COMP:service @TYPE:helper
@@ -798,6 +820,61 @@ class ExchangeService:
         except Exception as e:
             logger.error(f"잔액 조회 실패: account_id={account.id}, error={e}")
             return {'success': False, 'error': str(e)}
+
+    # @FEAT:exchange-integration @COMP:service @TYPE:core
+    def get_balance(self, account: Account, asset: str = 'USDT',
+                    market_type: str = 'spot') -> Dict[str, Any]:
+        """
+        특정 자산 잔고 조회 (편의 메서드)
+
+        capital_service.py의 잔고 조회 단순화를 위해 제공됩니다.
+
+        Args:
+            account: 계정 정보
+            asset: 조회할 자산 (기본값: 'USDT')
+            market_type: 마켓 타입 (기본값: 'spot')
+
+        Returns:
+            Dict[str, Any]: 특정 자산의 잔고 정보
+                - success: bool - 조회 성공 여부
+                - asset: str - 자산 심볼
+                - free: float - 사용 가능 잔액
+                - locked: float - 잠긴 잔액
+                - total: float - 총 잔액
+        """
+        try:
+            # 기존 fetch_balance() 사용
+            balance_result = self.fetch_balance(account, market_type)
+
+            if not balance_result['success']:
+                return balance_result
+
+            # balance_map에서 특정 자산 정보 추출
+            balance_map = balance_result['balance']
+            asset_balance = balance_map.get(asset, {})
+
+            # dict 또는 object 형식 모두 처리
+            if isinstance(asset_balance, dict):
+                free = float(asset_balance.get('free', 0))
+                locked = float(asset_balance.get('locked', 0))
+            else:  # Balance object
+                free = float(getattr(asset_balance, 'free', 0))
+                locked = float(getattr(asset_balance, 'locked', 0))
+
+            return {
+                'success': True,
+                'asset': asset,
+                'free': free,
+                'locked': locked,
+                'total': free + locked
+            }
+
+        except Exception as e:
+            logger.error(f"잔고 조회 실패: account_id={account.id}, asset={asset}, error={e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
     # @FEAT:batch-parallel-processing @FEAT:exchange-integration @COMP:service @TYPE:core
     def create_batch_orders(self, account: Account, orders: List[Dict[str, Any]],
