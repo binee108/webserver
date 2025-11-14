@@ -38,6 +38,7 @@
 - **capital-management** - 자본 배분, 재할당, 수량 계산 [`@COMP:service,route`] → [docs](features/capital-management.md)
 
 ### 🔌 Exchange Integration
+- **crypto-exchange-standardization** - 암호화폐 거래소 표준화 (BalanceObject 통합, MarketTypeEnum 타입 안전성) [`@COMP:service`] → [docs](docs/CRYPTO_EXCHANGE_STANDARD.md)
 - **exchange-integration** - 거래소 통합 레이어 (Binance, Upbit, Bybit, Bithumb, KIS) [`@COMP:exchange`] → [docs](features/exchange-integration.md)
 - **upbit-integration** - 업비트 SPOT 통합 (215개 심볼) [`@COMP:exchange`] → [docs](features/upbit-integration.md)
 - **price-cache** - 가격 캐싱 및 USDT/KRW 환율 조회 [`@COMP:service`] → [docs](features/price-cache.md)
@@ -84,6 +85,7 @@
 ### 📢 Notifications & Admin
 - **telegram-notification** - 사용자별/전역 텔레그램 봇 알림 (우선순위 기반 선택, 9가지 알림 타입) [`@COMP:service`] → [docs](features/telegram-notification.md)
 - **admin-panel** - Admin 대시보드, 시스템 모니터링, 백그라운드 작업 로그 조회 [`@COMP:route,ui`] → [docs](features/admin-panel.md)
+- **admin-system-log-sorting** - 관리자 시스템 로그 표시 순서 수정 (시간순으로 정렬, 백그라운드 작업 로그 상세화) [`@COMP:route,service`] → [docs](features/admin-system-log-sorting.md)
 
 ### 🔐 Authentication & Security
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
@@ -103,6 +105,8 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-14 | Admin System Log Sorting | ✅ Phase 1 | routes/admin.py, core.py | 시스템 로그 시간순 정렬 및 백그라운드 작업 로그 상세화 |
+| 2025-11-14 | Crypto Exchange Standardization | ✅ Phase 1 | exchange.py | 암호화폐 거래소 잔고 표준화, MarketTypeEnum 타입 안전성 추가 |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
 | 2025-11-09 | Race Condition Monitoring (Issue #38 Phase 4.2.1) | ✅ Phase 4.2.1 | record_manager.py, position_manager.py | 구조화된 로그 추가: `RACE_CONDITION_DETECTED` 키워드로 duplicate Trade 및 Position lock skip 이벤트 모니터링. Pipe-separated format (CloudWatch 호환). |

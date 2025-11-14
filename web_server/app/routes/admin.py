@@ -1,4 +1,5 @@
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 """
 Admin Panel Routes
 
@@ -154,6 +155,7 @@ def conditional_admin_required(f):
     return decorated_function
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/')
 @login_required
 @admin_required
@@ -184,6 +186,7 @@ def verify_admin_session():
     return jsonify({'success': True, 'verified_until': session['admin_verified_until']})
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users')
 @login_required
 @admin_required
@@ -209,6 +212,7 @@ def users():
                          admin_users_count=admin_users_count)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -271,6 +275,7 @@ def edit_user(user_id):
     return render_template('admin/edit_user.html', user=user)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/change-password', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -313,6 +318,7 @@ def change_user_password(user_id):
     return render_template('admin/change_user_password.html', user=user)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/change-password', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -357,6 +363,7 @@ def change_admin_password():
     return render_template('admin/change_admin_password.html')
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/toggle-active', methods=['POST'])
 @login_required
 @admin_required
@@ -390,6 +397,7 @@ def toggle_user_active(user_id):
     })
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/toggle-admin', methods=['POST'])
 @login_required
 @admin_required
@@ -423,6 +431,7 @@ def toggle_user_admin(user_id):
     })
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/approve', methods=['POST'])
 @login_required
 @admin_required
@@ -466,6 +475,7 @@ def approve_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/reject', methods=['POST'])
 @login_required
 @admin_required
@@ -504,6 +514,7 @@ def reject_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/reset-password', methods=['POST'])
 @login_required
 @admin_required
@@ -540,6 +551,7 @@ def reset_user_password(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>', methods=['DELETE'])
 @login_required
 @admin_required
@@ -578,6 +590,7 @@ def delete_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/system')
 @login_required
 @admin_required
@@ -1199,6 +1212,7 @@ def get_tracking_stats():
 
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/api/metrics', methods=['GET'])
 @login_required
 @admin_required
