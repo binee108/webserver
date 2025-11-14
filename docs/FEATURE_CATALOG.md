@@ -178,6 +178,7 @@
 - **Background Jobs** (3): background-scheduler, background-log-tagging, batch-parallel-processing
 - **Infrastructure** (4): worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
 - **Notifications** (2): telegram-notification, admin-panel
+- **Admin & Monitoring** (1): admin-system-log-sorting
 - **Auth** (2): auth-session, webhook-token
 
 </details>
