@@ -87,6 +87,28 @@
 - **admin-panel** - Admin 대시보드, 시스템 모니터링, 백그라운드 작업 로그 조회 [`@COMP:route,ui`] → [docs](features/admin-panel.md)
 - **admin-system-log-sorting** - 관리자 시스템 로그 표시 순서 수정 (시간순으로 정렬, 백그라운드 작업 로그 상세화) [`@COMP:route,service`] → [docs](features/admin-system-log-sorting.md)
 
+### ⚙️ CLI & Infrastructure
+- **cli-migration** - CLI 시스템 마이그레이션 및 명령 통합
+  - **delete_db** - 워크트리/프로젝트 루트 컨텍스트별 데이터베이스 삭제 [`@COMP:route`] [`@TYPE:core`] → [docs](cli-migration.md)
+    - 실행 컨텍스트 자동 감지 (`.worktree` 경로 패턴)
+    - 삭제 대상: `postgres_data/`, `*.db`, `flask_session/`
+    - Symlink 안전 처리 (링크 자체만 삭제)
+    - 'yes' 전체 입력 확인 프롬프트 (CleanCommand와 다른 엄격한 정책)
+
+### 🕒 System Utilities
+- **timezone-utility** - 범용 시간대 유틸리티 (자동 감지, 변환, 포맷팅, IE11+ 호환) [`@COMP:util`] → [docs](TIMEZONE_USAGE.md)
+  - 자동 시간대 감지 및 고정 오프셋 지원
+  - 다양한 포맷팅 옵션 및 로케일 지원
+  - 성능 최적화를 위한 캐시 시스템 (24h TTL 시간대 정보, 5m TTL 포맷팅 결과)
+  - IE11부터 최신 브라우지까지 완벽 호환성
+  - 50+ 주요 시간대 및 DST 지원
+- **admin-timezone-display** - Admin System 페이지 시간대 변환 및 KST 표시 (실시간 업데이트, 로그 시간 변환) [`@COMP:route,util,ui`] → [docs](TIMEZONE_USAGE.md#admin-system-페이지-적용-2025-11-14)
+  - 한국 관리자를 위한 KST 시간 표시
+  - 백그라운드 작업 로그 시간대 변환
+  - 실시간 시간 업데이트 (1초 간격)
+  - 다국어 관리자 지원 (한국어/영문 시간 표시)
+  - 시간대 변환 성능 최적화 및 캐시 시스템
+
 ### 🔐 Authentication & Security
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
 - **webhook-token** - 웹훅 토큰 관리 (복사 버튼, 재발행) [`@COMP:ui-helper`] → [docs](features/webhook-order-processing.md)
@@ -140,6 +162,7 @@
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
 | 2025-11-13 | Binance WebSocket Listen Key Renewal Fix | ✅ Phase 1 | binance_websocket.py | Issue #48: AttributeError 수정 (self.account.api_url → self.BASE_URL), 30분 주기 Listen Key 갱신 안정화 |
 | 2025-11-13 | Order Quantity Restriction Removal | ✅ Completed | quantity_calculator.py, webhook_message_format.md, capital-management.md | Issue #46: qty_per > 100% validation 제거, Futures 레버리지 거래 지원 (양수 qty_per 무제한, 청산 -100% 상한 유지) |
+| 2025-11-14 | Admin System Timezone Conversion | ✅ Phase 2 | admin.py, system.html, timezone.js | 관리자 시스템 페이지 KST 시간 변환 적용, 한국 사용자 경험 개선 (실시간 업데이트, 로그 시간 변환) |
 
 ---
 
@@ -153,7 +176,7 @@
 - **model** (8): Strategy, StrategyAccount, OpenOrder, StrategyPosition, Trade, TradeExecution, ...
 - **validation** (4): symbol_utils, futures_validation, order_validation, ...
 - **exchange** (5): binance, upbit, bybit, bithumb, korea_investment
-- **util** (10): symbol_utils, logging, toast, event_emitter, ...
+- **util** (11): symbol_utils, logging, toast, event_emitter, timezone-utility, ...
 - **job** (8): order_queue_manager, order_manager, background_scheduler, ...
 - **ui** (6): toast-system, open-orders-sorting, admin-panel, ...
 
@@ -163,7 +186,7 @@
 <summary><strong>🔧 By Logic Type</strong></summary>
 
 - **core** (45+): 핵심 비즈니스 로직 (주문 처리, 포지션 관리, 자본 배분)
-- **helper** (20+): 유틸리티 함수 (심볼 변환, 로깅, 포맷팅)
+- **helper** (21+): 유틸리티 함수 (심볼 변환, 로깅, 포맷팅, 시간대 관리)
 - **integration** (15): 외부 시스템 통합 (거래소 API, WebSocket, SSE)
 - **validation** (8): 입력 검증 (심볼, 선물 주문, 토큰)
 - **config** (6): 설정 및 초기화 (상수, 제한값, 환경 변수)
@@ -180,6 +203,7 @@
 - **UI & Real-time** (6): toast-system, toast-ux-improvement, event-sse, batch-sse, individual-toast, open-orders-sorting
 - **Strategy & Analytics** (4): strategy-management, strategy-subscription-safety, analytics, account-management
 - **Background Jobs** (3): background-scheduler, background-log-tagging, batch-parallel-processing
+- **System Utilities** (2): timezone-utility, admin-timezone-display
 - **Infrastructure** (4): worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
 - **Notifications** (2): telegram-notification, admin-panel
 - **Admin & Monitoring** (1): admin-system-log-sorting
