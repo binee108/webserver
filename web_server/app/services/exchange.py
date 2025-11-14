@@ -5,7 +5,8 @@ exchange_integrated_service.py 와 capital_service.py를 통합하여
 하나의 일관된 서비스로 제공합니다.
 """
 import logging
-from typing import Dict, List, Optional, Union, TYPE_CHECKING
+from enum import Enum
+from typing import Dict, List, Optional, Union, Any, TYPE_CHECKING
 
 from app.models import Account
 from app.constants import Exchange, MarketType, OrderType
@@ -1391,3 +1392,8 @@ class ExchangeService:
         except Exception as e:
             logger.error(f"정밀도 적용 실패: {e}")
             return 0.0, 0.0, 0.0
+
+
+# Create global exchange service instance
+# @FEAT:exchange-integration @COMP:service @TYPE:core
+exchange_service = ExchangeService()
