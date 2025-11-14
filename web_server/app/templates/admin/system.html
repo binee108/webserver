@@ -4,6 +4,8 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<!-- @FEAT:timezone-conversion @TYPE:config - Timezone utility for KST conversion -->
+<script src="{{ url_for('static', filename='js/timezone.js') }}"></script>
 <!-- @FEAT:error-warning-logs-ui @TYPE:config - Debug mode flag for conditional CSRF security -->
 <!-- WHY: 개발/프로덕션 환경을 구분하여 CSRF 보안 적용
      개발 모드(DEBUG=True): CSRF 토큰 비활성화 (디버깅 편의성)
@@ -29,6 +31,15 @@
                 <div class="header-text">
                     <h1>시스템 모니터링</h1>
                     <p>실시간 시스템 상태 및 백그라운드 작업 관리</p>
+                </div>
+            </div>
+            <!-- @FEAT:timezone-conversion @TYPE:ui - Timezone information display -->
+            <div class="header-timezone">
+                <div class="badge badge-info timezone-badge">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                    </svg>
+                    <span id="timezone-display">한국 시간대 (KST)</span>
                 </div>
             </div>
         </div>
@@ -210,8 +221,12 @@
                             </td>
                             <td>
                                 {% if job.next_run_time %}
-                                    <div class="text-sm text-primary">{{ job.next_run_time.strftime('%Y-%m-%d') }}</div>
-                                    <div class="text-sm text-muted">{{ job.next_run_time.strftime('%H:%M:%S') }}</div>
+                                    <div class="text-sm text-primary kst-time" data-utc="{{ job.next_run_time.isoformat() }}">
+                                        <!-- KST 변환 시간이 여기에 표시됩니다 -->
+                                    </div>
+                                    <div class="text-xs text-muted original-utc hidden" data-original="{{ job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') }}">
+                                        UTC: {{ job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                    </div>
                                 {% else %}
                                     <span class="badge badge-secondary">
                                         없음
@@ -1649,4 +1664,669 @@ function calculatePerformance() {
 document.addEventListener('DOMContentLoaded', function() {
     loadTrackingStats();
 });
+
+// ============================================================================
+// KST 시간대 변환 기능
+// @FEAT:timezone-conversion @COMP:ui @TYPE:integration
+// ============================================================================
+
+/**
+ * KST 시간대 변환 초기화 함수
+ * @FEAT:timezone-conversion @COMP:ui @TYPE:integration
+ * Improved error handling with graceful fallbacks and validation
+ */
+function initializeKSTConversion() {
+    try {
+        // TimeZoneUtils dependency validation
+        if (typeof window.timeZoneUtils === 'undefined') {
+            console.warn('TimeZoneUtils not available, skipping KST conversion initialization');
+            return;
+        }
+
+        // Validate timezone utility functionality
+        if (typeof window.timeZoneUtils.formatToLocalTime !== 'function') {
+            console.warn('TimeZoneUtils.formatToLocalTime not available, using fallback');
+            setupFallbackTimeConversion();
+            return;
+        }
+
+        // 스케줄러 다음 실행 시간 변환 (with error recovery)
+        const schedulerElements = document.querySelectorAll('.kst-time[data-utc]');
+        if (schedulerElements.length > 0) {
+            convertSchedulerTimesToKST();
+        }
+
+        // 시스템 로그 타임스탬프 변환 (동적 로그용)
+        setupLogTimestampConversion();
+
+        console.log('KST 변환 기능이 초기화되었습니다.');
+    } catch (error) {
+        console.error('KST 변환 초기화 실패:', error);
+        // Graceful fallback - basic time display without conversion
+        setupFallbackTimeConversion();
+    }
+}
+
+/**
+ * Fallback time conversion for when TimeZoneUtils is unavailable
+ * @private
+ */
+function setupFallbackTimeConversion() {
+    // Add basic KST indicator without conversion
+    const kstElements = document.querySelectorAll('.kst-time[data-utc]');
+    kstElements.forEach(element => {
+        const utcString = element.dataset.utc;
+        if (utcString) {
+            element.innerHTML = `
+                <div>${utcString}</div>
+                <div class="text-xs text-warning">UTC (변환 불가)</div>
+            `;
+            element.title = `원본 시간: ${utcString}`;
+        }
+    });
+
+    // Update timezone display
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (timezoneDisplay) {
+        timezoneDisplay.textContent = '한국 시간대 (KST) - 변환 기능 비활성화';
+    }
+}
+
+/**
+ * 스케줄러 다음 실행 시간을 KST로 변환
+ * Enhanced with input validation, error recovery, and performance optimization
+ */
+function convertSchedulerTimesToKST() {
+    // Performance: Cache DOM elements and validate early
+    const kstTimeElements = document.querySelectorAll('.kst-time[data-utc]');
+    if (kstTimeElements.length === 0) return;
+
+    // Batch processing for better performance
+    const conversionResults = [];
+
+    kstTimeElements.forEach((element, index) => {
+        try {
+            // Input validation
+            const utcString = element.dataset.utc;
+            if (!utcString || typeof utcString !== 'string' || utcString.trim() === '') {
+                console.warn(`[${index}] Empty or invalid UTC data`);
+                element.innerHTML = '<div class="text-muted">시간 정보 없음</div>';
+                return;
+            }
+
+            // Enhanced timestamp validation with multiple format support
+            let utcDate;
+            try {
+                // Try ISO format first
+                utcDate = new Date(utcString);
+            } catch (parseError) {
+                // Fallback: try adding 'Z' if missing
+                try {
+                    utcDate = new Date(utcString + (utcString.includes('Z') ? '' : 'Z'));
+                } catch (fallbackError) {
+                    console.warn(`[${index}] Invalid timestamp format: ${utcString}`);
+                    element.innerHTML = '<div class="text-warning">시간 형식 오류</div>';
+                    element.title = `잘못된 형식: ${utcString}`;
+                    return;
+                }
+            }
+
+            // Robust date validation
+            if (isNaN(utcDate.getTime()) || utcDate.getFullYear() < 2000 || utcDate.getFullYear() > 2100) {
+                console.warn(`[${index}] Out of range or invalid date: ${utcString}`);
+                element.innerHTML = '<div class="text-warning">유효하지 않은 시간</div>';
+                element.title = `범위 벗어남: ${utcString}`;
+                return;
+            }
+
+            // Safe KST conversion with error handling
+            let kstTime;
+            try {
+                kstTime = timeZoneUtils.formatToLocalTime(utcDate, {
+                    timezone: 'Asia/Seoul',
+                    format: 'YYYY-MM-DD HH:mm:ss',
+                    includeOffset: false,
+                    use24Hour: true
+                });
+            } catch (conversionError) {
+                console.warn(`[${index}] KST conversion failed, using browser locale:`, conversionError);
+                // Fallback to browser's built-in formatting
+                kstTime = utcDate.toLocaleString('ko-KR', {
+                    timeZone: 'Asia/Seoul',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
+            }
+
+            // 변환된 시간 표시 with accessibility improvements
+            element.innerHTML = `
+                <div>${kstTime}</div>
+                <div class="text-xs text-info" role="img" aria-label="한국 표준시">🇰🇷 KST</div>
+            `;
+
+            // Enhanced tooltip with both original and converted time
+            element.title = `원본 UTC: ${utcString}\n변환된 KST: ${kstTime}`;
+
+            conversionResults.push({ success: true, element, original: utcString, converted: kstTime });
+
+        } catch (error) {
+            console.error(`[${index}] 스케줄러 시간 KST 변환 실패:`, error);
+            element.innerHTML = '<div class="text-error">시간 변환 실패</div>';
+            element.title = `변환 오류: ${error.message}`;
+            conversionResults.push({ success: false, element, error: error.message });
+        }
+    });
+
+    // Performance logging for debugging
+    const successCount = conversionResults.filter(r => r.success).length;
+    const failCount = conversionResults.length - successCount;
+    if (failCount > 0) {
+        console.warn(`KST conversion completed: ${successCount} success, ${failCount} failed`);
+    }
+}
+
+/**
+ * 시스템 로그 타임스탬프 변환 설정 (동적 로그용)
+ */
+function setupLogTimestampConversion() {
+    // 로그 렌더링 함수를 확장하여 KST 변환 적용
+    if (typeof window.renderLogs === 'function') {
+        const originalRenderLogs = window.renderLogs;
+
+        window.renderLogs = function(jobId, logs, total, filtered) {
+            // 원본 함수 호출
+            originalRenderLogs(jobId, logs, total, filtered);
+
+            // 렌더링 후 타임스탬프 변환
+            setTimeout(() => {
+                convertLogTimestampsInContainer(`log-container-${jobId}`);
+            }, 100);
+        };
+    }
+
+    // 에러/경고 로그 렌더링 함수도 확장
+    if (typeof window.renderErrorWarningLogs === 'function') {
+        const originalRenderErrorWarningLogs = window.renderErrorWarningLogs;
+
+        window.renderErrorWarningLogs = function(logs, total, filtered) {
+            // 원본 함수 호출
+            originalRenderErrorWarningLogs(logs, total, filtered);
+
+            // 렌더링 후 타임스탬프 변환
+            setTimeout(() => {
+                convertLogTimestampsInContainer('errorWarningLogContainer');
+            }, 100);
+        };
+    }
+}
+
+/**
+ * 컨테이너 내의 로그 타임스탬프를 KST로 변환
+ * Enhanced with performance optimization and robust error handling
+ * @param {string} containerId - 로그 컨테이너 ID
+ */
+function convertLogTimestampsInContainer(containerId) {
+    // Input validation and performance check
+    if (!containerId || typeof containerId !== 'string') {
+        console.warn('Invalid container ID provided to convertLogTimestampsInContainer');
+        return;
+    }
+
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.warn(`Container with ID '${containerId}' not found`);
+        return;
+    }
+
+    // Performance: Skip if no TimeZoneUtils available
+    if (typeof window.timeZoneUtils === 'undefined' || typeof window.timeZoneUtils.formatToLocalTime !== 'function') {
+        console.warn('TimeZoneUtils not available for log timestamp conversion');
+        return;
+    }
+
+    // Performance: Cache DOM queries and use more specific selectors
+    const logElements = container.querySelectorAll('.py-1');
+    if (logElements.length === 0) return;
+
+    // Batch processing with performance tracking
+    const startTime = performance.now();
+    let convertedCount = 0;
+    let errorCount = 0;
+
+    // Regex pattern for timestamp matching - compiled once for performance
+    const timestampRegex = /\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/;
+
+    logElements.forEach((logElement, index) => {
+        try {
+            // Performance: Use cached selector result
+            const timestampElement = logElement.querySelector('.text-muted');
+            if (!timestampElement) return;
+
+            const timestampText = timestampElement.textContent;
+            if (!timestampText) return;
+
+            // 타임스탬프 패턴 추출 with pre-compiled regex
+            const timestampMatch = timestampText.match(timestampRegex);
+            if (!timestampMatch) return;
+
+            const originalTimestamp = timestampMatch[1];
+
+            // Enhanced timestamp validation
+            if (!originalTimestamp || originalTimestamp.length < 19) {
+                console.warn(`[${index}] Invalid timestamp format: ${originalTimestamp}`);
+                return;
+            }
+
+            // Robust date parsing with multiple format support
+            let timestampDate;
+            try {
+                // Assume UTC and add timezone specifier
+                timestampDate = new Date(originalTimestamp + 'Z');
+            } catch (parseError) {
+                try {
+                    // Fallback parsing without timezone
+                    timestampDate = new Date(originalTimestamp);
+                } catch (fallbackError) {
+                    console.warn(`[${index}] Failed to parse timestamp: ${originalTimestamp}`);
+                    errorCount++;
+                    return;
+                }
+            }
+
+            // Date validity check
+            if (isNaN(timestampDate.getTime()) ||
+                timestampDate.getFullYear() < 2000 ||
+                timestampDate.getFullYear() > 2100) {
+                console.warn(`[${index}] Invalid date derived from timestamp: ${originalTimestamp}`);
+                errorCount++;
+                return;
+            }
+
+            // Safe KST conversion with fallback
+            let kstTime;
+            try {
+                kstTime = timeZoneUtils.formatToLocalTime(timestampDate, {
+                    timezone: 'Asia/Seoul',
+                    format: 'YYYY-MM-DD HH:mm:ss',
+                    includeOffset: false,
+                    use24Hour: true
+                });
+            } catch (conversionError) {
+                // Fallback to browser's built-in formatting
+                try {
+                    kstTime = timestampDate.toLocaleString('ko-KR', {
+                        timeZone: 'Asia/Seoul',
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    }).replace(/\//g, '-');
+                } catch (fallbackError) {
+                    console.warn(`[${index}] All conversion methods failed for: ${originalTimestamp}`);
+                    errorCount++;
+                    return;
+                }
+            }
+
+            // Performance: Update DOM efficiently and safely
+            timestampElement.innerHTML = `[${kstTime}] <span class="text-info text-xs" role="img" aria-label="한국 표준시">🇰🇷</span>`;
+            timestampElement.title = `원본 UTC: ${originalTimestamp}\n변환된 KST: ${kstTime}`;
+
+            convertedCount++;
+
+        } catch (error) {
+            console.error(`[${index}] Log timestamp conversion failed:`, error);
+            errorCount++;
+        }
+    });
+
+    // Performance logging for optimization
+    const processingTime = performance.now() - startTime;
+    if (convertedCount > 0 || errorCount > 0) {
+        console.debug(`Timestamp conversion for ${containerId}: ${convertedCount} converted, ${errorCount} errors, ${processingTime.toFixed(2)}ms`);
+    }
+}
+
+/**
+ * 시간대 정보 표시 업데이트
+ */
+function updateTimezoneDisplay() {
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (!timezoneDisplay) return;
+
+    try {
+        // 현재 KST 시간
+        const now = new Date();
+        const kstNow = timeZoneUtils.formatToLocalTime(now, {
+            timezone: 'Asia/Seoul',
+            format: 'YYYY-MM-DD HH:mm:ss',
+            includeOffset: false,
+            use24Hour: true
+        });
+
+        timezoneDisplay.textContent = `한국 시간대 (KST) - ${kstNow}`;
+
+    } catch (error) {
+        console.error('시간대 정보 업데이트 실패:', error);
+    }
+}
+
+/**
+ * KST 변환 기능 전체 리프레시
+ * Enhanced with performance optimization and error handling
+ * @param {boolean} [force=false] - Force refresh even if recently updated
+ */
+function refreshKSTConversion(force = false) {
+    // Performance: Throttle refreshes to avoid excessive processing
+    const now = Date.now();
+    if (window._lastKSTRefresh && !force && (now - window._lastKSTRefresh) < 1000) {
+        console.debug('KST conversion throttled (last refresh < 1s ago)');
+        return;
+    }
+
+    // Dependency validation
+    if (typeof window.timeZoneUtils === 'undefined') {
+        console.warn('TimeZoneUtils not available, skipping KST refresh');
+        return;
+    }
+
+    const startTime = performance.now();
+    let totalConverted = 0;
+    const errors = [];
+
+    try {
+        // 1. Convert scheduler times (most important)
+        try {
+            convertSchedulerTimesToKST();
+            totalConverted += document.querySelectorAll('.kst-time[data-utc]').length;
+        } catch (error) {
+            errors.push({ component: 'scheduler', error: error.message });
+        }
+
+        // 2. Update timezone display
+        try {
+            updateTimezoneDisplay();
+        } catch (error) {
+            errors.push({ component: 'timezone-display', error: error.message });
+        }
+
+        // 3. Convert timestamps in open log panels (performance: limit to active panels)
+        try {
+            const openLogRows = document.querySelectorAll('[id^="logs-row-"]:not(.hidden)');
+            const maxPanels = 5; // Limit concurrent processing for performance
+            const panelsToProcess = Array.from(openLogRows).slice(0, maxPanels);
+
+            panelsToProcess.forEach(row => {
+                try {
+                    const jobId = row.id.replace('logs-row-', '');
+                    const containerId = `log-container-${jobId}`;
+                    const container = document.getElementById(containerId);
+
+                    if (container) {
+                        const logElements = container.querySelectorAll('.py-1');
+                        convertLogTimestampsInContainer(containerId);
+                        totalConverted += Math.min(logElements.length, 50); // Cap per container for performance
+                    }
+                } catch (error) {
+                    errors.push({ component: `log-panel-${row.id}`, error: error.message });
+                }
+            });
+        } catch (error) {
+            errors.push({ component: 'log-panels', error: error.message });
+        }
+
+        // 4. Convert error/warning log container (limit processing for performance)
+        try {
+            const errorContainer = document.getElementById('errorWarningLogContainer');
+            if (errorContainer) {
+                const errorLogElements = errorContainer.querySelectorAll('.py-1');
+                if (errorLogElements.length > 0) {
+                    convertLogTimestampsInContainer('errorWarningLogContainer');
+                    totalConverted += Math.min(errorLogElements.length, 100); // Cap for performance
+                }
+            }
+        } catch (error) {
+            errors.push({ component: 'error-warning-logs', error: error.message });
+        }
+
+    } catch (error) {
+        errors.push({ component: 'refresh-coordinator', error: error.message });
+    }
+
+    // Performance tracking and logging
+    const processingTime = performance.now() - startTime;
+    window._lastKSTRefresh = now;
+
+    if (errors.length > 0) {
+        console.warn('KST conversion completed with errors:', {
+            totalConverted,
+            processingTime: `${processingTime.toFixed(2)}ms`,
+            errors: errors.map(e => `${e.component}: ${e.error}`)
+        });
+    } else if (totalConverted > 0) {
+        console.debug(`KST conversion completed: ${totalConverted} timestamps, ${processingTime.toFixed(2)}ms`);
+    }
+
+    return {
+        success: errors.length === 0,
+        converted: totalConverted,
+        processingTime: processingTime,
+        errors: errors
+    };
+}
+
+// 페이지 로드 시 KST 변환 초기화
+// Enhanced with robust dependency management and performance optimization
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait for DOM to be fully ready
+    if (document.readyState !== 'complete') {
+        // Defer initialization until DOM is fully loaded
+        setTimeout(initializeTimezoneFeatures, 100);
+    } else {
+        initializeTimezoneFeatures();
+    }
+});
+
+/**
+ * Initialize timezone features with comprehensive error handling
+ * @private
+ */
+function initializeTimezoneFeatures() {
+    const initStartTime = performance.now();
+
+    try {
+        // 1. Validate dependencies with timeout
+        const dependencyCheck = checkTimeZoneDependencies();
+        if (!dependencyCheck.available) {
+            console.warn('TimeZone features disabled:', dependencyCheck.reason);
+            setupBasicTimeDisplay();
+            return;
+        }
+
+        // 2. Initialize KST conversion with error recovery
+        try {
+            initializeKSTConversion();
+        } catch (initError) {
+            console.error('KST conversion initialization failed:', initError);
+            setupBasicTimeDisplay();
+            return;
+        }
+
+        // 3. Update timezone display with fallback
+        try {
+            updateTimezoneDisplay();
+        } catch (displayError) {
+            console.warn('Timezone display update failed:', displayError);
+        }
+
+        // 4. Set up periodic updates with performance consideration
+        setupPeriodicTimeUpdates();
+
+        // 5. Set up intersection observer for performance optimization
+        setupPerformanceOptimizations();
+
+        const initTime = performance.now() - initStartTime;
+        console.debug(`Timezone features initialized in ${initTime.toFixed(2)}ms`);
+
+    } catch (error) {
+        console.error('Critical error in timezone feature initialization:', error);
+        setupBasicTimeDisplay();
+    }
+}
+
+/**
+ * Check if timezone dependencies are available
+ * @returns {Object} Availability status and reason
+ * @private
+ */
+function checkTimeZoneDependencies() {
+    // Check if TimeZoneUtils is available
+    if (typeof window.timeZoneUtils === 'undefined') {
+        return { available: false, reason: 'TimeZoneUtils not loaded' };
+    }
+
+    // Check critical methods
+    const requiredMethods = ['formatToLocalTime', 'isValidTimezone'];
+    const missingMethods = requiredMethods.filter(method =>
+        typeof window.timeZoneUtils[method] !== 'function'
+    );
+
+    if (missingMethods.length > 0) {
+        return {
+            available: false,
+            reason: `Missing methods: ${missingMethods.join(', ')}`
+        };
+    }
+
+    // Test basic functionality
+    try {
+        const testDate = new Date();
+        const testResult = window.timeZoneUtils.formatToLocalTime(testDate, {
+            timezone: 'Asia/Seoul',
+            format: 'YYYY-MM-DD HH:mm:ss'
+        });
+
+        if (!testResult || typeof testResult !== 'string') {
+            return { available: false, reason: 'TimeZoneUtils test conversion failed' };
+        }
+    } catch (testError) {
+        return { available: false, reason: `TimeZoneUtils test failed: ${testError.message}` };
+    }
+
+    return { available: true };
+}
+
+/**
+ * Setup basic time display as fallback
+ * @private
+ */
+function setupBasicTimeDisplay() {
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (timezoneDisplay) {
+        timezoneDisplay.textContent = '한국 시간대 (KST) - 기본 표시 모드';
+    }
+
+    // Add basic KST indicator to scheduler times
+    const kstElements = document.querySelectorAll('.kst-time[data-utc]');
+    kstElements.forEach(element => {
+        const utcString = element.dataset.utc;
+        if (utcString) {
+            element.innerHTML = `
+                <div>${utcString}</div>
+                <div class="text-xs text-warning">🇰🇷 KST (기본)</div>
+            `;
+        }
+    });
+}
+
+/**
+ * Set up periodic time updates with performance optimization
+ * @private
+ */
+function setupPeriodicTimeUpdates() {
+    // Clear any existing intervals
+    if (window._timezoneUpdateInterval) {
+        clearInterval(window._timezoneUpdateInterval);
+    }
+
+    // Update timezone display every 60 seconds
+    window._timezoneUpdateInterval = setInterval(() => {
+        try {
+            updateTimezoneDisplay();
+        } catch (error) {
+            console.warn('Periodic timezone update failed:', error);
+        }
+    }, 60000);
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+        if (window._timezoneUpdateInterval) {
+            clearInterval(window._timezoneUpdateInterval);
+        }
+    });
+}
+
+/**
+ * Set up performance optimizations for better user experience
+ * @private
+ */
+function setupPerformanceOptimizations() {
+    // Use Intersection Observer to defer processing of non-visible elements
+    if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    // Process visible elements
+                    const element = entry.target;
+                    if (element.classList.contains('kst-time') && element.dataset.utc) {
+                        // Convert timestamps for visible elements
+                        setTimeout(() => {
+                            if (typeof window.timeZoneUtils !== 'undefined') {
+                                convertSchedulerTimesToKST();
+                            }
+                        }, 100);
+                    }
+                }
+            });
+        }, { threshold: 0.1 });
+
+        // Observe relevant elements
+        document.querySelectorAll('.kst-time[data-utc]').forEach(element => {
+            observer.observe(element);
+        });
+    }
+
+    // Set up visibility change handler to pause/resume updates
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            // Pause updates when tab is not visible
+            if (window._timezoneUpdateInterval) {
+                clearInterval(window._timezoneUpdateInterval);
+                window._timezoneUpdateInterval = null;
+            }
+        } else {
+            // Resume updates when tab becomes visible
+            setupPeriodicTimeUpdates();
+            // Refresh immediately when tab becomes visible
+            setTimeout(() => {
+                refreshKSTConversion(true);
+            }, 500);
+        }
+    });
+}
+
+// Handle cases where DOM is already loaded
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    // Initialize immediately if DOM is ready
+    setTimeout(initializeTimezoneFeatures, 100);
+}
+
 </script>
