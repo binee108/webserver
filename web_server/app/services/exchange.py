@@ -24,12 +24,34 @@ from app.exchanges.exceptions import (
     NetworkError,
     OrderNotFound
 )
+from enum import Enum
 
 if TYPE_CHECKING:
     from app.exchanges.crypto.base import BaseCryptoExchange
     from app.exchanges.securities.base import BaseSecuritiesExchange
 
 logger = logging.getLogger(__name__)
+
+
+# @FEAT:exchange-integration @COMP:service @TYPE:validation
+class MarketTypeEnum(str, Enum):
+    """거래소 마켓 타입 표준화"""
+    SPOT = "spot"
+    FUTURES = "futures"
+
+    @classmethod
+    def has_value(cls, value) -> bool:
+        """값이 유효한 MarketTypeEnum 값인지 확인"""
+        return value in cls._value2member_map_
+
+    @classmethod
+    def normalize(cls, value) -> str:
+        """값을 표준화된 마켓 타입 문자열로 변환"""
+        if isinstance(value, cls):
+            return value.value
+        if cls.has_value(value):
+            return value
+        raise ValueError(f"Invalid market type: {value}")
 
 
 # @FEAT:exchange-integration @COMP:service @TYPE:helper
@@ -134,6 +156,60 @@ class RateLimiter:
 
 
 # @FEAT:exchange-integration @COMP:service @TYPE:helper
+def _standardize_crypto_balance(balance_map: Dict[str, Any], exchange: str, market_type: str) -> Dict[str, Any]:
+    """
+    거래소 잔고 응답을 표준화된 포맷으로 변환
+
+    Args:
+        balance_map: 거래소에서 반환한 원본 잔고 데이터
+        exchange: 거래소 이름
+        market_type: 마켓 타입 ('spot'/'futures')
+
+    Returns:
+        StandardCryptoBalanceResponse 포맷:
+        {
+            'success': True,
+            'exchange': 'binance',
+            'market_type': 'spot',
+            'balances': {
+                'USDT': {
+                    'asset': 'USDT',
+                    'free': 100.0,
+                    'locked': 0.0,
+                    'total': 100.0
+                }
+            },
+            'raw_response': 원본_데이터
+        }
+    """
+    standardized_balances = {}
+
+    for asset, balance in balance_map.items():
+        # BalanceObject가 dict 또는 객체 처리
+        if isinstance(balance, dict):
+            free = float(balance.get('free', 0))
+            locked = float(balance.get('locked', 0))
+        else:
+            free = float(getattr(balance, 'free', 0))
+            locked = float(getattr(balance, 'locked', 0))
+
+        standardized_balances[asset] = {
+            'asset': asset,
+            'free': free,
+            'locked': locked,
+            'total': free + locked
+        }
+
+    return {
+        'success': True,
+        'exchange': exchange,
+        'market_type': market_type,
+        'balances': standardized_balances,
+        'raw_response': balance_map
+    }
+
+
+# @FEAT:exchange-integration @COMP:service @TYPE:helper
 class PrecisionCache:
     """Precision 정보 캐싱 (기존 precision_cache_service.py 통합)"""
 
@@ -170,6 +246,8 @@ class PrecisionCache:
                 'total_entries': len(self.precision_data),
                 'cache_ttl': self.cache_ttl
             }
+
+
 
 
 # @FEAT:exchange-integration @COMP:service @TYPE:orchestrator
@@ -780,8 +858,90 @@ class ExchangeService:
                 'error_type': 'precision_error'
             }
 
+    # @FEAT:exchange-integration @COMP:service @TYPE:core
+    def get_balance(self, account: Account, asset: str = 'USDT',
+                   market_type: Union[str, MarketTypeEnum] = MarketTypeEnum.SPOT) -> Dict[str, Any]:
+        """
+        단일 자산 잔고 조회 편의 메서드
+
+        capital_service.py에서 호출하는 인터페이스로, 특정 자산의 잔고 정보만 반환합니다.
+
+        Args:
+            account: 계정 정보
+            asset: 조회할 자산 기호 (기본: 'USDT')
+            market_type: 마켓 타입 (기본: SPOT)
+
+        Returns:
+            {
+                'success': True,
+                'asset': 'USDT',
+                'free': 100.0,
+                'locked': 0.0,
+                'total': 100.0
+            }
+            또는 자산이 없을 때:
+            {
+                'success': True,
+                'asset': 'USDT',
+                'free': 0.0,
+                'locked': 0.0,
+                'total': 0.0
+            }
+            실패 시:
+            {
+                'success': False,
+                'error': '오류 메시지'
+            }
+        """
+        # MarketType 정규화
+        normalized_market_type = MarketTypeEnum.normalize(market_type)
+
+        # 전체 잔고 조회
+        result = self.fetch_balance(account, normalized_market_type)
+
+        if not result['success']:
+            return result
+
+        balances = result['balances']
+        if asset not in balances:
+            return {
+                'success': True,
+                'asset': asset,
+                'free': 0.0,
+                'locked': 0.0,
+                'total': 0.0
+            }
+
+        return {
+            'success': True,
+            **balances[asset]
+        }
+
     def fetch_balance(self, account: Account, market_type: str = 'spot') -> Dict[str, Any]:
-        """잔액 조회"""
+        """
+        잔액 조회 (표준화된 응답 포맷)
+
+        Args:
+            account: 계정 정보
+            market_type: 마켓 타입 (기본: 'spot')
+
+        Returns:
+            StandardCryptoBalanceResponse 포맷:
+            {
+                'success': True,
+                'exchange': 'binance',
+                'market_type': 'spot',
+                'balances': {
+                    'USDT': {
+                        'asset': 'USDT',
+                        'free': 100.0,
+                        'locked': 0.0,
+                        'total': 100.0
+                    }
+                },
+                'raw_response': 원본_데이터
+            }
+        """
         try:
             client = self.get_exchange_client(account)
             if not client:
@@ -793,7 +953,8 @@ class ExchangeService:
             # Crypto/Securities 모두 동기 메서드 호출 (Phase 1-2에서 비동기 제거 완료)
             balance_map = client.fetch_balance(market_type)
 
-            return {'success': True, 'balance': balance_map}
+            # 표준 포맷으로 변환
+            return _standardize_crypto_balance(balance_map, account.exchange, market_type)
 
         except Exception as e:
             logger.error(f"잔액 조회 실패: account_id={account.id}, error={e}")

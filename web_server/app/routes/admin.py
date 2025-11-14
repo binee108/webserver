@@ -1475,11 +1475,11 @@ def get_job_logs(job_id):
 
 
 # @FEAT:error-warning-logs @COMP:route @TYPE:core
+# @FEAT:admin-system @COMP:route @TYPE:core
 @bp.route('/system/logs/errors-warnings', methods=['GET'])
 @conditional_admin_required
-# @FEAT:admin-system @COMP:route @TYPE:core
 def get_errors_warnings_logs():
-  """
+    """
     ERROR/WARNING 로그 조회 API (디버깅 용도)
 
     시스템 전체의 ERROR 및 WARNING 로그를 빠르게 조회하는 API입니다.
@@ -1587,7 +1587,7 @@ def get_errors_warnings_logs():
         - 사용자 입력 검증: limit, level, search 파라미터 검증
 
     Feature Tags:
-        @FEAT:error-warning-logs @COMP:route @TYPE:core
+        # @FEAT:error-warning-logs @COMP:route @TYPE:core
     """
     try:
         from flask import current_app
