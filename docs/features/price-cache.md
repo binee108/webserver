@@ -65,7 +65,7 @@
 - 저장 데이터: `{'price': float, 'timestamp': float, 'exchange': str, 'market_type': str, 'symbol': str}`
 
 **의존성**:
-- `ExchangeService.get_price_quotes()` - 거래소 API 호출
+- `ExchangeService.get_price_quotes()` - 거래소 API 호출 (가격 캐시 시스템 핵심 메서드)
 - `APScheduler` - 백그라운드 주기 갱신
 - `StrategyPosition` DB - 활성 포지션 목록 조회
 
