@@ -1219,8 +1219,13 @@ class BinanceExchange(BaseCryptoExchange):
 
     def create_order(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
+                         stop_price: Optional[Decimal] = None,  # 명시적 파라미터 추가
                          market_type: str = 'spot', **params) -> Order:
         """주문 생성 (동기 래퍼)"""
+        # stop_price를 params에 추가하여 _prepare_order_params로 위임
+        if stop_price is not None:
+            params['stopPrice'] = stop_price
+
         return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
     def load_markets(self, market_type: str = 'spot', reload: bool = False, force_cache: bool = False) -> Dict[str, MarketInfo]:
