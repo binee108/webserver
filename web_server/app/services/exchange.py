@@ -197,8 +197,8 @@ class ExchangeService:
             # 주문 생성
             result = client.create_order(
                 symbol=order_data['symbol'],
-                side=order_data['side'],
                 order_type=order_data['type'],
+                side=order_data['side'],
                 amount=order_data['amount'],
                 price=order_data.get('price'),
                 stop_price=order_data.get('stop_price'),
@@ -422,8 +422,8 @@ class ExchangeService:
                 try:
                     result = client.create_order(
                         symbol=order_data['symbol'],
-                        side=order_data['side'],
                         order_type=order_data['type'],
+                        side=order_data['side'],
                         amount=order_data['amount'],
                         price=order_data.get('price'),
                         stop_price=order_data.get('stop_price'),
