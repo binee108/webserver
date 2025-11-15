@@ -4,6 +4,162 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<!-- @FEAT:timezone-conversion @TYPE:config - Timezone utility for KST conversion -->
+<script src="{{ url_for('static', filename='js/timezone.js') }}"></script>
+<!-- @FEAT:timezone-conversion @TYPE:ui - Enhanced KST time display styles -->
+<style>
+/* KST Time Display Enhancement Styles */
+.kst-time-display {
+    font-weight: 600;
+    color: #2d3748;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+.kst-badge {
+    background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+    color: #0050b3;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.5px;
+    border: 1px solid #91d5ff;
+    box-shadow: 0 1px 3px rgba(24, 144, 255, 0.1);
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.kst-badge:hover {
+    background: linear-gradient(135deg, #bae7ff 0%, #91d5ff 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(24, 144, 255, 0.2);
+}
+
+.kst-indicator {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    color: #0369a1;
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-weight: 500;
+    font-size: 0.65rem;
+    letter-spacing: 0.3px;
+    border: 1px solid #7dd3fc;
+    box-shadow: 0 1px 2px rgba(3, 105, 161, 0.1);
+    transition: all 0.15s ease;
+    margin-left: 4px;
+}
+
+.kst-indicator:hover {
+    background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+    transform: scale(1.05);
+}
+
+.kst-error-display {
+    background: linear-gradient(135deg, #fff2f0 0%, #ffccc7 100%);
+    color: #820014;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-weight: 500;
+    font-size: 0.7rem;
+    border: 1px solid #ffa39e;
+    animation: fadeInError 0.3s ease-out;
+}
+
+.kst-conversion-error {
+    border-left: 3px solid #ff4d4f;
+    background-color: #fff2f0;
+    animation: errorPulse 2s ease-in-out infinite;
+}
+
+/* Timezone Badge Enhancement */
+.timezone-badge {
+    background: linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%);
+    border: 1px solid #b7eb8f;
+    box-shadow: 0 2px 4px rgba(34, 197, 94, 0.1);
+    transition: all 0.2s ease;
+}
+
+.timezone-badge:hover {
+    background: linear-gradient(135deg, #d9f7be 0%, #b7eb8f 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(34, 197, 94, 0.15);
+}
+
+/* Animations for better UX */
+@keyframes fadeInError {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes errorPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+@keyframes kstBadgeGlow {
+    0%, 100% { box-shadow: 0 1px 3px rgba(24, 144, 255, 0.1); }
+    50% { box-shadow: 0 1px 6px rgba(24, 144, 255, 0.25); }
+}
+
+.kst-badge.newly-converted {
+    animation: kstBadgeGlow 1.5s ease-in-out;
+}
+
+/* Dark mode compatibility support */
+@media (prefers-color-scheme: dark) {
+    .kst-time-display {
+        color: #e2e8f0;
+    }
+
+    .kst-badge {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+        color: #dbeafe;
+        border-color: #3b82f6;
+    }
+
+    .kst-indicator {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+        color: #bfdbfe;
+        border-color: #60a5fa;
+    }
+
+    .kst-error-display {
+        background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+        color: #fecaca;
+        border-color: #ef4444;
+    }
+}
+
+/* Responsive design adjustments */
+@media (max-width: 768px) {
+    .kst-badge {
+        font-size: 0.6rem;
+        padding: 1px 6px;
+    }
+
+    .kst-indicator {
+        font-size: 0.6rem;
+        padding: 1px 4px;
+        margin-left: 2px;
+    }
+
+    .kst-time-display {
+        font-size: 0.85rem;
+    }
+}
+</style>
+<!-- @FEAT:error-warning-logs-ui @TYPE:config - Debug mode flag for conditional CSRF security -->
+<!-- WHY: 개발/프로덕션 환경을 구분하여 CSRF 보안 적용
+     개발 모드(DEBUG=True): CSRF 토큰 비활성화 (디버깅 편의성)
+     프로덕션(DEBUG=False): CSRF 토큰 필수 (보안 강화)
+     JavaScript의 loadErrorWarningLogs()에서 window.DEBUG_MODE 체크하여 조건부 헤더 추가 -->
+<script>
+    window.DEBUG_MODE = {{ 'true' if config.DEBUG else 'false' }};
+</script>
+<meta name="csrf-token" content="{{ csrf_token() }}">
 {% endblock %}
 
 {% block content %}
@@ -20,6 +176,15 @@
                 <div class="header-text">
                     <h1>시스템 모니터링</h1>
                     <p>실시간 시스템 상태 및 백그라운드 작업 관리</p>
+                </div>
+            </div>
+            <!-- @FEAT:timezone-conversion @TYPE:ui - Timezone information display -->
+            <div class="header-timezone">
+                <div class="badge badge-info timezone-badge">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                    </svg>
+                    <span id="timezone-display">한국 시간대 (KST)</span>
                 </div>
             </div>
         </div>
@@ -201,8 +366,12 @@
                             </td>
                             <td>
                                 {% if job.next_run_time %}
-                                    <div class="text-sm text-primary">{{ job.next_run_time.strftime('%Y-%m-%d') }}</div>
-                                    <div class="text-sm text-muted">{{ job.next_run_time.strftime('%H:%M:%S') }}</div>
+                                    <div class="text-sm text-primary kst-time" data-utc="{{ job.next_run_time.isoformat() }}">
+                                        <!-- KST 변환 시간이 여기에 표시됩니다 -->
+                                    </div>
+                                    <div class="text-xs text-muted original-utc hidden" data-original="{{ job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') }}">
+                                        UTC: {{ job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                    </div>
                                 {% else %}
                                     <span class="badge badge-secondary">
                                         없음
@@ -306,7 +475,123 @@
             {% endif %}
         </div>
     </div>
-    
+
+    <!-- @FEAT:error-warning-logs-ui @COMP:template @TYPE:core
+         시스템 오류 및 경고 로그 섹션: 실시간 ERROR/WARNING 모니터링
+         컴포넌트: 헤더, 통계카드(ERROR/WARNING/총계), 필터(레벨/검색/줄수), 로그컨테이너
+         Phase 1 UI - Phase 2에서 JavaScript 구현 예정
+    -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                시스템 오류 및 경고 로그
+            </h2>
+            <p class="text-sm text-secondary mt-1">실시간 ERROR/WARNING 로그 모니터링</p>
+        </div>
+        <div class="p-6">
+            <!-- 통계 카드: errorLogCount/warningLogCount/total24hLogCount (JavaScript에서 동적 업데이트) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <!-- ERROR 로그 카운트 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>ERROR</h3>
+                            <p class="stats-value text-error" id="errorLogCount">0</p>
+                            <p class="stats-subtitle">오류</p>
+                        </div>
+                        <div class="stats-icon bg-error-light">
+                            <svg class="w-6 h-6 text-error" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WARNING 로그 카운트 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>WARNING</h3>
+                            <p class="stats-value text-warning" id="warningLogCount">0</p>
+                            <p class="stats-subtitle">경고</p>
+                        </div>
+                        <div class="stats-icon bg-warning-light">
+                            <svg class="w-6 h-6 text-warning" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 24시간 총계 -->
+                <div class="stats-card">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <h3>총계</h3>
+                            <p class="stats-value text-info" id="total24hLogCount">0</p>
+                            <p class="stats-subtitle">로그 수</p>
+                        </div>
+                        <div class="stats-icon bg-info-light">
+                            <svg class="w-6 h-6 text-info" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
+                                <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 1 1 0 000 2H4a1 1 0 100 2h12a1 1 0 100-2h-2a1 1 0 100-2 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 필터 컨트롤: 레벨(ALL/ERROR/WARNING), 검색어, 표시줄수(50/100/200/500), 새로고침버튼 -->
+            <div class="flex items-center space-x-3 flex-wrap gap-y-2 mb-6">
+                <select id="errorWarningLogLevel"
+                        class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                        aria-label="로그 레벨 필터">
+                    <option value="ALL">전체</option>
+                    <option value="ERROR">🔴 ERROR</option>
+                    <option value="WARNING">⚠️ WARNING</option>
+                </select>
+
+                <input type="text"
+                       id="errorWarningLogSearch"
+                       placeholder="검색..."
+                       class="form-input flex-1 min-w-[150px] text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                       aria-label="로그 검색">
+
+                <select id="errorWarningLogLimit"
+                        class="form-select text-sm border border-color rounded-md px-3 py-2 bg-primary text-primary"
+                        aria-label="로그 표시 줄 수">
+                    <option value="50">50줄</option>
+                    <option value="100" selected>100줄</option>
+                    <option value="200">200줄</option>
+                    <option value="500">500줄</option>
+                </select>
+
+                <button onclick="refreshErrorWarningLogs()"
+                        class="btn btn-outline btn-sm"
+                        aria-label="로그 새로고침">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+                    </svg>
+                    새로고침
+                </button>
+            </div>
+
+            <!-- 로그 컨테이너: scrollable (max-h-96), role=log, ARIA label포함 (Phase 2에서 실시간 로그 스트림) -->
+            <div class="mt-6">
+                <div id="errorWarningLogContainer"
+                     class="bg-primary rounded-lg p-4 font-mono text-sm max-h-96 overflow-y-auto border border-color"
+                     role="log"
+                     aria-label="시스템 오류 및 경고 로그">
+                    <div class="text-center text-secondary py-4">로그를 불러오는 중...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- / @FEAT:error-warning-logs-ui -->
+
     <!-- 전역 텔레그램 설정 -->
     <div class="card">
         <div class="px-6 py-4 border-b border-color">
@@ -806,6 +1091,9 @@ function toggleTokenVisibility() {
 // 페이지 로드 시 전역 텔레그램 설정 로드
 document.addEventListener('DOMContentLoaded', function() {
     loadGlobalTelegramSettings();
+
+    // @FEAT:error-warning-logs-ui - 에러/경고 로그 초기 로드
+    loadErrorWarningLogs();
 });
 
 // ============================================================================
@@ -1023,14 +1311,21 @@ function escapeHtml(text) {
 
 // 필터 변경 시 자동 갱신 (이벤트 위임 패턴)
 document.addEventListener('change', function(e) {
+    // 백그라운드 작업 로그 필터
     if (e.target.id.startsWith('log-level-') || e.target.id.startsWith('log-limit-')) {
         const jobId = e.target.id.replace(/^log-(level|limit)-/, '');
         refreshJobLogs(jobId);
+    }
+
+    // @FEAT:error-warning-logs-ui - 에러/경고 로그 필터
+    if (e.target.id === 'errorWarningLogLevel' || e.target.id === 'errorWarningLogLimit') {
+        refreshErrorWarningLogs();
     }
 });
 
 // 검색 입력 시 디바운스 적용 (500ms)
 document.addEventListener('input', function(e) {
+    // 백그라운드 작업 로그 검색
     if (e.target.id.startsWith('log-search-')) {
         const jobId = e.target.id.replace('log-search-', '');
 
@@ -1044,7 +1339,273 @@ document.addEventListener('input', function(e) {
             refreshJobLogs(jobId);
         }, 500);
     }
+
+    // @FEAT:error-warning-logs-ui - 에러/경고 로그 검색
+    if (e.target.id === 'errorWarningLogSearch') {
+        // 기존 타이머 클리어
+        clearTimeout(errorWarningSearchTimer);
+
+        // 새 타이머 설정 (500ms 디바운스)
+        errorWarningSearchTimer = setTimeout(() => {
+            refreshErrorWarningLogs();
+        }, 500);
+    }
 });
+
+// ============================================================================
+// 시스템 오류 및 경고 로그 조회 UI
+// @FEAT:error-warning-logs-ui @COMP:template @TYPE:core
+// Phase 2: Interactive Functionality
+// ============================================================================
+
+// 검색 디바운스 타이머
+let errorWarningSearchTimer = null;
+
+/**
+ * @FEAT:error-warning-logs-ui @COMP:template @TYPE:integration - 에러/경고 로그 조회 API 호출
+ *
+ * WHY: 필터와 CSRF 보안을 적용하여 안전하게 로그 조회
+ * - 파라미터 우선순위: 인자 > DOM > 기본값
+ * - CSRF: 프로덕션 모드(DEBUG=false)에서만 X-CSRF-Token 헤더 추가
+ *
+ * Edge Cases:
+ * - DOM 요소 없음 → 기본값 적용 (level='ERROR', limit=100)
+ * - API 실패 → 오류 메시지 표시, 네트워크 오류 로깅
+ * - search='' vs search=null → 빈 문자열과 미입력 구분
+ *
+ * @param {string|null} level - 로그 레벨 ('ERROR', 'WARNING', 'INFO', 'ALL', 기본: DOM 또는 'ERROR')
+ * @param {string|null} search - 검색어 (기본: DOM 또는 '')
+ * @param {number|null} limit - 최대 줄 수 (기본: DOM 또는 100)
+ * @returns {void}
+ *
+ * @sideEffect
+ * - errorWarningLogContainer innerHTML 업데이트 (로딩중 → 결과 또는 오류)
+ * - renderErrorWarningLogs() 또는 오류 표시 함수 호출
+ */
+function loadErrorWarningLogs(level = null, search = null, limit = null) {
+    const container = document.getElementById('errorWarningLogContainer');
+
+    // 로딩 상태 표시
+    container.innerHTML = `
+        <div class="text-center text-secondary py-4">
+            <svg class="animate-spin h-6 w-6 mx-auto mb-2 text-info" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            로그 로딩 중...
+        </div>
+    `;
+
+    // 필터 값 우선순위: 인자 > DOM > 기본값
+    const levelFilter = level || document.getElementById('errorWarningLogLevel')?.value || 'ERROR';
+    const searchFilter = search !== null ? search : (document.getElementById('errorWarningLogSearch')?.value || '');
+    const limitFilter = limit || document.getElementById('errorWarningLogLimit')?.value || 100;
+
+    // URL 파라미터 구성
+    const params = new URLSearchParams({
+        limit: limitFilter,
+        level: levelFilter,
+        search: searchFilter
+    });
+
+    // CSRF 토큰 헤더 설정 (프로덕션 모드만)
+    // DEBUG_MODE 조건: 개발(true) → CSRF 비활성화, 프로덕션(false) → X-CSRF-Token 헤더 필수
+    // window.DEBUG_MODE는 템플릿 상단(line 7-11)의 <script> 블록에서 설정됨
+    const headers = {};
+    if (!window.DEBUG_MODE) {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+        if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+        }
+    }
+
+    // API 호출
+    fetch(`/admin/system/logs/errors-warnings?${params}`, {
+        method: 'GET',
+        headers: headers
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderErrorWarningLogs(data.logs, data.total, data.filtered);
+            } else {
+                container.innerHTML = `
+                    <div class="text-center text-error py-4">
+                        <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                        </svg>
+                        로그 조회 실패
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading error-warning logs:', error);
+            container.innerHTML = `
+                <div class="text-center text-error py-4">
+                    <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                    </svg>
+                    오류 발생: ${escapeHtml(error.message)}
+                </div>
+            `;
+        });
+}
+
+/**
+ * @FEAT:error-warning-logs-ui @COMP:template @TYPE:core - 로그 렌더링 및 통계 업데이트
+ *
+ * WHY: 동적 로그 렌더링으로 실시간 모니터링 UI 제공
+ * - XSS 방어: 모든 동적 콘텐츠(log.message, log.tag, log.timestamp)에 escapeHtml() 적용
+ * - 레벨별 색상 매핑: ERROR(빨강), WARNING(주황), INFO(파랑), DEBUG(회색)
+ * - 태그 뱃지: 존재 시만 렌더링 (조건부)
+ *
+ * Edge Cases:
+ * - logs=[] → 빈 로그 메시지 표시
+ * - total !== filtered → 필터링 통계 표시
+ * - log.file 또는 log.line 없음 → 조건부 생략
+ *
+ * @param {Array} logs - 로그 객체 배열 [{timestamp, level, tag, message, file, line}, ...]
+ * @param {number} total - 전체 로그 개수 (필터링 전, 통계용)
+ * @param {number} filtered - 필터링된 로그 개수 (현재 표시 개수)
+ * @returns {void}
+ *
+ * @sideEffect
+ * - errorWarningLogContainer innerHTML 업데이트 (로그 테이블 렌더링)
+ * - updateErrorWarningStats(logs) 호출 → 통계 카드 업데이트
+ */
+function renderErrorWarningLogs(logs, total, filtered) {
+    const container = document.getElementById('errorWarningLogContainer');
+
+    // 빈 로그 처리
+    if (!logs || logs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-secondary py-4">
+                <svg class="w-6 h-6 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-11a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path>
+                </svg>
+                로그가 없습니다.
+            </div>
+        `;
+        updateErrorWarningStats([]);
+        return;
+    }
+
+    // 로그 통계 표시
+    let statsHtml = '';
+    if (total !== filtered) {
+        statsHtml = `
+            <div class="mb-2 text-xs text-secondary">
+                전체 ${total}개 중 ${filtered}개 표시
+            </div>
+        `;
+    } else {
+        statsHtml = `
+            <div class="mb-2 text-xs text-secondary">
+                전체 ${total}개 로그
+            </div>
+        `;
+    }
+
+    // 로그 레벨별 색상, 배지, 아이콘 매핑
+    const levelClasses = {
+        'INFO': 'text-info',
+        'WARNING': 'text-warning',
+        'ERROR': 'text-error',
+        'DEBUG': 'text-secondary'
+    };
+
+    const levelBadges = {
+        'INFO': 'badge-info',
+        'WARNING': 'badge-warning',
+        'ERROR': 'badge-error',
+        'DEBUG': 'badge-secondary'
+    };
+
+    const levelIcons = {
+        'ERROR': '🔴',
+        'WARNING': '⚠️',
+        'INFO': 'ℹ️',
+        'DEBUG': '🔍',
+        'UNKNOWN': '❓'
+    };
+
+    // 로그 렌더링
+    const logHtml = logs.map(log => {
+        const levelClass = levelClasses[log.level] || 'text-primary';
+        const badgeClass = levelBadges[log.level] || 'badge';
+        const levelIcon = levelIcons[log.level] || '';
+
+        // 태그 뱃지 (조건부 렌더링)
+        const tagBadge = log.tag ? `
+            <span class="badge badge-accent mr-2 flex-shrink-0">
+                ${escapeHtml(log.tag)}
+            </span>
+        ` : '';
+
+        return `
+            <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
+                <div class="flex items-start">
+                    <span class="text-secondary text-xs mr-2 flex-shrink-0">[${escapeHtml(log.timestamp)}]</span>
+                    <span class="badge ${badgeClass} mr-2 flex-shrink-0">
+                        ${levelIcon} ${escapeHtml(log.level)}
+                    </span>
+                    ${tagBadge}
+                    <span class="${levelClass} flex-1 break-words">${escapeHtml(log.message)}</span>
+                    ${log.file ? `<span class="text-xs text-secondary ml-2 flex-shrink-0">${escapeHtml(log.file)}${log.line ? ':' + log.line : ''}</span>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = statsHtml + logHtml;
+
+    // 통계 카드 업데이트
+    updateErrorWarningStats(logs);
+}
+
+/**
+ * @FEAT:error-warning-logs-ui @COMP:template @TYPE:helper - 통계 카드 업데이트
+ *
+ * WHY: 현재 로드된 로그를 기반으로 통계 카드 숫자 업데이트
+ *
+ * IMPORTANT: 현재 로드된 로그(limit 범위)만 반영하므로, 전체 서버 통계와 다를 수 있음
+ * - 예: limit=100이면 최근 100개만 카운트
+ * - 전체 통계는 API의 data.total 사용 (현재 미사용)
+ *
+ * @param {Array} logs - 로그 객체 배열 [{level, ...}, ...]
+ * @returns {void}
+ *
+ * @sideEffect
+ * - errorLogCount textContent 업데이트
+ * - warningLogCount textContent 업데이트
+ * - total24hLogCount textContent 업데이트
+ */
+function updateErrorWarningStats(logs) {
+    const errorCount = logs.filter(log => log.level === 'ERROR').length;
+    const warningCount = logs.filter(log => log.level === 'WARNING').length;
+    const total24h = logs.length;
+
+    document.getElementById('errorLogCount').textContent = errorCount;
+    document.getElementById('warningLogCount').textContent = warningCount;
+    document.getElementById('total24hLogCount').textContent = total24h;
+}
+
+/**
+ * @FEAT:error-warning-logs-ui @COMP:template @TYPE:helper - 에러/경고 로그 새로고침
+ *
+ * WHY: 사용자가 새로고침 버튼 클릭 시 호출하여 최신 로그 조회
+ *
+ * @returns {void}
+ *
+ * @sideEffect
+ * - loadErrorWarningLogs() 호출 → API 호출 및 렌더링
+ */
+function refreshErrorWarningLogs() {
+    loadErrorWarningLogs();
+}
+
+// / @FEAT:error-warning-logs-ui
 </script>
 {% endblock %} 
 <!-- Phase 1: 주문 추적 시스템 섹션 -->
@@ -1248,4 +1809,1057 @@ function calculatePerformance() {
 document.addEventListener('DOMContentLoaded', function() {
     loadTrackingStats();
 });
+
+// ============================================================================
+// KST 시간대 변환 기능
+// @FEAT:timezone-conversion @COMP:ui @TYPE:integration
+// ============================================================================
+
+/**
+ * KST 시간대 변환 초기화 함수
+ * @FEAT:timezone-conversion @COMP:ui @TYPE:integration
+ * Improved error handling with graceful fallbacks and validation
+ */
+function initializeKSTConversion() {
+    try {
+        // TimeZoneUtils dependency validation
+        if (typeof window.timeZoneUtils === 'undefined') {
+            console.warn('TimeZoneUtils not available, skipping KST conversion initialization');
+            return;
+        }
+
+        // Validate timezone utility functionality
+        if (typeof window.timeZoneUtils.formatToLocalTime !== 'function') {
+            console.warn('TimeZoneUtils.formatToLocalTime not available, using fallback');
+            setupFallbackTimeConversion();
+            return;
+        }
+
+        // 스케줄러 다음 실행 시간 변환 (with error recovery)
+        const schedulerElements = document.querySelectorAll('.kst-time[data-utc]');
+        if (schedulerElements.length > 0) {
+            convertSchedulerTimesToKST();
+        }
+
+        // 시스템 로그 타임스탬프 변환 (동적 로그용)
+        setupLogTimestampConversion();
+
+        console.log('KST 변환 기능이 초기화되었습니다.');
+    } catch (error) {
+        console.error('KST 변환 초기화 실패:', error);
+        // Graceful fallback - basic time display without conversion
+        setupFallbackTimeConversion();
+    }
+}
+
+/**
+ * Fallback time conversion for when TimeZoneUtils is unavailable
+ * @private
+ */
+function setupFallbackTimeConversion() {
+    // Add basic KST indicator without conversion
+    const kstElements = document.querySelectorAll('.kst-time[data-utc]');
+    kstElements.forEach(element => {
+        const utcString = element.dataset.utc;
+        if (utcString) {
+            element.innerHTML = `
+                <div>${utcString}</div>
+                <div class="text-xs text-warning">UTC (변환 불가)</div>
+            `;
+            element.title = `원본 시간: ${utcString}`;
+        }
+    });
+
+    // Update timezone display
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (timezoneDisplay) {
+        timezoneDisplay.textContent = '한국 시간대 (KST) - 변환 기능 비활성화';
+    }
+}
+
+/**
+ * 스케줄러 다음 실행 시간을 KST로 변환
+ * Enhanced with robust error handling, input validation, and performance optimization
+ */
+function convertSchedulerTimesToKST() {
+    // Performance: Cache DOM elements and validate early
+    const kstTimeElements = document.querySelectorAll('.kst-time[data-utc]');
+    if (kstTimeElements.length === 0) return;
+
+    // Constants for validation
+    const CURRENT_YEAR = new Date().getFullYear();
+    const MIN_YEAR = 2000;
+    const MAX_YEAR = CURRENT_YEAR + 10;
+
+    // Batch processing for better performance with comprehensive error tracking
+    const conversionResults = {
+        success: 0,
+        failed: 0,
+        errors: []
+    };
+
+    kstTimeElements.forEach((element, index) => {
+        try {
+            // Enhanced input validation with null/undefined checks
+            const utcString = element.dataset.utc;
+            if (!utcString || typeof utcString !== 'string' || utcString.trim() === '') {
+                const errorMsg = `Empty or invalid UTC data`;
+                conversionResults.errors.push({ index, element, error: errorMsg, data: utcString });
+                safeUpdateTimeElement(element, '시간 정보 없음', 'text-muted', errorMsg);
+                conversionResults.failed++;
+                return;
+            }
+
+            // Sanitize input - remove potential XSS and normalize
+            const sanitizedUtcString = utcString.trim().replace(/[<>]/g, '');
+
+            // Enhanced timestamp validation with comprehensive format support
+            let utcDate;
+            let parsingAttempt = 0;
+
+            // Strategy 1: Standard ISO format
+            try {
+                parsingAttempt = 1;
+                utcDate = new Date(sanitizedUtcString);
+                if (isNaN(utcDate.getTime())) throw new Error('Invalid date result');
+            } catch (parseError) {
+                // Strategy 2: Try adding 'Z' if missing
+                try {
+                    parsingAttempt = 2;
+                    utcDate = new Date(sanitizedUtcString + (sanitizedUtcString.includes('Z') ? '' : 'Z'));
+                    if (isNaN(utcDate.getTime())) throw new Error('Invalid date result with Z');
+                } catch (fallbackError) {
+                    // Strategy 3: Try alternative common formats
+                    try {
+                        parsingAttempt = 3;
+                        // Try YYYY-MM-DD HH:MM:SS format
+                        const cleanedString = sanitizedUtcString.replace('T', ' ').replace(/\..+$/, '');
+                        utcDate = new Date(cleanedString);
+                        if (isNaN(utcDate.getTime())) throw new Error('Invalid date result with cleanup');
+                    } catch (finalError) {
+                        const errorMsg = `Invalid timestamp format (attempted ${parsingAttempt} strategies)`;
+                        conversionResults.errors.push({
+                            index, element,
+                            error: errorMsg,
+                            data: sanitizedUtcString,
+                            attempts: parsingAttempt
+                        });
+                        safeUpdateTimeElement(element, '시간 형식 오류', 'text-warning', `${errorMsg}: ${sanitizedUtcString}`);
+                        conversionResults.failed++;
+                        return;
+                    }
+                }
+            }
+
+            // Enhanced date validation with future year protection
+            if (isNaN(utcDate.getTime())) {
+                const errorMsg = `Invalid date object`;
+                conversionResults.errors.push({ index, element, error: errorMsg, data: sanitizedUtcString });
+                safeUpdateTimeElement(element, '유효하지 않은 시간', 'text-warning', `${errorMsg}: ${sanitizedUtcString}`);
+                conversionResults.failed++;
+                return;
+            }
+
+            const year = utcDate.getFullYear();
+            if (year < MIN_YEAR || year > MAX_YEAR) {
+                const errorMsg = `Date out of valid range (${MIN_YEAR}-${MAX_YEAR}): ${year}`;
+                conversionResults.errors.push({ index, element, error: errorMsg, data: sanitizedUtcString });
+                safeUpdateTimeElement(element, '유효 범위 벗어남', 'text-warning', errorMsg);
+                conversionResults.failed++;
+                return;
+            }
+
+            // Enhanced KST conversion with multiple fallback strategies
+            let kstTime;
+            let conversionAttempt = 0;
+
+            // Strategy 1: Primary timeZoneUtils conversion
+            try {
+                conversionAttempt = 1;
+                kstTime = timeZoneUtils.formatToLocalTime(utcDate, {
+                    timezone: 'Asia/Seoul',
+                    format: 'YYYY-MM-DD HH:mm:ss',
+                    includeOffset: false,
+                    use24Hour: true
+                });
+
+                // Validate conversion result
+                if (!kstTime || typeof kstTime !== 'string' || kstTime.trim() === '') {
+                    throw new Error('Empty or invalid conversion result');
+                }
+            } catch (conversionError) {
+                console.warn(`[${index}] Primary KST conversion failed (attempt ${conversionAttempt}):`, conversionError);
+
+                // Strategy 2: Browser native formatting with timezone
+                try {
+                    conversionAttempt = 2;
+                    kstTime = utcDate.toLocaleString('ko-KR', {
+                        timeZone: 'Asia/Seoul',
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+
+                    // Normalize the format for consistency
+                    kstTime = kstTime.replace(/\./g, '-').replace(/\. /g, '-').trim();
+                } catch (browserError) {
+                    console.warn(`[${index}] Browser formatting failed (attempt ${conversionAttempt}):`, browserError);
+
+                    // Strategy 3: Manual KST conversion (UTC + 9 hours)
+                    try {
+                        conversionAttempt = 3;
+                        const kstDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000));
+                        kstTime = kstDate.toISOString().replace('T', ' ').substring(0, 19).replace(/\.\d+$/, '');
+                    } catch (manualError) {
+                        const errorMsg = `All KST conversion strategies failed (${conversionAttempt} attempts)`;
+                        conversionResults.errors.push({
+                            index, element,
+                            error: errorMsg,
+                            data: sanitizedUtcString,
+                            lastError: manualError.message
+                        });
+                        safeUpdateTimeElement(element, 'KST 변환 실패', 'text-error', errorMsg);
+                        conversionResults.failed++;
+                        return;
+                    }
+                }
+            }
+
+            // Enhanced validation of final result
+            if (!kstTime || typeof kstTime !== 'string' || kstTime.trim() === '') {
+                const errorMsg = `Empty final conversion result`;
+                conversionResults.errors.push({ index, element, error: errorMsg, data: sanitizedUtcString });
+                safeUpdateTimeElement(element, '변환 결과 없음', 'text-error', errorMsg);
+                conversionResults.failed++;
+                return;
+            }
+
+            // Enhanced time display with accessibility and visual improvements
+            element.innerHTML = `
+                <div class="kst-time-display">${kstTime}</div>
+                <div class="text-xs text-info kst-badge newly-converted" role="img" aria-label="한국 표준시">
+                    🇰🇷 KST
+                </div>
+            `;
+
+            // Remove animation class after animation completes
+            setTimeout(() => {
+                const badge = element.querySelector('.kst-badge');
+                if (badge) {
+                    badge.classList.remove('newly-converted');
+                }
+            }, 1500);
+
+            // Comprehensive tooltip with diagnostic information
+            const tooltipInfo = [
+                `원본 UTC: ${sanitizedUtcString}`,
+                `변환된 KST: ${kstTime}`,
+                `변환 방식: ${conversionAttempt === 1 ? 'TimeZoneUtils' : conversionAttempt === 2 ? 'Browser Native' : 'Manual'}`
+            ];
+            element.title = tooltipInfo.join('\n');
+
+            conversionResults.success++;
+
+        } catch (unexpectedError) {
+            const errorMsg = `Unexpected error during KST conversion`;
+            console.error(`[${index}] ${errorMsg}:`, unexpectedError);
+            conversionResults.errors.push({
+                index, element,
+                error: errorMsg,
+                data: utcString,
+                details: unexpectedError.message
+            });
+            safeUpdateTimeElement(element, '예기치 않은 오류', 'text-error', `${errorMsg}: ${unexpectedError.message}`);
+            conversionResults.failed++;
+        }
+    });
+
+    // Enhanced performance and error logging
+    const totalElements = kstTimeElements.length;
+    if (conversionResults.failed > 0) {
+        console.warn(`KST conversion summary:`, {
+            total: totalElements,
+            success: conversionResults.success,
+            failed: conversionResults.failed,
+            errorRate: `${((conversionResults.failed / totalElements) * 100).toFixed(1)}%`,
+            errors: conversionResults.errors.slice(0, 5) // Show first 5 errors
+        });
+    } else if (conversionResults.success > 0) {
+        console.debug(`KST conversion completed successfully: ${conversionResults.success} timestamps converted`);
+    }
+}
+
+/**
+ * Helper function for safe element updates with consistent styling
+ * @param {Element} element - DOM element to update
+ * @param {string} text - Display text
+ * @param {string} cssClass - CSS class for styling
+ * @param {string} tooltip - Tooltip text
+ */
+function safeUpdateTimeElement(element, text, cssClass, tooltip) {
+    try {
+        element.innerHTML = `<div class="text-xs ${cssClass} kst-error-display">${text}</div>`;
+        if (tooltip) {
+            element.title = tooltip;
+        }
+        // Add error class for potential debugging
+        element.classList.add('kst-conversion-error');
+    } catch (updateError) {
+        console.error('Failed to update time element:', updateError);
+        // Ultra-safe fallback
+        element.textContent = text;
+        element.title = tooltip || '';
+    }
+}
+
+/**
+ * 시스템 로그 타임스탬프 변환 설정 (동적 로그용)
+ */
+function setupLogTimestampConversion() {
+    // 로그 렌더링 함수를 확장하여 KST 변환 적용
+    if (typeof window.renderLogs === 'function') {
+        const originalRenderLogs = window.renderLogs;
+
+        window.renderLogs = function(jobId, logs, total, filtered) {
+            // 원본 함수 호출
+            originalRenderLogs(jobId, logs, total, filtered);
+
+            // 렌더링 후 타임스탬프 변환
+            setTimeout(() => {
+                convertLogTimestampsInContainer(`log-container-${jobId}`);
+            }, 100);
+        };
+    }
+
+    // 에러/경고 로그 렌더링 함수도 확장
+    if (typeof window.renderErrorWarningLogs === 'function') {
+        const originalRenderErrorWarningLogs = window.renderErrorWarningLogs;
+
+        window.renderErrorWarningLogs = function(logs, total, filtered) {
+            // 원본 함수 호출
+            originalRenderErrorWarningLogs(logs, total, filtered);
+
+            // 렌더링 후 타임스탬프 변환
+            setTimeout(() => {
+                convertLogTimestampsInContainer('errorWarningLogContainer');
+            }, 100);
+        };
+    }
+}
+
+/**
+ * 컨테이너 내의 로그 타임스탬프를 KST로 변환
+ * Enhanced with intelligent batching, performance optimization, and comprehensive error handling
+ * @param {string} containerId - 로그 컨테이너 ID
+ * @param {number} [maxElements=null] - Maximum elements to process (for performance control)
+ * @returns {Object} Conversion results with performance metrics
+ */
+function convertLogTimestampsInContainer(containerId, maxElements = null) {
+    // Comprehensive input validation
+    if (!containerId || typeof containerId !== 'string') {
+        console.warn('convertLogTimestampsInContainer: Invalid container ID provided');
+        return { success: false, converted: 0, errors: ['Invalid container ID'] };
+    }
+
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.warn(`convertLogTimestampsInContainer: Container with ID '${containerId}' not found`);
+        return { success: false, converted: 0, errors: ['Container not found'] };
+    }
+
+    // Early dependency validation with caching
+    if (typeof window.timeZoneUtils === 'undefined' || typeof window.timeZoneUtils.formatToLocalTime !== 'function') {
+        console.warn('convertLogTimestampsInContainer: TimeZoneUtils not available for log timestamp conversion');
+        return { success: false, converted: 0, errors: ['TimeZoneUtils not available'] };
+    }
+
+    // Performance: Batch DOM queries to minimize reflow
+    const logElements = container.querySelectorAll('.py-1');
+    if (logElements.length === 0) {
+        return { success: true, converted: 0, errors: [] };
+    }
+
+    // Intelligent batch size management
+    const elementsToProcess = maxElements ? Math.min(logElements.length, maxElements) : logElements.length;
+    const elements = Array.from(logElements).slice(0, elementsToProcess);
+
+    // Performance tracking with detailed metrics
+    const startTime = performance.now();
+    const conversionResults = {
+        success: 0,
+        failed: 0,
+        errors: [],
+        skipped: 0
+    };
+
+    // Pre-compiled regex patterns for performance optimization
+    const PATTERNS = {
+        TIMESTAMP: /\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d{3})?\]/,
+        CLEANUP: /[<>]/g
+    };
+
+    // Constants for validation
+    const CURRENT_YEAR = new Date().getFullYear();
+    const MIN_YEAR = 2010;
+    const MAX_YEAR = CURRENT_YEAR + 5;
+
+    // Process elements in batches for better performance
+    elements.forEach((logElement, index) => {
+        try {
+            // Enhanced input validation and sanitization
+            const timestampElement = logElement.querySelector('.text-muted');
+            if (!timestampElement) {
+                conversionResults.skipped++;
+                return;
+            }
+
+            const timestampText = timestampElement.textContent;
+            if (!timestampText || typeof timestampText !== 'string') {
+                conversionResults.skipped++;
+                return;
+            }
+
+            // Extract timestamp pattern using pre-compiled regex with error handling
+            let timestampMatch;
+            try {
+                timestampMatch = timestampText.match(PATTERNS.TIMESTAMP);
+            } catch (regexError) {
+                conversionResults.errors.push({ index, error: 'Regex execution failed', data: timestampText.substring(0, 50) });
+                conversionResults.failed++;
+                return;
+            }
+
+            if (!timestampMatch || !timestampMatch[1]) {
+                conversionResults.skipped++;
+                return;
+            }
+
+            const originalTimestamp = timestampMatch[1].trim();
+
+            // Comprehensive timestamp validation
+            if (!originalTimestamp || originalTimestamp.length < 19) {
+                conversionResults.errors.push({ index, error: 'Invalid timestamp format', data: originalTimestamp });
+                conversionResults.failed++;
+                return;
+            }
+
+            // Sanitize input to prevent potential XSS
+            const sanitizedTimestamp = originalTimestamp.replace(PATTERNS.CLEANUP, '');
+
+            // Enhanced date parsing with multiple strategies
+            let timestampDate;
+            let parseAttempt = 0;
+
+            try {
+                // Strategy 1: ISO format with UTC timezone
+                parseAttempt = 1;
+                timestampDate = new Date(sanitizedTimestamp + 'Z');
+                if (isNaN(timestampDate.getTime())) throw new Error('Invalid ISO date result');
+            } catch (parseError) {
+                try {
+                    // Strategy 2: Local time format
+                    parseAttempt = 2;
+                    timestampDate = new Date(sanitizedTimestamp);
+                    if (isNaN(timestampDate.getTime())) throw new Error('Invalid local date result');
+                } catch (fallbackError) {
+                    conversionResults.errors.push({
+                        index,
+                        error: 'All parsing strategies failed',
+                        data: sanitizedTimestamp,
+                        attempts: parseAttempt
+                    });
+                    conversionResults.failed++;
+                    return;
+                }
+            }
+
+            // Robust date validity checking
+            const year = timestampDate.getFullYear();
+            if (isNaN(timestampDate.getTime()) || year < MIN_YEAR || year > MAX_YEAR) {
+                conversionResults.errors.push({
+                    index,
+                    error: `Date out of valid range (${MIN_YEAR}-${MAX_YEAR})`,
+                    data: sanitizedTimestamp,
+                    derivedYear: year
+                });
+                conversionResults.failed++;
+                return;
+            }
+
+            // Enhanced KST conversion with multiple fallback strategies
+            let kstTime;
+            let conversionAttempt = 0;
+
+            try {
+                // Strategy 1: Primary timeZoneUtils conversion
+                conversionAttempt = 1;
+                kstTime = window.timeZoneUtils.formatToLocalTime(timestampDate, {
+                    timezone: 'Asia/Seoul',
+                    format: 'YYYY-MM-DD HH:mm:ss',
+                    includeOffset: false,
+                    use24Hour: true
+                });
+
+                // Validate conversion result
+                if (!kstTime || typeof kstTime !== 'string' || kstTime.trim() === '') {
+                    throw new Error('Empty or invalid conversion result');
+                }
+            } catch (conversionError) {
+                try {
+                    // Strategy 2: Browser native formatting
+                    conversionAttempt = 2;
+                    kstTime = timestampDate.toLocaleString('ko-KR', {
+                        timeZone: 'Asia/Seoul',
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+
+                    // Normalize format for consistency
+                    kstTime = kstTime.replace(/\./g, '-').replace(/\//g, '-').replace(/\. /g, '-').trim();
+
+                    if (!kstTime || kstTime.length < 19) {
+                        throw new Error('Browser formatting produced invalid result');
+                    }
+                } catch (browserError) {
+                    try {
+                        // Strategy 3: Manual UTC+9 conversion
+                        conversionAttempt = 3;
+                        const kstDate = new Date(timestampDate.getTime() + (9 * 60 * 60 * 1000));
+                        kstTime = kstDate.toISOString().replace('T', ' ').substring(0, 19);
+                    } catch (manualError) {
+                        conversionResults.errors.push({
+                            index,
+                            error: 'All KST conversion strategies failed',
+                            data: sanitizedTimestamp,
+                            attempts: conversionAttempt,
+                            lastError: manualError.message
+                        });
+                        conversionResults.failed++;
+                        return;
+                    }
+                }
+            }
+
+            // Safe and efficient DOM update with enhanced accessibility
+            try {
+                timestampElement.innerHTML = `[${kstTime}] <span class="text-info text-xs kst-indicator newly-converted" role="img" aria-label="한국 표준시 변환됨">🇰🇷 KST</span>`;
+
+                // Add subtle highlight animation to show successful conversion
+                timestampElement.style.transition = 'background-color 0.3s ease';
+                timestampElement.style.backgroundColor = 'rgba(59, 130, 246, 0.05)';
+
+                // Remove highlight after animation
+                setTimeout(() => {
+                    timestampElement.style.backgroundColor = '';
+                    const indicator = timestampElement.querySelector('.kst-indicator');
+                    if (indicator) {
+                        indicator.classList.remove('newly-converted');
+                    }
+                }, 1500);
+
+                // Enhanced tooltip with diagnostic information
+                const tooltipInfo = [
+                    `원본 UTC: ${sanitizedTimestamp}`,
+                    `변환된 KST: ${kstTime}`,
+                    `변환 방식: ${conversionAttempt === 1 ? 'TimeZoneUtils' : conversionAttempt === 2 ? 'Browser Native' : 'Manual'}`
+                ];
+                timestampElement.title = tooltipInfo.join('\n');
+
+                conversionResults.success++;
+            } catch (domError) {
+                conversionResults.errors.push({
+                    index,
+                    error: 'DOM update failed',
+                    data: kstTime,
+                    domError: domError.message
+                });
+                conversionResults.failed++;
+            }
+
+        } catch (unexpectedError) {
+            conversionResults.errors.push({
+                index,
+                error: 'Unexpected error during conversion',
+                details: unexpectedError.message,
+                stack: unexpectedError.stack
+            });
+            conversionResults.failed++;
+        }
+    });
+
+    // Enhanced performance logging and metrics collection
+    const processingTime = performance.now() - startTime;
+    const totalElements = elements.length;
+
+    // Comprehensive result object with detailed metrics
+    const result = {
+        success: conversionResults.errors.length === 0,
+        containerId: containerId,
+        totalElements: totalElements,
+        converted: conversionResults.success,
+        failed: conversionResults.failed,
+        skipped: conversionResults.skipped,
+        processingTime: processingTime,
+        conversionRate: totalElements > 0 ? ((conversionResults.success / totalElements) * 100).toFixed(1) : 0,
+        errors: conversionResults.errors.slice(0, 10) // Limit error reporting for performance
+    };
+
+    // Performance-optimized logging with different levels
+    if (conversionResults.failed > 0 || conversionResults.errors.length > 0) {
+        console.warn(`convertLogTimestampsInContainer completed with issues:`, {
+            containerId: result.containerId,
+            summary: `${result.converted} converted, ${result.failed} failed, ${result.skipped} skipped`,
+            performance: `${result.processingTime.toFixed(2)}ms (${result.conversionRate}% success)`,
+            sampleErrors: result.errors.slice(0, 3) // Show first 3 errors for debugging
+        });
+    } else if (conversionResults.success > 0) {
+        console.debug(`convertLogTimestampsInContainer completed successfully:`, {
+            containerId: result.containerId,
+            converted: result.converted,
+            performance: `${result.processingTime.toFixed(2)}ms (${result.conversionRate}% success)`
+        });
+    }
+
+    return result;
+}
+
+/**
+ * 시간대 정보 표시 업데이트
+ */
+function updateTimezoneDisplay() {
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (!timezoneDisplay) return;
+
+    try {
+        // 현재 KST 시간
+        const now = new Date();
+        const kstNow = timeZoneUtils.formatToLocalTime(now, {
+            timezone: 'Asia/Seoul',
+            format: 'YYYY-MM-DD HH:mm:ss',
+            includeOffset: false,
+            use24Hour: true
+        });
+
+        timezoneDisplay.textContent = `한국 시간대 (KST) - ${kstNow}`;
+
+    } catch (error) {
+        console.error('시간대 정보 업데이트 실패:', error);
+    }
+}
+
+/**
+ * KST 변환 기능 전체 리프레시
+ * Enhanced with intelligent throttling, batch processing, performance optimization, and comprehensive error handling
+ * @param {boolean} [force=false] - Force refresh even if recently updated
+ * @returns {Object} Detailed refresh results with performance metrics
+ */
+function refreshKSTConversion(force = false) {
+    // Performance: Use high-resolution timer and adaptive throttling
+    const now = performance.now();
+
+    // Adaptive throttling based on system performance
+    const throttleInterval = window._systemUnderLoad ? 2000 : 1000;
+    if (window._lastKSTRefresh && !force && (now - window._lastKSTRefresh) < throttleInterval) {
+        console.debug(`KST conversion throttled (last refresh < ${throttleInterval}ms ago)`);
+        return {
+            success: false,
+            reason: 'throttled',
+            converted: 0,
+            processingTime: 0,
+            systemLoad: window._systemUnderLoad
+        };
+    }
+
+    // Early dependency validation with caching
+    if (typeof window.timeZoneUtils === 'undefined') {
+        console.warn('TimeZoneUtils not available, skipping KST refresh');
+        return {
+            success: false,
+            reason: 'missing-dependencies',
+            converted: 0,
+            processingTime: 0
+        };
+    }
+
+    const startTime = performance.now();
+    let totalConverted = 0;
+    const errors = [];
+    const performanceMetrics = {
+        scheduler: { elements: 0, time: 0 },
+        logPanels: { panels: 0, elements: 0, time: 0 },
+        errorLogs: { elements: 0, time: 0 },
+        display: { time: 0 }
+    };
+
+    try {
+        // Performance: Batch DOM queries to minimize layout thrashing
+        const domElements = {
+            scheduler: document.querySelectorAll('.kst-time[data-utc]'),
+            openLogRows: document.querySelectorAll('[id^="logs-row-"]:not(.hidden)'),
+            errorContainer: document.getElementById('errorWarningLogContainer'),
+            timezoneDisplay: document.getElementById('timezone-display')
+        };
+
+        // 1. Convert scheduler times (highest priority) with performance tracking
+        if (domElements.scheduler.length > 0) {
+            try {
+                const schedulerStart = performance.now();
+                convertSchedulerTimesToKST();
+                const schedulerTime = performance.now() - schedulerStart;
+
+                performanceMetrics.scheduler.elements = domElements.scheduler.length;
+                performanceMetrics.scheduler.time = schedulerTime;
+                totalConverted += domElements.scheduler.length;
+
+                console.debug(`Scheduler conversion: ${domElements.scheduler.length} elements in ${schedulerTime.toFixed(2)}ms`);
+            } catch (error) {
+                console.error('Scheduler time conversion failed:', error);
+                errors.push({ component: 'scheduler', error: error.message, stack: error.stack });
+            }
+        }
+
+        // 2. Update timezone display with performance monitoring
+        try {
+            const displayStart = performance.now();
+            updateTimezoneDisplay();
+            const displayTime = performance.now() - displayStart;
+            performanceMetrics.display.time = displayTime;
+        } catch (error) {
+            errors.push({ component: 'timezone-display', error: error.message });
+        }
+
+        // 3. Convert timestamps in open log panels with intelligent batching
+        if (domElements.openLogRows.length > 0) {
+            try {
+                const logPanelStart = performance.now();
+
+                // Dynamic batch sizing based on system load
+                const maxPanels = window._systemUnderLoad ? 3 : 5;
+                const maxElementsPerPanel = window._systemUnderLoad ? 25 : 50;
+
+                const panelsToProcess = Array.from(domElements.openLogRows).slice(0, maxPanels);
+
+                panelsToProcess.forEach(row => {
+                    try {
+                        const jobId = row.id.replace('logs-row-', '');
+                        const containerId = `log-container-${jobId}`;
+                        const container = document.getElementById(containerId);
+
+                        if (container) {
+                            const logElements = container.querySelectorAll('.py-1');
+                            const elementsToProcess = Math.min(logElements.length, maxElementsPerPanel);
+
+                            convertLogTimestampsInContainer(containerId, elementsToProcess);
+                            totalConverted += elementsToProcess;
+
+                            performanceMetrics.logPanels.elements += elementsToProcess;
+                        }
+                    } catch (error) {
+                        errors.push({ component: `log-panel-${row.id}`, error: error.message });
+                    }
+                });
+
+                performanceMetrics.logPanels.panels = panelsToProcess.length;
+                performanceMetrics.logPanels.time = performance.now() - logPanelStart;
+
+                console.debug(`Log panels conversion: ${performanceMetrics.logPanels.panels} panels, ${performanceMetrics.logPanels.elements} elements in ${performanceMetrics.logPanels.time.toFixed(2)}ms`);
+            } catch (error) {
+                errors.push({ component: 'log-panels', error: error.message });
+            }
+        }
+
+        // 4. Convert error/warning log container with adaptive limits
+        if (domElements.errorContainer) {
+            try {
+                const errorLogStart = performance.now();
+                const errorLogElements = domElements.errorContainer.querySelectorAll('.py-1');
+
+                if (errorLogElements.length > 0) {
+                    const maxErrorElements = window._systemUnderLoad ? 50 : 100;
+                    const elementsToProcess = Math.min(errorLogElements.length, maxErrorElements);
+
+                    convertLogTimestampsInContainer('errorWarningLogContainer', elementsToProcess);
+                    totalConverted += elementsToProcess;
+
+                    performanceMetrics.errorLogs.elements = elementsToProcess;
+                    performanceMetrics.errorLogs.time = performance.now() - errorLogStart;
+
+                    console.debug(`Error log conversion: ${elementsToProcess}/${errorLogElements.length} elements in ${performanceMetrics.errorLogs.time.toFixed(2)}ms`);
+                }
+            } catch (error) {
+                errors.push({ component: 'error-warning-logs', error: error.message });
+            }
+        }
+
+        // Performance: Memory cleanup and cache management
+        if (window._kstConversionCache && window._kstConversionCache.size > 500) {
+            const entries = Array.from(window._kstConversionCache.entries());
+            const toKeep = entries.slice(-250); // Keep most recent entries
+            window._kstConversionCache.clear();
+            toKeep.forEach(([key, value]) => window._kstConversionCache.set(key, value));
+            console.debug('KST conversion cache optimized to prevent memory leaks');
+        }
+
+    } catch (error) {
+        console.error('Critical error in KST refresh coordinator:', error);
+        errors.push({ component: 'refresh-coordinator', error: error.message, stack: error.stack });
+    }
+
+    // Enhanced performance tracking and system load detection
+    const processingTime = performance.now() - startTime;
+    window._lastKSTRefresh = now;
+
+    // Update system load detection based on performance metrics
+    const previousSystemLoad = window._systemUnderLoad;
+    window._systemUnderLoad = processingTime > 300 || totalConverted > 200;
+
+    if (previousSystemLoad !== window._systemUnderLoad) {
+        console.info(`System load status changed: ${previousSystemLoad} → ${window._systemUnderLoad} (processing: ${processingTime.toFixed(2)}ms, elements: ${totalConverted})`);
+    }
+
+    const result = {
+        success: errors.length === 0,
+        converted: totalConverted,
+        processingTime: processingTime,
+        systemLoad: window._systemUnderLoad,
+        performanceMetrics: performanceMetrics,
+        errors: errors
+    };
+
+    // Enhanced logging with performance diagnostics
+    if (errors.length > 0) {
+        console.warn('KST conversion completed with errors:', {
+            totalConverted,
+            processingTime: `${processingTime.toFixed(2)}ms`,
+            systemLoad: window._systemUnderLoad,
+            performanceMetrics: performanceMetrics,
+            errors: errors.map(e => `${e.component}: ${e.error}`)
+        });
+    } else if (totalConverted > 0) {
+        console.debug(`KST conversion completed successfully:`, {
+            totalConverted,
+            processingTime: `${processingTime.toFixed(2)}ms`,
+            systemLoad: window._systemUnderLoad,
+            performanceMetrics: performanceMetrics
+        });
+    }
+
+    return result;
+}
+
+// 페이지 로드 시 KST 변환 초기화
+// Enhanced with robust dependency management and performance optimization
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait for DOM to be fully ready
+    if (document.readyState !== 'complete') {
+        // Defer initialization until DOM is fully loaded
+        setTimeout(initializeTimezoneFeatures, 100);
+    } else {
+        initializeTimezoneFeatures();
+    }
+});
+
+/**
+ * Initialize timezone features with comprehensive error handling
+ * @private
+ */
+function initializeTimezoneFeatures() {
+    const initStartTime = performance.now();
+
+    try {
+        // 1. Validate dependencies with timeout
+        const dependencyCheck = checkTimeZoneDependencies();
+        if (!dependencyCheck.available) {
+            console.warn('TimeZone features disabled:', dependencyCheck.reason);
+            setupBasicTimeDisplay();
+            return;
+        }
+
+        // 2. Initialize KST conversion with error recovery
+        try {
+            initializeKSTConversion();
+        } catch (initError) {
+            console.error('KST conversion initialization failed:', initError);
+            setupBasicTimeDisplay();
+            return;
+        }
+
+        // 3. Update timezone display with fallback
+        try {
+            updateTimezoneDisplay();
+        } catch (displayError) {
+            console.warn('Timezone display update failed:', displayError);
+        }
+
+        // 4. Set up periodic updates with performance consideration
+        setupPeriodicTimeUpdates();
+
+        // 5. Set up intersection observer for performance optimization
+        setupPerformanceOptimizations();
+
+        const initTime = performance.now() - initStartTime;
+        console.debug(`Timezone features initialized in ${initTime.toFixed(2)}ms`);
+
+    } catch (error) {
+        console.error('Critical error in timezone feature initialization:', error);
+        setupBasicTimeDisplay();
+    }
+}
+
+/**
+ * Check if timezone dependencies are available
+ * @returns {Object} Availability status and reason
+ * @private
+ */
+function checkTimeZoneDependencies() {
+    // Check if TimeZoneUtils is available
+    if (typeof window.timeZoneUtils === 'undefined') {
+        return { available: false, reason: 'TimeZoneUtils not loaded' };
+    }
+
+    // Check critical methods
+    const requiredMethods = ['formatToLocalTime', 'isValidTimezone'];
+    const missingMethods = requiredMethods.filter(method =>
+        typeof window.timeZoneUtils[method] !== 'function'
+    );
+
+    if (missingMethods.length > 0) {
+        return {
+            available: false,
+            reason: `Missing methods: ${missingMethods.join(', ')}`
+        };
+    }
+
+    // Test basic functionality
+    try {
+        const testDate = new Date();
+        const testResult = window.timeZoneUtils.formatToLocalTime(testDate, {
+            timezone: 'Asia/Seoul',
+            format: 'YYYY-MM-DD HH:mm:ss'
+        });
+
+        if (!testResult || typeof testResult !== 'string') {
+            return { available: false, reason: 'TimeZoneUtils test conversion failed' };
+        }
+    } catch (testError) {
+        return { available: false, reason: `TimeZoneUtils test failed: ${testError.message}` };
+    }
+
+    return { available: true };
+}
+
+/**
+ * Setup basic time display as fallback
+ * @private
+ */
+function setupBasicTimeDisplay() {
+    const timezoneDisplay = document.getElementById('timezone-display');
+    if (timezoneDisplay) {
+        timezoneDisplay.textContent = '한국 시간대 (KST) - 기본 표시 모드';
+    }
+
+    // Add basic KST indicator to scheduler times
+    const kstElements = document.querySelectorAll('.kst-time[data-utc]');
+    kstElements.forEach(element => {
+        const utcString = element.dataset.utc;
+        if (utcString) {
+            element.innerHTML = `
+                <div>${utcString}</div>
+                <div class="text-xs text-warning">🇰🇷 KST (기본)</div>
+            `;
+        }
+    });
+}
+
+/**
+ * Set up periodic time updates with performance optimization
+ * @private
+ */
+function setupPeriodicTimeUpdates() {
+    // Clear any existing intervals
+    if (window._timezoneUpdateInterval) {
+        clearInterval(window._timezoneUpdateInterval);
+    }
+
+    // Update timezone display every 60 seconds
+    window._timezoneUpdateInterval = setInterval(() => {
+        try {
+            updateTimezoneDisplay();
+        } catch (error) {
+            console.warn('Periodic timezone update failed:', error);
+        }
+    }, 60000);
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+        if (window._timezoneUpdateInterval) {
+            clearInterval(window._timezoneUpdateInterval);
+        }
+    });
+}
+
+/**
+ * Set up performance optimizations for better user experience
+ * @private
+ */
+function setupPerformanceOptimizations() {
+    // Use Intersection Observer to defer processing of non-visible elements
+    if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    // Process visible elements
+                    const element = entry.target;
+                    if (element.classList.contains('kst-time') && element.dataset.utc) {
+                        // Convert timestamps for visible elements
+                        setTimeout(() => {
+                            if (typeof window.timeZoneUtils !== 'undefined') {
+                                convertSchedulerTimesToKST();
+                            }
+                        }, 100);
+                    }
+                }
+            });
+        }, { threshold: 0.1 });
+
+        // Observe relevant elements
+        document.querySelectorAll('.kst-time[data-utc]').forEach(element => {
+            observer.observe(element);
+        });
+    }
+
+    // Set up visibility change handler to pause/resume updates
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            // Pause updates when tab is not visible
+            if (window._timezoneUpdateInterval) {
+                clearInterval(window._timezoneUpdateInterval);
+                window._timezoneUpdateInterval = null;
+            }
+        } else {
+            // Resume updates when tab becomes visible
+            setupPeriodicTimeUpdates();
+            // Refresh immediately when tab becomes visible
+            setTimeout(() => {
+                refreshKSTConversion(true);
+            }, 500);
+        }
+    });
+}
+
+// Handle cases where DOM is already loaded
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    // Initialize immediately if DOM is ready
+    setTimeout(initializeTimezoneFeatures, 100);
+}
+
 </script>

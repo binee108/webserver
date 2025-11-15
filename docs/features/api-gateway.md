@@ -42,21 +42,21 @@ API Gateway는 웹 애플리케이션의 주요 라우팅 계층으로, 대시�
 **주요 엔드포인트:**
 
 **포지션 관리:**
-- `POST /api/positions/<position_id>/close`: 포지션 청산
+- `POST /api/positions/<position_id>/close`: 포지션 청산 (Service 계층 위임)
 - `GET /api/positions-with-orders`: 포지션과 열린 주문 통합 조회
 - `GET /api/symbol/<symbol>/positions-orders`: 심볼별 포지션/주문 조회
-- `GET /api/strategies/<strategy_id>/positions`: 전략별 포지션 조회
+- `GET /api/strategies/<strategy_id>/positions`: 전략별 포지션 조회 (API 엔드포인트)
 
 **주문 관리:**
 - `GET /api/open-orders`: 사용자의 모든 열린 주문 조회
 - `POST /api/open-orders/<order_id>/cancel`: 개별 주문 취소
 - `POST /api/open-orders/cancel-all`: 일괄 주문 취소 (전략/계좌/심볼 필터 지원)
 - `POST /api/open-orders/status-update`: 주문 상태 수동 업데이트 트리거
-- `GET /api/strategies/<strategy_id>/my/open-orders`: 구독 전략의 내 주문 조회
+- `GET /api/strategies/<strategy_id>/my/open-orders`: 구독 전략의 내 주문 조회 (구독자 계좌만)
 
 **실시간 업데이트:**
-- `GET /api/events/stream`: SSE (Server-Sent Events) 스트림
-- `GET /api/auth/check`: 로그인 상태 확인 (SSE 연결 전 체크)
+- `GET /api/events/stream`: SSE (Server-Sent Events) 스트림 (strategy_id 필수)
+- `GET /api/auth/check`: 로그인 상태 확인 (인증 불필요, SSE 연결 전 체크용)
 - `GET /api/events/stats`: 이벤트 서비스 통계 (관리자용)
 
 ### 4. Strategy Management API (`/api/strategies/*`)
@@ -150,12 +150,12 @@ API Gateway는 웹 애플리케이션의 주요 라우팅 계층으로, 대시�
 ## 의존성
 
 ### Service 계층
-- **analytics_service** (`@FEAT:analytics`): 대시보드 통계 집계, 일일 요약
-- **trading_service** (`@FEAT:position-tracking`, `@FEAT:order-tracking`): 포지션/주문 조회, 청산, 취소
-- **strategy_service** (`@FEAT:strategy-management`): 전략 CRUD, 계좌 연결, 공개 전략 구독
-- **capital_service** (`@FEAT:capital-management`): 자본 배분, 리밸런싱
-- **event_service** (`@FEAT:event-sse`): SSE 이벤트 스트림 관리
-- **performance_tracking_service** (`@FEAT:analytics`): 전략 성과 추적, ROI 계산
+- **analytics_service** (`@FEAT:analytics`): 대시보드 통계 집계, 최근 거래 내역 조회
+- **trading_service** (`@FEAT:position-tracking`, `@FEAT:order-tracking`): 포지션/주문 조회, 청산, 취소, 상태 업데이트
+- **strategy_service** (`@FEAT:strategy-management`): 전략 CRUD, 계좌 연결, 공개 전략 구독, 접근 권한 검증
+- **capital_service** (`@FEAT:capital-management`): 자본 배분, 리밸런싱 (현재 문서에서 미사용)
+- **event_service** (`@FEAT:event-sse`): SSE 이벤트 스트림 관리, 실시간 업데이트
+- **performance_tracking_service** (`@FEAT:analytics`): 전략 성과 추적, ROI 계산 (현재 문서에서 미사용)
 
 ### Models
 - **Strategy**, **Account**, **StrategyAccount**: 전략/계좌 관계
@@ -167,17 +167,21 @@ API Gateway는 웹 애플리케이션의 주요 라우팅 계층으로, 대시�
 
 1. **사용자 인증**:
    - 대부분의 API 엔드포인트에 `@login_required` 적용
-   - 예외: `/api/system/health` (공개), `/api/webhook` (토큰 인증)
+   - 예외: `/api/auth/check` (로그인 상태 조회, 사전 인증용)
 2. **권한 검증**:
-   - 전략 소유자 확인: `strategy.user_id == current_user.id`
-   - 구독자 확인: `StrategyAccount` 테이블 조인 검증
-   - 관리자 전용 API: `current_user.is_admin` 검증
-3. **데이터 격리**: 사용자별 데이터만 반환 (`current_user.id` 필터)
+   - 전략 접근: `StrategyService.verify_strategy_access(strategy_id, user_id)` 사용
+   - 포지션/주문: 현재 사용자의 계좌에 속한 데이터만 조회 (`Account.user_id == current_user.id`)
+   - 관리자 전용 API: `/api/events/stats` 등에서 `current_user.is_admin` 검증
+3. **데이터 격리**:
+   - 사용자별 데이터만 반환 (`current_user.id` 필터)
+   - SSE 스트림은 strategy_id 필수 파라미터로 특정 전략만 구독 가능
 4. **입력 검증**:
-   - `strategy_id`, `account_id` 타입 검증
+   - `strategy_id`, `account_id` 정수 타입 검증
    - `limit` 최대값 제한 (100)
-   - Response Formatter를 통한 표준 에러 처리 (`ErrorCode` 클래스 사용)
-5. **CORS**: 현재 CORS 미설정 (필요 시 Flask-CORS 추가 필요)
+   - JSON 파싱 실패 시 안전한 기본값 사용
+   - 필수 파라미터 부재 시 명확한 에러 메시지 반환
+5. **실시간 스트림**:
+   - SSE 연결 전 권한 검증 (유효하지 않은 strategy_id 시 403 반환)
 
 ## 검색 예시
 
@@ -202,28 +206,39 @@ grep -r "@FEAT:api-gateway" --include="*.py" | grep "@FEAT:order-tracking"
 
 1. **라우트 추가 시**:
    - 적절한 `@FEAT` 태그 추가 (api-gateway + 관련 기능)
-   - Service 계층 위임 패턴 유지
-   - 사용자 권한 검증 필수 (`@login_required`, 관리자 API는 `is_admin` 체크)
-   - 표준 Response Formatter 사용 (`create_success_response`, `create_error_response`)
+   - Service 계층 위임 패턴 유지 (라우트는 검증만, 비즈니스 로직은 Service에)
+   - 사용자 권한 검증: `@login_required` 기본, 공개 엔드포인트는 명시적으로 문서화
+   - 권한 검증: 관리자 API는 `current_user.is_admin`, 전략 접근은 `StrategyService.verify_strategy_access()` 사용
 
-2. **API 응답 수정 시**:
-   - 명명 규칙 준수 (`position_id`, `order_id`)
-   - 프론트엔드 호환성 확인
-   - ErrorCode 클래스 사용 (HTTP 상태 코드 자동 매핑)
+2. **API 응답 명명 규칙**:
+   - 포지션: `position_id` 사용 (DB pk는 `StrategyPosition.id`)
+   - 주문: `order_id` 사용 (DB pk는 `OpenOrder.exchange_order_id`)
+   - 계좌: `account` 객체 중첩 구조 (name, exchange 포함)
+   - 프론트엔드 호환성 변경 시 웹 UI 함께 수정
 
-3. **SSE 관련**:
-   - `event_service` 로직 확인 필요
-   - 클라이언트 연결 관리 주의
-   - `/api/auth/check`를 통한 사전 인증 체크 권장
+3. **SSE 스트림 관리**:
+   - `strategy_id` 필수 파라미터 필수
+   - 연결 전 권한 검증으로 데이터 격리
+   - `/api/auth/check` 통해 사전 인증 상태 확인 권장
+   - 응답 상태 코드: 권한 부재 시 403, 파라미터 누락 시 400
 
 4. **성능 최적화**:
-   - 페이지네이션 활용 (`limit`, `offset`)
-   - `joinedload`, `selectinload` ORM 최적화
-   - 중복 DB 쿼리 방지
-   - 캐시 활용 (가격 캐시, 거래소 연결 캐시)
+   - ORM joinedload/selectinload 활용 (N+1 쿼리 방지)
+   - 페이지네이션 구현: `limit` (기본 20, 최대 100), `offset`
+   - 대량 데이터 조회 시 DB 직접 쿼리 검토 필요
 
-5. **에러 처리**:
-   - 비즈니스 로직 에러: `ErrorCode.BUSINESS_LOGIC_ERROR` (422)
-   - 권한 에러: `ErrorCode.ACCESS_DENIED` (403)
-   - 리소스 없음: `ErrorCode.STRATEGY_NOT_FOUND` (404)
-   - 검증 에러: `ErrorCode.VALIDATION_ERROR` (422)
+5. **에러 처리 패턴**:
+   - Service 계층 에러 반환값 사용: `success`, `error` 필드
+   - HTTP 상태: 성공 200, 권한 403, 불완전 207, 실패 400/500
+
+## 주요 변경 이력
+
+- **2025-10-30**: 코드 기준 동기화
+  - `/api/strategies/<strategy_id>/positions` API 엔드포인트 명확화
+  - `/api/auth/check` 인증 불필요 명시
+  - Service 계층 의존성 설명 정확화
+  - SSE 권한 검증 절차 추가
+  - 보안 고려사항: 입력 검증 및 에러 처리 실제 구현 기반 업데이트
+  - 유지보수 노트: 명명 규칙 및 패턴 실제 코드 기준 재작성
+
+Last Updated: 2025-10-30

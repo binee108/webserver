@@ -1,0 +1,34 @@
+# Requirements for run.py CLI
+# This file contains dependencies needed to run the CLI commands:
+# python run.py [start/stop/restart/clean/setup/logs/status/delete_db/ls]
+#
+# Note: The web application runs in Docker containers, so Flask and other
+# web dependencies are NOT included here. This is only for the CLI tool.
+
+# Database connectivity (for delete_db and migration commands)
+sqlalchemy>=2.0.0,<3.0.0
+
+# PostgreSQL driver (required by SQLAlchemy for database migrations)
+# Uses psycopg2-binary for easy installation without C dependencies
+psycopg2-binary>=2.9.0
+
+# All other dependencies are Python standard library modules:
+# - argparse (built-in)
+# - getpass (built-in)
+# - importlib (built-in)
+# - json (built-in)
+# - os (built-in)
+# - pathlib (built-in)
+# - platform (built-in)
+# - secrets (built-in)
+# - shutil (built-in)
+# - socket (built-in)
+# - ssl (built-in)
+# - subprocess (built-in)
+# - sys (built-in)
+# - time (built-in)
+# - urllib (built-in)
+# - webbrowser (built-in)
+# - abc (built-in)
+# - datetime (built-in)
+# - typing (built-in)

@@ -91,8 +91,12 @@ class BinanceExchange(BaseCryptoExchange):
         self.cache_time = {}
         self.cache_ttl = 300  # 5분
 
-        # 주문 타입 매핑 추적 (거래소 특수성 캡슐화)
-        self.order_type_mappings = {}  # order_id -> original_order_type
+        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+        # STOP 주문 타입 캐시 (활성화 감지용 - Option C: Graceful Degradation)
+        # Cache structure: {order_id: original_type}
+        # Purpose: Detect STOP_LIMIT->LIMIT conversion without DB dependency
+        # Fallback: Returns None when cache miss (e.g., server restart)
+        self.order_type_mappings: Dict[str, str] = {}
 
         # HTTP 세션 (스레드별 관리)
         self._sessions: Dict[int, aiohttp.ClientSession] = {}  # 스레드 ID → 세션 매핑
@@ -737,6 +741,12 @@ class BinanceExchange(BaseCryptoExchange):
         if order_id and original_order_type != binance_order_type:
             self._store_order_mapping(order_id, original_order_type)
 
+        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+        # Cache STOP order types for activation detection (Option C)
+        if order_id and original_order_type.upper() in ['STOP_LIMIT', 'STOP_MARKET']:
+            self.order_type_mappings[order_id] = original_order_type.upper()
+            logger.debug(f"💾 STOP 주문 캐시 저장: {order_id} → {original_order_type.upper()}")
+
         # 3. 응답 변환: Binance 응답 → 프로젝트 표준 형식
         return self._parse_order(data, market_type, original_order_type)
 
@@ -984,6 +994,12 @@ class BinanceExchange(BaseCryptoExchange):
         if order_id and original_order_type != binance_order_type:
             self._store_order_mapping(order_id, original_order_type)
 
+        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+        # Cache STOP order types for activation detection (Option C)
+        if order_id and original_order_type.upper() in ['STOP_LIMIT', 'STOP_MARKET']:
+            self.order_type_mappings[order_id] = original_order_type.upper()
+            logger.debug(f"💾 STOP 주문 캐시 저장 (비동기): {order_id} → {original_order_type.upper()}")
+
         return self._parse_order(data, market_type, original_order_type)
 
     async def cancel_order_async(self, order_id: str, symbol: str,
@@ -1041,6 +1057,31 @@ class BinanceExchange(BaseCryptoExchange):
             # 일반 변환 (조회 등에서 사용)
             converted_type = self._convert_from_binance_format(binance_type, order_id)
 
+        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+        # STOP order activation detection (Option C: Graceful Degradation)
+        # Strategy: Cache hit → Detect, Cache miss → Return None (order_manager fallback)
+        is_activated = None
+        activation_detected_at = None
+
+        # Check if current type is activated STOP order (STOP_LIMIT/STOP_MARKET → LIMIT/MARKET)
+        if binance_type in ['LIMIT', 'MARKET']:
+            # Cache hit: Detect activation
+            if order_id in self.order_type_mappings:
+                cached_original_type = self.order_type_mappings[order_id]
+                if cached_original_type in ['STOP_LIMIT', 'STOP_MARKET']:
+                    is_activated = True
+                    activation_detected_at = datetime.now()
+                    logger.debug(
+                        f"🚀 STOP 주문 활성화 감지 (캐시): "
+                        f"order_id={order_id}, {cached_original_type}→{binance_type}"
+                    )
+            else:
+                # Cache miss: Fallback to order_manager (e.g., server restart)
+                is_activated = None
+                logger.debug(
+                    f"🔄 캐시 미스, fallback 위임: order_id={order_id}, type={binance_type}"
+                )
+
         # 시장가 주문의 경우 평균 체결가 계산
         executed_qty = Decimal(order_data.get('executedQty', '0'))
         cumulative_quote = Decimal(order_data.get('cummulativeQuoteQty', '0'))
@@ -1069,6 +1110,14 @@ class BinanceExchange(BaseCryptoExchange):
             except (InvalidOperation, TypeError):
                 limit_price = None
 
+        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+        # Cache cleanup for terminal states (memory leak prevention)
+        FINAL_STATUSES = {'FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED'}
+        if order_data['status'] in FINAL_STATUSES:
+            if order_id in self.order_type_mappings:
+                del self.order_type_mappings[order_id]
+                logger.debug(f"🗑️ 캐시 정리 (종료 상태): order_id={order_id}, status={order_data['status']}")
+
         return Order(
             id=order_id,
             symbol=standard_symbol,  # 표준 형식 심볼 사용
@@ -1083,7 +1132,10 @@ class BinanceExchange(BaseCryptoExchange):
             type=converted_type,  # 변환된 타입 사용
             market_type=market_type.upper(),
             average=avg_price if avg_price and avg_price > 0 else None,
-            cost=cumulative_quote if cumulative_quote > 0 else None
+            cost=cumulative_quote if cumulative_quote > 0 else None,
+            # New fields (Phase 2)
+            is_stop_order_activated=is_activated,
+            activation_detected_at=activation_detected_at
         )
 
     # @FEAT:exchange-integration @COMP:exchange @TYPE:helper
@@ -1167,8 +1219,13 @@ class BinanceExchange(BaseCryptoExchange):
 
     def create_order(self, symbol: str, order_type: str, side: str,
                          amount: Decimal, price: Optional[Decimal] = None,
+                         stop_price: Optional[Decimal] = None,  # 명시적 파라미터 추가
                          market_type: str = 'spot', **params) -> Order:
         """주문 생성 (동기 래퍼)"""
+        # stop_price를 params에 추가하여 _prepare_order_params로 위임
+        if stop_price is not None:
+            params['stopPrice'] = stop_price
+
         return self.create_order_impl(symbol, order_type, side, amount, price, market_type, **params)
 
     def load_markets(self, market_type: str = 'spot', reload: bool = False, force_cache: bool = False) -> Dict[str, MarketInfo]:
@@ -1383,6 +1440,12 @@ class BinanceExchange(BaseCryptoExchange):
                         if original_order['type'] != self._convert_to_binance_format(original_order['type'], original_order['side']):
                             self._store_order_mapping(order_obj.id, original_order['type'])
 
+                        # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+                        # Cache STOP order types for activation detection
+                        if original_order['type'].upper() in ['STOP_LIMIT', 'STOP_MARKET']:
+                            self.order_type_mappings[order_obj.id] = original_order['type'].upper()
+                            logger.debug(f"💾 STOP 주문 캐시 저장 (배치): {order_obj.id} → {original_order['type'].upper()}")
+
                         logger.info(f"✅ 주문 {global_idx} 성공: order_id={order_obj.id}")
                         all_results.append({
                             'order_index': global_idx,
@@ -1529,6 +1592,12 @@ class BinanceExchange(BaseCryptoExchange):
             order_id = str(data.get('orderId'))
             if order_id and original_order_type != binance_order_type:
                 self._store_order_mapping(order_id, original_order_type)
+
+            # @FEAT:stop-limit-activation @ISSUE:45 @COMP:exchange
+            # Cache STOP order types for activation detection
+            if order_id and original_order_type.upper() in ['STOP_LIMIT', 'STOP_MARKET']:
+                self.order_type_mappings[order_id] = original_order_type.upper()
+                logger.debug(f"💾 STOP 주문 캐시 저장 (순차): {order_id} → {original_order_type.upper()}")
 
             order_obj = self._parse_order(data, market_type, original_order_type)
 

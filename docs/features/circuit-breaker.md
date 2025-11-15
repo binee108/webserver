@@ -61,7 +61,7 @@ Circuit Breaker 발동 (OPEN 상태)
 
 ## 구현 세부사항
 
-### 1. 환경변수 설정 (order_manager.py: Lines 1024-1030)
+### 1. 환경변수 설정 (order_manager.py: Lines 863-871)
 
 ```python
 # @FEAT:order-tracking @COMP:job @TYPE:resilience
@@ -82,7 +82,7 @@ export CIRCUIT_BREAKER_THRESHOLD=2    # 더 빨리 차단
 export CIRCUIT_BREAKER_THRESHOLD=5    # 더 느리게 차단
 ```
 
-### 2. Circuit Breaker 체크 (Lines 1052-1061)
+### 2. Circuit Breaker 체크 (Lines 891-900)
 
 실패 카운터가 임계값 이상이면 거래소 건너뜀:
 
@@ -104,7 +104,7 @@ if exchange_failures[exchange_name] >= CIRCUIT_BREAKER_THRESHOLD:
 - 다른 거래소는 정상 처리 계속 진행
 - 건너뛴 주문은 `total_failed` 카운터로 추적
 
-### 3. Gradual Recovery (Lines 1280-1287)
+### 3. Gradual Recovery (Lines 1119-1126)
 
 배치 처리 성공 시 실패 카운터를 점진적으로 감소:
 
@@ -124,7 +124,7 @@ if exchange_failures[exchange_name] > 0:
 - 3회 실패 → 3회 성공으로 완전 복구
 - 비이진 복구 (All-or-Nothing 아님)
 
-### 4. 안전한 실패 증가 (Lines 1296-1310)
+### 4. 안전한 실패 증가 (Lines 1128-1152)
 
 예외 발생 시 exchange_name이 할당된 경우만 카운터 증가:
 
@@ -149,9 +149,20 @@ except Exception as e:
 ```
 
 **왜 `if exchange_name` 체크?**
-- 계좌 조회 실패 시 `exchange_name = None`으로 유지됨
+- 계좌 조회 실패 시 `exchange_name = None`으로 초기화됨 (Line 880)
 - 거래소 정보 없이 카운터 증가 불가
 - 변수 스코프 안전성 (exception handler에서 참조 안전)
+
+**else 분기 (Lines 1145-1149)**:
+```python
+else:
+    logger.warning(
+        f"⚠️ 거래소 정보 없음: account_id={account_id} - "
+        f"Circuit Breaker 카운터 증가 불가 (계좌 조회 실패)"
+    )
+```
+- 계좌 조회 실패 시 거래소 정보가 없음을 명시 로깅
+- 유효하지 않은 exchange_name으로 인한 오동작 방지
 
 ---
 
@@ -248,21 +259,25 @@ except Exception as e:
 ## 코드 검색
 
 ```bash
-# Circuit Breaker 전체 구현
-grep -n "Circuit Breaker\|exchange_failures\|CIRCUIT_BREAKER_THRESHOLD" \
+# Circuit Breaker 전체 구현 위치
+grep -n "CIRCUIT_BREAKER_THRESHOLD\|exchange_failures" \
   /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py
 
-# 거래소별 실패 카운터 초기화
-grep -n "exchange_failures = defaultdict" \
+# 환경변수 설정 및 카운터 초기화 (Lines 863-871)
+grep -A 10 "Priority 2 Phase 2: Circuit Breaker" \
+  /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py | head -15
+
+# Circuit Breaker 체크 로직 (Lines 891-900)
+grep -B 2 -A 8 "if exchange_failures\[exchange_name\] >= CIRCUIT_BREAKER_THRESHOLD" \
   /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py
 
-# Circuit Breaker 체크 로직
-grep -B 2 -A 5 "if exchange_failures\[exchange_name\] >= CIRCUIT_BREAKER_THRESHOLD" \
+# Gradual Recovery 로직 (Lines 1119-1126)
+grep -B 2 -A 7 "Priority 2 Phase 2: Gradual Recovery" \
   /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py
 
-# Gradual Recovery 로직
-grep -B 2 -A 5 "if exchange_failures\[exchange_name\] > 0:" \
-  /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py
+# 실패 카운터 증가 및 안전성 처리 (Lines 1128-1152)
+grep -B 2 -A 20 "Priority 2 Phase 1: 계좌 격리" \
+  /Users/binee/Desktop/quant/webserver/web_server/app/services/trading/order_manager.py | tail -25
 ```
 
 ---
@@ -340,6 +355,6 @@ grep -B 2 -A 5 "if exchange_failures\[exchange_name\] > 0:" \
 
 ---
 
-*Last Updated: 2025-10-23*
-*Version: 1.0*
-*Status: 프로덕션 배포 준비 완료*
+*Last Updated: 2025-10-30*
+*Version: 1.1*
+*Status: 라인 번호 동기화 및 else 분기 추가 설명*

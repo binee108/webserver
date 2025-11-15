@@ -17,7 +17,8 @@ def register_blueprints(app):
     from .positions import bp as positions_bp
     from .capital import bp as capital_bp  # 자본 재배분 API
     from .health import health_bp
-    
+    from .failed_orders import failed_orders_bp  # 실패 주문 관리 API
+
     # Blueprint 등록
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
@@ -29,4 +30,5 @@ def register_blueprints(app):
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(positions_bp)
-    app.register_blueprint(health_bp) 
+    app.register_blueprint(health_bp)
+    app.register_blueprint(failed_orders_bp)  # 실패 주문 관리 API 

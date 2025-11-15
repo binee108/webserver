@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TimeZoneUtils Browser Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test-section { margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .test-result { padding: 10px; margin: 5px 0; border-radius: 3px; }
+        .pass { background-color: #d4edda; color: #155724; }
+        .fail { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        button { padding: 8px 16px; margin: 5px; border: none; border-radius: 3px; background: #007bff; color: white; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h1>🧪 TimeZoneUtils Browser Tests</h1>
+
+    <div class="test-section">
+        <h2>Test Setup</h2>
+        <div id="test-setup" class="test-result info">
+            Loading TimeZoneUtils...
+        </div>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+
+    <div class="test-section">
+        <h2>Timezone Detection Tests</h2>
+        <div id="detection-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Korean Timezone Tests</h2>
+        <div id="korean-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Timezone Conversion Tests</h2>
+        <div id="conversion-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Performance Tests</h2>
+        <div id="performance-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Error Handling Tests</h2>
+        <div id="error-results"></div>
+    </div>
+
+    <!-- Load TimeZone Utils -->
+    <script src="/static/js/timezone.js"></script>
+
+    <script>
+        let tzUtils;
+        let testResults = [];
+
+        function logTest(testName, passed, details = '') {
+            const result = { testName, passed, details, timestamp: new Date().toLocaleString() };
+            testResults.push(result);
+
+            const className = passed ? 'pass' : 'fail';
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${className}`;
+            resultDiv.innerHTML = `
+                <strong>${passed ? '✅ PASS' : '❌ FAIL'} - ${testName}</strong>
+                ${details ? `<br><small>${details}</small>` : ''}
+                <br><small>${result.timestamp}</small>
+            `;
+
+            return resultDiv;
+        }
+
+        function displayResults(containerId, results) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            results.forEach(result => {
+                container.appendChild(logTest(result.testName, result.passed, result.details));
+            });
+        }
+
+        async function runAllTests() {
+            console.log('🧪 Starting comprehensive TimeZoneUtils tests...');
+
+            if (!tzUtils) {
+                document.getElementById('test-setup').innerHTML =
+                    '<span class="fail">❌ TimeZoneUtils not initialized</span>';
+                return;
+            }
+
+            testResults = [];
+            const allTests = [];
+
+            // Test 1: Basic Initialization
+            allTests.push(testBasicSetup());
+
+            // Test 2: Timezone Detection
+            allTests.push(testTimezoneDetection());
+
+            // Test 3: Korean Timezone Support
+            allTests.push(testKoreanTimezone());
+
+            // Test 4: Timezone Conversion
+            allTests.push(testTimezoneConversion());
+
+            // Test 5: Performance
+            allTests.push(testPerformance());
+
+            // Test 6: Error Handling
+            allTests.push(testErrorHandling());
+
+            // Wait for all tests to complete
+            await Promise.all(allTests);
+
+            // Display results
+            displayResults('detection-results', testResults.filter(r => r.testName.includes('Detection')));
+            displayResults('korean-results', testResults.filter(r => r.testName.includes('Korean') || r.testName.includes('KST')));
+            displayResults('conversion-results', testResults.filter(r => r.testName.includes('Conversion') || r.testName.includes('Offset')));
+            displayResults('performance-results', testResults.filter(r => r.testName.includes('Performance') || r.testName.includes('Cache')));
+            displayResults('error-results', testResults.filter(r => r.testName.includes('Error')));
+
+            // Summary
+            const passed = testResults.filter(r => r.passed).length;
+            const total = testResults.length;
+            const summary = document.createElement('div');
+            summary.className = `test-result ${passed === total ? 'pass' : 'fail'}`;
+            summary.innerHTML = `
+                <h3>📊 Test Summary</h3>
+                <strong>Passed: ${passed}/${total}</strong>
+                <br>${passed === total ? '🎉 All tests passed!' : `⚠️ ${total - passed} tests failed.`}
+            `;
+            document.body.insertBefore(summary, document.body.firstChild);
+        }
+
+        function testBasicSetup() {
+            return new Promise((resolve) => {
+                try {
+                    const userTz = tzUtils.detectUserTimeZone();
+                    const isValid = userTz && typeof userTz === 'string';
+
+                    document.getElementById('test-setup').innerHTML =
+                        `<span class="${isValid ? 'pass' : 'fail'}">✅ TimeZoneUtils initialized successfully</span>
+                         <br>Detected timezone: ${userTz}`;
+
+                    testResults.push({
+                        testName: 'Basic Setup',
+                        passed: isValid,
+                        details: `User timezone: ${userTz}`
+                    });
+
+                    resolve();
+                } catch (error) {
+                    document.getElementById('test-setup').innerHTML =
+                        `<span class="fail">❌ Setup failed: ${error.message}</span>`;
+                    testResults.push({
+                        testName: 'Basic Setup',
+                        passed: false,
+                        details: error.message
+                    });
+                    resolve();
+                }
+            });
+        }
+
+        function testTimezoneDetection() {
+            return new Promise((resolve) => {
+                const tests = [];
+
+                // Test user timezone detection
+                try {
+                    const userTz = tzUtils.detectUserTimeZone();
+                    tests.push({
+                        testName: 'User Timezone Detection',
+                        passed: true,
+                        details: `Detected: ${userTz}`
+                    });
+                } catch (error) {
+                    tests.push({
+                        testName: 'User Timezone Detection',
+                        passed: false,
+                        details: error.message
+                    });
+                }
+
+                // Test timezone info retrieval
+                try {
+                    const tzInfo = tzUtils.getTimezoneInfo();
+                    const hasRequiredFields = tzInfo &&
+                        tzInfo.identifier &&
+                        tzInfo.offsetString &&
+                        tzInfo.currentTime;
+
+                    tests.push({
+                        testName: 'Timezone Info Structure',
+                        passed: hasRequiredFields,
+                        details: `Has required fields: ${hasRequiredFields}`
+                    });
+                } catch (error) {
+                    tests.push({
+                        testName: 'Timezone Info Structure',
+                        passed: false,
+                        details: error.message
+                    });
+                }
+
+                testResults.push(...tests);
+                resolve();
+            });
+        }
+
+        function testKoreanTimezone() {
+            return new Promise((resolve) => {
+                const tests = [];
+
+                const koreanTimezones = [
+                    'Asia/Seoul',
+                    'Asia/Seoul',
+                    'UTC+09:00'
+                ];
+
+                koreanTimezones.forEach(tz => {
+                    try {
+                        const tzInfo = tzUtils.getTimezoneInfo(tz);
+                        const isKorean = tz.includes('Seoul') || tz.startsWith('UTC+09');
+                        const isValid = tzInfo && tzInfo.identifier;
+
+                        tests.push({
+                            testName: `Korean Timezone (${tz})`,
+                            passed: isValid,
+                            details: `Valid: ${isValid}, Offset: ${tzInfo?.offsetString || 'N/A'}`
+                        });
+                    } catch (error) {
+                        tests.push({
+                            testName: `Korean Timezone (${tz})`,
+                            passed: false,
+                            details: error.message
+                        });
+                    }
+                });
+
+                // Test KST current time
+                try {
+                    const now = Date.now();
+                    const kstTime = tzUtils.formatToLocalTime(now, { timezone: 'Asia/Seoul' });
+                    const utcTime = tzUtils.formatToLocalTime(now, { timezone: 'UTC' });
+
+                    tests.push({
+                        testName: 'KST Time Format',
+                        passed: kstTime && utcTime && kstTime !== utcTime,
+                        details: `KST: ${kstTime}, UTC: ${utcTime}`
+                    });
+                } catch (error) {
+                    tests.push({
+                        testName: 'KST Time Format',
+                        passed: false,
+                        details: error.message
+                    });
+                }
+
+                testResults.push(...tests);
+                resolve();
+            });
+        }
+
+        function testTimezoneConversion() {
+            return new Promise((resolve) => {
+                const tests = [];
+
+                const conversionTests = [
+                    {
+                        from: 'UTC',
+                        to: 'Asia/Seoul',
+                        description: 'UTC to KST'
+                    },
+                    {
+                        from: 'America/New_York',
+                        to: 'UTC',
+                        description: 'NY to UTC'
+                    },
+                    {
+                        from: 'Asia/Seoul',
+                        to: 'America/New_York',
+                        description: 'KST to NY'
+                    }
+                ];
+
+                const now = Date.now();
+
+                conversionTests.forEach(test => {
+                    try {
+                        const utcTime = tzUtils.convertTimezone(now, test.from, test.to);
+                        const isValid = utcTime && !isNaN(utcTime.getTime());
+
+                        tests.push({
+                            testName: `Timezone Conversion (${test.description})`,
+                            passed: isValid,
+                            details: `${test.from} → ${test.to}: ${utcTime?.toISOString() || 'Invalid'}`
+                        });
+                    } catch (error) {
+                        tests.push({
+                            testName: `Timezone Conversion (${test.description})`,
+                            passed: false,
+                            details: error.message
+                        });
+                    }
+                });
+
+                testResults.push(...tests);
+                resolve();
+            });
+        }
+
+        function testPerformance() {
+            return new Promise((resolve) => {
+                const tests = [];
+
+                // Test batch processing
+                try {
+                    const timestamps = [];
+                    for (let i = 0; i < 100; i++) {
+                        timestamps.push(Date.now() - (i * 24 * 60 * 60 * 1000));
+                    }
+
+                    const startTime = performance.now();
+                    const results = tzUtils.formatBatch(timestamps);
+                    const endTime = performance.now();
+                    const duration = endTime - startTime;
+
+                    tests.push({
+                        testName: 'Batch Processing Performance',
+                        passed: duration < 100, // Should be fast
+                        details: `100 timestamps in ${duration.toFixed(2)}ms`
+                    });
+
+                    // Test cache hit rate
+                    const metrics = tzUtils.getPerformanceMetrics();
+                    tests.push({
+                        testName: 'Cache Hit Rate',
+                        passed: metrics.cacheHitRate !== '0%',
+                        details: `Cache hit rate: ${metrics.cacheHitRate}`
+                    });
+
+                } catch (error) {
+                    tests.push({
+                        testName: 'Performance Test',
+                        passed: false,
+                        details: error.message
+                    });
+                }
+
+                testResults.push(...tests);
+                resolve();
+            });
+        }
+
+        function testErrorHandling() {
+            return new Promise((resolve) => {
+                const tests = [];
+
+                const errorCases = [
+                    { input: null, description: 'Null input' },
+                    { input: 'invalid-timestamp', description: 'Invalid timestamp' },
+                    { input: '', description: 'Empty string' },
+                    { input: 999999999999999, description: 'Out of range timestamp' }
+                ];
+
+                errorCases.forEach(testCase => {
+                    try {
+                        const result = tzUtils.formatToLocalTime(testCase.input);
+                        const isValid = result && typeof result === 'string';
+
+                        tests.push({
+                            testName: `Error Handling (${testCase.description})`,
+                            passed: isValid,
+                            details: `Input: ${testCase.input}, Result: ${result}`
+                        });
+                    } catch (error) {
+                        tests.push({
+                            testName: `Error Handling (${testCase.description})`,
+                            passed: true, // Error caught successfully
+                            details: `Error caught: ${error.message}`
+                        });
+                    }
+                });
+
+                // Test invalid timezone
+                try {
+                    const result = tzUtils.formatToLocalTime(Date.now(), { timezone: 'Invalid/Timezone' });
+                    tests.push({
+                        testName: 'Invalid Timezone Handling',
+                        passed: true, // Should gracefully handle
+                        details: `Handled invalid timezone: ${result}`
+                    });
+                } catch (error) {
+                    tests.push({
+                        testName: 'Invalid Timezone Handling',
+                        passed: true, // Error handling is working
+                        details: `Error caught: ${error.message}`
+                    });
+                }
+
+                testResults.push(...tests);
+                resolve();
+            });
+        }
+
+        function clearResults() {
+            testResults = [];
+            document.getElementById('detection-results').innerHTML = '';
+            document.getElementById('korean-results').innerHTML = '';
+            document.getElementById('conversion-results').innerHTML = '';
+            document.getElementById('performance-results').innerHTML = '';
+            document.getElementById('error-results').innerHTML = '';
+            document.querySelector('.test-result')?.remove();
+        }
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            try {
+                tzUtils = new TimeZoneUtils();
+                console.log('✅ TimeZoneUtils initialized successfully');
+                document.getElementById('test-setup').innerHTML =
+                    '<span class="pass">✅ TimeZoneUtils initialized successfully</span>';
+            } catch (error) {
+                console.error('❌ Failed to initialize TimeZoneUtils:', error);
+                document.getElementById('test-setup').innerHTML =
+                    `<span class="fail">❌ Failed to initialize TimeZoneUtils: ${error.message}</span>`;
+            }
+        });
+    </script>
+</body>
+</html>

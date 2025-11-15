@@ -18,101 +18,125 @@ Changes:
 Related Issue: #Critical-Issue-4 (Idempotency Not Guaranteed)
 """
 import logging
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 
-def upgrade(connection):
+def upgrade(engine):
     """Add UNIQUE constraint to trades table
 
     Args:
-        connection: SQLAlchemy connection object
+        engine: SQLAlchemy engine object
     """
-    try:
-        logger.info("🔧 Adding UNIQUE constraint to trades table...")
+    with engine.connect() as connection:
+        trans = connection.begin()
+        try:
+            # Check table existence
+            check_table_sql = text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'trades'
+            );
+            """)
+            result = connection.execute(check_table_sql)
+            if not result.scalar():
+                logger.info("ℹ️  trades table not found. Skipping (initial install).")
+                trans.commit()
+                return
 
-        # Check if constraint already exists (idempotent)
-        check_sql = """
-        SELECT constraint_name
-        FROM information_schema.table_constraints
-        WHERE table_name='trades'
-          AND constraint_name='unique_order_per_account'
-          AND constraint_type='UNIQUE';
-        """
+            logger.info("🔧 Adding UNIQUE constraint to trades table...")
 
-        result = connection.execute(check_sql)
-        existing = result.fetchone()
+            # Check if constraint already exists (idempotent)
+            check_sql = text("""
+            SELECT constraint_name
+            FROM information_schema.table_constraints
+            WHERE table_name='trades'
+              AND constraint_name='unique_order_per_account'
+              AND constraint_type='UNIQUE';
+            """)
 
-        if existing:
-            logger.info("✅ UNIQUE constraint 'unique_order_per_account' already exists, skipping")
-            return
+            result = connection.execute(check_sql)
+            existing = result.fetchone()
 
-        # Add UNIQUE constraint
-        alter_sql = """
-        ALTER TABLE trades
-        ADD CONSTRAINT unique_order_per_account
-        UNIQUE (strategy_account_id, exchange_order_id);
-        """
+            if existing:
+                logger.info("✅ UNIQUE constraint 'unique_order_per_account' already exists, skipping")
+                trans.commit()
+                return
 
-        connection.execute(alter_sql)
-        logger.info("✅ Successfully added UNIQUE constraint 'unique_order_per_account'")
+            # Add UNIQUE constraint
+            alter_sql = text("""
+            ALTER TABLE trades
+            ADD CONSTRAINT unique_order_per_account
+            UNIQUE (strategy_account_id, exchange_order_id);
+            """)
 
-        # Verify constraint was added
-        verify_result = connection.execute(check_sql)
-        if not verify_result.fetchone():
-            raise Exception("Constraint creation verification failed")
+            connection.execute(alter_sql)
+            logger.info("✅ Successfully added UNIQUE constraint 'unique_order_per_account'")
 
-        logger.info("✅ Constraint verification passed")
+            # Verify constraint was added
+            verify_result = connection.execute(check_sql)
+            if not verify_result.fetchone():
+                raise Exception("Constraint creation verification failed")
 
-    except Exception as e:
-        logger.error(f"❌ Failed to add UNIQUE constraint: {e}", exc_info=True)
-        raise
+            logger.info("✅ Constraint verification passed")
+            trans.commit()
+
+        except Exception as e:
+            trans.rollback()
+            logger.error(f"❌ Failed to add UNIQUE constraint: {e}", exc_info=True)
+            raise
 
 
-def downgrade(connection):
+def downgrade(engine):
     """Remove UNIQUE constraint from trades table
 
     Args:
-        connection: SQLAlchemy connection object
+        engine: SQLAlchemy engine object
     """
-    try:
-        logger.info("🔧 Removing UNIQUE constraint from trades table...")
+    with engine.connect() as connection:
+        trans = connection.begin()
+        try:
+            logger.info("🔧 Removing UNIQUE constraint from trades table...")
 
-        # Check if constraint exists
-        check_sql = """
-        SELECT constraint_name
-        FROM information_schema.table_constraints
-        WHERE table_name='trades'
-          AND constraint_name='unique_order_per_account'
-          AND constraint_type='UNIQUE';
-        """
+            # Check if constraint exists
+            check_sql = text("""
+            SELECT constraint_name
+            FROM information_schema.table_constraints
+            WHERE table_name='trades'
+              AND constraint_name='unique_order_per_account'
+              AND constraint_type='UNIQUE';
+            """)
 
-        result = connection.execute(check_sql)
-        existing = result.fetchone()
+            result = connection.execute(check_sql)
+            existing = result.fetchone()
 
-        if not existing:
-            logger.info("✅ UNIQUE constraint 'unique_order_per_account' does not exist, skipping")
-            return
+            if not existing:
+                logger.info("✅ UNIQUE constraint 'unique_order_per_account' does not exist, skipping")
+                trans.commit()
+                return
 
-        # Remove UNIQUE constraint
-        drop_sql = """
-        ALTER TABLE trades
-        DROP CONSTRAINT IF EXISTS unique_order_per_account;
-        """
+            # Remove UNIQUE constraint
+            drop_sql = text("""
+            ALTER TABLE trades
+            DROP CONSTRAINT IF EXISTS unique_order_per_account;
+            """)
 
-        connection.execute(drop_sql)
-        logger.info("✅ Successfully removed UNIQUE constraint 'unique_order_per_account'")
+            connection.execute(drop_sql)
+            logger.info("✅ Successfully removed UNIQUE constraint 'unique_order_per_account'")
 
-        # Verify constraint was removed
-        verify_result = connection.execute(check_sql)
-        if verify_result.fetchone():
-            raise Exception("Constraint removal verification failed")
+            # Verify constraint was removed
+            verify_result = connection.execute(check_sql)
+            if verify_result.fetchone():
+                raise Exception("Constraint removal verification failed")
 
-        logger.info("✅ Constraint removal verification passed")
+            logger.info("✅ Constraint removal verification passed")
+            trans.commit()
 
-    except Exception as e:
-        logger.error(f"❌ Failed to remove UNIQUE constraint: {e}", exc_info=True)
-        raise
+        except Exception as e:
+            trans.rollback()
+            logger.error(f"❌ Failed to remove UNIQUE constraint: {e}", exc_info=True)
+            raise
 
 
 def check_duplicate_trades(connection):
@@ -130,7 +154,7 @@ def check_duplicate_trades(connection):
             'duplicates': list of (strategy_account_id, exchange_order_id, count)
         }
     """
-    check_sql = """
+    check_sql = text("""
     SELECT
         strategy_account_id,
         exchange_order_id,
@@ -140,7 +164,7 @@ def check_duplicate_trades(connection):
     HAVING COUNT(*) > 1
     ORDER BY count DESC
     LIMIT 10;
-    """
+    """)
 
     result = connection.execute(check_sql)
     duplicates = result.fetchall()
@@ -178,13 +202,13 @@ if __name__ == '__main__':
     app = create_app()
 
     with app.app_context():
-        connection = db.engine.connect()
-        trans = connection.begin()
+        engine = db.engine
 
         try:
             # Check for duplicates first
             print("🔍 Checking for existing duplicate trades...")
-            dup_info = check_duplicate_trades(connection)
+            with engine.connect() as connection:
+                dup_info = check_duplicate_trades(connection)
 
             if dup_info['has_duplicates']:
                 print(f"⚠️ Found {dup_info['duplicate_count']} duplicate trade groups:")
@@ -215,14 +239,10 @@ if __name__ == '__main__':
 
             # Run migration
             print("\n🚀 Running upgrade migration...")
-            upgrade(connection)
+            upgrade(engine)
 
-            trans.commit()
             print("\n✅ Migration completed successfully!")
 
         except Exception as e:
-            trans.rollback()
             print(f"\n❌ Migration failed: {e}")
             sys.exit(1)
-        finally:
-            connection.close()

@@ -171,7 +171,8 @@ def tag_background_logger(tag: BackgroundJobTag):
 
     Usage:
         @tag_background_logger(BackgroundJobTag.AUTO_REBAL)
-        def auto_rebalance_all_accounts_with_context(app):
+        def auto_rebalance_all_accounts():
+            app = get_flask_app()
             app.logger.info('🔄 작업 시작')  # 자동: [AUTO_REBAL] 🔄 작업 시작
             app.logger.debug('진행 %d/%d', 5, 10)  # varargs 지원
             # ... 로직 ...
@@ -184,9 +185,9 @@ def tag_background_logger(tag: BackgroundJobTag):
         - @wraps로 원본 함수 메타데이터 보존 (디버깅 용이)
 
     Note:
-        - 함수 시그니처: func(app) 형태만 지원
-        - current_app을 사용하는 함수에는 적용 불가
-        - 파라미터 없는 함수 또는 추가 파라미터가 있는 함수 미지원
+        - Phase 2: SQLAlchemyJobStore pickle 직렬화 호환성을 위해 함수 시그니처 변경
+        - 함수 형태: 파라미터 없는 func() 형태 (get_flask_app()으로 앱 조회)
+        - 기존 func(app) 패턴은 Phase 1에서 사용됨 (pickle 비호환)
 
     Technical Details:
         - contextvars.ContextVar를 사용한 thread-local 태그 저장
@@ -197,11 +198,11 @@ def tag_background_logger(tag: BackgroundJobTag):
     """
     def decorator(func):
         @wraps(func)
-        def wrapper(app):
+        def wrapper():
             # Thread-local 컨텍스트에 태그 설정
             token = _current_tag.set(tag)
             try:
-                return func(app)
+                return func()
             finally:
                 # 예외 발생 시에도 태그 복원 보장
                 _current_tag.reset(token)

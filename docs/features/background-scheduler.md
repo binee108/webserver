@@ -505,80 +505,6 @@ Admin 페이지(system.html)에서 백그라운드 작업별 로그를 실시간
 
 ---
 
-## Phase 3.2: queue_rebalancer.py Logging Improvements
-
-**목적**: `queue_rebalancer.py`의 24개 로그 라인에 백그라운드 작업 태깅 시스템 적용
-
-### 적용 태그
-- **태그명**: `[QUEUE_REBAL]`
-- **형식**: `format_background_log(BackgroundJobTag.QUEUE_REBAL, message)`
-
-### 대상 함수 & 변경 사항
-
-#### 1. `rebalance_all_symbols_with_context()` - 24개 로그 라인
-**구현 위치**: Lines 71-349
-
-**로그 분포** (레벨별):
-- **INFO** (5개): 메모리 사용량 요약, 대기열 상태 요약, 대기열 적체 해소, 재정렬 완료
-- **WARNING** (6개): 높은 메모리 사용, psutil 설치 필수 안내, 대기열 적체 감지, 재정렬 실패, 적체 지속
-- **ERROR** (4개): 메모리 체크 실패, 재정렬 예외, 스케줄러 오류
-- **DEBUG** (9개): 대상 조합 추출 상세, 중복 검증, 처리 시작/완료 추적, 텔레그램 알림 실패
-
-### 특별 정책
-
-#### 텔레그램 알림 실패 DEBUG 유지
-- **위치**: Lines 92-95 (메모리 경고), 217-220 (대기열 적체), 315-318 (적체 지속)
-- **이유**: 텔레그램 서비스 장애는 주요 작업이 아니므로 스팸 방지
-- **로그 레벨**: DEBUG (user-facing 알림 제외)
-
-#### Early Return 패턴 (로그 없음)
-- **Line 129**: 활성 계정 없을 때 무조건 종료
-- **Line 176**: 재정렬 대상 없을 때 무조건 종료
-- **이유**: 정상 스케줄러 작동 (매우 고빈도)
-
-### 검증 방법
-
-#### 로그 확인
-```bash
-# 전체 QUEUE_REBAL 로그 확인
-grep "\[QUEUE_REBAL\]" /Users/binee/Desktop/quant/webserver/web_server/logs/app.log | head -20
-
-# 레벨별 통계
-grep "\[QUEUE_REBAL\]" /Users/binee/Desktop/quant/webserver/web_server/logs/app.log | cut -d' ' -f4 | sort | uniq -c
-
-# 기대 출력 (1초 주기이므로 매우 고빈도)
-# 약 5분 로그에서:
-#  48 INFO
-#  30 WARNING
-#  15 ERROR
-# 270 DEBUG
-```
-
-#### 기능 태그 확인
-```bash
-# 파일 헤더 태그 검증
-head -1 /Users/binee/Desktop/quant/webserver/.worktree/background-log-tagging/web_server/app/services/background/queue_rebalancer.py
-# 기대 출력: # @FEAT:order-queue @FEAT:background-scheduler @COMP:job @TYPE:core @DEPS:order-tracking,telegram-notification
-```
-
-### 구현 세부사항
-
-#### Import 추가
-- **Line 55**: `from app.utils.logging import format_background_log`
-- **Line 56**: `from app.constants import BackgroundJobTag`
-
-#### 기존 기능 보존
-- 모든 로그 메시지 의미 동일 유지
-- 로그 레벨 변경 없음 (백그라운드 정책 준수)
-- 함수 로직 변경 없음 (로깅만 개선)
-
-### 관련 Phase
-
-- **Phase 3.1**: `open_orders_updater.py` (16개 로그 라인, `[OPEN_ORD_UPD]`)
-- **Phase 3.2**: `queue_rebalancer.py` (24개 로그 라인, `[QUEUE_REBAL]`)
-
----
-
 ## 관련 문서
 - [주문 큐 시스템](./order-queue-system.md)
 - [웹훅 주문 처리](./webhook-order-processing.md)
@@ -612,7 +538,7 @@ head -1 /Users/binee/Desktop/quant/webserver/.worktree/background-log-tagging/we
 
 ---
 
-*Last Updated: 2025-10-24*
-*Version: 2.2 (백그라운드 로그 태깅 Phase 3.2 반영)*
-*Changes: queue_rebalancer.py 백그라운드 로그 태깅 [QUEUE_REBAL] 적용 (24개 로그 라인)*
-*Lines: ~580 (17개 작업 상세 문서화 + Phase 3.2 로그 태깅 가이드)*
+*Last Updated: 2025-10-30*
+*Version: 2.3 (단순화 및 코드 동기화)*
+*Changes: 더 이상 사용되지 않는 Phase 3.2 로그 태깅 내용 제거*
+*Lines: ~510 (17개 백그라운드 작업 상세 문서화, 로그 조회 기능, 성능 모니터링)*

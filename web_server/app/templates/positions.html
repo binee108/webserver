@@ -6,6 +6,9 @@
 <!-- Position-specific CSS -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/positions.css') }}">
 
+<!-- Failed Orders CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/failed_orders.css') }}">
+
 <!-- Logger utility -->
 <script src="{{ url_for('static', filename='js/logger.js') }}"></script>
 
@@ -282,6 +285,75 @@
                     </div>
                     <p class="text-muted">열린 주문을 불러오는 중...</p>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 실패된 주문 관리 -->
+    <div class="card">
+        <div class="px-6 py-4 border-b border-color">
+            <h2 class="text-xl font-semibold text-primary flex items-center">
+                <svg class="w-5 h-5 mr-2 text-error" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 0 1 5.11 2.523a6 6 0 0 1 8.367 8.367ZM18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" clip-rule="evenodd"></path>
+                </svg>
+                실패된 주문
+            </h2>
+            <p class="text-sm text-muted mt-1">재시도 또는 제거할 수 있습니다 (최대 5회 재시도)</p>
+        </div>
+        <div class="p-6">
+            <!-- 필터 섹션 -->
+            <div class="filters" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; align-items: flex-end;">
+                <label style="display: flex; flex-direction: column; gap: 0.375rem; color: var(--text-secondary); font-size: 0.875rem; font-weight: 500;">
+                    전략 계정:
+                    <select id="filter-strategy" style="padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--bg-primary); color: var(--text-primary); font-size: 0.875rem;">
+                        <option value="">전체</option>
+                        {% if strategy and strategy.strategy_accounts %}
+                            {% for sa in strategy.strategy_accounts %}
+                            <option value="{{ sa.id }}">{{ sa.account.name }} ({{ sa.account.exchange.upper() }})</option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </label>
+                <label style="display: flex; flex-direction: column; gap: 0.375rem; color: var(--text-secondary); font-size: 0.875rem; font-weight: 500;">
+                    심볼:
+                    <input type="text" id="filter-symbol" placeholder="예: BTC/USDT" style="padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--bg-primary); color: var(--text-primary); font-size: 0.875rem;">
+                </label>
+                <button onclick="window.filterFailedOrders()" style="padding: 0.5rem 1.25rem; background: var(--accent-color); color: white; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer;">
+                    검색
+                </button>
+            </div>
+
+            <!-- 테이블 -->
+            <div style="overflow-x: auto;">
+                <table class="failed-orders-table">
+                    <thead>
+                        <tr>
+                            <th>심볼</th>
+                            <th>방향</th>
+                            <th>타입</th>
+                            <th>수량</th>
+                            <th>가격</th>
+                            <th>실패 이유</th>
+                            <th>거래소 에러</th>
+                            <th>생성 시각</th>
+                            <th>액션</th>
+                        </tr>
+                    </thead>
+                    <!-- 실패된 주문이 없을 때 tbody 안에 빈 상태 메시지 표시 -->
+                    <tbody id="failed-orders-tbody">
+                        <tr class="empty-failed-orders-row">
+                            <td colspan="9">
+                                <div class="empty-state">
+                                    <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <h3>실패된 주문이 없습니다</h3>
+                                    <p>재시도가 필요한 주문이 없습니다.</p>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -581,7 +653,24 @@ async function cancelAllOpenOrders() {
     }
 }
 
-// 포지션 청산
+/**
+ * @FEAT:position-tracking @COMP:route @TYPE:integration
+ * Close position by ID
+ *
+ * WHY: API sends close request. Backend broadcasts SSE position_closed event
+ * (~100ms delay). Toast notification triggered by SSE flow, NOT here.
+ *
+ * FLOW:
+ * 1. closePosition() → API POST /api/positions/{id}/close
+ * 2. Backend processes → SSE broadcasts position_closed event
+ * 3. handlePositionUpdate() → showPositionNotification() → toast shown (once)
+ * 4. removePosition() → checkEmptyPositions() (UI update only)
+ *
+ * ANTI-PATTERN PREVENTED:
+ * ❌ DO NOT: Show toast on success (let SSE event trigger it)
+ * ✅ DO: Show toast only on API error (failure case)
+ * ✅ DO: Wait for SSE notification (100ms delay acceptable for UX)
+ */
 function closePosition(positionId) {
     if (confirm('정말로 이 포지션을 청산하시겠습니까?')) {
         fetch(`/api/positions/${positionId}/close`, {
@@ -594,8 +683,7 @@ function closePosition(positionId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                showToast('포지션 청산 요청이 전송되었습니다.', 'success');
-                // SSE를 통해 자동으로 업데이트될 예정이므로 새로고침하지 않음
+                // SSE position_closed event triggers toast notification (~100ms), no duplicate needed
             } else {
                 showToast('포지션 청산 중 오류가 발생했습니다: ' + data.error, 'error');
             }
@@ -1156,4 +1244,11 @@ window.testSSE = testSSEConnection;
 // 토스트 알림 기능은 전역 toast.js를 사용합니다 (base.html에서 로드됨)
 // showToast(message, type, duration) 함수는 전역으로 사용 가능합니다
 </script>
+
+<!-- Toast notification system -->
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+
+<!-- Failed Orders Management -->
+<script src="{{ url_for('static', filename='js/failed_orders.js') }}"></script>
+
 {% endblock %} 

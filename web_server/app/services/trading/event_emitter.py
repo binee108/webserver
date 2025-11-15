@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.constants import OrderEventType, OrderStatus, OrderType
 from app.models import OpenOrder, Strategy, StrategyAccount
@@ -21,6 +21,37 @@ class EventEmitter:
     def __init__(self, service: Optional[object] = None) -> None:
         self.service = service
 
+    # @FEAT:event-sse @COMP:service @TYPE:helper
+    def _map_event_to_status(self, event_type: str, order_result: Dict[str, object]) -> str:
+        """이벤트 타입을 주문 상태 값으로 매핑
+
+        @FEAT:event-sse @COMP:service @TYPE:helper
+
+        Args:
+            event_type: 이벤트 타입 (order_filled, order_cancelled, trade_executed 등)
+            order_result: 주문 결과 딕셔너리 (fallback용 status 포함 가능)
+
+        Returns:
+            str: 매핑된 상태 값 (FILLED, CANCELLED, UNKNOWN 등)
+
+        Examples:
+            >>> _map_event_to_status('order_filled', {})
+            'FILLED'
+            >>> _map_event_to_status('ORDER_CANCELLED', {})
+            'CANCELLED'
+            >>> _map_event_to_status('unknown', {'status': 'PENDING'})
+            'PENDING'
+        """
+        event_type_lower = event_type.lower()
+
+        if event_type_lower in ('order_filled', 'trade_executed'):
+            return 'FILLED'
+        elif event_type_lower == 'order_cancelled':
+            return 'CANCELLED'
+        else:
+            # 알 수 없는 이벤트 타입: order_result의 status 사용 (안전한 fallback)
+            return order_result.get('status', 'UNKNOWN')
+
     # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:integration
     def emit_trading_event(
         self,
@@ -30,6 +61,7 @@ class EventEmitter:
         side: str,
         quantity: Decimal,
         order_result: Dict[str, object],
+        suppress_toast: bool = False,  # 배치 주문 시 개별 토스트 억제
     ) -> None:
         """Emit a unified trading order event via the SSE event service."""
         try:
@@ -83,7 +115,9 @@ class EventEmitter:
                 side=side.upper(),
                 quantity=float(quantity),
                 price=price,
-                status='FILLED' if event_type == 'trade_executed' else order_result.get('status', 'UNKNOWN'),
+                # @FEAT:event-sse @TYPE:core - 이벤트 타입을 주문 상태로 일관되게 매핑
+                # order_filled/order_cancelled 이벤트는 _map_event_to_status()로 올바른 상태 결정
+                status=self._map_event_to_status(event_type, order_result),
                 timestamp=datetime.utcnow().isoformat(),
                 order_type=order_result.get('order_type', 'MARKET'),
                 stop_price=stop_price_value,
@@ -92,6 +126,7 @@ class EventEmitter:
                     'name': account.name,
                     'exchange': account.exchange,
                 },
+                suppress_toast=suppress_toast,  # Phase 1에서 추가된 필드에 전달
             )
             event_service.emit_order_event(event)
             logger.debug(
@@ -238,6 +273,7 @@ class EventEmitter:
         side: str,
         quantity: Decimal,
         order_result: Dict[str, object],
+        suppress_toast: bool = False,  # 배치 주문 시 개별 토스트 억제
     ) -> None:
         """Emit context-aware order events based on the current order state."""
         logger.info("🚀 스마트 이벤트 발송 시작: %s %s %s", symbol, side, quantity)
@@ -279,17 +315,26 @@ class EventEmitter:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, filled_quantity))
             else:
                 events_to_emit.append((OrderEventType.ORDER_UPDATED, quantity))
-                new_filled = filled_quantity - existing_order.filled_quantity
+                # TypeError 방지: existing_order.filled_quantity는 db.Float이므로 Decimal 변환 필수
+                new_filled = Decimal(str(filled_quantity)) - Decimal(str(existing_order.filled_quantity))
                 if new_filled > 0:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, new_filled))
 
         elif status == OrderStatus.FILLED:
             if not existing_order:
+                # 새 주문: 전체 수량 체결 이벤트
                 events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
             else:
-                remaining = quantity - existing_order.filled_quantity
+                # 기존 주문: 남은 수량 체결 이벤트
+                # TypeError 방지: existing_order.filled_quantity는 db.Float이므로 Decimal 변환 필수
+                remaining = quantity - Decimal(str(existing_order.filled_quantity))
+                # Issue #37: FILLED 상태에서는 remaining이 0이라도 이벤트 발송
+                # (Scheduler 경로에서 DB 업데이트 타이밍으로 remaining=0이 됨)
                 if remaining > 0:
                     events_to_emit.append((OrderEventType.ORDER_FILLED, remaining))
+                else:
+                    # remaining이 0 또는 음수인 경우 전체 수량으로 프론트엔드 업데이트 보장
+                    events_to_emit.append((OrderEventType.ORDER_FILLED, quantity))
 
         elif status == OrderStatus.CANCELLED:
             events_to_emit.append((OrderEventType.ORDER_CANCELLED, quantity))
@@ -305,7 +350,7 @@ class EventEmitter:
 
         # 그 다음 이벤트 발행
         for event_type, event_quantity in events_to_emit:
-            self.emit_trading_event(event_type, strategy, symbol, side, event_quantity, order_result)
+            self.emit_trading_event(event_type, strategy, symbol, side, event_quantity, order_result, suppress_toast=suppress_toast)
             logger.debug(
                 "📡 스마트 이벤트 발송: %s - %s %s %s",
                 event_type,
@@ -449,76 +494,6 @@ class EventEmitter:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("주문 취소 이벤트 발송 실패: %s", exc)
 
-    # @FEAT:event-sse @FEAT:order-queue @COMP:service @TYPE:integration
-    def emit_pending_order_event(
-        self,
-        event_type: str,
-        pending_order,
-        user_id: int,
-    ) -> None:
-        """Emit pending order event via SSE.
-
-        Args:
-            event_type: 'order_created' (대기열 추가) or 'order_cancelled' (대기열 제거)
-            pending_order: PendingOrder 모델 인스턴스
-            user_id: 사용자 ID (전략 소유자)
-        """
-        try:
-            from app.services.event_service import event_service, OrderEvent
-            from app.models import Account
-
-            # 계좌 정보 조회
-            account = Account.query.get(pending_order.account_id)
-            if not account:
-                logger.warning(
-                    "계좌를 찾을 수 없어 PendingOrder 이벤트 발송 스킵: %s",
-                    pending_order.account_id
-                )
-                return
-
-            # strategy_id 추출 (pending_order.strategy_account → strategy_id)
-            strategy_account = pending_order.strategy_account
-            if not strategy_account or not strategy_account.strategy_id:
-                logger.warning(
-                    f"PendingOrder {pending_order.id}에 strategy_account 또는 strategy_id 없음 - SSE 발송 스킵"
-                )
-                return
-
-            strategy_id = strategy_account.strategy_id
-
-            # OrderEvent 생성 (PendingOrder용)
-            order_event = OrderEvent(
-                event_type=event_type,
-                order_id=f'p_{pending_order.id}',  # PendingOrder는 'p_' prefix
-                symbol=pending_order.symbol,
-                strategy_id=strategy_id,  # pending_order.strategy_account.strategy_id 사용
-                user_id=user_id,
-                side=pending_order.side.upper(),
-                quantity=float(pending_order.quantity),
-                price=float(pending_order.price) if pending_order.price else 0.0,
-                status='PENDING_QUEUE',  # PendingOrder 상태
-                timestamp=datetime.utcnow().isoformat(),
-                order_type=pending_order.order_type,
-                stop_price=float(pending_order.stop_price) if pending_order.stop_price else None,
-                account={
-                    'account_id': account.id,
-                    'name': account.name,
-                    'exchange': account.exchange,
-                }
-            )
-
-            event_service.emit_order_event(order_event)
-            logger.info(
-                "✅ PendingOrder 이벤트 발송 완료: %s - %s (ID: p_%s, 전략: %s)",
-                event_type,
-                pending_order.symbol,
-                pending_order.id,
-                strategy_id
-            )
-
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("PendingOrder 이벤트 발송 실패: %s", exc)
-
     # @FEAT:event-sse @FEAT:webhook-order @COMP:service @TYPE:core
     def emit_order_batch_update(self, user_id: int, strategy_id: int, batch_results: List[Dict[str, Any]]):
         """Aggregate batch order results and emit single SSE event
@@ -585,3 +560,83 @@ class EventEmitter:
             logger.debug(f'Batch aggregation: {len(summaries)} order types')
         else:
             logger.debug('No successful orders - batch SSE skipped')
+
+    # @FEAT:event-sse @FEAT:order-tracking @COMP:service @TYPE:core
+    def emit_order_cancelled_or_expired_event(
+        self,
+        open_order: OpenOrder,
+        status: str
+    ) -> None:
+        """취소/만료 주문 SSE 이벤트 발송
+
+        ⚠️ CRITICAL: 반드시 OpenOrder 삭제 **전**에 호출되어야 합니다.
+        삭제 후에는 데이터 접근 불가.
+
+        Args:
+            open_order: OpenOrder 객체 (삭제 전 데이터)
+            status: 'CANCELED' or 'EXPIRED'
+
+        Raises:
+            ValueError: status가 유효하지 않은 경우
+        """
+        if status not in ['CANCELED', 'CANCELLED', 'EXPIRED']:
+            raise ValueError(f"Invalid status: {status}")
+
+        try:
+            from app.services.event_service import event_service, OrderEvent
+            from app.models import Account
+
+            # OpenOrder에서 필요 데이터 추출 (삭제 전이므로 안전)
+            strategy_account = open_order.strategy_account
+            if not strategy_account or not strategy_account.strategy:
+                logger.warning(f"전략 정보 없음 - order_id={open_order.exchange_order_id}")
+                return
+
+            strategy = strategy_account.strategy
+            account = strategy_account.account
+
+            if not account:
+                logger.warning(f"계좌 정보 없음 - order_id={open_order.exchange_order_id}")
+                return
+
+            # 이벤트 타입 결정
+            event_type = 'order_cancelled' if status in ['CANCELED', 'CANCELLED'] else 'order_expired'
+
+            # 표시 가격 추출 (주문 타입별 로직)
+            display_price = 0.0
+            if open_order.order_type in ['LIMIT', 'STOP_LIMIT']:
+                display_price = float(open_order.price) if open_order.price else 0.0
+            elif open_order.order_type == 'STOP_MARKET':
+                display_price = float(open_order.stop_price) if open_order.stop_price else 0.0
+            # MARKET 주문은 0.0 유지
+
+            # OrderEvent 생성
+            order_event = OrderEvent(
+                event_type=event_type,
+                order_id=open_order.exchange_order_id,
+                symbol=open_order.symbol,
+                strategy_id=strategy.id,
+                user_id=strategy.user_id,
+                side=open_order.side.upper(),
+                quantity=float(open_order.quantity),
+                price=display_price,
+                status=status,
+                timestamp=datetime.utcnow().isoformat(),
+                order_type=open_order.order_type,
+                stop_price=float(open_order.stop_price) if open_order.stop_price else None,
+                account={
+                    'account_id': account.id,
+                    'name': account.name,
+                    'exchange': account.exchange,
+                }
+            )
+
+            # SSE 이벤트 발송
+            event_service.emit_order_event(order_event)
+            logger.info(f"✅ {event_type} 이벤트 발송 완료 - order_id={open_order.exchange_order_id}, strategy={strategy.id}")
+
+        except Exception as exc:
+            logger.error(
+                f"❌ {status} 이벤트 발송 실패 - order_id={open_order.exchange_order_id}, error={exc}",
+                exc_info=True
+            )

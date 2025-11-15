@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Optional
 
 from .config import SystemConfig
-from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper
+from .helpers import StatusPrinter, NetworkHelper, DockerHelper, SSLHelper, EnvHelper, MigrationHelper
 from .commands import (
     StartCommand, StopCommand, RestartCommand, LogsCommand,
-    StatusCommand, CleanCommand, SetupCommand, ListCommand
+    StatusCommand, CleanCommand, SetupCommand, ListCommand, DeleteDbCommand
 )
 
 
@@ -45,6 +45,7 @@ class TradingSystemCLI:
         self.docker = DockerHelper(self.printer, self.root_dir)
         self.ssl = SSLHelper(self.printer, self.root_dir)
         self.env = EnvHelper(self.printer, self.network, self.root_dir)  # Phase 2 수정 반영
+        self.migration = MigrationHelper(self.printer)
 
         # Command 인스턴스 생성 (의존성 주입)
         self.commands = self._create_commands()
@@ -61,7 +62,7 @@ class TradingSystemCLI:
         # StartCommand
         start_cmd = StartCommand(
             self.printer, self.docker, self.network,
-            self.ssl, self.env, self.root_dir
+            self.ssl, self.env, self.migration, self.root_dir
         )
 
         # StopCommand
@@ -83,7 +84,10 @@ class TradingSystemCLI:
         setup_cmd = SetupCommand(self.printer, self.env, self.docker, self.root_dir)
 
         # ListCommand
-        list_cmd = ListCommand(self.printer, self.docker, self.env)
+        list_cmd = ListCommand(self.printer, self.docker)
+
+        # DeleteDbCommand
+        delete_db_cmd = DeleteDbCommand(self.printer, self.root_dir)
 
         return {
             'start': start_cmd,
@@ -94,6 +98,7 @@ class TradingSystemCLI:
             'clean': clean_cmd,
             'setup': setup_cmd,
             'ls': list_cmd,  # ls 명령어 추가
+            'delete_db': delete_db_cmd,
         }
 
     def run(self, args: list) -> int:
@@ -137,6 +142,10 @@ class TradingSystemCLI:
         """도움말 출력
 
         사용 가능한 명령어와 옵션을 표시합니다.
+
+        주요 명령어 옵션:
+        - clean: --all (모든 프로젝트 정리), --full (SSL/로그 포함)
+        - stop: --all (모든 프로젝트 중지)
         """
         from .helpers.printer import Colors
 
@@ -149,14 +158,17 @@ class TradingSystemCLI:
   python run.py <명령어> [옵션]
 
 명령어:
-  start       - 시스템 시작
-  stop        - 시스템 중지
-  restart     - 시스템 재시작
-  logs        - Docker 로그 조회
-  status      - 시스템 상태 확인
   clean       - 시스템 정리 (컨테이너/볼륨)
-  setup       - 초기 환경 설정
+                --all: 모든 webserver 프로젝트 정리
+                --full: SSL 인증서 및 로그도 함께 정리
+  delete_db   - 데이터베이스 삭제 (워크트리/루트 자동 감지)
+  logs        - Docker 로그 조회
   ls          - 실행 중인 프로젝트 목록
+  restart     - 시스템 재시작
+  setup       - 초기 환경 설정
+  start       - 시스템 시작
+  status      - 시스템 상태 확인
+  stop        - 시스템 중지
 
 옵션:
   -h, --help  - 도움말 표시
@@ -164,7 +176,11 @@ class TradingSystemCLI:
 예제:
   python run.py start
   python run.py logs -f app
-  python run.py clean --all
+  python run.py clean                    # 현재 프로젝트만 정리
+  python run.py clean --all              # 모든 webserver 프로젝트 정리
+  python run.py clean --full             # 현재 프로젝트 + SSL/로그 정리
+  python run.py clean --all --full       # 모든 프로젝트 + SSL/로그 정리
+  python run.py clean webserver_dev      # 특정 프로젝트만 정리
   python run.py setup --env production
 
 상세 도움말:

@@ -31,7 +31,7 @@ class StartCommand(BaseCommand):
     TradingSystemManager.start_system() 로직을 Command 패턴으로 구현
     """
 
-    def __init__(self, printer, docker, network, ssl, env, root_dir: Path):
+    def __init__(self, printer, docker, network, ssl, env, migration, root_dir: Path):
         """초기화
 
         Args:
@@ -40,6 +40,7 @@ class StartCommand(BaseCommand):
             network: NetworkHelper 인스턴스
             ssl: SSLHelper 인스턴스
             env: EnvHelper 인스턴스
+            migration: MigrationHelper 인스턴스
             root_dir: 프로젝트 루트 디렉토리
         """
         super().__init__(printer)
@@ -47,6 +48,7 @@ class StartCommand(BaseCommand):
         self.network = network
         self.ssl = ssl
         self.env = env
+        self.migration = migration
         self.root_dir = root_dir
         self.project_name = "webserver"  # 기본 프로젝트명
 
@@ -154,6 +156,11 @@ class StartCommand(BaseCommand):
             if not self.docker.start_postgres(self.project_name):
                 return 1
 
+            # 마이그레이션 실행 (PostgreSQL 시작 후, Flask 시작 전)
+            self.printer.print_status("데이터베이스 마이그레이션 확인 중...", "info")
+            if not self.migration.run_pending_migrations(self.root_dir):
+                self.printer.print_status("⚠️  마이그레이션 실패, 계속 진행합니다.", "warning")
+
             # Flask 앱 시작
             if not self.docker.start_flask(self.project_name):
                 return 1
@@ -177,10 +184,13 @@ class StartCommand(BaseCommand):
             return 1
 
     def _detect_and_stop_conflicts(self) -> bool:
-        """다른 경로에서 실행 중인 서비스 감지 및 중지
+        """DEPRECATED: 하위 호환성을 위해 유지, 실제로는 종료하지 않음
+
+        다른 워크트리/메인 프로젝트의 서비스 정보만 확인합니다.
+        더 이상 서비스를 종료하지 않습니다.
 
         Returns:
-            bool: 성공 시 True
+            bool: 항상 True 반환 (하위 호환성 보장)
         """
         # 다른 경로의 webserver 프로젝트 감지
         try:
@@ -202,23 +212,19 @@ class StartCommand(BaseCommand):
 
                 if other_projects:
                     self.printer.print_status(
-                        f"다른 경로에서 실행 중인 프로젝트 발견: {', '.join(other_projects)}",
-                        "warning"
+                        f"다른 경로에서 실행 중인 서비스 발견: {', '.join(other_projects)}",
+                        "info"
                     )
 
-                    # 자동으로 중지
-                    for project in other_projects:
-                        self.printer.print_status(f"{project} 프로젝트 중지 중...", "info")
-                        try:
-                            subprocess.run(
-                                self.docker.compose_cmd + ['-p', project, 'down'],
-                                capture_output=True,
-                                timeout=30
-                            )
-                        except Exception:
-                            pass
-
-                    time.sleep(3)  # 컨테이너 정리 대기
+                    # 정보만 출력 (종료하지 않음)
+                    self.printer.print_status(
+                        "다른 서비스는 유지되며, 포트 충돌 시 자동 재할당됩니다",
+                        "info"
+                    )
+                    self.printer.print_status(
+                        "각 워크트리는 독립적으로 실행되어 서로 영향을 주지 않습니다",
+                        "info"
+                    )
 
             return True
         except Exception:

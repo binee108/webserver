@@ -103,3 +103,39 @@ class SecuritiesExchangeFactory:
             list: 증권사 이름 목록 (예: ['KIS', 'KIWOOM'])
         """
         return list(cls._EXCHANGE_CLASSES.keys())
+
+    @classmethod
+    def create_default_client(cls, exchange_name: str) -> Optional[BaseSecuritiesExchange]:
+        """
+        API 키 없이 기본 증권 거래소 클라이언트를 생성합니다.
+
+        Args:
+            exchange_name: 거래소 이름 (대문자, 예: 'KIS')
+
+        Returns:
+            BaseSecuritiesExchange: 기본 클라이언트 또는 None
+        """
+        try:
+            # 지원 증권사 검증
+            if exchange_name not in cls._EXCHANGE_CLASSES:
+                logger.warning(f"지원되지 않는 증권사: {exchange_name}")
+                return None
+
+            # 기본 클라이언트 생성 (계좌 없이)
+            exchange_class = cls._EXCHANGE_CLASSES[exchange_name]
+
+            # 대부분의 증권사 클라이언트는 계좌 정보 필요
+            # 기본 모드로 생성 또는 None 반환
+            try:
+                # 계좌 없이 생성 시도 (지원하는 경우)
+                client = exchange_class(account=None)
+                logger.debug(f"✅ {exchange_name} 기본 클라이언트 생성 성공")
+                return client
+            except Exception:
+                # 계좌 없이 생성 불가 시 None 반환
+                logger.debug(f"⚠️  {exchange_name} 기본 클라이언트 생성 불가 (계좌 필요)")
+                return None
+
+        except Exception as e:
+            logger.warning(f"기본 증권 클라이언트 생성 실패 ({exchange_name}): {e}")
+            return None

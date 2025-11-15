@@ -122,6 +122,12 @@ Manually execute background job.
 **Request:** `{"job_type": "update_orders|calculate_pnl|daily_summary|calculate_performance"}`
 **Response:** `{"success": true, "message": "작업 완료"}`
 
+**Job Types:**
+- `update_orders`: Update open orders status via `trading_service.update_open_orders_status()` (line 186)
+- `calculate_pnl`: Calculate unrealized PnL via `trading_service.calculate_unrealized_pnl()` (line 190)
+- `daily_summary`: Generate and send daily summary to all active accounts via `analytics_service.get_daily_summary()` and `telegram_service.send_daily_summary()` (lines 196-206)
+- `calculate_performance`: Execute daily performance calculation via `calculate_daily_performance_with_context()` (lines 208-212)
+
 ### Cache Management (Admin Only)
 
 #### GET /api/system/cache-stats
@@ -149,9 +155,11 @@ Clear cache entries (price cache or exchange client cache).
 **Response:** `{"success": true, "message": "가격 캐시 정리 완료 - 5개 항목 삭제"}`
 
 **Cache Types:**
-- `price`: Clear price cache (uses `price_cache.clear_cache()`)
-- `exchange`: Clear exchange client cache (uses `exchange_service.clear_all_cache()`)
-- `all`: Clear both caches
+- `price`: Clear price cache via `price_cache.clear_cache(exchange, market_type)` - returns count of deleted items (line 283)
+- `exchange`: Clear exchange client cache via `exchange_service.clear_all_cache()` - returns count of removed clients (line 286)
+- `all`: Clear both price and exchange caches sequentially (lines 289-291)
+
+**Note:** `market_type` parameter is optional for price cache clearing (defaults to all types if not specified)
 
 ### Integration Testing (Admin Only)
 
@@ -162,10 +170,31 @@ Test Telegram notification connectivity.
 
 ## Implementation Details
 
-### Files
-- `web_server/app/routes/health.py` - Health check endpoints
-- `web_server/app/routes/system.py` - System monitoring and control
-- `web_server/app/__init__.py` - Scheduler initialization
+### Files & Location Details
+
+#### Health Check Endpoints
+- **File**: `web_server/app/routes/health.py` (76 lines)
+- **Tag**: `@FEAT:health-monitoring @COMP:route @TYPE:core`
+- **Endpoints**:
+  - `GET /health` (lines 14-35): Basic health + DB status
+  - `GET /health/ready` (lines 38-64): Readiness probe
+  - `GET /health/live` (lines 67-75): Liveness probe
+
+#### System Management Routes
+- **File**: `web_server/app/routes/system.py` (332 lines)
+- **Tag**: `@FEAT:health-monitoring @COMP:route @TYPE:core` (primary)
+- **Endpoints**:
+  - `GET /api/system/health` (lines 16-32): Minimal health check (public endpoint)
+  - `GET /api/system/scheduler-status` (lines 57-104): APScheduler state query (admin only)
+  - `POST /api/system/scheduler-control` (lines 107-162): Start/stop/restart scheduler (admin only)
+  - `POST /api/system/trigger-job` (lines 165-232): Manual job execution (admin only, 4 job types)
+  - `GET /api/system/cache-stats` (lines 235-260): Cache statistics (admin only)
+  - `POST /api/system/cache-clear` (lines 263-304): Granular cache clearing (admin only)
+  - `GET /api/system/exchange-metadata` (lines 307-331): Futures support metadata (admin only, cross-tagged with @FEAT:futures-validation)
+
+#### Scheduler Integration
+- **File**: `web_server/app/__init__.py`
+- **Purpose**: APScheduler initialization and registration of background jobs
 
 ### Quick Search
 ```bash
@@ -255,6 +284,13 @@ curl -X POST https://example.com/api/system/cache-clear \
 ```
 
 ---
-**Last Updated:** 2025-10-11
+**Last Updated:** 2025-10-30
 **Feature Status:** Active
-**Dependencies:** None (core monitoring feature)
+**Dependencies:** APScheduler, Flask-Login, SQLAlchemy, trading_service, analytics_service, telegram_service, exchange_service, price_cache
+**Sync Status:** Code-aligned ✓ (health.py 76L, system.py 332L)
+
+**Recent Sync Updates (2025-10-30):**
+- Added service call line numbers for `trigger-job` endpoint (trading_service, analytics_service, telegram_service)
+- Clarified cache clearing implementation details and return value types
+- Added admin-only designation for all protected endpoints
+- Cross-referenced `exchange-metadata` endpoint with @FEAT:futures-validation tag

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TimeZone Utils - Development Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        h1, h2, h3 {
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+
+        .timezone-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .info-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #007acc;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .info-value {
+            font-size: 1.1em;
+            color: #333;
+            margin-top: 5px;
+        }
+
+        .test-section {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .test-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        input, select, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #005fa3;
+        }
+
+        .results {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .result-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .performance-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-card {
+            background: #e8f4fd;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #007acc;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .batch-test {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            resize: vertical;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌍 TimeZone Utils Development Demo</h1>
+        <p>This page demonstrates the TimeZoneUtils functionality for timezone detection, conversion, and formatting.</p>
+
+        <!-- User Timezone Detection -->
+        <div class="section">
+            <h2>🔍 User Timezone Detection</h2>
+            <div id="user-timezone-info" class="timezone-info">
+                <!-- Will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Timezone Information -->
+        <div class="section">
+            <h2>📊 Timezone Information</h2>
+            <div class="test-input">
+                <label for="timezone-select">Select Timezone:</label>
+                <select id="timezone-select">
+                    <option value="">Auto-detect user timezone</option>
+                    <option value="UTC">UTC</option>
+                    <option value="America/New_York">New York (Eastern)</option>
+                    <option value="America/Chicago">Chicago (Central)</option>
+                    <option value="America/Denver">Denver (Mountain)</option>
+                    <option value="America/Los_Angeles">Los Angeles (Pacific)</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Europe/Paris">Paris</option>
+                    <option value="Asia/Tokyo">Tokyo</option>
+                    <option value="Asia/Shanghai">Shanghai</option>
+                    <option value="Asia/Seoul">Seoul</option>
+                    <option value="Australia/Sydney">Sydney</option>
+                </select>
+                <button onclick="showTimezoneInfo()">Get Timezone Info</button>
+            </div>
+            <div id="timezone-details" class="timezone-info">
+                <!-- Will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Timestamp Formatting -->
+        <div class="section">
+            <h2>⏰ Timestamp Formatting</h2>
+            <div class="test-input">
+                <label for="timestamp-input">Timestamp:</label>
+                <input type="text" id="timestamp-input" placeholder="Enter timestamp (ms, ISO string, or leave empty for now)" value="">
+                <label for="format-select">Format:</label>
+                <select id="format-select">
+                    <option value="YYYY-MM-DD HH:mm:ss">Default</option>
+                    <option value="MM/DD/YYYY HH:mm:ss">US Format</option>
+                    <option value="DD/MM/YYYY HH:mm:ss">EU Format</option>
+                    <option value="YYYY-MM-DD">Date Only</option>
+                    <option value="HH:mm:ss">Time Only</option>
+                    <option value="YYYY-MM-DDTHH:mm:ss">ISO Format</option>
+                </select>
+                <label for="24hour-checkbox">
+                    <input type="checkbox" id="24hour-checkbox" checked> 24-hour
+                </label>
+                <button onclick="formatTimestamp()">Format</button>
+            </div>
+            <div id="format-results" class="results">
+                <div class="result-item">Results will appear here...</div>
+            </div>
+        </div>
+
+        <!-- Batch Processing -->
+        <div class="section">
+            <h2>📦 Batch Processing</h2>
+            <div class="batch-test">
+                <p>Enter multiple timestamps (one per line) for batch formatting:</p>
+                <textarea id="batch-input" placeholder="2024-01-15T10:30:00Z
+1705311000000
+2024-01-16 14:45:00
+now"></textarea>
+                <div class="test-input" style="margin-top: 10px;">
+                    <label for="batch-timezone">Timezone:</label>
+                    <select id="batch-timezone">
+                        <option value="">User timezone</option>
+                        <option value="UTC">UTC</option>
+                        <option value="America/New_York">New York</option>
+                        <option value="Asia/Seoul">Seoul</option>
+                    </select>
+                    <button onclick="processBatch()">Process Batch</button>
+                    <button onclick="clearBatch()">Clear</button>
+                </div>
+                <div id="batch-results" class="results">
+                    <div class="result-item">Batch results will appear here...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Metrics -->
+        <div class="section">
+            <h2>📈 Performance Metrics</h2>
+            <div class="performance-stats" id="performance-stats">
+                <!-- Will be populated by JavaScript -->
+            </div>
+            <div class="test-input" style="margin-top: 15px;">
+                <button onclick="runPerformanceTest()">Run Performance Test</button>
+                <button onclick="clearCache()">Clear Cache</button>
+                <button onclick="refreshMetrics()">Refresh</button>
+            </div>
+        </div>
+
+        <!-- Error Handling Tests -->
+        <div class="section">
+            <h2>🛠️ Error Handling Tests</h2>
+            <div class="test-input">
+                <button onclick="testInvalidTimestamp()">Test Invalid Timestamp</button>
+                <button onclick="testInvalidTimezone()">Test Invalid Timezone</button>
+                <button onclick="testEdgeCases()">Test Edge Cases</button>
+            </div>
+            <div id="error-results" class="results">
+                <div class="result-item">Error test results will appear here...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load TimeZone Utils -->
+    <script src="js/timezone.js"></script>
+
+    <script>
+        // Global variable for our TimeZoneUtils instance
+        let tzUtils;
+        let currentTimestamp = Date.now();
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            try {
+                tzUtils = new TimeZoneUtils();
+                initializePage();
+                console.log('TimeZoneUtils initialized successfully');
+            } catch (error) {
+                showError('Failed to initialize TimeZoneUtils: ' + error.message);
+            }
+        });
+
+        function initializePage() {
+            showUserTimezone();
+            refreshMetrics();
+            setInterval(refreshMetrics, 5000); // Update metrics every 5 seconds
+        }
+
+        function showUserTimezone() {
+            try {
+                const userTz = tzUtils.detectUserTimeZone();
+                const tzInfo = tzUtils.getTimezoneInfo();
+
+                const infoHtml = `
+                    <div class="info-card">
+                        <div class="info-label">Detected Timezone</div>
+                        <div class="info-value">${userTz}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Timezone Name</div>
+                        <div class="info-value">${tzInfo.name}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Current Offset</div>
+                        <div class="info-value">${tzInfo.offsetString}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Current Local Time</div>
+                        <div class="info-value">${tzInfo.currentTime}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">DST Active</div>
+                        <div class="info-value">${tzInfo.isDST ? 'Yes' : 'No'}</div>
+                    </div>
+                `;
+
+                document.getElementById('user-timezone-info').innerHTML = infoHtml;
+
+            } catch (error) {
+                showError('Failed to get user timezone: ' + error.message);
+            }
+        }
+
+        function showTimezoneInfo() {
+            try {
+                const selectedTz = document.getElementById('timezone-select').value;
+                const tzInfo = tzUtils.getTimezoneInfo(selectedTz);
+
+                const infoHtml = `
+                    <div class="info-card">
+                        <div class="info-label">Timezone ID</div>
+                        <div class="info-value">${tzInfo.identifier}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Display Name</div>
+                        <div class="info-value">${tzInfo.name}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">UTC Offset</div>
+                        <div class="info-value">${tzInfo.offsetString}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Current Time</div>
+                        <div class="info-value">${tzInfo.currentTime}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">DST Status</div>
+                        <div class="info-value">${tzInfo.isDST ? 'DST Active' : 'Standard Time'}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-label">Raw Offset</div>
+                        <div class="info-value">${tzInfo.offset} minutes</div>
+                    </div>
+                `;
+
+                document.getElementById('timezone-details').innerHTML = infoHtml;
+
+            } catch (error) {
+                showError('Failed to get timezone info: ' + error.message);
+            }
+        }
+
+        function formatTimestamp() {
+            try {
+                const timestampInput = document.getElementById('timestamp-input').value;
+                const format = document.getElementById('format-select').value;
+                const use24Hour = document.getElementById('24hour-checkbox').checked;
+
+                let timestamp = timestampInput;
+                if (!timestamp || timestamp.toLowerCase() === 'now') {
+                    timestamp = Date.now();
+                }
+
+                const formattedTime = tzUtils.formatToLocalTime(timestamp, {
+                    format: format,
+                    use24Hour: use24Hour
+                });
+
+                const resultHtml = `
+                    <div class="success">
+                        <strong>Input:</strong> ${timestamp}<br>
+                        <strong>Formatted:</strong> ${formattedTime}
+                    </div>
+                `;
+
+                document.getElementById('format-results').innerHTML = resultHtml;
+
+            } catch (error) {
+                showError('Failed to format timestamp: ' + error.message);
+            }
+        }
+
+        function processBatch() {
+            try {
+                const batchInput = document.getElementById('batch-input').value;
+                const selectedTz = document.getElementById('batch-timezone').value;
+
+                if (!batchInput.trim()) {
+                    showError('Please enter timestamps for batch processing');
+                    return;
+                }
+
+                const timestamps = batchInput.split('\n').filter(line => line.trim());
+                const results = tzUtils.formatBatch(timestamps, {
+                    timezone: selectedTz || undefined
+                });
+
+                const resultsHtml = timestamps.map((timestamp, index) =>
+                    `<div class="result-item">
+                        <strong>${timestamp}</strong> → ${results[index]}
+                    </div>`
+                ).join('');
+
+                document.getElementById('batch-results').innerHTML = resultsHtml;
+
+            } catch (error) {
+                showError('Batch processing failed: ' + error.message);
+            }
+        }
+
+        function clearBatch() {
+            document.getElementById('batch-input').value = '';
+            document.getElementById('batch-results').innerHTML = '<div class="result-item">Batch results will appear here...</div>';
+        }
+
+        function runPerformanceTest() {
+            try {
+                const testTimestamps = [];
+                const now = Date.now();
+
+                // Generate test timestamps (100 timestamps over the past year)
+                for (let i = 0; i < 100; i++) {
+                    testTimestamps.push(now - (i * 24 * 60 * 60 * 1000)); // Daily timestamps
+                }
+
+                console.log('Running performance test with', testTimestamps.length, 'timestamps...');
+
+                const startTime = performance.now();
+
+                // Test batch formatting
+                tzUtils.formatBatch(testTimestamps);
+
+                const endTime = performance.now();
+                const duration = endTime - startTime;
+
+                showSuccess(`Performance test completed: ${testTimestamps.length} conversions in ${duration.toFixed(2)}ms`);
+                refreshMetrics();
+
+            } catch (error) {
+                showError('Performance test failed: ' + error.message);
+            }
+        }
+
+        function refreshMetrics() {
+            try {
+                if (!tzUtils) return;
+
+                const metrics = tzUtils.getPerformanceMetrics();
+
+                const metricsHtml = `
+                    <div class="stat-card">
+                        <div class="stat-value">${metrics.conversions}</div>
+                        <div class="stat-label">Total Conversions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${metrics.cacheHits}</div>
+                        <div class="stat-label">Cache Hits</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${metrics.cacheMisses}</div>
+                        <div class="stat-label">Cache Misses</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${metrics.cacheHitRate}</div>
+                        <div class="stat-label">Cache Hit Rate</div>
+                    </div>
+                `;
+
+                document.getElementById('performance-stats').innerHTML = metricsHtml;
+
+            } catch (error) {
+                console.warn('Failed to refresh metrics:', error);
+            }
+        }
+
+        function clearCache() {
+            try {
+                tzUtils.clearCache();
+                showSuccess('Cache cleared successfully');
+                refreshMetrics();
+            } catch (error) {
+                showError('Failed to clear cache: ' + error.message);
+            }
+        }
+
+        function testInvalidTimestamp() {
+            try {
+                const invalidTimestamp = 'invalid-timestamp';
+                const result = tzUtils.formatToLocalTime(invalidTimestamp);
+
+                document.getElementById('error-results').innerHTML = `
+                    <div class="result-item">
+                        <strong>Invalid Input:</strong> ${invalidTimestamp}<br>
+                        <strong>Result:</strong> ${result} (should fallback to current time)
+                    </div>
+                `;
+
+            } catch (error) {
+                document.getElementById('error-results').innerHTML = `
+                    <div class="error result-item">
+                        <strong>Error caught:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function testInvalidTimezone() {
+            try {
+                const result = tzUtils.formatToLocalTime(Date.now(), {
+                    timezone: 'Invalid/Timezone'
+                });
+
+                document.getElementById('error-results').innerHTML = `
+                    <div class="result-item">
+                        <strong>Invalid Timezone Test</strong><br>
+                        <strong>Result:</strong> ${result}
+                    </div>
+                `;
+
+            } catch (error) {
+                document.getElementById('error-results').innerHTML = `
+                    <div class="error result-item">
+                        <strong>Error caught:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function testEdgeCases() {
+            const edgeCases = [
+                { name: 'Zero timestamp', value: 0 },
+                { name: 'Negative timestamp', value: -86400000 },
+                { name: 'Very large timestamp', value: 253402300799000 }, // Year 9999
+                { name: 'String timestamp', value: '2024-01-15T10:30:00Z' }
+            ];
+
+            const results = edgeCases.map(testCase => {
+                try {
+                    const result = tzUtils.formatToLocalTime(testCase.value);
+                    return `<div class="result-item">
+                        <strong>${testCase.name} (${testCase.value}):</strong> ${result}
+                    </div>`;
+                } catch (error) {
+                    return `<div class="error result-item">
+                        <strong>${testCase.name} (${testCase.value}):</strong> Error - ${error.message}
+                    </div>`;
+                }
+            }).join('');
+
+            document.getElementById('error-results').innerHTML = results;
+        }
+
+        function showError(message) {
+            console.error('TimeZoneUtils Demo Error:', message);
+            alert('Error: ' + message);
+        }
+
+        function showSuccess(message) {
+            console.log('TimeZoneUtils Demo Success:', message);
+        }
+    </script>
+</body>
+</html>

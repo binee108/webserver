@@ -253,3 +253,11 @@ test_*.py
 # Temporary test directory
 .test/
 
+# Postgres data
+postgres_data/
+
+# Refactoring
+.refactoring/
+
+# Workflow configuration (personal settings)
+.workflow/

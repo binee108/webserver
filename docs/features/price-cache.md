@@ -65,7 +65,7 @@
 - 저장 데이터: `{'price': float, 'timestamp': float, 'exchange': str, 'market_type': str, 'symbol': str}`
 
 **의존성**:
-- `ExchangeService.get_price_quotes()` - 거래소 API 호출
+- `ExchangeService.get_price_quotes()` - 거래소 API 호출 (가격 캐시 시스템 핵심 메서드)
 - `APScheduler` - 백그라운드 주기 갱신
 - `StrategyPosition` DB - 활성 포지션 목록 조회
 
@@ -77,11 +77,35 @@
 
 | 파일 | 역할 | 태그 | 핵심 메서드 |
 |------|------|------|-------------|
-| `services/price_cache.py` | 가격 캐싱 및 조회 | `@FEAT:price-cache @COMP:service @TYPE:core` | `get_price()`, `set_price()`, `update_batch_prices()` |
+| `services/price_cache.py` | 가격 캐싱 및 조회 | `@FEAT:price-cache @COMP:service @TYPE:core` | `get_price()`, `set_price()`, `update_batch_prices()`, `get_usdt_krw_rate()` |
 
 **주요 메서드**:
 
-#### get_price()
+#### __init__() - 초기화
+```python
+# @FEAT:price-cache @COMP:service @TYPE:core
+def __init__(self, ttl_seconds: int = 60)
+```
+**기능**: PriceCache 인스턴스 초기화
+- TTL 설정 (기본 60초, 싱글톤은 30초)
+- 메모리 캐시 딕셔너리 초기화
+- Thread-safe Lock 설정 (RLock)
+- 통계 카운터 초기화 (hit, miss, update)
+
+#### _get_cache_key() - 캐시 키 생성 (내부 함수)
+```python
+# @FEAT:price-cache @COMP:service @TYPE:helper
+def _get_cache_key(
+    symbol: str,
+    exchange: str = 'BINANCE',
+    market_type: str = 'FUTURES'
+) -> str
+```
+**기능**: 캐시 키 생성 (정규화된 형식)
+- 반환 형식: `{EXCHANGE}:{MARKET_TYPE}:{SYMBOL}` (예: `BINANCE:FUTURES:BTCUSDT`)
+- 대문자 정규화
+
+#### get_price() - 가격 조회 (TTL 기반 캐싱)
 ```python
 # @FEAT:price-cache @COMP:service @TYPE:core
 def get_price(
@@ -92,41 +116,144 @@ def get_price(
     return_details: bool = False
 ) -> Optional[Any]
 ```
+**기능**: 메모리 캐시에서 심볼 가격 조회 또는 API 폴백
 - 기본 TTL: 60초 (싱글톤 인스턴스는 30초로 설정)
-- Thread-safe (RLock)
-- 자동 Fallback API 호출
-- 1시간 이상 갱신 지연 시 CRITICAL 로그
+- Thread-safe (RLock 사용)
+- 자동 Fallback API 호출 (캐시 미스 시)
+- 1시간(3600초) 이상 갱신 지연 시 CRITICAL 로그 발생 및 None 반환
+- `return_details=True`: 상세 정보 반환
+  - 캐시 HIT: {price, age_seconds, source='cache', timestamp}
+  - API 호출: {price, age_seconds=0.0, source='api', timestamp}
+- 캐시 HIT/MISS 통계 자동 기록
 
-#### update_batch_prices()
+#### get_usdt_krw_rate() - 환율 조회 (신뢰성 중시)
 ```python
-# @FEAT:price-cache @COMP:service @TYPE:helper
+# @FEAT:price-cache @COMP:service @TYPE:core @DEPS:exchange-api
+def get_usdt_krw_rate(fallback_to_api: bool = True) -> Decimal
+```
+**기능**: UPBIT에서 USDT/KRW 환율 조회 (금전적 손실 방지)
+- TTL: 30초 (USDT/KRW 심볼로 캐싱)
+- 거래소: UPBIT, 마켓타입: SPOT
+- 실패 시 `ExchangeRateUnavailableError` 예외 발생
+- 용도: KRW 잔고를 USDT로 변환할 때 사용
+- fallback_to_api=False: API 호출 없이 캐시만 확인
+
+#### _fetch_price_from_api() - API 직접 조회 (내부 함수)
+```python
+# @FEAT:price-cache @COMP:service @TYPE:integration @DEPS:exchange-integration
+def _fetch_price_from_api(
+    symbol: str,
+    exchange: str = 'BINANCE',
+    market_type: str = 'FUTURES'
+) -> Optional[Decimal]
+```
+**기능**: API에서 직접 가격 조회 (캐시 미스 시 호출)
+- ExchangeService.get_price_quotes() 호출
+- 거래소/마켓타입 정규화 처리
+- 예외 발생 시 로그 기록 후 None 반환
+
+#### update_batch_prices() - 일괄 업데이트
+```python
+# @FEAT:price-cache @COMP:service @TYPE:core
 def update_batch_prices(
     symbols: list,
     exchange: str,
     market_type: str
 ) -> Dict[str, Decimal]
 ```
-- 여러 심볼 일괄 업데이트
+**기능**: 여러 심볼 가격 일괄 업데이트
 - 단일 API 호출로 효율성 극대화
+- 거래소/마켓타입 정규화 처리
+- 심볼 중복 제거 및 정렬 처리
+- 반환: 성공적으로 업데이트된 심볼 딕셔너리 {symbol: price}
+- 개별 조회 실패는 무시하고 계속 진행 (부분 성공 허용)
+- 예외 발생 시 에러 로그 기록하고 현재까지의 성공 결과 반환
 
-#### get_stats()
+#### set_price() - 캐시 수동 업데이트
+```python
+# @FEAT:price-cache @COMP:service @TYPE:core
+def set_price(
+    symbol: str,
+    price: Decimal,
+    exchange: str = 'BINANCE',
+    market_type: str = 'FUTURES'
+) -> None
+```
+**기능**: 특정 심볼의 가격을 수동으로 캐시에 저장
+- 캐시 데이터: price, timestamp, exchange, market_type, symbol
+- Thread-safe (RLock 사용)
+- 업데이트 카운트 증가
+
+#### get_stats() - 통계 조회
 ```python
 # @FEAT:price-cache @COMP:service @TYPE:helper
 def get_stats() -> Dict[str, Any]
 ```
-- 캐시 크기, 히트율, 업데이트 횟수 등 통계 제공
+- 반환: 캐시_크기, 히트/미스 횟수, 히트율, 업데이트 횟수
+
+#### clear_cache() / get_cached_symbols() - 유틸리티
+```python
+# @FEAT:price-cache @COMP:service @TYPE:helper
+def clear_cache(
+    exchange: Optional[str] = None,
+    market_type: Optional[str] = None
+) -> int
+
+def get_cached_symbols(
+    exchange: Optional[str] = None,
+    market_type: Optional[str] = None
+) -> list
+```
+**clear_cache()**: 캐시 클리어 (조건부)
+- None일 시 전체 클리어
+- 거래소/마켓타입 필터 적용 가능
+- 반환: 삭제된 항목 수
+
+**get_cached_symbols()**: 캐시된 심볼 목록 조회
+- 거래소/마켓타입 필터 적용 가능
+- 반환: 심볼 리스트
+
+### 4.1.1 싱글톤 인스턴스
+
+```python
+# @FEAT:price-cache @COMP:service @TYPE:core
+price_cache = PriceCache(ttl_seconds=30)  # 30초 TTL
+```
+
+**특징**:
+- 모듈 레벨 싱글톤 (전역 인스턴스)
+- 기본 TTL 60초 대신 30초로 설정 (백그라운드 갱신 주기 31초와 동기화)
+- 거래소 전체, 마켓타입 전체 통합 캐싱
+
+**사용 예시**:
+```python
+from app.services.price_cache import price_cache
+
+# 가격 조회
+price = price_cache.get_price('BTCUSDT', 'BINANCE', 'FUTURES')
+
+# 환율 조회 (금전적 손실 방지)
+rate = price_cache.get_usdt_krw_rate()
+
+# 일괄 업데이트
+prices = price_cache.update_batch_prices(['BTCUSDT', 'ETHUSDT'], 'BINANCE', 'FUTURES')
+
+# 통계
+stats = price_cache.get_stats()
+```
 
 ### 4.2 백그라운드 갱신 스케줄러
 
 | 파일 | 역할 | 태그 |
 |------|------|------|
-| `app/__init__.py:723-816` | 주기적 가격 캐시 갱신 핵심 로직 (`_refresh_price_cache`) | `@FEAT:price-cache @FEAT:background-scheduler @COMP:job @TYPE:core` |
+| `app/__init__.py:979-1081` | 주기적 가격 캐시 갱신 핵심 로직 (`_refresh_price_cache`) | `@FEAT:price-cache @FEAT:background-scheduler @COMP:job @TYPE:core` |
+| `app/__init__.py:1084-1092` | 앱 시작 시 캐시 초기 웜업 (`warm_up_market_caches`) | `@FEAT:price-cache @COMP:job @TYPE:core` |
+| `app/__init__.py:1095-1104` | 주기적 갱신 래퍼 함수 (`update_price_cache`) | `@FEAT:price-cache @COMP:job @TYPE:helper` |
 
-**스케줄러 설정** (`app/__init__.py:547-557`):
+**스케줄러 설정** (`app/__init__.py:687-696`):
 ```python
 scheduler.add_job(
-    func=update_price_cache_with_context,
-    args=[app],
+    func=update_price_cache,
     trigger="interval",
     seconds=31,  # 소수 주기 (정각 트래픽 회피)
     id='update_price_cache',
@@ -137,11 +264,20 @@ scheduler.add_job(
 ```
 
 **갱신 전략 (2-Tier)**:
-1. **Tier 1**: 전체 시장 조회 (symbols=None) - 모든 심볼 캐시 웜업
-2. **Tier 2**: 활성 포지션 우선 갱신 - 보유 중인 심볼 배치 업데이트
 
-**초기 웜업** (`app/__init__.py:819-827`):
-- 애플리케이션 시작 시 `warm_up_market_caches_with_context()` 호출
+**Tier 1 - 전체 시장 조회** (모든 거래소/마켓타입)
+- ExchangeMetadata 기반 supported_markets 필터링
+- 각 거래소별로 메타데이터에 정의된 마켓타입만 조회
+- 전체 심볼 일괄 조회 (symbols=None)
+
+**Tier 2 - 활성 포지션 우선 갱신**
+- DB 조회: `StrategyPosition.query.filter(quantity != 0)`
+- 보유 중인 심볼만 추출하여 거래소/마켓타입별로 그룹화
+- `update_batch_prices()` 호출로 배치 업데이트
+
+**초기 웜업** (`app/__init__.py:1084-1092`):
+- 애플리케이션 시작 시 `warm_up_market_caches()` 호출
+- `_refresh_price_cache(app, source='startup')` 실행
 - 전체 시장 가격 캐시를 미리 로드하여 초기 캐시 미스 방지
 
 ---
@@ -196,6 +332,14 @@ scheduler.add_job(
 | 응답 시간 (캐시 미스) | <200ms | 150ms |
 | API 호출 감소 | 90%+ | 92% |
 | 메모리 사용량 | <50MB | 12MB |
+
+---
+
+## 7.5 Known Issues
+
+### 1시간 갱신 지연 감지 (Critical Safety Check)
+**이상한 점**: `get_price()`가 1시간(3600초) 이상 갱신 안 된 캐시를 감지하면 CRITICAL 로그 후 None 반환
+**이유**: 스케줄러 정지 또는 거래소 API 장애 등으로 인한 금전적 손실 방지. 신뢰할 수 없는 구식 가격으로 거래하지 못하도록 강제
 
 ---
 
@@ -262,5 +406,5 @@ grep -r "update_batch_prices" --include="*.py"
 
 ---
 
-*Last Updated: 2025-10-10*
-*Version: 2.0.0 (Streamlined)*
+*Last Updated: 2025-10-30*
+*Version: 2.2.0 (Code Sync - Added Method Details: __init__, _get_cache_key, _fetch_price_from_api, Singleton Instance)*

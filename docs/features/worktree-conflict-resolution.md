@@ -1,461 +1,480 @@
-# Worktree Service Conflict Detection & Auto-Resolution
+# Worktree Service Conflict Resolution
+
+@FEAT:worktree-conflict-resolution @COMP:service @TYPE:core
 
 ## 개요
 
-여러 git worktree 환경에서 작업 시, 다른 경로에서 실행 중인 서비스를 자동으로 감지하고 안전하게 종료한 후 현재 경로의 서비스를 시작하는 기능입니다.
+여러 git worktree 환경에서 작업 시, 포트 충돌을 **동적 포트 재할당**으로 자동 해결하여 각 워크트리가 독립적으로 실행되도록 합니다.
+메인 프로젝트와 워크트리는 동시에 실행 가능하며, 각각 자신의 포트 범위를 할당받습니다.
 
 ## 배경
 
-### 문제점
-- 여러 worktree에서 동시에 `python run.py start` 실행 시 포트 충돌 발생
-- 이미 실행 중인 서비스가 어느 경로에서 시작되었는지 알 수 없음
-- 수동으로 다른 경로를 찾아가서 서비스를 종료해야 하는 불편함
-- 포트 충돌로 인한 서비스 시작 실패
+### 이전 방식의 문제점
+- 여러 worktree에서 동시에 `python run.py start` 실행 불가능
+- 포트 충돌 시 다른 경로의 서비스 강제 종료 필요
+- 사용자가 어느 워크트리의 서비스가 실행 중인지 추적하기 어려움
 
-### 영향을 받는 포트
-- **443**: HTTPS (Nginx)
-- **5001**: HTTP Flask 앱
-- **5432**: PostgreSQL
+### 현재 해결책: 동적 포트 할당
+- 메인 프로젝트: 표준 포트 사용 (443, 5001, 5432)
+- 각 워크트리: 고유한 포트 범위 할당 (프로젝트명 해시 기반)
+- 동시 실행 가능: 메인 + 최대 98개 워크트리
+
+### 포트 할당 범위
+- **HTTPS**: 4431-4529 (worktree 환경)
+- **HTTP**: 5002-5100 (worktree 환경)
+- **PostgreSQL**: 5433-5531 (worktree 환경)
 
 ## 적용 범위
 
 이 기능은 다음 명령어에서 자동으로 작동합니다:
-- `python run.py start` - 시스템 시작
-- `python run.py restart` - 시스템 재시작
-- `python run.py clean` - 시스템 완전 정리
+- `python run.py start` - 시스템 시작 (동적 포트 할당)
+- `python run.py restart` - 시스템 재시작 (포트 재확인)
 
-모든 명령어 실행 시 자동으로:
-1. 다른 worktree 경로의 실행 중인 서비스 감지
-2. 충돌하는 서비스 안전하게 종료
-3. 현재 경로에서 명령어 실행
+워크트리 감지 및 포트 할당 프로세스:
+1. 현재 경로 확인 (`.worktree/` 패턴 감지)
+2. 워크트리면 동적 포트 할당, 메인이면 표준 포트 사용
+3. 할당된 포트를 `.env.local`에 저장 (재시작 시 일관성 유지)
+4. 모든 필수 포트 가용성 확인
+5. 서비스 시작
 
 ## 기능 설명
 
-### 1. 실행 경로 추적
-Docker Compose는 컨테이너에 다음 라벨을 자동으로 추가합니다:
+### 1. 워크트리 환경 감지
+`_detect_worktree_environment()` 메서드 (StartCommand):
+- 현재 경로에서 `.worktree/` 문자열 감지
+- 워크트리 환경이면 True, 메인 프로젝트면 False 반환
+- 경로: `cli/commands/start.py:61-72`
+
+### 2. 워크트리 포트 초기화
+`_setup_worktree_ports()` 메서드 (StartCommand):
+- 워크트리명 기반 해시로 포트 사전 계산
+- 생성자에서 호출되어 인스턴스 변수에 저장
+- 포트 할당 범위:
+  - **Flask**: 5002-5100 (워크트리명 해시 기반)
+  - **PostgreSQL**: 5433-5531
+  - **HTTPS**: 4431-4529
+- 프로젝트명: `webserver_{worktree_name}` 형식
+- 경로: `cli/commands/start.py:74-93`
+
+### 3. 동적 포트 할당
+`_allocate_ports_dynamically()` 메서드:
+
+**우선순위**:
+1. `.env.local`에 저장된 이전 할당 포트 (존재하고 사용 가능하면 재사용)
+2. 프로젝트명 해시 기반 포트 (`_calculate_hash_port()`)
+3. 포트 범위 내 순차 검색 (충돌 시 다음 가용 포트)
+4. 범위 소진 → `PortAllocationError` 발생
+
+**해시 기반 포트 계산**:
+```python
+def _calculate_hash_port(project_name, start_port, end_port):
+    port_range = end_port - start_port
+    hash_offset = abs(hash(project_name)) % port_range
+    return start_port + hash_offset
 ```
-com.docker.compose.project.working_dir=/path/to/worktree
-com.docker.compose.project=webserver
-```
+- 같은 프로젝트명은 항상 동일 포트 할당
+- 예: `webserver_feature-x` → 항상 5042 (hash 기반)
 
-이 라벨을 통해 각 컨테이너가 어느 경로에서 시작되었는지 추적할 수 있습니다.
+**경로**: `cli/commands/start.py:251-340`
 
-### 2. 자동 충돌 감지
-`check_running_services()` 메서드가 다음을 수행합니다:
-1. 모든 실행 중인 Docker 컨테이너 조회
-2. 트레이딩 시스템 관련 컨테이너 필터링 (postgres, nginx, app)
-3. 현재 경로와 다른 경로의 컨테이너 분류
+### 4. 메인 프로젝트 DB 복사 (Worktree 환경)
+`copy_main_db_to_worktree()` 메서드 (DockerHelper):
 
-### 3. 포트 가용성 확인
-`check_port_availability()` 메서드가 필수 포트의 사용 여부를 확인합니다:
-- 소켓 연결 시도로 포트 사용 여부 테스트
-- OS별로 포트 사용 프로세스 정보 제공:
-  - Windows: `netstat -ano`
-  - macOS: `lsof -i :{port}`
-  - Linux: `ss -tulpn`
+@FEAT:worktree-db-copy @COMP:service @TYPE:core
 
-### 4. 자동 서비스 종료
-`stop_other_services()` 메서드가 충돌하는 서비스를 정리합니다:
-1. 워킹 디렉토리별로 컨테이너 그룹화
-2. 각 디렉토리에서 `docker-compose down --remove-orphans` 실행
-3. 디렉토리가 존재하지 않으면 컨테이너 개별 종료
-4. 포트 해제를 위한 대기 시간 (3초)
+워크트리에서 `python run.py start` 실행 시:
+1. 메인 프로젝트의 `postgres_data/` 디렉토리 위치 파악
+2. 기존 워크트리 DB 제거 (매번 최신 상태 유지)
+3. 메인 DB를 워크트리로 Bind Mount 방식으로 복사
+
+**복사 전략**:
+- `shutil.copytree()`: 디렉토리 전체 복사 (Named Volume 방식에서 변경)
+- `symlinks=False`: 심볼릭 링크 공격 방지
+- `copy_function=shutil.copy2`: 메타데이터 보존
+- 복사 시간: ~30초 (5GB DB 기준)
+
+**경로**: `cli/helpers/docker.py:325-494`
 
 ## 사용 예시
 
-### 시나리오 1: 다른 worktree에서 실행 중
+### 시나리오 1: 메인 프로젝트에서 시작
 
 ```bash
-# worktree1에서 서비스 실행
 cd /Users/binee/Desktop/quant/webserver
-python run.py start
-# ✅ 서비스 시작 완료
-
-# worktree2로 이동
-cd /Users/binee/Desktop/quant/webserver/.worktree/feature-branch
 python run.py start
 
 # 출력:
 # ============================================================
-# ℹ️  다른 경로의 실행 중인 서비스 확인 중...
+# 암호화폐 트레이딩 시스템 CLI
 # ============================================================
-# 
-# ⚠️  다른 worktree 경로에서 실행 중인 서비스가 감지되었습니다!
-# 
-# ⚠️  다른 경로에서 실행 중인 서비스 발견:
-#   📂 /Users/binee/Desktop/quant/webserver
-#      - webserver-postgres-1
-#      - webserver-app-1
-#      - webserver-nginx-1
-# 
-# ℹ️  서비스 종료 중: /Users/binee/Desktop/quant/webserver
-# ✅ 서비스 종료 완료: /Users/binee/Desktop/quant/webserver
-# ℹ️  포트 해제 대기 중...
-# ✅ 다른 경로의 서비스가 성공적으로 종료되었습니다
-# 
+#
+# ℹ️  시스템 요구사항 확인 중...
+# ✅ Docker 확인: Docker version 24.0.0
+# ✅ Docker Compose 확인: Docker Compose version v2.20.0
+# ✅ Docker 서비스 실행 중
+#
 # ============================================================
-# ℹ️  현재 경로에서 서비스 시작: /Users/binee/Desktop/.../feature-branch
+# ℹ️  현재 경로에서 서비스 시작: /Users/binee/Desktop/quant/webserver
 # ============================================================
-# 
-# ... (서비스 시작 계속)
+#
+# ℹ️  PostgreSQL 데이터베이스 시작 중...
+# ℹ️  PostgreSQL 준비 대기 중...
+# ✅ PostgreSQL 준비 완료!
+#
+# ℹ️  Flask 애플리케이션 시작 중...
+# ✅ 데이터베이스 테이블 자동 생성 준비 완료
+#
+# ℹ️  Nginx 리버스 프록시 시작 중...
+# ✅ 서비스 시작 완료!
 ```
 
-### 시나리오 2: 포트 충돌 감지
+### 시나리오 2: 워크트리 환경에서 동적 포트 할당
 
 ```bash
+cd /Users/binee/Desktop/quant/webserver/.worktree/feature-x
 python run.py start
 
-# 포트가 이미 사용 중인 경우:
-# ⚠️  다음 포트가 이미 사용 중입니다: 443, 5001
-# ❌ 충돌하는 프로세스를 종료하거나 포트를 변경해주세요
-# 
-# 포트 443 사용 정보:
-# COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
-# nginx   12345  user    6u  IPv4 0x1a2b3c4d      0t0  TCP *:https (LISTEN)
+# 출력:
+# ℹ️  워크트리 환경 감지: feature-x
+# ℹ️  동적 포트 할당 중...
+# ✅ HTTPS_PORT 할당: 4453
+# ✅ APP_PORT 할당: 5025
+# ✅ POSTGRES_PORT 할당: 5456
+#
+# ℹ️  현재 경로에서 서비스 시작: .../webserver/.worktree/feature-x
+# ℹ️  메인 프로젝트 DB 복사 중...
+# ✅ DB 복사 완료!
+#
+# ... (서비스 시작)
+# ✅ 서비스 시작 완료!
+#
+# 접속 정보:
+#   HTTP: http://localhost:5025
+#   HTTPS: https://localhost:4453
+```
+
+### 시나리오 3: 메인 + 워크트리 동시 실행
+
+```bash
+# Terminal 1: 메인 프로젝트
+cd /Users/binee/Desktop/quant/webserver
+python run.py start
+# → 포트: 443, 5001, 5432 사용
+
+# Terminal 2: 워크트리 (별도 터미널)
+cd /Users/binee/Desktop/quant/webserver/.worktree/feature-y
+python run.py start
+# → 포트: 4442, 5012, 5445 할당 (동시 실행 가능!)
+
+# 두 서비스가 독립적으로 실행되며, 서로 영향을 주지 않음
 ```
 
 ## 구현 세부사항
 
-### 메서드 목록
+### StartCommand 메서드 목록
 
-#### 1. `check_port_availability(port: int) -> bool`
-**목적**: 특정 포트의 사용 가능 여부 확인
+#### 1. `_detect_worktree_environment() -> bool`
+**경로**: `cli/commands/start.py:61-72`
 
-**로직**:
+워크트리 환경 여부를 `.worktree/` 패턴으로 감지합니다.
+
 ```python
-def check_port_availability(self, port):
-    """Check if a port is available"""
+def _detect_worktree_environment(self) -> bool:
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            result = s.connect_ex(('localhost', port))
-            return result != 0  # Port is available if connection fails
+        current_path = str(self.root_dir.resolve())
+        return '.worktree' in current_path
     except Exception:
-        return True  # Assume available if check fails
+        return False
 ```
 
-**반환값**:
-- `True`: 포트 사용 가능
-- `False`: 포트 이미 사용 중
+#### 2. `_setup_worktree_ports()`
+**경로**: `cli/commands/start.py:74-93`
 
-#### 2. `get_running_containers_info() -> List[Dict]`
-**목적**: 실행 중인 트레이딩 시스템 컨테이너 정보 수집
+워크트리명 기반 해시로 포트를 사전 계산하여 인스턴스 변수에 저장합니다.
 
-**로직**:
+**동작**:
+- 워크트리명 기반 오프셋 계산 (0-97 범위)
+- `self.flask_port = 5002 + offset`
+- `self.postgres_port = 5433 + offset`
+- `self.https_port = 4431 + offset`
+- 프로젝트명 설정: `webserver_{worktree_name}`
+
+#### 3. `_calculate_hash_port(project_name, start_port, end_port) -> int`
+**경로**: `cli/commands/start.py:227-249`
+
+프로젝트명의 해시값으로 포트 범위 내 일관된 포트를 계산합니다.
+
 ```python
-def get_running_containers_info(self):
-    """Get information about running trading system containers"""
-    result = subprocess.run([
-        'docker', 'ps', '--format',
-        '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project.working_dir"}}|{{.Label "com.docker.compose.project"}}'
-    ], capture_output=True, text=True, check=True)
-    
-    containers = []
-    for line in result.stdout.strip().split('\n'):
-        parts = line.split('|')
-        if len(parts) >= 4:
-            container_id, name, working_dir, project = parts
-            if any(keyword in name.lower() for keyword in ['postgres', 'nginx', 'app', 'trading']):
-                containers.append({
-                    'id': container_id,
-                    'name': name,
-                    'working_dir': working_dir,
-                    'project': project
-                })
-    return containers
+port_range = end_port - start_port
+hash_offset = abs(hash(project_name)) % port_range
+return start_port + hash_offset
 ```
 
-**반환값**:
-```python
-[
-    {
-        'id': 'abc123',
-        'name': 'webserver-postgres-1',
-        'working_dir': '/Users/binee/Desktop/quant/webserver',
-        'project': 'webserver'
-    },
-    ...
-]
-```
+#### 4. `_allocate_ports_dynamically(project_name) -> dict`
+**경로**: `cli/commands/start.py:251-340`
 
-#### 3. `check_running_services() -> Dict`
-**목적**: 현재 경로와 다른 경로의 서비스 분류
+동적 포트 할당 메서드로, 다음 우선순위로 포트를 결정합니다:
+
+**우선순위**:
+1. `.env.local`에 저장된 포트 (존재 + 가용)
+2. 해시 기반 포트 (`_calculate_hash_port()`)
+3. 범위 내 순차 검색 (충돌 시 다음 포트)
+4. 범위 소진 → `PortAllocationError`
 
 **반환값**:
 ```python
 {
-    'other_services': [...],      # 다른 경로의 컨테이너
-    'current_services': [...]     # 현재 경로의 컨테이너
+    "HTTPS_PORT": 4431,
+    "APP_PORT": 5002,
+    "POSTGRES_PORT": 5433
 }
 ```
 
-#### 4. `stop_other_services(other_services: List[Dict]) -> bool`
-**목적**: 다른 경로의 서비스 안전하게 종료
+#### 5. `_check_required_ports(args) -> bool`
+**경로**: `cli/commands/start.py:342-418`
 
-**로직**:
-1. 워킹 디렉토리별로 컨테이너 그룹화
-2. 각 디렉토리에 대해:
-   - `docker-compose.yml` 존재 시: `docker-compose down --remove-orphans`
-   - 없으면: 각 컨테이너 개별 종료 (`docker stop {container_id}`)
-3. 예외 발생 시 강제 종료 시도
-4. 3초 대기 (포트 해제)
+필수 포트 사용 가능 여부 확인, 충돌 시 동적 할당 시작합니다.
 
-#### 5. `detect_and_stop_conflicts() -> bool`
-**목적**: 충돌 감지 및 종료 로직을 통합한 고수준 메서드
+**동작**:
+- 메인: 고정 포트 검증만 (443, 5001, 5432)
+- 워크트리: 충돌 감지 시 `_allocate_ports_dynamically()` 호출
+- 할당 포트를 `os.environ`과 인스턴스 변수에 반영
 
-**로직**:
-```python
-def detect_and_stop_conflicts(self):
-    """Detect and stop services from other worktree directories"""
-    # 1. 실행 중인 서비스 확인
-    running_services = self.check_running_services()
-    
-    # 2. 다른 경로 서비스 종료
-    if running_services and running_services['other_services']:
-        if not self.stop_other_services(running_services['other_services']):
-            return False
-    
-    return True
+#### 6. `_detect_and_stop_conflicts() -> bool` (DEPRECATED)
+**경로**: `cli/commands/start.py:179-225`
+
+**현재 상태**: 하위 호환성을 위해 유지, 실제로는 종료하지 않음.
+
+다른 webserver 프로젝트만 감지하고 정보를 출력하며, 실제 종료는 하지 않습니다.
+동적 포트 할당으로 인해 충돌 해결이 자동화되었습니다.
+
+### DockerHelper 메서드
+
+#### 1. `_find_main_project_root() -> Optional[Path]`
+**경로**: `cli/helpers/docker.py:325-387`
+
+워크트리에서 메인 프로젝트 루트를 찾습니다.
+
+```
+입력: /Users/binee/Desktop/quant/webserver/.worktree/feature-x/
+출력: /Users/binee/Desktop/quant/webserver/
 ```
 
-**사용 위치**:
-- `start_system()`: 시작 전 충돌 감지
-- `restart_system()`: 재시작 전 충돌 감지
-- `clean_system()`: 정리 전 충돌 감지
+#### 2. `copy_main_db_to_worktree(worktree_project_name) -> bool`
+**경로**: `cli/helpers/docker.py:389-494`
 
-### 명령어별 통합
+워크트리에서 메인 프로젝트의 `postgres_data/`를 복사합니다.
 
-#### start_system()
-```python
-def start_system(self):
-    """시스템 시작"""
-    self.print_banner()
-    
-    if not self.check_requirements():
-        return False
-    
-    # 1. 다른 경로 서비스 확인 및 종료
-    if not self.detect_and_stop_conflicts():
-        return False
-    
-    # 2. 포트 가용성 확인
-    unavailable_ports = [p for p in self.required_ports 
-                        if not self.check_port_availability(p)]
-    if unavailable_ports:
-        return False
-    
-    # 3. 서비스 시작 (기존 로직)
-    ...
-```
+**복사 전략**:
+- `shutil.copytree()`: 디렉토리 전체 복사
+- `symlinks=False`: 심볼릭 링크 공격 방지
+- `copy_function=shutil.copy2`: 메타데이터 보존
 
-#### restart_system()
-```python
-def restart_system(self):
-    """시스템 재시작"""
-    self.print_banner()
-    
-    # 1. 요구사항 확인
-    if not self.check_requirements():
-        return False
-    
-    # 2. 다른 경로 서비스 확인 및 종료
-    if not self.detect_and_stop_conflicts():
-        return False
-    
-    # 3. 현재 경로 서비스 종료
-    self.stop_system()
-    
-    # 4. 대기 (포트 해제)
-    time.sleep(5)
-    
-    # 5. 서비스 재시작
-    # (start_system() 로직 인라인 - 중복 충돌 감지 방지)
-    ...
-```
+**반환값**:
+- `True`: 복사 성공, 메인 DB 없음, 워크트리 아님 (정상 흐름)
+- `False`: 권한 오류, 파일 삭제/복사 실패
 
-#### clean_system()
-```python
-def clean_system(self):
-    """시스템 완전 정리"""
-    # 1. 경고 메시지 및 사용자 확인
-    ...
-    
-    # 2. 요구사항 확인
-    if not hasattr(self, 'compose_cmd'):
-        self.check_requirements()
-    
-    # 3. 다른 경로 서비스 확인 및 종료
-    if not self.detect_and_stop_conflicts():
-        self.print_status("다른 경로 서비스 종료 실패", "warning")
-        # 정리는 계속 진행
-    
-    # 4. 현재 경로 정리
-    # - Docker 컨테이너, 볼륨, 이미지 삭제
-    # - SSL 인증서 삭제
-    # - 시스템 정리
-    ...
-```
+### 명령어 통합
+
+#### execute() (StartCommand)
+**경로**: `cli/commands/start.py:95-177`
+
+1. 배너 및 요구사항 확인
+2. 충돌 감지 (`_detect_and_stop_conflicts()`) - 정보 출력만
+3. 포트 확인 (`_check_required_ports()`)
+4. 워크트리 환경 변수 설정 (`_setup_worktree_environment()`)
+5. 기존 컨테이너 정리
+6. **워크트리면 DB 복사** (`copy_main_db_to_worktree()`)
+7. PostgreSQL, Flask, Nginx 시작
+8. 성공 메시지 및 접속 정보 출력
 
 ## 장점
 
-### 1. 사용자 편의성
-- ✅ 수동으로 다른 worktree 찾아가서 종료할 필요 없음
-- ✅ 자동으로 충돌 감지 및 해결
-- ✅ 명확한 상태 메시지로 진행 상황 파악 가능
+### 1. 동시 실행 지원
+- ✅ 메인 + 최대 98개 워크트리 동시 실행 가능
+- ✅ 포트 자동 재할당으로 충돌 방지
+- ✅ 프로젝트명 해시 기반 포트로 일관성 보장
 
-### 2. 안전성
-- ✅ 포트 충돌 사전 확인
-- ✅ 정상 종료 (docker-compose down) 시도
-- ✅ 실패 시 강제 종료 백업 로직
-- ✅ 포트 해제 대기 시간 확보
+### 2. 사용자 편의성
+- ✅ 자동 포트 할당 - 명령어 하나로 완료
+- ✅ `.env.local`에 저장 - 재시작 시 동일 포트 사용
+- ✅ 워크트리 인식 - 자동 DB 복사로 같은 데이터 환경
 
 ### 3. 개발 워크플로우 개선
-- ✅ 여러 브랜치/기능을 빠르게 전환 가능
-- ✅ worktree 경로 기억할 필요 없음
-- ✅ 명령어 하나로 서비스 전환 완료
+- ✅ 다중 브랜치 동시 개발 가능
+- ✅ 브랜치 전환 시 별도 터미널만 열면 됨
+- ✅ 각 워크트리가 독립적으로 실행 (서로 영향 없음)
+
+### 4. 안정성
+- ✅ 해시 기반 포트로 예측 가능한 할당
+- ✅ 심볼릭 링크 공격 방지 (DB 복사 시)
+- ✅ 메타데이터 보존으로 권한/타임스탬프 유지
 
 ## 제한사항
 
-### 1. Docker Labels 의존성
-- Docker Compose V2+ 필요
-- 수동으로 시작한 컨테이너는 감지 불가 (라벨 없음)
+### 1. 포트 범위 한계
+- 워크트리당 약 100개 포트 (HTTPS, APP, PostgreSQL)
+- 범위 소진 시 `PortAllocationError` 발생
+- 실제로는 최대 98개 워크트리만 동시 실행 가능
 
-### 2. 동시 실행 불가
-- 여러 worktree에서 동시에 서비스 실행 불가능
-- 포트 충돌로 인한 기술적 제약
+### 2. 해시 충돌 가능성 (낮음)
+- 프로젝트명이 같으면 동일 포트 할당
+- 해시 함수로 인한 충돌 가능 (매우 낮음)
+- 순차 검색으로 대체 포트 자동 탐색
 
-### 3. 타임아웃
-- 서비스 종료 타임아웃: 30초
-- 컨테이너 개별 종료 타임아웃: 10초
-- 포트 확인 타임아웃: 5초
+### 3. DB 복사 시간
+- 첫 시작: ~30초 (5GB DB 기준)
+- 매번 메인 DB 복사 (최신 상태 유지)
+- 대용량 DB 환경에서 시간 소요 가능
+
+### 4. 메인 프로젝트 DB 의존성
+- 워크트리는 메인 프로젝트 DB를 복사하여 사용
+- 메인 프로젝트 DB 없으면 초기화된 DB로 시작
+- 메인과 워크트리 DB는 독립적 (복사 후 변경사항 미동기)
 
 ## 테스트 시나리오
 
-### 테스트 1: start - 기본 충돌 해결
+### 테스트 1: 워크트리 포트 할당
 ```bash
 # Setup
-cd /path/to/worktree1
+cd /Users/binee/Desktop/quant/webserver/.worktree/feature-a
 python run.py start
-# 확인: 서비스 정상 실행
+# 확인: 포트 4453, 5025, 5456 할당
 
-# Test
-cd /path/to/worktree2
-python run.py start
-# 기대 결과: worktree1 서비스 종료 → worktree2 서비스 시작
-```
-
-### 테스트 2: restart - 다른 경로에서 실행 중
-```bash
-# Setup
-cd /path/to/worktree1
-python run.py start
-# 확인: 서비스 정상 실행
-
-# Test
-cd /path/to/worktree2
+# Test: 동일 워크트리에서 재시작
 python run.py restart
-# 기대 결과: 
-# 1. worktree1 서비스 감지 및 종료
-# 2. worktree2 현재 서비스 종료 (없음)
-# 3. worktree2 서비스 시작
+# 기대 결과: 동일 포트 재할당 (일관성 보장)
 ```
 
-### 테스트 3: clean - 다른 경로 정리 후 현재 경로 정리
+### 테스트 2: 메인 + 워크트리 동시 실행
 ```bash
-# Setup
-cd /path/to/worktree1
+# Terminal 1: 메인 프로젝트
+cd /Users/binee/Desktop/quant/webserver
 python run.py start
-# 확인: 서비스 정상 실행
+# → 포트: 443, 5001, 5432
 
-# Test
-cd /path/to/worktree2
-python run.py clean
-# 입력: yes
+# Terminal 2: 워크트리
+cd /Users/binee/Desktop/quant/webserver/.worktree/feature-b
+python run.py start
+# → 포트: 4442, 5012, 5445
+
+# 기대 결과: 두 서비스 동시 실행, 포트 충돌 없음
+```
+
+### 테스트 3: 다중 워크트리 동시 실행
+```bash
+# Terminal 1
+cd .worktree/feature-x && python run.py start  # 포트 A
+
+# Terminal 2
+cd .worktree/feature-y && python run.py start  # 포트 B
+
+# Terminal 3
+cd .worktree/feature-z && python run.py start  # 포트 C
+
+# 기대 결과: 세 워크트리 모두 독립적 포트로 실행
+```
+
+### 테스트 4: 메인 DB 복사
+```bash
+# Setup: 메인 프로젝트 DB 생성
+cd /Users/binee/Desktop/quant/webserver
+python run.py start
+# → DB 초기화, 전략/거래소 설정 추가
+
+# Test: 워크트리에서 시작
+cd .worktree/new-feature
+python run.py start
 # 기대 결과:
-# 1. worktree1 서비스 감지 및 종료
-# 2. worktree2 모든 데이터/이미지/인증서 삭제
+# 1. 메인 DB 자동 감지
+# 2. postgres_data/ 복사
+# 3. 동일한 DB 상태로 시작
 ```
 
-### 테스트 4: 존재하지 않는 경로
+### 테스트 5: 포트 범위 소진 (극한)
 ```bash
-# Setup
-cd /path/to/worktree1
-python run.py start
-rm -rf /path/to/worktree1  # 경로 삭제 (위험: 테스트 환경에서만)
+# 범위: APP_PORT 5002-5100 (99개)
+# 최대 99개 워크트리 동시 실행
 
-# Test
-cd /path/to/worktree2
+# 100번째 워크트리 시작
+cd .worktree/worktree-100
 python run.py start
-# 기대 결과: 컨테이너 개별 종료 → worktree2 서비스 시작
+# 기대 결과: PortAllocationError 발생 및 명확한 오류 메시지
 ```
 
-### 테스트 5: 포트 충돌 (외부 프로세스)
+### 테스트 6: 권한 오류 (DB 복사 실패)
 ```bash
 # Setup
-nginx  # 포트 443 점유
+chmod 000 /Users/binee/Desktop/quant/webserver/postgres_data
 
 # Test
-cd /path/to/worktree
+cd .worktree/feature-x
 python run.py start
-# 기대 결과: 포트 충돌 오류 메시지, 종료
+# 기대 결과:
+# ❌ 권한 오류 메시지
+# ℹ️ 해결 방법: sudo chmod -R 755 postgres_data/
 ```
 
 ## 향후 개선 사항
 
-### 1. 사용자 확인 옵션
+### 1. 포트 범위 확장
+- 현재: 최대 98개 워크트리
+- 개선: 포트 범위를 더 많은 값으로 확장 (예: 4400-4999)
+
+### 2. DB 동기화 옵션
 ```bash
-python run.py start --no-auto-stop  # 자동 종료 비활성화
+python run.py start --keep-db  # 기존 워크트리 DB 유지
+python run.py start --sync-db  # 매 시작 시 메인 DB 동기화
 ```
 
-### 2. 병렬 실행 지원 (포트 분리)
-각 worktree에 다른 포트 자동 할당:
-```
-worktree1: 443, 5001, 5432
-worktree2: 444, 5002, 5433
-```
+### 3. 포트 할당 UI 개선
+- 할당된 포트를 파일로 저장 (`.env.worktree`)
+- CLI에서 포트 정보 조회 명령어 추가
 
-### 3. 상태 저장
-마지막 실행 경로 추적:
-```bash
-python run.py start --resume  # 마지막 실행 경로로 복귀
-```
+## 관련 파일 및 라인 번호
 
-## 관련 파일
+### CLI 명령어 체계
+- `cli/commands/start.py:61-72` - _detect_worktree_environment()
+- `cli/commands/start.py:74-93` - _setup_worktree_ports()
+- `cli/commands/start.py:95-177` - execute() 메인 로직
+- `cli/commands/start.py:179-225` - _detect_and_stop_conflicts() (deprecated)
+- `cli/commands/start.py:227-249` - _calculate_hash_port()
+- `cli/commands/start.py:251-340` - _allocate_ports_dynamically()
+- `cli/commands/start.py:342-418` - _check_required_ports()
+- `cli/commands/start.py:453-467` - _setup_worktree_environment()
 
-### 주요 파일
-- `run.py`: TradingSystemManager 클래스
-  - Lines 412-416: `__init__` (required_ports 추가, 절대 경로 사용)
-  - Lines 468-476: `check_port_availability()` - 포트 가용성 확인
-  - Lines 478-505: `get_running_containers_info()` - 컨테이너 정보 수집
-  - Lines 507-528: `check_running_services()` - 실행 중인 서비스 분류
-  - Lines 530-585: `stop_other_services()` - 다른 경로 서비스 종료
-  - Lines 587-610: `detect_and_stop_conflicts()` - 충돌 감지 및 종료 통합
-  - Lines 833-904: `start_system()` - 충돌 감지 로직 통합
-  - Lines 987-1077: `restart_system()` - 충돌 감지 및 재시작
-  - Lines 1164-1247: `clean_system()` - 충돌 감지 및 정리
+### 헬퍼 모듈
+- `cli/helpers/docker.py:325-387` - _find_main_project_root()
+- `cli/helpers/docker.py:389-494` - copy_main_db_to_worktree()
 
 ### 문서
-- `README.md`: Lines 70-91 (사용자 가이드)
-- `docs/FEATURE_CATALOG.md`: 기능 카탈로그 엔트리
+- `docs/FEATURE_CATALOG.md` - 기능 카탈로그 (업데이트 필요)
+- `README.md` - 사용자 가이드
 
-## 태그
+## 태그 및 검색
 
+### 기능 태그
 ```python
-# @FEAT:worktree-conflict-resolution
-# @COMP:util
-# @TYPE:core
+# @FEAT:worktree-conflict-resolution @COMP:service @TYPE:core
+# @FEAT:worktree-db-copy @COMP:service @TYPE:core
+# @FEAT:dynamic-port-allocation @COMP:service @TYPE:core
 ```
 
-## 검색 명령어
-
+### 검색 명령어
 ```bash
-# 관련 메서드 찾기
-grep -n "check_running_services\|stop_other_services\|check_port_availability" run.py
+# 동적 포트 할당 로직
+grep -n "_allocate_ports_dynamically\|_calculate_hash_port" cli/commands/start.py
 
-# 기능 사용 위치 찾기
-grep -n "worktree-conflict-resolution" docs/
+# DB 복사 로직
+grep -n "copy_main_db_to_worktree\|_find_main_project_root" cli/helpers/docker.py
 
-# Docker 라벨 확인
-docker ps --format '{{.Names}}|{{.Label "com.docker.compose.project.working_dir"}}'
+# 워크트리 환경 감지
+grep -n "_detect_worktree_environment" cli/commands/start.py
+
+# 충돌 감지 (deprecated)
+grep -n "_detect_and_stop_conflicts" cli/commands/start.py
 ```
 
+---
+
+**Last Updated**: 2025-10-30 - 코드 기준 동기화 (execute() 라인, _setup_worktree_ports() 추가, 메서드 라인번호 정확화)

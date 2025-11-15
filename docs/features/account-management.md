@@ -51,8 +51,8 @@ User Request → Route (accounts.py) → Service (security.py) → DB (models.py
 
 ### 1. 계좌 CRUD
 - **생성**: API 키 Fernet 암호화 저장, 잔고 조회 및 스냅샷 저장
-- **조회**: 사용자 계좌 목록/상세, API 키 마스킹 처리 (앞뒤 4자리만 표시)
-- **수정**: 계좌명, 활성화 상태, API 키 재등록 (캐시 무효화)
+- **조회**: 사용자 계좌 목록/상세, API 키 마스킹 처리 (앞뒤 4자리만 표시), KRW→USDT 변환 (Phase 2)
+- **수정**: 계좌명, 활성화 상태, API 키 재등록 (캐시 무효화), 비활성화 시 SSE 종료 (Phase 4)
 - **삭제**: CASCADE 물리 삭제 (연관 전략, 주문, 포지션 등 자동 삭제)
 - **계좌 타입**: CRYPTO (암호화폐) / STOCK (증권) 구분 지원
 
@@ -63,8 +63,9 @@ User Request → Route (accounts.py) → Service (security.py) → DB (models.py
 
 ### 3. 거래소 연동
 - **연결 테스트**: API 키 유효성 검증, 잔고 조회 성공 여부 확인
-- **잔고 조회**: Spot/Futures 구분, 자산별 free/locked/total 조회
-- **스냅샷 저장**: DailyAccountSummary 테이블에 일일 잔고 자동 저장
+- **잔고 조회**: Spot/Futures 구분, 자산별 free/locked/total 조회, 환율 기반 KRW→USDT 변환 (Phase 2)
+- **스냅샷 저장**: DailyAccountSummary 테이블에 일일 잔고 자동 저장 (Spot/Futures 분리)
+- **환율 적용**: PriceCache에서 USDT/KRW 환율 조회, Graceful Degradation (환율 조회 실패 시 원화 표시)
 
 ### 4. 증권 계좌 지원 (신규)
 - **OAuth 토큰**: 한국투자증권 등 OAuth 기반 인증 토큰 암호화 저장
@@ -81,6 +82,13 @@ GET /api/accounts
 Authorization: Required
 ```
 **응답**: 계좌 목록 + 최신 잔고 (`latest_balance`, `latest_balance_date`)
+
+**KRW → USDT 변환 (Phase 2 신규)**:
+- 국내 거래소(UPBIT, BITHUMB) 계좌의 KRW 잔고 자동 변환
+- 환율 조회 성공 시: `latest_balance` (USDT), `original_balance_krw`, `usdt_krw_rate` 포함
+- 환율 조회 실패 시: KRW 원화 표시, `conversion_error: "환율 조회 실패"` 설정
+- 환율 데이터 이상(0 이하) 시: `conversion_error: "환율 데이터 이상"` 설정
+- 해외 거래소: 변환 없음, `currency_converted: false`
 
 ### 2. 계좌 생성
 ```http
@@ -123,6 +131,11 @@ Content-Type: application/json
 - 프론트엔드에서 빈 문자열/null인 API 키 필드를 요청에서 제외
 - 계좌 이름만 변경 시 불필요한 캐시 무효화 방지
 - 백엔드 `update_account` 메서드의 Variable Shadowing 버그 수정 (Phase 1)
+
+**Phase 4 신규 기능 (2025-10-30)**:
+- 계좌 비활성화(`is_active=false`) 시 연결된 모든 활성 전략의 SSE 클라이언트 즉시 종료
+- 이유: 사용자가 거래소 키를 수동 폐기하면 해당 계좌로 더 이상 주문 불가능하므로 실시간 스트림 연결 해제 필요
+- 로직: `event_service.disconnect_client(user_id, strategy_id, reason='account_deactivated')` 호출
 
 ### 5. 계좌 삭제
 ```http
@@ -288,10 +301,18 @@ from app.security.encryption import encrypt_value, decrypt_value, is_likely_lega
 
 ## Known Issues
 
-### Variable Shadowing 방지 (security.py:634)
-**이상한 점**: `update_account` 메서드에서 캐시 무효화 시 `Account.clear_cache()` 직접 호출  
-**이유**: 함수 내 조건부 `from app.models import Account` import 시 Python이 `Account`를 지역 변수로 인식하여 UnboundLocalError 발생. 모듈 레벨 import만 사용하여 회피.  
+### 1. Variable Shadowing 방지 (security.py:634)
+**이상한 점**: `update_account` 메서드에서 캐시 무효화 시 `Account.clear_cache()` 직접 호출
+**이유**: 함수 내 조건부 `from app.models import Account` import 시 Python이 `Account`를 지역 변수로 인식하여 UnboundLocalError 발생. 모듈 레벨 import만 사용하여 회피.
 **참고**: `docs/decisions/004-python-variable-shadowing-prevention.md`
+
+### 2. Graceful Degradation - 환율 조회 실패 (Phase 2)
+**처리 방식**: 환율 조회 실패 시 국내 계좌의 KRW 잔고를 그대로 표시
+**이유**: USDT/KRW 환율은 보조 정보이므로, 환율 조회 실패가 전체 계좌 목록 조회를 실패하게 해서는 안 됨
+**로직**:
+- 환율 조회 실패 → `conversion_error: "환율 조회 실패"` 설정, KRW 원화 표시
+- 환율이 0 이하 → `conversion_error: "환율 데이터 이상"` 설정, KRW 원화 표시
+- 각 개별 계정 변환 실패해도 다른 계정 처리는 계속
 
 ---
 
@@ -303,4 +324,4 @@ from app.security.encryption import encrypt_value, decrypt_value, is_likely_lega
 
 ---
 
-*Last Updated: 2025-10-13*
+*Last Updated: 2025-10-30*

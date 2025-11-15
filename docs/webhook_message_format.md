@@ -17,7 +17,7 @@ Content-Type: application/json
 | `symbol` | String | 거래 심볼 | `"BTC/USDT"`, `"005930"` |
 | `order_type` | String | 주문 타입 | `"MARKET"`, `"LIMIT"` |
 | `side` | String | 거래 방향 | `"buy"`, `"sell"` |
-| `qty_per` | Number | 수량 (크립토: %, 증권: 주) | `10`, `-100` (청산) |
+| `qty_per` | Number | 수량 (크립토: %, 증권: 주) | `10`, `-100` (청산), `200` (레버리지) |
 
 ### 주문 타입별 추가 필드
 
@@ -27,6 +27,28 @@ Content-Type: application/json
 | `STOP_MARKET` | `stop_price` |
 | `STOP_LIMIT` | `price`, `stop_price` |
 | `CANCEL_ALL_ORDER` | (side 선택적) |
+
+### 시스템 제한
+
+**타임아웃**: 10초
+- 웹훅 처리는 **10초 제한**이 적용됩니다
+- 10초 내에 처리되지 않으면 타임아웃 응답 반환
+- 배치 주문은 **30개 제한** (10초 안전 마진 확보)
+
+**타임아웃 발생 시 응답**:
+```json
+{
+  "success": false,
+  "error": "Webhook processing timeout (10s)",
+  "timeout": true,
+  "processing_time_ms": 10000,
+  "message": "웹훅 타임아웃"
+}
+```
+
+> ⚠️ **중요**: 타임아웃 발생 시에도 **HTTP 200 OK**로 응답합니다. 이는 TradingView 등 외부 시스템의 자동 재전송을 방지하기 위함입니다.
+
+> 💡 **부분 실행**: 배치 주문에서 타임아웃 발생 시, 완료된 주문은 유지되고 미완료 주문만 실패 처리됩니다.
 
 ### 심볼 포맷
 
@@ -139,11 +161,19 @@ Content-Type: application/json
 - **각 주문 필수**: `order_type`, `side`, `qty_per`, `price` (타입별)
 
 ### 자동 우선순위 정렬
-1. MARKET (시장가)
-2. CANCEL_ALL_ORDER (취소)
-3. LIMIT (지정가)
-4. STOP_MARKET
-5. STOP_LIMIT
+
+배치 주문은 2단계로 처리됩니다:
+
+**1단계 (고우선순위 - 즉시 실행)**
+- MARKET (시장가)
+- CANCEL_ALL_ORDER (주문 취소)
+
+**2단계 (저우선순위 - 이후 실행)**
+- LIMIT (지정가)
+- STOP_MARKET
+- STOP_LIMIT
+
+> 💡 **처리 방식**: 1단계 주문이 모두 완료된 후 2단계 주문이 실행됩니다. 각 단계는 독립적으로 처리되어 한 단계의 실패가 다른 단계에 영향을 주지 않습니다.
 
 ### 예시: 기존 주문 취소 후 재생성
 ```json
@@ -196,7 +226,7 @@ Content-Type: application/json
 
 ### 포지션 청산 실패
 ```json
-{"error": "청산할 롱 포지션이 없습니다", "status": 400}
+{"error": "청산할 포지션이 없습니다.", "status": 400}
 ```
 → qty_per=-100은 포지션이 있을 때만 사용 가능
 
@@ -215,6 +245,12 @@ A. 아니오. 현재는 상위 레벨 symbol만 폴백 지원하므로, 한 번�
 
 **Q. exchange나 market_type을 지정해야 하나요?**
 A. 아니오. 전략(group_name)에 연동된 모든 계좌에서 자동으로 주문이 실행됩니다.
+
+**Q. 타임아웃이 발생하면 어떻게 되나요?**
+A. 10초 타임아웃 발생 시에도 HTTP 200 OK로 응답합니다. 완료된 주문은 유지되고, 미완료 주문만 실패 처리됩니다. 응답의 `timeout: true` 필드로 타임아웃 여부를 확인할 수 있습니다.
+
+**Q. qty_per를 100 이상으로 설정할 수 있나요?**
+A. 네. Futures 거래에서 레버리지를 활용하는 경우 100% 이상 설정이 가능합니다. 예를 들어, qty_per=200, leverage=10이면 할당 자본의 20배 포지션을 보유하게 됩니다. 거래소의 레버리지 한도와 증거금 요구사항이 적용됩니다.
 
 ---
 
@@ -250,5 +286,5 @@ tail -f /web_server/logs/app.log
 
 ---
 
-**최종 업데이트**: 2025-10-08
+**최종 업데이트**: 2025-11-07 (문서 정확성 검증 완료)
 **버전**: 2.0 (통합 웹훅)

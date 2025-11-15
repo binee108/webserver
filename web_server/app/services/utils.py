@@ -128,8 +128,28 @@ def _suggest_symbol_format(symbol_input: str) -> str:
     return None
 
 # @FEAT:webhook-order @COMP:validation @TYPE:validation
+# @REFACTOR:2025-11-03 - Removed batch_mode field assignment (Phase 2)
 def normalize_webhook_data(webhook_data: dict) -> dict:
-    """웹훅 데이터의 필드명을 표준화 (order_type은 정확한 필드명만 허용)"""
+    """
+    웹훅 데이터의 필드명을 표준화합니다 (order_type은 정확한 필드명만 허용).
+
+    배치 모드 감지:
+        'orders' 필드 존재 여부로 배치 모드를 판단합니다.
+        @PRINCIPLE: batch_mode 파생 필드를 생성하지 않습니다 (단일 소스 원칙)
+        @REFACTOR:2025-11-03 - batch_mode 필드 할당 제거 (Phase 2)
+
+    수량 지정 방식:
+        - qty: 절대 수량 지정 (예: {"qty": 10} = 10 BTC 정확히)
+        - qty_per: 비율 기반 수량 (예: {"qty_per": 50} = allocated_capital의 50%)
+        - 단일 주문: 둘 중 하나 선택 (CANCEL_ALL_ORDER 제외)
+        - 배치 주문: 각 order별로 독립 지정 (폴백 정책 없음)
+
+    Args:
+        webhook_data: 웹훅 입력 데이터
+
+    Returns:
+        정규화된 데이터 (qty, qty_per 필드 포함 가능, 'orders' 필드로만 배치 감지)
+    """
     normalized = {}
 
     # 필드명 매핑 (소문자 키 -> 표준 키)
@@ -145,7 +165,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         'price': 'price',
         'stop_price': 'stop_price',  # STOP 주문용 Stop 가격
         'stopprice': 'stop_price',   # 대안 필드명
-        'qty_per': 'qty_per',
+        'qty_per': 'qty_per',        # 비율 기반 (allocated_capital * qty_per%)
+        'qty': 'qty',                # 🆕 절대 수량 (예: 10 BTC 정확히 지정)
         'token': 'token',
         'user_token': 'token',
         'params': 'params'           # 🆕 증권/선물옵션용 추가 파라미터
@@ -200,8 +221,8 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         # 필터링: strategy_account_id (전략 격리) + symbol (필수) + side (선택적)
 
     # 🆕 배치 주문 감지 및 처리 (새로운 포맷)
+    # @REFACTOR:2025-11-03 - Batch mode detected via 'orders' field only (no batch_mode assignment)
     if 'orders' in webhook_data and isinstance(webhook_data['orders'], list):
-        normalized['batch_mode'] = True
         normalized['orders'] = []
 
         # 상위 레벨 공통 필드 (폴백 지원): symbol만
@@ -267,6 +288,11 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                 if 'qty_per' in order:
                     batch_order['qty_per'] = to_decimal(order['qty_per'])
 
+                # 🆕 qty 지원 (절대 수량: qty_per 대신 정확한 수량 지정)
+                # 예: 100개 주문 중 각각 5, 10, 15 BTC 등으로 서로 다른 양 지정 가능
+                if 'qty' in order:
+                    batch_order['qty'] = to_decimal(order['qty'])
+
                 # params 지원 (확장 파라미터)
                 if 'params' in order:
                     batch_order['params'] = order['params']
@@ -286,11 +312,11 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
                         f"폴백 정책 변경 (2025-10-08): side는 각 주문에 명시해야 합니다."
                     )
 
-                # qty_per 검증 (CANCEL_ALL_ORDER 제외 필수)
-                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('qty_per'):
+                # 🆕 qty 또는 qty_per 검증 (CANCEL_ALL_ORDER, CANCEL 제외 필수)
+                if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL'] and not batch_order.get('qty_per') and not batch_order.get('qty'):
                     raise ValueError(
-                        f"배치 주문 {idx + 1}번째에 qty_per가 필요합니다. "
-                        f"폴백 정책 변경 (2025-10-08): qty_per는 각 주문에 명시해야 합니다."
+                        f"배치 주문 {idx + 1}번째에 qty 또는 qty_per 중 하나가 필요합니다. "
+                        f"폴백 정책 변경 (2025-10-08): 각 주문에 명시해야 합니다."
                     )
 
                 normalized['orders'].append(batch_order)
@@ -299,8 +325,6 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
         normalized.pop('price', None)
         normalized.pop('qty_per', None)
         normalized.pop('side', None)
-    else:
-        normalized['batch_mode'] = False
 
     # 매핑되지 않은 다른 필드들도 그대로 포함 (order_type 관련 및 orders 제외)
     for key, value in webhook_data.items():
@@ -309,6 +333,9 @@ def normalize_webhook_data(webhook_data: dict) -> dict:
             key.lower() not in ['ordertype', 'orderType'] and
             key != 'orders'):
             normalized[key] = value
+
+    # @REFACTOR:2025-11-03 - Batch mode field assignment removed (Phase 2)
+    # Detection is now exclusively via 'orders' field presence (single source of truth)
 
     # 값들을 내부 로직에 맞게 표준화
     if 'order_type' in normalized and isinstance(normalized['order_type'], str):

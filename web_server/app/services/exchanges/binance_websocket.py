@@ -91,7 +91,7 @@ class BinanceWebSocket:
                 # PUT 요청으로 Listen Key 갱신
                 async with aiohttp.ClientSession() as session:
                     headers = {'X-MBX-APIKEY': self.account.api_key}
-                    url = f"{self.account.api_url}/fapi/v1/listenKey"
+                    url = f"{self.BASE_URL}/fapi/v1/listenKey"
 
                     async with session.put(url, headers=headers) as response:
                         if response.status == 200:

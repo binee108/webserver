@@ -54,8 +54,10 @@ class SymbolValidator:
         logger.info("✅ Symbol Validator 초기화 완료")
 
     # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:integration
-    def refresh_symbols_with_context(self, app):
+    def refresh_symbols(self):
         """Flask app context와 함께 Symbol 정보 갱신 (APScheduler용)"""
+        from app import get_flask_app
+        app = get_flask_app()
         with app.app_context():
             self._refresh_all_symbols()
 
@@ -119,22 +121,6 @@ class SymbolValidator:
 
             # 로드 후 캐시 상태 확인
             logger.info(f"📊 로드 후 캐시 상태: {len(self.market_info_cache)}개 심볼")
-
-            # 중요한 심볼 확인 (BTCUSDT FUTURES, BTC/KRW SPOT)
-            btc_futures_key = "BINANCE_BTCUSDT_FUTURES"
-            btc_krw_spot_key = "UPBIT_BTC/KRW_SPOT"
-
-            if btc_futures_key in self.market_info_cache:
-                market_info = self.market_info_cache[btc_futures_key]
-                logger.info(f"🔍 BTCUSDT FUTURES 정보 확인: min_qty={market_info.min_qty}, min_notional={market_info.min_notional}")
-            else:
-                logger.warning(f"⚠️ BTCUSDT FUTURES 정보를 찾을 수 없음: {btc_futures_key}")
-
-            if btc_krw_spot_key in self.market_info_cache:
-                market_info = self.market_info_cache[btc_krw_spot_key]
-                logger.info(f"🔍 BTC/KRW SPOT 정보 확인: min_qty={market_info.min_qty}, min_notional={market_info.min_notional}")
-            else:
-                logger.warning(f"⚠️ BTC/KRW SPOT 정보를 찾을 수 없음: {btc_krw_spot_key}")
 
             if not self.market_info_cache:
                 error_msg = "심볼 정보를 로드할 수 없습니다 - 거래 불가"

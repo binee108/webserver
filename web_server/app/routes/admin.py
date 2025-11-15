@@ -1,4 +1,5 @@
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 """
 Admin Panel Routes
 
@@ -75,7 +76,86 @@ def admin_verification_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# @FEAT:error-warning-logs @COMP:route @TYPE:helper
+def _is_development_mode() -> bool:
+    """
+    환경 감지: 개발 모드 여부 확인
+
+    환경 감지 방식:
+    - .env 파일의 FLASK_ENV 변수 확인
+    - 'production'이 아니면 개발 모드로 간주
+    - python run.py setup --env production으로 설정
+
+    Returns:
+        bool: 개발 모드이면 True, 프로덕션이면 False
+
+    Note:
+        개발 모드에서는 디버깅 API의 인증을 우회하여
+        빠른 오류 확인이 가능합니다.
+    """
+    import os
+    from flask import current_app
+
+    # FLASK_ENV 환경 변수를 우선 확인 (docker-compose.yml에서 설정됨)
+    env_var = os.environ.get('FLASK_ENV', '')
+    if env_var:
+        env = env_var
+    else:
+        # 환경 변수가 없으면 app.config에서 확인
+        env = current_app.config.get('ENV', 'production')
+
+    return env.lower() not in ['production', 'prod']
+
+# @FEAT:error-warning-logs @COMP:route @TYPE:validation
+def conditional_admin_required(f):
+    """
+    환경별 인증 분기 데코레이터
+
+    개발 모드 (ENV != 'production'):
+        - 인증 완전 우회 (로그인 불필요)
+        - 목적: API 요청으로 빠른 디버깅 지원
+
+    ⚠️ SECURITY WARNING:
+        개발 모드는 인증을 완전히 우회합니다.
+        - 절대 프로덕션 환경에서 ENV != 'production' 설정 금지
+        - 외부 네트워크 노출 시 심각한 보안 위험
+        - 배포 전 반드시 `python run.py setup --env production` 실행 필수
+
+    프로덕션 모드 (ENV = 'production'):
+        - 로그인 필수 (@login_required)
+        - 관리자 권한 필수 (@admin_required 로직)
+        - 보안: 민감한 로그 정보 보호
+
+    Usage:
+        @bp.route('/debug-endpoint')
+        @conditional_admin_required
+        def debug_view():
+            # 개발: 누구나 접근, 프로덕션: 관리자만
+            pass
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if _is_development_mode():
+            # 개발 모드: 인증 우회 (디버깅 편의성)
+            from flask import current_app
+            current_app.logger.warning(
+                f"🔓 [DEV MODE] Authentication bypassed for {f.__name__} "
+                f"(ENV={current_app.config.get('ENV')})"
+            )
+            return f(*args, **kwargs)
+        else:
+            # 프로덕션 모드: 로그인 및 관리자 권한 검증
+            if not current_user.is_authenticated:
+                flash('로그인이 필요합니다.', 'error')
+                return redirect(url_for('auth.login', next=request.url))
+            if not current_user.is_admin:
+                flash('관리자 권한이 필요합니다.', 'error')
+                return redirect(url_for('main.dashboard'))
+            return f(*args, **kwargs)
+    return decorated_function
+
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/')
 @login_required
 @admin_required
@@ -106,6 +186,7 @@ def verify_admin_session():
     return jsonify({'success': True, 'verified_until': session['admin_verified_until']})
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users')
 @login_required
 @admin_required
@@ -131,6 +212,7 @@ def users():
                          admin_users_count=admin_users_count)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -193,6 +275,7 @@ def edit_user(user_id):
     return render_template('admin/edit_user.html', user=user)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/change-password', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -235,6 +318,7 @@ def change_user_password(user_id):
     return render_template('admin/change_user_password.html', user=user)
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/change-password', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -279,6 +363,7 @@ def change_admin_password():
     return render_template('admin/change_admin_password.html')
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/toggle-active', methods=['POST'])
 @login_required
 @admin_required
@@ -312,6 +397,7 @@ def toggle_user_active(user_id):
     })
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/toggle-admin', methods=['POST'])
 @login_required
 @admin_required
@@ -345,6 +431,7 @@ def toggle_user_admin(user_id):
     })
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/approve', methods=['POST'])
 @login_required
 @admin_required
@@ -388,6 +475,7 @@ def approve_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/reject', methods=['POST'])
 @login_required
 @admin_required
@@ -426,6 +514,7 @@ def reject_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>/reset-password', methods=['POST'])
 @login_required
 @admin_required
@@ -462,6 +551,7 @@ def reset_user_password(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/users/<int:user_id>', methods=['DELETE'])
 @login_required
 @admin_required
@@ -500,6 +590,7 @@ def delete_user(user_id):
         }), 500
 
 # @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/system')
 @login_required
 @admin_required
@@ -1120,186 +1211,19 @@ def get_tracking_stats():
         }), 500
 
 
-# ============================================
-# 대기열 시스템 API
-# ============================================
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
-@bp.route('/api/queue-status', methods=['GET'])
-@login_required
-@admin_required
-def get_queue_status():
-    """
-    대기열 현황 조회 (Order Queue System)
-
-    계좌별 심볼별 활성 주문 수, 대기 주문 수, 제한 반환
-    """
-    try:
-        from app.models import Account, OpenOrder, PendingOrder, StrategyAccount
-        from app.constants import ExchangeLimits
-        from sqlalchemy import distinct, func
-
-        # 활성 계정 조회
-        active_accounts = Account.query.filter_by(is_active=True).all()
-
-        result = {
-            'success': True,
-            'accounts': [],
-            'total_active': 0,
-            'total_pending': 0
-        }
-
-        for account in active_accounts:
-            # (account_id, symbol) 조합 추출
-            active_symbols_query = db.session.query(
-                distinct(OpenOrder.symbol)
-            ).join(
-                StrategyAccount,
-                OpenOrder.strategy_account_id == StrategyAccount.id
-            ).filter(
-                StrategyAccount.account_id == account.id
-            )
-
-            pending_symbols_query = db.session.query(
-                distinct(PendingOrder.symbol)
-            ).filter(
-                PendingOrder.account_id == account.id
-            )
-
-            # 합집합
-            all_symbols = set(
-                [s[0] for s in active_symbols_query.all()] +
-                [s[0] for s in pending_symbols_query.all()]
-            )
-
-            if not all_symbols:
-                continue  # 주문이 없는 계정은 건너뛰기
-
-            # market_type 결정
-            strategy_account = StrategyAccount.query.filter_by(account_id=account.id).first()
-            market_type = 'SPOT'
-            if strategy_account and strategy_account.strategy:
-                market_type = strategy_account.strategy.market_type or 'SPOT'
-
-            account_data = {
-                'account_id': account.id,
-                'account_name': account.name,
-                'exchange': account.exchange,
-                'market_type': market_type,
-                'symbols': []
-            }
-
-            for symbol in sorted(all_symbols):
-                # 활성 주문 수 (DB 조회)
-                active_count = OpenOrder.query.join(StrategyAccount).filter(
-                    StrategyAccount.account_id == account.id,
-                    OpenOrder.symbol == symbol
-                ).count()
-
-                # 대기열 주문 수
-                pending_count = PendingOrder.query.filter_by(
-                    account_id=account.id,
-                    symbol=symbol
-                ).count()
-
-                # 제한 계산
-                limits = ExchangeLimits.calculate_symbol_limit(
-                    exchange=account.exchange,
-                    market_type=market_type,
-                    symbol=symbol
-                )
-
-                account_data['symbols'].append({
-                    'symbol': symbol,
-                    'active_orders': active_count,
-                    'pending_orders': pending_count,
-                    'total': active_count + pending_count,
-                    'limit': limits['max_orders'],
-                    'limit_stop': limits['max_stop_orders']
-                })
-
-                result['total_active'] += active_count
-                result['total_pending'] += pending_count
-
-            result['accounts'].append(account_data)
-
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'대기열 현황 조회 중 오류가 발생했습니다: {str(e)}'
-        }), 500
-
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
-@bp.route('/api/queue-rebalance', methods=['POST'])
-@login_required
-@admin_required
-def manual_rebalance_queue():
-    """
-    수동 대기열 재정렬 (Order Queue System)
-
-    특정 계좌/심볼의 대기열 수동 재정렬
-    """
-    try:
-        data = request.get_json()
-        account_id = data.get('account_id')
-        symbol = data.get('symbol')
-
-        if not account_id or not symbol:
-            return jsonify({
-                'success': False,
-                'message': 'account_id와 symbol은 필수입니다'
-            }), 400
-
-        # 계정 존재 확인
-        from app.models import Account
-        account = Account.query.get(account_id)
-        if not account:
-            return jsonify({
-                'success': False,
-                'message': f'계정을 찾을 수 없습니다 (ID: {account_id})'
-            }), 404
-
-        # 재정렬 실행
-        from app.services.trading.order_queue_manager import OrderQueueManager
-        from app.services.trading import trading_service
-
-        queue_manager = OrderQueueManager(service=trading_service.trading_core)
-        result = queue_manager.rebalance_symbol(
-            account_id=account_id,
-            symbol=symbol
-        )
-
-        if result.get('success'):
-            return jsonify({
-                **result,
-                'message': f'재정렬 완료: {result.get("executed")}개 실행, {result.get("cancelled")}개 취소'
-            })
-        else:
-            return jsonify(result), 500
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'수동 재정렬 중 오류가 발생했습니다: {str(e)}'
-        }), 500
-
-
-# @FEAT:admin-panel @FEAT:order-queue @COMP:route @TYPE:core
+# @FEAT:admin-panel @COMP:route @TYPE:core
+# @FEAT:admin-system-log-sorting @COMP:route @TYPE:helper
 @bp.route('/api/metrics', methods=['GET'])
 @login_required
 @admin_required
 def get_metrics():
     """
-    대기열 시스템 메트릭 조회
+    시스템 메트릭 조회
 
-    재정렬 메트릭, 대기열 통계, WebSocket 통계 반환
+    WebSocket 통계 반환
     """
     try:
         from app.services.trading import trading_service
-        from app.models import PendingOrder
         import logging
 
         logger = logging.getLogger(__name__)
@@ -1311,37 +1235,6 @@ def get_metrics():
                 'error': 'Trading service가 초기화되지 않았습니다'
             }), 503
 
-        if not hasattr(trading_service, 'order_queue_manager') or not trading_service.order_queue_manager:
-            return jsonify({
-                'success': False,
-                'error': 'Order queue manager가 초기화되지 않았습니다'
-            }), 503
-
-        # 재정렬 메트릭
-        queue_manager = trading_service.order_queue_manager
-        queue_metrics = queue_manager.get_metrics()
-
-        # 대기열 통계
-        pending_stats = db.session.query(
-            PendingOrder.account_id,
-            PendingOrder.symbol,
-            func.count(PendingOrder.id).label('count')
-        ).group_by(
-            PendingOrder.account_id,
-            PendingOrder.symbol
-        ).all()
-
-        pending_by_symbol = [
-            {
-                'account_id': stat.account_id,
-                'symbol': stat.symbol,
-                'count': stat.count
-            }
-            for stat in pending_stats
-        ]
-
-        total_pending = sum(stat['count'] for stat in pending_by_symbol)
-
         # WebSocket 통계
         websocket_manager = trading_service.websocket_manager
         websocket_stats = websocket_manager.get_stats() if websocket_manager else {}
@@ -1349,11 +1242,6 @@ def get_metrics():
         return jsonify({
             'success': True,
             'data': {
-                'queue_metrics': queue_metrics,
-                'pending_orders': {
-                    'total': total_pending,
-                    'by_symbol': pending_by_symbol
-                },
                 'websocket_stats': websocket_stats
             }
         })
@@ -1421,12 +1309,34 @@ def get_job_logs(job_id):
         - 태그 없는 로그도 파싱 가능 (하위 호환성)
         - job_id가 JOB_TAG_MAP에 없으면 WARNING 로그 출력 후 모든 로그 반환
         - API 응답의 'tag' 필드는 Optional (null 가능)
+
+    Implementation (GitHub Issue #2 해결):
+        헬퍼 함수를 활용한 안전한 로그 읽기 및 파싱:
+
+        1. validate_log_file_path(): Path Traversal 방어 및 파일 검증
+        2. read_log_tail_utf8_safe(): UTF-8 안전 tail 읽기 (200KB 최적화)
+           - 바이너리 모드, 라인 경계 탐색, errors='replace'
+           - 폴백: 최적화 실패 시 전체 파일 읽기
+        3. parse_log_line(): 정규식 기반 구조화 파싱
+           - timestamp, level, tag, message, file, line 추출
+
+        상세 구현은 app/utils/log_reader.py 참조
+
+    Security:
+        - Path Traversal 방어: allowed_log_dir 범위 내 파일만 허용
+        - Job ID 화이트리스트 검증: scheduler.get_jobs()에 등록된 작업만 접근 허용
+
+    Feature Tags:
+        @FEAT:background-job-logs @COMP:route @TYPE:core
     """
     try:
         from flask import current_app
         from app import scheduler
-        import os
-        import re
+        from app.utils.log_reader import (
+            validate_log_file_path,
+            read_log_tail_utf8_safe,
+            parse_log_line
+        )
 
         # Job ID 검증 (화이트리스트)
         valid_job_ids = [job.id for job in scheduler.get_jobs()]
@@ -1440,10 +1350,12 @@ def get_job_logs(job_id):
                 'job_id': job_id
             }), 404
 
-        # 로그 파일 경로 가져오기
+        # 로그 파일 경로 가져오기 및 검증
         log_path = current_app.config.get('LOG_FILE')
-        if not log_path:
-            current_app.logger.error('LOG_FILE 설정이 없습니다.')
+        try:
+            log_path = validate_log_file_path(log_path, current_app)
+        except ValueError:
+            # LOG_FILE 설정 누락
             return jsonify({
                 'success': False,
                 'message': '로그 조회 중 오류가 발생했습니다.',
@@ -1452,15 +1364,8 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 500
-
-        # 절대 경로로 변환 및 검증
-        log_path = os.path.abspath(log_path)
-        log_dir = os.path.dirname(log_path)
-
-        # 허용된 로그 디렉토리 내에 있는지 확인 (Path Traversal 방어)
-        allowed_log_dir = os.path.abspath(os.path.join(current_app.root_path, '..', 'logs'))
-        if not log_path.startswith(allowed_log_dir):
-            current_app.logger.error(f'보안: 허용되지 않은 로그 경로 접근 시도: {log_path}')
+        except PermissionError:
+            # Path traversal 시도
             return jsonify({
                 'success': False,
                 'message': '로그 조회 중 오류가 발생했습니다.',
@@ -1469,9 +1374,8 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 403
-
-        # 파일 존재 확인
-        if not os.path.exists(log_path):
+        except FileNotFoundError:
+            # 로그 파일 없음
             return jsonify({
                 'success': False,
                 'message': '로그 파일을 찾을 수 없습니다.',
@@ -1486,23 +1390,10 @@ def get_job_logs(job_id):
         level = request.args.get('level', 'ALL').upper()
         search_term = request.args.get('search', '').lower()
 
-        # 로그 파일 읽기 (tail 방식 - 최근 1000줄)
+        # 로그 파일 읽기 (tail 방식 - UTF-8 안전)
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
-                # 파일 크기가 크면 마지막 부분만 읽기
-                try:
-                    f.seek(0, 2)  # 파일 끝으로 이동
-                    file_size = f.tell()
-                    # 대략 평균 라인 길이 200바이트 * 1000줄 = 200KB
-                    read_size = min(file_size, 200000)
-                    f.seek(max(0, file_size - read_size))
-                    # 첫 번째 불완전한 라인 제거
-                    f.readline()
-                    lines = f.readlines()
-                except (IOError, OSError):
-                    f.seek(0)
-                    lines = f.readlines()
-        except (IOError, OSError) as e:
+            lines = read_log_tail_utf8_safe(log_path)
+        except OSError as e:
             current_app.logger.error(f'로그 파일 읽기 실패: {str(e)}')
             return jsonify({
                 'success': False,
@@ -1512,19 +1403,6 @@ def get_job_logs(job_id):
                 'filtered': 0,
                 'job_id': job_id
             }), 500
-
-        # 로그 파싱 정규식
-        # 실제 로그 포맷 (app/__init__.py line 169):
-        # %(asctime)s %(levelname)s: [TAG] %(message)s [in %(pathname)s:%(lineno)d]
-        # 예시: 2025-10-23 14:08:29,055 INFO: [QUEUE_REBAL] 재정렬 완료 [in /app/queue_rebalancer.py:123]
-        log_pattern = re.compile(
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ '  # 그룹 1: timestamp
-            r'(\w+): '                                      # 그룹 2: level
-            r'(?:\[([A-Z_]+)\] )?'                         # 그룹 3: tag (선택적)
-            r'(.+?) '                                       # 그룹 4: message
-            r'\[in (.+?):(\d+)\]',                         # 그룹 5,6: file, line
-            re.VERBOSE
-        )
 
         # Job ID → Tag 매핑 조회
         job_tag = JOB_TAG_MAP.get(job_id)
@@ -1540,35 +1418,26 @@ def get_job_logs(job_id):
         for line in lines:
             total_count += 1
 
-            # 정규식 파싱
-            match = log_pattern.match(line.strip())
-            if match:
-                timestamp, log_level, tag, message, file_path, line_num = match.groups()
+            # Phase 3.1 헬퍼 재사용: parse_log_line()으로 구조화 파싱
+            parsed = parse_log_line(line)
 
+            if parsed:
                 # 태그 기반 필터링 (job_tag가 있을 경우)
                 if job_tag:
-                    if tag != job_tag.name:
+                    # job_tag: "[QUEUE_REBAL]" (constants.py에서 대괄호 포함)
+                    # parsed['tag']: "QUEUE_REBAL" (정규식으로 추출, 대괄호 제외)
+                    if parsed['tag'] != job_tag.strip('[]'):  # 대괄호 제거하여 비교
                         continue  # 다른 작업의 로그는 스킵
 
                 # 로그 레벨 필터
-                if level != 'ALL' and log_level != level:
+                if level != 'ALL' and parsed['level'] != level:
                     continue
 
                 # 검색어 필터
-                if search_term and search_term not in message.lower():
+                if search_term and search_term not in parsed['message'].lower():
                     continue
 
-                # 파일명만 추출 (전체 경로에서)
-                file_name = os.path.basename(file_path)
-
-                parsed_logs.append({
-                    'timestamp': timestamp,
-                    'level': log_level,
-                    'tag': tag,  # 🆕 추가
-                    'message': message.strip(),
-                    'file': file_name,
-                    'line': int(line_num)
-                })
+                parsed_logs.append(parsed)
             else:
                 # 파싱 실패 시 fallback (태그 없는 로그도 포함)
                 if search_term and search_term not in line.lower():
@@ -1577,7 +1446,7 @@ def get_job_logs(job_id):
                 parsed_logs.append({
                     'timestamp': 'N/A',
                     'level': 'UNKNOWN',
-                    'tag': None,  # 🆕 추가
+                    'tag': None,
                     'message': line.strip(),
                     'file': 'N/A',
                     'line': 0
@@ -1596,6 +1465,263 @@ def get_job_logs(job_id):
 
     except Exception as e:
         current_app.logger.error(f'로그 조회 중 오류 발생: {str(e)}', exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': '로그 조회 중 오류가 발생했습니다.',
+            'logs': [],
+            'total': 0,
+            'filtered': 0
+        }), 500
+
+
+# @FEAT:error-warning-logs @COMP:route @TYPE:core
+# @FEAT:admin-system @COMP:route @TYPE:core
+@bp.route('/system/logs/errors-warnings', methods=['GET'])
+@conditional_admin_required
+def get_errors_warnings_logs():
+    """
+    ERROR/WARNING 로그 조회 API (디버깅 용도)
+
+    시스템 전체의 ERROR 및 WARNING 로그를 빠르게 조회하는 API입니다.
+
+    **중요 변경 사항 (로그 순서 개선):**
+    - 변경 전: 오래된 로그가 상단에 표시됨
+    - 변경 후: 최신 로그가 상단에 표시됨 (사용자 경험 개선)
+    - 기술적 구현: `sorted(..., reverse=True)`를 통한 내림차순 정렬
+    개발 모드에서는 인증을 우회하여 디버깅을 편리하게 지원하며,
+    프로덕션 모드에서는 관리자 권한을 요구하여 보안을 강화합니다.
+
+    **인증 정책:**
+    - 개발 모드 (ENV != 'production'): 인증 완전 우회 (로그인 불필요)
+    - 프로덕션 모드 (ENV = 'production'): 로그인 + 관리자 권한 필수
+
+    **사용 사례:**
+    - 실시간 오류 모니터링
+    - 경고 메시지 빠른 확인
+    - 문제 원인 파악 (파일명, 라인 번호 포함)
+
+    Query Parameters:
+        limit (int): 최대 로그 줄 수 (기본: 100, 최대: 500)
+            설명: 최근 N개 로그 반환 (가장 오래된 순서)
+        level (str): 로그 레벨 필터 (기본: 'ERROR')
+            옵션: 'ERROR' (오류만), 'WARNING' (경고만), 'ALL' (둘 다)
+        search (str): 텍스트 검색어 (대소문자 무시, 선택사항)
+            예: '{"search": "order"}' → "order" 포함된 로그만 반환
+
+    Returns:
+        JSON (200) - 성공:
+            {
+                "success": true,
+                "logs": [
+                    {
+                        "timestamp": "2025-10-23 14:08:29",
+                        "level": "ERROR",
+                        "tag": null,
+                        "message": "Failed to execute order",
+                        "file": "order_executor.py",
+                        "line": 456
+                    },
+                    {
+                        "timestamp": "2025-10-23 14:07:15",
+                        "level": "WARNING",
+                        "tag": null,
+                        "message": "High slippage detected",
+                        "file": "risk_manager.py",
+                        "line": 234
+                    }
+                ],
+                "total": 1250,
+                "filtered": 45,
+                "level_filter": "ERROR",
+                "environment": "development",
+                "log_file": "app.log"
+            }
+
+        JSON (404) - 로그 파일 미발견:
+            {
+                "success": false,
+                "message": "로그 파일을 찾을 수 없습니다.",
+                "logs": [],
+                "total": 0,
+                "filtered": 0
+            }
+
+        JSON (403) - 경로 검증 실패 (Path Traversal):
+            {
+                "success": false,
+                "message": "로그 조회 중 오류가 발생했습니다.",
+                "logs": [],
+                "total": 0,
+                "filtered": 0
+            }
+
+        JSON (500) - 서버 오류:
+            {
+                "success": false,
+                "message": "로그 조회 중 오류가 발생했습니다.",
+                "logs": [],
+                "total": 0,
+                "filtered": 0
+            }
+
+    Implementation Notes:
+        1. UTF-8 Safe Tail Read Algorithm (get_job_logs 참고):
+           - 바이너리 모드('rb')로 파일 열기 (멀티바이트 안전성)
+           - 파일 끝에서 200KB 역방향 seek (성능 최적화)
+           - 라인 경계 탐색으로 완전한 라인부터 읽기
+           - decode('utf-8', errors='replace') 사용 (깨진 문자 대체)
+
+        2. 태그 필터링 제거 (get_job_logs와의 차이점):
+           - Job ID별 태그 필터링 없음
+           - 모든 ERROR/WARNING 로그 조회
+           - 검색어로만 추가 필터링 가능
+
+        3. 성능 고려사항:
+           - 200KB 청크 읽기 (약 1000줄)
+           - 메모리 효율적인 처리
+           - 느린 클라이언트를 위한 limit 제한 (최대 500)
+
+    Security:
+        - Path Traversal 방어: allowed_log_dir 범위 내 파일만 허용
+        - 환경 기반 인증: 프로덕션에서만 관리자 권한 요구
+        - 사용자 입력 검증: limit, level, search 파라미터 검증
+
+    Feature Tags:
+        # @FEAT:error-warning-logs @COMP:route @TYPE:core
+    """
+    try:
+        from flask import current_app
+        import os
+        from app.utils.log_reader import (
+            validate_log_file_path,
+            read_log_tail_utf8_safe,
+            parse_log_line
+        )
+
+        # 로그 파일 경로 가져오기 및 검증
+        log_path = current_app.config.get('LOG_FILE')
+        try:
+            log_path = validate_log_file_path(log_path, current_app)
+        except ValueError:
+            # LOG_FILE 설정 누락
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0
+            }), 500
+        except PermissionError:
+            # Path traversal 시도
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0
+            }), 403
+        except FileNotFoundError:
+            # 로그 파일 없음
+            return jsonify({
+                'success': False,
+                'message': '로그 파일을 찾을 수 없습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0
+            }), 404
+
+        # 쿼리 파라미터 파싱
+        try:
+            limit = min(int(request.args.get('limit', 100)), 500)
+        except (ValueError, TypeError):
+            limit = 100
+
+        level = request.args.get('level', 'ERROR').upper()
+        # 유효한 레벨 검증
+        valid_levels = ['ERROR', 'WARNING', 'ALL']
+        if level not in valid_levels:
+            level = 'ERROR'
+
+        search_term = request.args.get('search', '').lower()
+
+        # 로그 파일 읽기 (tail 방식 - UTF-8 안전)
+        try:
+            lines = read_log_tail_utf8_safe(log_path)
+        except OSError as e:
+            current_app.logger.error(f'로그 파일 읽기 실패: {str(e)}')
+            return jsonify({
+                'success': False,
+                'message': '로그 조회 중 오류가 발생했습니다.',
+                'logs': [],
+                'total': 0,
+                'filtered': 0
+            }), 500
+
+        parsed_logs = []
+        total_count = 0
+
+        for line in lines:
+            total_count += 1
+
+            # 헬퍼를 사용한 파싱
+            parsed = parse_log_line(line)
+
+            if parsed:
+                # 로그 레벨 필터 (ERROR, WARNING 또는 ALL)
+                if level != 'ALL' and parsed['level'] != level:
+                    continue
+
+                # 검색어 필터
+                if search_term and search_term not in parsed['message'].lower():
+                    continue
+
+                parsed_logs.append(parsed)
+            else:
+                # 파싱 실패 시 fallback (기존 동작 유지)
+                if search_term and search_term not in line.lower():
+                    continue
+
+                # ERROR/WARNING 필터링을 위해 키워드 포함 여부 확인
+                # ⚠️ CRITICAL: 이 로직은 get_job_logs()에 없는 고유 로직임
+                line_upper = line.upper()
+                if level != 'ALL':
+                    if level == 'ERROR' and 'ERROR' not in line_upper:
+                        continue
+                    elif level == 'WARNING' and 'WARNING' not in line_upper:
+                        continue
+
+                parsed_logs.append({
+                    'timestamp': 'N/A',
+                    'level': 'UNKNOWN',
+                    'tag': None,
+                    'message': line.strip(),
+                    'file': 'N/A',
+                    'line': 0
+                })
+
+        # @IMPORTANT: 통계 계산은 순서 반전 전에 수행해야 함
+        # 현재 이 함수에는 로그 통계 계산 로직이 없지만,
+        # 향후 추가 시 여기에서 계산해야 함
+        # 예시: error_count = len([log for log in filtered_logs if log['level'] == 'ERROR'])
+
+        # limit 적용 (최근 N개 반환, 가장 오래된 순서)
+        logs_with_limit = parsed_logs[-limit:]
+
+        # @FEAT:admin-system @TYPE:core - 로그 순서 개선: 최신 로그가 상단에 표시되도록 내림차순 정렬
+        filtered_logs = sorted(logs_with_limit, key=lambda x: x['timestamp'], reverse=True)
+
+        return jsonify({
+            'success': True,
+            'logs': filtered_logs,
+            'total': total_count,
+            'filtered': len(filtered_logs),
+            'level_filter': level,
+            'environment': 'development' if _is_development_mode() else 'production',
+            'log_file': os.path.basename(log_path)
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'ERROR/WARNING 로그 조회 중 오류 발생: {str(e)}', exc_info=True)
         return jsonify({
             'success': False,
             'message': '로그 조회 중 오류가 발생했습니다.',

@@ -40,8 +40,32 @@ class QuantityCalculator:
         exchange: str = 'BINANCE',
         market_type: str = 'FUTURES',
     ) -> Optional[Decimal]:
-        """Resolve an effective price for the supplied order parameters."""
+        """Resolve an effective price for the supplied order parameters.
+
+        Price Priority (Updated for MARKET ONLY):
+        1. MARKET + price provided → Use webhook-provided price
+        2. LIMIT orders + price required → Use price parameter
+        3. STOP orders + stop_price required → Use stop_price parameter
+        4. Fallback → Use local cache price (price_cache or exchange_service)
+
+        @PRINCIPLE: Webhook-provided price takes precedence over cache (accuracy improvement)
+        @HISTORICAL: Previously, MARKET orders always used cache price
+        @CHANGE: MARKET can now use webhook-provided price (optional)
+        @CRITICAL: STOP_MARKET unchanged - always uses stop_price (no price support)
+        """
         from app.constants import OrderType  # Local import to avoid circular deps
+
+        # ✅ NEW: MARKET 주문만 웹훅 제공 price 우선 사용
+        # @PRINCIPLE: 웹훅 송신자가 더 정확한 가격을 알고 있다고 가정
+        # @USE_CASE: TradingView가 최신 시장가를 알고 있어 더 정확한 수량 계산 가능
+        # @CRITICAL: STOP_MARKET은 여기서 제외 (기존 동작 유지)
+        if order_type == OrderType.MARKET:
+            if price is not None:
+                logger.info(
+                    "💰 MARKET 주문: 웹훅 제공 가격 사용 (수량 계산 정확도 향상) - %s",
+                    price
+                )
+                return Decimal(str(price))
 
         if OrderType.requires_price(order_type) and price is not None:
             logger.debug("📊 %s 주문: 지정가 %s 사용", order_type, price)
@@ -114,15 +138,95 @@ class QuantityCalculator:
     def calculate_order_quantity(
         self,
         strategy_account: StrategyAccount,
-        qty_per: Decimal,
         symbol: str,
         order_type: str,
+        qty_per: Optional[Decimal] = None,  # 🆕 None 허용
+        qty: Optional[Decimal] = None,      # 🆕 추가
         market_type: str = 'futures',
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
         side: Optional[str] = None,
     ) -> Decimal:
-        """Return the order quantity derived from allocated capital."""
+        """Return the order quantity derived from allocated capital or absolute value.
+
+        Args:
+            strategy_account: StrategyAccount instance for the trading strategy.
+            symbol: Trading symbol (e.g., 'BTC/USDT', 'AAPL').
+            order_type: Order type (e.g., 'MARKET', 'LIMIT', 'STOP_MARKET').
+            qty_per: Allocation percentage. Positive values (>0) for entry orders
+                     (no upper limit, supports leverage >100%). Negative values (<0)
+                     trigger position liquidation logic.
+            qty: Absolute quantity (bypasses percentage calculation). Must be positive.
+                 Use qty_per=-100 for liquidation. Overridden by qty_per when both
+                 are provided (qty_per priority).
+            market_type: Market type ('futures' or 'spot'). Default: 'futures'.
+            price: Order price for LIMIT orders.
+            stop_price: Stop price for STOP orders.
+            side: Trade side ('BUY' or 'SELL') for position liquidation.
+
+        Returns:
+            Decimal: Calculated order quantity, or Decimal('0') if validation fails.
+        """
+        # 🆕 Validation: qty 또는 qty_per 중 하나는 필수
+        if qty_per is None and qty is None:
+            logger.error("qty 또는 qty_per 중 하나는 필수입니다")
+            raise ValueError("qty 또는 qty_per 중 하나는 필수입니다")
+
+        # 🆕 Priority: qty_per > qty
+        if qty_per is not None and qty is not None:
+            logger.warning(
+                "⚠️ qty_per (%s%%)와 qty (%s) 둘 다 제공됨. "
+                "qty_per를 우선 사용합니다 (우선순위 정책)",
+                qty_per,
+                qty
+            )
+            # qty_per 로직으로 진행 (기존 코드 경로)
+
+        # 🆕 Case 1: qty 제공 (qty_per 없음) → 절대 수량 직접 사용
+        if qty_per is None and qty is not None:
+            # 🆕 Issue Fix #1: qty 음수 검증 추가 (plan-reviewer 피드백)
+            if qty <= 0:
+                logger.error("qty는 양수여야 합니다: %s. 청산은 qty_per=-100 사용", qty)
+                raise ValueError("qty는 양수여야 합니다. 청산은 qty_per=-100 사용")
+
+            logger.info("🎯 절대 수량 모드: qty=%s (퍼센트 계산 우회)", qty)
+
+            # 검증만 수행 (수량 계산 우회)
+            exchange_name = (
+                strategy_account.account.exchange if strategy_account.account else 'BINANCE'
+            )
+
+            validation = symbol_validator.validate_order_params(
+                exchange=exchange_name,
+                symbol=symbol,
+                market_type=market_type,
+                quantity=qty,
+                price=price or self.determine_order_price(
+                    order_type=order_type,
+                    price=price,
+                    stop_price=stop_price,
+                    symbol=symbol,
+                    exchange=exchange_name,
+                    market_type=market_type,
+                ),
+            )
+
+            if not validation.get('success'):
+                logger.warning(
+                    "❌ 수량 검증 실패 (%s): %s",
+                    validation.get('error_type'),
+                    validation.get('error')
+                )
+                return Decimal('0')
+
+            adjusted_quantity = validation.get('adjusted_quantity', qty)
+            if adjusted_quantity <= 0:
+                logger.warning("❌ 검증된 수량이 0 이하입니다 (symbol=%s qty=%s)", symbol, qty)
+                return Decimal('0')
+
+            return adjusted_quantity
+
+        # 🆕 Case 2: qty_per 제공 (기존 로직)
         try:
             qty_per_decimal = Decimal(str(qty_per))
 
@@ -139,10 +243,6 @@ class QuantityCalculator:
                     stop_price=stop_price,
                     side=side
                 )
-
-            if qty_per_decimal > 100:
-                logger.error("qty_per 범위 오류: %s%% (0-100 필요)", qty_per_decimal)
-                return Decimal('0')
 
             if qty_per_decimal == 0:
                 return Decimal('0')
@@ -248,8 +348,12 @@ class QuantityCalculator:
         stop_price: Optional[Decimal] = None,
         side: Optional[str] = None,
     ) -> Decimal:
-        """Convert qty_per into an absolute quantity for entry or exit."""
-        # NOTE: 현재 미사용 - 향후 청산 로직에 활용 예정
+        """Convert qty_per into an absolute quantity for entry or exit.
+
+        Handles both positive qty_per (entry orders, unlimited %) and negative
+        qty_per (position liquidation, capped at -100%).
+        """
+        # NOTE: 청산 로직에서 사용 중 (calculate_order_quantity Line 154-165 참조)
         try:
             qty_per_decimal = Decimal(str(qty_per))
         except (InvalidOperation, ValueError, TypeError) as exc:
@@ -284,15 +388,12 @@ class QuantityCalculator:
                 raise QuantityCalculationError('스탑 가격 형식이 올바르지 않습니다.') from exc
 
         if qty_per_decimal > 0:
-            if qty_per_decimal > Decimal('100'):
-                logger.error("qty_per 범위 오류: %s%% (0-100 범위 필요)", qty_per_decimal)
-                raise QuantityCalculationError('수량 비율은 0~100% 사이여야 합니다.')
-
             quantity = self.calculate_order_quantity(
                 strategy_account=strategy_account,
-                qty_per=qty_per_decimal,
                 symbol=symbol,
                 order_type=order_type_normalized,
+                qty_per=qty_per_decimal,  # 명시적으로 qty_per 전달
+                qty=None,  # qty는 사용하지 않음
                 market_type=market_type,
                 price=price_decimal,
                 stop_price=stop_price_decimal,

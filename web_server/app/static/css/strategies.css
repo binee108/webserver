@@ -1,8 +1,15 @@
 /* Strategies page specific styles - overrides and small tweaks */
 
+/* PHASE 2: TYPOGRAPHY OPTIMIZATION (2025-11-13)
+ * Goal: 폰트 크기 15-20% 축소하여 정보 밀도 증가
+ * Changes:
+ *   - Strategy summary amount: 1.375rem → 1.15rem (-16.4%)
+ * Reference: .plan/ui-density-improvement_plan.md Phase 2
+ */
+
 /* Compact spacing for strategy summary metrics on strategies page */
 .page-strategies .strategy-summary-card .main-metric .amount {
-  font-size: 1.375rem;
+  font-size: 1.15rem; /* PHASE 2: 1.375rem → 1.15rem (-16.4%) */
 }
 
 .page-strategies .strategy-accounts-list {
@@ -21,10 +28,32 @@
   margin-top: 0.125rem;
 }
 
+/* @FEAT:capital-management @COMP:ui @TYPE:core
+   WHY: Capital reallocation button moved from tab area to header for better UX flow.
+   Reduces visual clutter and improves content accessibility. */
+.page-strategies .header-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.page-strategies .header-actions .btn {
+  white-space: nowrap;
+}
+
 /* Responsive tweaks */
 @media (max-width: 768px) {
   .page-strategies .summary-quick-actions {
     flex-direction: row;
     flex-wrap: wrap;
+  }
+
+  /* Mobile: Stack header buttons vertically for better touch UX */
+  .page-strategies .header-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .page-strategies .header-actions .btn {
+    width: 100%;
   }
 }

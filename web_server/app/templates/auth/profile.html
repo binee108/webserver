@@ -77,6 +77,13 @@
                     <label class="form-label">현재 웹훅 토큰</label>
                     <div class="flex space-x-2 items-center">
                         <input id="webhookToken" type="password" class="form-input flex-1" value="{{ current_user.webhook_token or '' }}" readonly>
+                        <button type="button" id="copyWebhookBtn" onclick="copyWebhookToken()" class="btn btn-info btn-sm" aria-label="웹훅 토큰 복사">
+                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M8 16.5a2 2 0 01-2-2V9.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v5a2 2 0 01-2 2z"/>
+                                <path d="M12.5 6.5a.5.5 0 00-.5-.5h-3a.5.5 0 00-.5.5v5a.5.5 0 00.5.5h3a.5.5 0 00.5-.5v-5zM14 4a1 1 0 01-1 1h-1V4a2 2 0 012-2h6a2 2 0 012 2v9a2 2 0 01-2 2h-1v-1a1 1 0 011-1h1V4z"/>
+                            </svg>
+                            복사
+                        </button>
                         <button type="button" onclick="toggleWebhookVisibility()" class="btn btn-secondary btn-sm">표시/숨김</button>
                         <button type="submit" name="action" value="regenerate_webhook_token" class="btn btn-warning btn-sm">
                             재발행
@@ -402,6 +409,58 @@ function toggleWebhookVisibility() {
     const input = document.getElementById('webhookToken');
     if (!input) return;
     input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+/**
+ * 웹훅 토큰을 클립보드에 복사하는 함수
+ * @FEAT:webhook-token @COMP:ui-helper @TYPE:helper
+ *
+ * WHY: 사용자가 API 통합 시 필요한 토큰을 쉽게 복사할 수 있도록 UX 개선
+ *
+ * 동작:
+ * 1. 토큰 입력 필드 유효성 검사
+ * 2. Clipboard API로 토큰을 클립보드에 복사
+ * 3. 성공 시: 토스트 알림 + 2초간 체크 아이콘 표시 후 복원
+ * 4. 실패 시: 에러 토스트 알림 (권한 거부, 토큰 없음 등)
+ *
+ * Accessibility: aria-label 지원으로 스크린 리더 접근성 제공
+ * Performance: 비동기 처리로 UI 블로킹 없음
+ */
+function copyWebhookToken() {
+    const COPY_SUCCESS_FEEDBACK_DURATION = 2000; // 복사 성공 피드백 표시 시간 (밀리초)
+
+    const input = document.getElementById('webhookToken');
+    const button = document.getElementById('copyWebhookBtn');
+
+    // 토큰 유효성 검사
+    if (!input || !input.value) {
+        showToast('웹훅 토큰 복사 실패: 토큰이 없습니다.', 'error');
+        return;
+    }
+
+    // 클립보드에 복사
+    navigator.clipboard.writeText(input.value)
+        .then(() => {
+            // 복사 성공 시 피드백
+            showToast('웹훅 토큰 복사 성공!', 'success');
+
+            // 버튼 임시 변경: 체크 아이콘 + 비활성화
+            const originalHTML = button.innerHTML;
+            // @SECURITY: innerHTML used safely - hardcoded SVG only (no user input)
+            // Risk: XSS if SVG contains user data. Current: Static SVG string only.
+            button.innerHTML = '<svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>복사됨';
+            button.disabled = true;
+
+            // 지정 시간 후 복원
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.disabled = false;
+            }, COPY_SUCCESS_FEEDBACK_DURATION);
+        })
+        .catch(err => {
+            console.error('클립보드 복사 실패:', err);
+            showToast('웹훅 토큰 복사 실패: 브라우저 권한 확인 필요', 'error');
+        });
 }
 </script>
 {% endblock %}

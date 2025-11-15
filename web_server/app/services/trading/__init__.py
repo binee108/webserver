@@ -1,4 +1,4 @@
-
+# @FEAT:order-cancellation @COMP:service @TYPE:integration
 """High-level trading service interface composed of modular components."""
 
 from __future__ import annotations
@@ -19,8 +19,7 @@ from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .quantity_calculator import QuantityCalculator, QuantityCalculationError
 from .record_manager import RecordManager
-from .exchange_limit_tracker import ExchangeLimitTracker
-from .order_queue_manager import OrderQueueManager
+from .failed_order_manager import failed_order_manager
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +50,11 @@ class TradingService:
         self.order_manager = OrderManager(service=self)
         self.core = TradingCore(service=self)
         self.event_emitter = EventEmitter(service=self)
-        self.exchange_limit_tracker = ExchangeLimitTracker  # classmethod만 있는 유틸리티 클래스
-        self.order_queue_manager = OrderQueueManager(service=self)
 
         # WebSocket 관리자 (앱 초기화 시 설정됨)
         self.websocket_manager = None
 
-        logger.info("✅ 통합 트레이딩 서비스 초기화 완료 (모듈형 구성 + 대기열 관리)")
+        logger.info("✅ 통합 트레이딩 서비스 초기화 완료")
 
     def init_websocket_manager(self, app):
         """WebSocket 관리자 초기화
@@ -206,8 +203,23 @@ class TradingService:
             stop_price=stop_price,
         )
 
-    def cancel_order(self, order_id: str, symbol: str, account_id: int) -> Dict[str, Any]:
-        return self.order_manager.cancel_order(order_id, symbol, account_id)
+    def cancel_order(
+        self,
+        order_id: str,
+        symbol: str,
+        account_id: int,
+        strategy_account_id: Optional[int] = None,
+        open_order: Optional['OpenOrder'] = None
+    ) -> Dict[str, Any]:
+        """Facade for OrderManager.cancel_order - Issue #27 Phase 3a Fix
+
+        Synchronize cancel_order signature with OrderManager implementation.
+        Added open_order param (Phase 3a) to use accurate market_type without
+        extra DB queries and enable proper cancellation across spot/margin/futures.
+        """
+        return self.order_manager.cancel_order(
+            order_id, symbol, account_id, strategy_account_id, open_order
+        )
 
     def cancel_order_by_user(self, order_id: str, user_id: int) -> Dict[str, Any]:
         return self.order_manager.cancel_order_by_user(order_id, user_id)
@@ -291,4 +303,5 @@ __all__ = [
     'OrderError',
     'PositionError',
     'QuantityCalculationError',
+    'failed_order_manager',
 ]

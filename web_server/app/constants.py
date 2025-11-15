@@ -408,6 +408,11 @@ class OrderType:
     CANCEL = 'CANCEL'
     CANCEL_ALL_ORDER = 'CANCEL_ALL_ORDER'
 
+    # @FEAT:webhook-batch-queue @COMP:config @TYPE:core
+    # Individual Commit Pattern routing groups (Phase 1)
+    QUEUED_TYPES = ['LIMIT', 'STOP_LIMIT', 'STOP_MARKET']  # Route to PendingOrder queue
+    DIRECT_TYPES = ['MARKET', 'CANCEL_ALL_ORDER']  # Execute immediately on exchange
+
     # 소문자 버전 (API 연동용)
     MARKET_LOWER = 'market'
     LIMIT_LOWER = 'limit'
@@ -677,6 +682,50 @@ class OrderType:
         normalized_type = order_type.upper()
         return cls.PRIORITY.get(normalized_type, 99)
 
+    @staticmethod
+    def classify_priority(order_type: str) -> str:
+        """배치주문 우선순위 분류
+
+        @FEAT:immediate-order-execution @COMP:config @TYPE:core
+
+        배치 주문 처리 시 즉시 실행 여부를 결정하는 우선순위를 반환합니다.
+
+        비즈니스 로직:
+        - 'high' (즉시 실행): CANCEL(취소), MARKET(시장가), STOP_MARKET(손절매)
+          → 시장 상황에 민감하며 지연 시 손실 가능성 높음
+        - 'low' (지연 실행 가능): LIMIT(지정가), STOP_LIMIT(조건부지정가)
+          → 대기 가능하며 배치 처리로 효율성 제고
+
+        Args:
+            order_type (str): 주문 타입 (CANCEL, MARKET, LIMIT, STOP_LIMIT, STOP_MARKET 등)
+
+        Returns:
+            str: 'high' (즉시 실행 우선) 또는 'low' (지연 실행 가능)
+
+        Examples:
+            >>> OrderType.classify_priority('MARKET')
+            'high'
+            >>> OrderType.classify_priority('CANCEL')
+            'high'
+            >>> OrderType.classify_priority('STOP_MARKET')
+            'high'
+            >>> OrderType.classify_priority('LIMIT')
+            'low'
+            >>> OrderType.classify_priority('STOP_LIMIT')
+            'low'
+
+        Notes:
+            - None 또는 빈 문자열 입력: 'low' 반환 (안전한 기본값)
+            - 유효하지 않은 order_type: 'low' 반환 (조용히 처리, 로그 없음)
+            - Phase 2: webhook 우선순위 큐 분류에 활용 예정
+        """
+        if not order_type:
+            return 'low'
+
+        high_priority = {OrderType.CANCEL, OrderType.MARKET, OrderType.STOP_MARKET}
+        normalized_type = order_type.upper()
+        return 'high' if normalized_type in high_priority else 'low'
+
 
 class MinOrderAmount:
     """거래소별 마켓타입별 최소 거래 금액 (USDT 기준)"""
@@ -766,6 +815,9 @@ class MinOrderAmount:
 class OrderStatus:
     """통합 주문 상태 (거래소 독립적)"""
     # 기본 상태
+    PENDING = 'PENDING'              # @DATA:OrderStatus.PENDING - DB-first 패턴 (Phase 2: 2025-10-30)
+    CANCELLING = 'CANCELLING'        # @FEAT:cancel-order-db-first @COMP:constant @TYPE:core
+                                     # @DATA:OrderStatus.CANCELLING - Pre-exchange API call state (order cancellation)
     NEW = 'NEW'                      # 신규 주문
     OPEN = 'OPEN'                    # 미체결
     PARTIALLY_FILLED = 'PARTIALLY_FILLED'  # 부분 체결
@@ -773,11 +825,13 @@ class OrderStatus:
     CANCELLED = 'CANCELLED'          # 취소됨
     REJECTED = 'REJECTED'            # 거부됨
     EXPIRED = 'EXPIRED'              # 만료됨
+    FAILED = 'FAILED'                # @DATA:OrderStatus.FAILED - 거래소 API 실패 (Phase 2: 2025-10-30)
 
-    # 미체결 상태 그룹
-    OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED]
+    # 미체결 상태 그룹 (백그라운드 작업 처리용)
+    # Note: PENDING은 get_active_statuses()에서 별도 추가됨
+    OPEN_STATUSES = [NEW, OPEN, PARTIALLY_FILLED, CANCELLING]  # @FEAT:cancel-order-db-first
     # 완료 상태 그룹
-    CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED]
+    CLOSED_STATUSES = [FILLED, CANCELLED, REJECTED, EXPIRED, FAILED]
 
     @classmethod
     def from_exchange(cls, status: str, exchange: str) -> str:
@@ -865,13 +919,18 @@ class OrderStatus:
             status (str): 주문 상태
 
         Returns:
-            bool: 미체결 상태이면 True (NEW, OPEN, PARTIALLY_FILLED)
+            bool: 미체결 상태이면 True (NEW, OPEN, PARTIALLY_FILLED, CANCELLING)
 
         Examples:
             >>> OrderStatus.is_open('OPEN')
             True
+            >>> OrderStatus.is_open('CANCELLING')
+            True
             >>> OrderStatus.is_open('FILLED')
             False
+
+        Notes:
+            - CANCELLING: DB-first 주문 취소 패턴의 임시 상태 (백그라운드 작업 대상)
         """
         return status in cls.OPEN_STATUSES
 
@@ -898,11 +957,15 @@ class OrderStatus:
         """미체결 상태 목록 반환
 
         Returns:
-            list: 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
+            list: 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED, CANCELLING]
 
         Examples:
             >>> OrderStatus.get_open_statuses()
-            ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+            ['NEW', 'OPEN', 'PARTIALLY_FILLED', 'CANCELLING']
+
+        Notes:
+            - 백그라운드 작업용 활성 미체결 상태
+            - PENDING은 get_active_statuses()에서 별도 추가됨
         """
         return cls.OPEN_STATUSES.copy()
 
@@ -919,17 +982,58 @@ class OrderStatus:
         """
         return cls.CLOSED_STATUSES.copy()
 
+    @classmethod
+    def get_active_statuses(cls) -> list:
+        """백그라운드 작업용 활성 상태 목록 반환 (PENDING 포함)
+
+        활성 상태: 정리, 모니터링, 강제 상태 전환이 필요한 상태
+        - PENDING: DB-first 패턴 (거래소 API 호출 대기 중)
+        - OPEN, PARTIALLY_FILLED: 미체결 주문
+
+        Returns:
+            list: 활성 상태 목록 [PENDING, NEW, OPEN, PARTIALLY_FILLED]
+
+        Examples:
+            >>> OrderStatus.get_active_statuses()
+            ['PENDING', 'NEW', 'OPEN', 'PARTIALLY_FILLED']
+
+        Notes:
+            - PENDING: 120초 초과 시 cleanup job에서 FAILED로 변환
+            - 배경 작업 쿼리: OpenOrder.status.in_(OrderStatus.get_active_statuses())
+        """
+        return [cls.PENDING] + cls.OPEN_STATUSES.copy()
+
+    @classmethod
+    def get_open_statuses_for_ui(cls) -> list:
+        """UI 표시용 미체결 상태 목록 반환 (PENDING, CANCELLING 제외)
+
+        사용자에게 표시되는 상태: NEW, OPEN, PARTIALLY_FILLED만 표시
+        PENDING과 CANCELLING은 임시 상태이므로 사용자에게 숨김
+
+        Returns:
+            list: UI용 미체결 상태 목록 [NEW, OPEN, PARTIALLY_FILLED]
+
+        Examples:
+            >>> OrderStatus.get_open_statuses_for_ui()
+            ['NEW', 'OPEN', 'PARTIALLY_FILLED']
+
+        Notes:
+            - API 응답 필터링: orders = OpenOrder.query.filter(status.in_(get_open_statuses_for_ui()))
+            - 대시보드: PENDING, CANCELLING 상태 주문은 필터링됨
+        """
+        return [cls.NEW, cls.OPEN, cls.PARTIALLY_FILLED]
+
 
 # @FEAT:order-limits @COMP:validation @TYPE:config
 # 주문 제한 관련 상수
 MAX_ORDERS_PER_SYMBOL_SIDE = 10  # 심볼당 side별 전체 제한 (LIMIT + STOP 합계)
-MAX_ORDERS_PER_SYMBOL_TYPE_SIDE = 5  # 심볼당 타입 그룹별 side별 제한
+MAX_ORDERS_PER_SYMBOL_TYPE_SIDE = 2  # 심볼당 타입 그룹별 side별 제한
 
 # 주문 타입 그룹 분류
 # Purpose: 심볼당 타입 그룹별 주문 제한 관리 (MAX_ORDERS_PER_SYMBOL_TYPE_SIDE 적용)
-# - LIMIT 그룹: 일반 지정가 주문 (심볼당 side별 최대 5개)
-# - STOP 그룹: 스톱 주문 (심볼당 side별 최대 5개)
-# 예시: BTC/USDT buy 방향 - LIMIT 5개 + STOP 5개 = 총 10개 허용
+# - LIMIT 그룹: 일반 지정가 주문 (심볼당 side별 최대 2개)
+# - STOP 그룹: 스톱 주문 (심볼당 side별 최대 2개)
+# 예시: BTC/USDT buy 방향 - LIMIT 2개 + STOP 2개 = 총 4개 허용
 ORDER_TYPE_GROUPS = {
     "LIMIT": ["LIMIT", "LIMIT_MAKER"],
     "STOP": ["STOP", "STOP_LIMIT", "STOP_MARKET"]
@@ -959,6 +1063,7 @@ class BackgroundJobTag:
     DAILY_SUMMARY = "[DAILY_SUMMARY]"        # 일일 요약 전송 (매일 09:00)
     PERF_CALC = "[PERF_CALC]"                # 일일 성과 계산 (매일 09:05)
     AUTO_REBAL = "[AUTO_REBAL]"              # 자동 리밸런싱 (매시 17분)
+    BALANCE_SYNC = "[BALANCE_SYNC]"          # 계좌 잔고 자동 동기화 (59초 주기)
     TOKEN_REFRESH = "[TOKEN_REFRESH]"        # 증권 OAuth 토큰 갱신 (매시 정각)
     QUEUE_REBAL = "[QUEUE_REBAL]"            # 대기열 재정렬 (1초 주기)
     LOCK_RELEASE = "[LOCK_RELEASE]"          # 오래된 처리 잠금 해제 (5분 주기)
@@ -968,20 +1073,29 @@ class BackgroundJobTag:
 # Job ID → Tag 매핑 (admin 페이지 로그 파싱용)
 # Purpose: admin/system에서 job_id 파라미터로 로그 필터링 시 사용
 # Usage: JOB_TAG_MAP.get(job_id) → BackgroundJobTag or None
+# IMPORTANT: 키는 APScheduler Job ID와 정확히 일치해야 함 (app/__init__.py 참조)
+# Example: scheduler.add_job(..., id='precision_cache_update', ...) → 키는 'precision_cache_update'
+# Validation: grep "id='" app/__init__.py | grep scheduler.add_job
 JOB_TAG_MAP = {
-    'precision_cache': BackgroundJobTag.PRECISION_CACHE,
-    'symbol_validator': BackgroundJobTag.SYMBOL_VALID,
-    'market_info': BackgroundJobTag.MARKET_INFO,
-    'price_cache': BackgroundJobTag.PRICE_CACHE,
-    'update_open_orders': BackgroundJobTag.ORDER_UPDATE,
-    'update_positions': BackgroundJobTag.PNL_CALC,
-    'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,
-    'calculate_daily_performance': BackgroundJobTag.PERF_CALC,
-    'auto_rebalance': BackgroundJobTag.AUTO_REBAL,
-    'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,
-    'queue_rebalancer': BackgroundJobTag.QUEUE_REBAL,
-    'release_stale_processing': BackgroundJobTag.LOCK_RELEASE,
-    'websocket_health_monitor': BackgroundJobTag.WS_HEALTH,
+    # Infrastructure Services
+    'precision_cache_update': BackgroundJobTag.PRECISION_CACHE,       # Line 542 (app/__init__.py)
+    'symbol_validator_refresh': BackgroundJobTag.SYMBOL_VALID,        # Line 555
+    'refresh_market_info': BackgroundJobTag.MARKET_INFO,              # Line 574
+    'update_price_cache': BackgroundJobTag.PRICE_CACHE,               # Line 587
+
+    # Trading Operations
+    'update_open_orders': BackgroundJobTag.ORDER_UPDATE,              # Line 598
+    'calculate_unrealized_pnl': BackgroundJobTag.PNL_CALC,            # Line 610
+    'auto_rebalance_accounts': BackgroundJobTag.AUTO_REBAL,           # Line 654
+    'rebalance_order_queue': BackgroundJobTag.QUEUE_REBAL,            # Line 681
+    'release_stale_order_locks': BackgroundJobTag.LOCK_RELEASE,       # Line 693
+
+    # Monitoring & Reporting
+    'check_websocket_health': BackgroundJobTag.WS_HEALTH,             # Line 705
+    'send_daily_summary': BackgroundJobTag.DAILY_SUMMARY,             # Line 623
+    'calculate_daily_performance': BackgroundJobTag.PERF_CALC,        # Line 637
+    'securities_token_refresh': BackgroundJobTag.TOKEN_REFRESH,       # Line 668
+    'sync_account_balances': BackgroundJobTag.BALANCE_SYNC,              # Line 819 (app/__init__.py)
 }
 
 
@@ -1190,212 +1304,3 @@ class KISOrderType:
             cls.FUTURES_CONDITION: OrderType.CONDITIONAL_LIMIT,
         }
         return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
-
-
-# @FEAT:order-queue @COMP:config @TYPE:core
-class ExchangeLimits:
-    """거래소별 열린 주문 제한 관리
-
-    거래소별 심볼당/계정당 열린 주문 제한을 정의하고,
-    대기열 시스템에서 사용할 동적 제한을 계산합니다.
-    """
-
-    # 거래소별 제한 상수 (거래소 공식 문서 기준)
-    LIMITS = {
-        'BINANCE': {
-            MarketType.FUTURES: {
-                'per_symbol': 200,      # 심볼당 열린 주문 제한
-                'per_account': 10000,   # 계정당 총 열린 주문 제한
-                'conditional': 10       # 조건부 주문 제한 (STOP)
-            },
-            MarketType.SPOT: {
-                'per_symbol': 25,
-                'per_account': 1000,
-                'conditional': 5
-            }
-        },
-        'BYBIT': {
-            MarketType.FUTURES: {
-                'per_symbol': 500,
-                'per_account': None,    # 제한 없음
-                'conditional': 10
-            },
-            MarketType.SPOT: {
-                'per_symbol': None,
-                'per_account': 500,
-                'conditional': 30
-            }
-        },
-        'OKX': {
-            MarketType.FUTURES: {
-                'per_symbol': 500,
-                'per_account': 4000,
-                'conditional': None     # 별도 제한 없음
-            },
-            MarketType.SPOT: {
-                'per_symbol': 500,
-                'per_account': 4000,
-                'conditional': None
-            }
-        },
-        'UPBIT': {
-            MarketType.SPOT: {
-                'per_symbol': None,
-                'per_account': None,
-                'conditional': 20       # 조건부 주문만 제한
-            }
-        },
-        'BITHUMB': {
-            MarketType.SPOT: {
-                'per_symbol': None,     # 공식 문서 없음 - 보수적 기본값 사용
-                'per_account': None,
-                'conditional': 20       # ESTIMATED - 업비트와 유사 (공식 문서 없음)
-            }
-        }
-    }
-
-    # 기본 제한값
-    DEFAULT_MAX_ORDERS = 20         # 제한이 없을 때 기본값
-    MAX_CAP = 20                     # 계산된 제한의 최대 캡
-    MIN_LIMIT = 1                    # 최소 제한
-    DEFAULT_STOP_LIMIT = 5          # STOP 주문 기본 제한
-
-
-    # @FEAT:order-queue @COMP:config @TYPE:core
-    @classmethod
-    def calculate_symbol_limit(cls, exchange: str, market_type: str, symbol: str = None) -> dict:
-        """심볼당 열린 주문 제한 계산
-
-        계산 로직:
-        1. 심볼당 제한의 10% (존재 시)
-        2. 계정당 제한의 10% (심볼당 없을 시)
-        3. 기본값 20개 (모두 없을 시)
-
-        제약 조건:
-        - 최대 캡: 20개
-        - 최소: 1개
-        - STOP 주문: 별도 제한 (기본 5개)
-
-        BREAKING CHANGE (Side-based separation v2.0):
-        - max_orders: 이제 총 허용량을 나타냄 (Buy + Sell 합계)
-        - max_orders_per_side: 각 side(Buy/Sell)의 독립적인 제한
-        - max_stop_orders: 이제 총 STOP 허용량을 나타냄 (Buy + Sell 합계)
-        - max_stop_orders_per_side: 각 side(Buy/Sell)의 독립적인 STOP 제한
-        - 기존 동작: 심볼당 10개 제한
-        - 신규 동작: 각 side당 10개 제한 (총 최대 20개)
-
-        STOP 주문 할당 정책 (v2.4 - 2025-10-16):
-        - STOP 주문은 전체 주문의 50%로 고정 할당하여 예측 가능성 향상
-        - 계산식: max_stop_per_side = max_orders_per_side // 2 (정수 나눗셈)
-        - 엣지 케이스: max_orders_per_side=1 시 STOP=1, LIMIT=0 (STOP 우선 정책)
-        - 예: BINANCE FUTURES (20개/side) → STOP 10개, LIMIT 10개
-        - 예: BINANCE SPOT (2개/side) → STOP 1개, LIMIT 1개
-        - 거래소 조건부 제한(conditional) 우선 적용
-
-        Args:
-            exchange: 거래소 이름 (BINANCE, BYBIT, OKX, UPBIT)
-            market_type: 마켓 타입 (SPOT, FUTURES)
-            symbol: 심볼 (현재는 사용하지 않음, 향후 심볼별 커스텀 제한용)
-
-        Returns:
-            dict: {
-                'max_orders': int,                # 총 허용량 (Buy + Sell 합계)
-                'max_orders_per_side': int,       # 각 side별 제한 (Buy 또는 Sell)
-                'max_stop_orders': int,           # 총 STOP 허용량 (Buy + Sell 합계)
-                'max_stop_orders_per_side': int,  # 각 side별 STOP 제한
-                'per_symbol_limit': int,          # 거래소 심볼당 원본 제한
-                'per_account_limit': int,         # 거래소 계정당 원본 제한
-                'calculation_method': str         # 계산 방법 (per_symbol, per_account, default)
-            }
-
-        Examples:
-            >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'FUTURES')
-            {'max_orders': 40, 'max_orders_per_side': 20, 'max_stop_orders': 20, 'max_stop_orders_per_side': 10, ...}
-
-            >>> ExchangeLimits.calculate_symbol_limit('BINANCE', 'SPOT')
-            {'max_orders': 4, 'max_orders_per_side': 2, 'max_stop_orders': 2, 'max_stop_orders_per_side': 1, ...}
-        """
-        exchange_upper = exchange.upper()
-        market_type_normalized = MarketType.normalize(market_type)
-
-        # 거래소별 제한 조회
-        exchange_limits = cls.LIMITS.get(exchange_upper, {})
-        market_limits = exchange_limits.get(market_type_normalized, {})
-
-        per_symbol = market_limits.get('per_symbol')
-        per_account = market_limits.get('per_account')
-        conditional_limit = market_limits.get('conditional', cls.DEFAULT_STOP_LIMIT)
-
-        # 제한 계산 로직
-        calculated_limit = None
-        calculation_method = 'default'
-
-        if per_symbol is not None:
-            # 1순위: 심볼당 제한의 10%
-            calculated_limit = int(per_symbol * 0.1)
-            calculation_method = 'per_symbol'
-        elif per_account is not None:
-            # 2순위: 계정당 제한의 10%
-            calculated_limit = int(per_account * 0.1)
-            calculation_method = 'per_account'
-        else:
-            # 3순위: 기본값
-            calculated_limit = cls.DEFAULT_MAX_ORDERS
-            calculation_method = 'default'
-
-        # 제약 조건 적용
-        max_orders_per_side = max(cls.MIN_LIMIT, min(calculated_limit, cls.MAX_CAP))
-
-        # STOP 주문 제한 (고정 50:50 할당)
-        # 엣지 케이스 보호: max_orders_per_side=1 시 STOP 우선 정책
-        if max_orders_per_side == 1:
-            max_stop_orders_per_side = 1  # STOP 우선 (LIMIT은 0개)
-        else:
-            # 50:50 분할: STOP = 절반, LIMIT = 나머지
-            max_stop_orders_per_side = max_orders_per_side // 2
-
-            # 거래소 조건부 제한 적용
-            if conditional_limit is not None:
-                max_stop_orders_per_side = min(max_stop_orders_per_side, conditional_limit)
-
-        # Side별 제한을 총 허용량으로 변환 (Buy + Sell)
-        max_orders = max_orders_per_side * 2
-        max_stop_orders = max_stop_orders_per_side * 2
-
-        return {
-            'max_orders': max_orders,
-            'max_orders_per_side': max_orders_per_side,
-            'max_stop_orders': max_stop_orders,
-            'max_stop_orders_per_side': max_stop_orders_per_side,
-            # max_limit는 호출자가 계산: max_orders_per_side - max_stop_orders_per_side
-            'per_symbol_limit': per_symbol,
-            'per_account_limit': per_account,
-            'calculation_method': calculation_method,
-            'exchange': exchange_upper,
-            'market_type': market_type_normalized
-        }
-
-    @classmethod
-    def get_raw_limits(cls, exchange: str, market_type: str) -> dict:
-        """거래소의 원본 제한값 반환 (계산하지 않음)
-
-        Args:
-            exchange: 거래소 이름
-            market_type: 마켓 타입
-
-        Returns:
-            dict: {
-                'per_symbol': int or None,
-                'per_account': int or None,
-                'conditional': int or None
-            }
-        """
-        exchange_upper = exchange.upper()
-        market_type_normalized = MarketType.normalize(market_type)
-
-        exchange_limits = cls.LIMITS.get(exchange_upper, {})
-        return exchange_limits.get(market_type_normalized, {
-            'per_symbol': None,
-            'per_account': None,
-            'conditional': None
-        })

@@ -2,11 +2,13 @@
 
 @FEAT:cli-migration @COMP:util @TYPE:helper
 """
+import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 
 class DockerHelper:
@@ -320,87 +322,317 @@ class DockerHelper:
             self.printer.print_status(f"정리 중 오류 발생: {e}", "error")
             raise
 
-    def copy_main_db_to_worktree(self, worktree_project_name: str) -> bool:
-        """메인 프로젝트 DB 볼륨을 워크트리 볼륨으로 복사
+    def _find_main_project_root(self) -> Optional[Path]:
+        """워크트리에서 메인 프로젝트 루트 찾기
 
-        Args:
-            worktree_project_name (str): 워크트리 프로젝트 이름
+        @FEAT:worktree-db-copy @COMP:util @TYPE:helper
+
+        워크트리 환경에서 실행 중일 때, .worktree 상위 디렉토리를 탐지하여
+        메인 프로젝트의 루트 경로를 반환합니다.
+
+        경로 변환 예시:
+        - 현재: /Users/binee/Desktop/quant/webserver/.worktree/worktree-db-copy/
+        - 반환: /Users/binee/Desktop/quant/webserver/
 
         Returns:
-            bool: 복사 성공 여부
+            Path: 메인 프로젝트 루트 경로 (.worktree의 부모 디렉토리)
+            None: 워크트리가 아닌 경우 (메인 프로젝트에서 실행 중)
+
+        Note:
+            - .worktree가 경로에 없으면 None 반환 (메인 프로젝트)
+            - postgres_data/ 존재 여부는 검증하지만 없어도 경로 반환
+            - 경로 파싱 실패 시 None 반환 (에러 억제)
+
+        Examples:
+            >>> # 워크트리에서 실행
+            >>> helper._find_main_project_root()
+            Path('/Users/binee/Desktop/quant/webserver')
+
+            >>> # 메인 프로젝트에서 실행
+            >>> helper._find_main_project_root()
+            None
         """
-        main_volume = 'webserver_postgres_data'
-        worktree_volume = f"{worktree_project_name}_postgres_data"
-
-        self.printer.print_status(
-            f"메인 DB 볼륨 복사 중... ({main_volume} → {worktree_volume})",
-            "info"
-        )
-
-        # 1. 메인 DB 볼륨 존재 확인
         try:
-            result = subprocess.run(
-                ['docker', 'volume', 'inspect', main_volume],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode != 0:
-                self.printer.print_status("메인 프로젝트 DB 볼륨이 존재하지 않습니다.", "warning")
-                self.printer.print_status("초기화된 DB로 시작합니다.", "info")
-                return True
-        except Exception:
-            return True
+            current = self.root_dir.resolve()
 
-        try:
-            # 2. 임시 백업 파일 생성
-            timestamp = int(time.time())
-            backup_file = f"/tmp/db_backup_{timestamp}.tar.gz"
+            # .worktree/ 경로 내에서 실행 중인지 확인
+            if '.worktree' not in str(current):
+                # 메인 프로젝트에서 실행 중 (워크트리 아님)
+                return None
 
-            # 3. 메인 볼륨에서 백업
-            self.printer.print_status("메인 DB 백업 생성 중...", "info")
-            subprocess.run(
-                ['docker', 'run', '--rm',
-                 '-v', f'{main_volume}:/source',
-                 '-v', '/tmp:/backup',
-                 'alpine',
-                 'tar', 'czf', f'/backup/db_backup_{timestamp}.tar.gz', '-C', '/source', '.'],
-                check=True,
-                capture_output=True
-            )
-
-            # 4. 워크트리 볼륨 생성 (이미 존재하면 무시)
-            subprocess.run(
-                ['docker', 'volume', 'create', worktree_volume],
-                capture_output=True  # 에러 무시 (이미 존재할 수 있음)
-            )
-
-            # 5. 워크트리 볼륨으로 복원
-            self.printer.print_status("워크트리 DB 볼륨으로 복원 중...", "info")
-            subprocess.run(
-                ['docker', 'run', '--rm',
-                 '-v', f'{worktree_volume}:/target',
-                 '-v', '/tmp:/backup',
-                 'alpine',
-                 'tar', 'xzf', f'/backup/db_backup_{timestamp}.tar.gz', '-C', '/target'],
-                check=True,
-                capture_output=True
-            )
-
-            # 6. 백업 파일 정리
+            # .worktree의 부모 디렉토리 = 메인 프로젝트 루트
+            # 경로 파싱 로직: /a/b/webserver/.worktree/feature-x/
+            #   → parts = ('/', 'a', 'b', 'webserver', '.worktree', 'feature-x')
+            #   → worktree_index = 4
+            #   → main_root = Path('/', 'a', 'b', 'webserver')  # 인덱스 0-3
+            parts = current.parts
             try:
-                os.remove(backup_file)
-            except Exception:
-                pass
+                worktree_index = parts.index('.worktree')
+                # .worktree 이전까지의 경로가 메인 루트
+                main_root = Path(*parts[:worktree_index])
 
-            self.printer.print_status(f"DB 볼륨 복사 완료! ({worktree_volume})", "success")
+                # 검증: postgres_data 디렉토리 존재 확인
+                if (main_root / "postgres_data").exists():
+                    return main_root
+                else:
+                    # .worktree는 있지만 postgres_data가 없음
+                    return main_root  # 경로는 반환 (호출 측에서 처리)
+
+            except ValueError:
+                # .worktree가 parts에 없음 (이론상 불가능, 위에서 체크함)
+                return None
+
+        except Exception:
+            # 경로 파싱 실패 등
+            return None
+
+    def copy_main_db_to_worktree(self, worktree_project_name: str) -> bool:
+        """메인 프로젝트 postgres_data 디렉토리를 워크트리로 복사 (Bind Mount 방식)
+
+        @FEAT:worktree-db-copy @COMP:service @TYPE:core @DEPS:_find_main_project_root
+
+        워크트리 환경에서 메인 프로젝트의 postgres_data/ 디렉토리를
+        현재 워크트리로 복사하여 동일한 DB 환경(계정, 전략, 거래소 설정)을 사용합니다.
+
+        변경 이력:
+        - 이전 (Named Volume 방식): docker volume inspect + tar 명령 사용
+        - 현재 (Bind Mount 방식): shutil.copytree()로 디렉토리 복사
+
+        복사 전략:
+        - 매번 전체 복사 (항상 최신 상태 유지)
+        - 기존 워크트리 DB가 있으면 덮어쓰기
+        - 복사 실패 시 Graceful Degradation (경고 + False 반환)
+
+        Args:
+            worktree_project_name (str): 워크트리 프로젝트 이름 (사용 안 함, 호환성 유지)
+
+        Returns:
+            bool: 복사/검증 성공 시 True, 권한 오류 또는 심각한 실패 시 False
+                - True: 복사 성공, 메인 DB 없음, 워크트리 아님 (모두 정상 흐름)
+                - False: 권한 오류(PermissionError), 파일 삭제/복사 실패
+
+        Raises:
+            None: 모든 예외는 내부 처리, 호출 측에 안전
+
+        Note:
+            - 복사 시간: ~30초 (5GB DB 기준, 허용 범위)
+            - 디스크 공간: 워크트리당 ~5GB (DB 크기만큼)
+            - 보안: symlinks=False로 심볼릭 링크 공격 방지
+            - 호출 위치: cli/commands/start.py:141-143 (워크트리 환경 감지 시)
+
+        Examples:
+            >>> # 워크트리에서 python run.py start 실행 시 자동 호출
+            >>> docker_helper.copy_main_db_to_worktree("webserver_feature-x")
+            True  # 복사 성공
+
+            >>> # 메인 프로젝트에 DB 없을 경우
+            >>> docker_helper.copy_main_db_to_worktree("webserver_test")
+            True  # 경고 출력 + 초기화된 DB로 시작
+
+            >>> # 권한 오류 발생 시
+            >>> docker_helper.copy_main_db_to_worktree("webserver_blocked")
+            False  # 에러 메시지 + 해결 방법 안내
+        """
+        # 1. 메인 프로젝트 루트 찾기
+        main_root = self._find_main_project_root()
+        if not main_root:
+            # 워크트리가 아니거나 메인 루트 찾기 실패
+            self.printer.print_status("메인 프로젝트 루트를 찾을 수 없습니다.", "warning")
+            return True  # 초기화된 DB로 시작
+
+        # 2. 소스/타겟 경로 설정
+        source_db = main_root / "postgres_data"
+        target_db = self.root_dir / "postgres_data"
+
+        # 3. 소스 존재 확인
+        if not source_db.exists():
+            self.printer.print_status("메인 프로젝트 DB가 존재하지 않습니다.", "warning")
+            self.printer.print_status("초기화된 DB로 시작합니다.", "info")
             return True
 
-        except subprocess.CalledProcessError as e:
-            self.printer.print_status(f"DB 볼륨 복사 실패: {e}", "error")
+        # 4. 타겟이 이미 존재하면 덮어쓰기 (매번 최신 상태 유지)
+        # 기존 워크트리 DB 제거 → 메인 DB 복사 (모든 워크스페이스에서 최신 상태)
+        # 주의: 권한 오류 발생 시 구체적인 해결 방법 안내
+        if target_db.exists():
+            self.printer.print_status("기존 워크트리 DB 제거 중...", "info")
+            try:
+                shutil.rmtree(target_db)
+            except PermissionError as e:
+                self.printer.print_status(f"권한 오류: {e}", "error")
+                self.printer.print_status("해결 방법: sudo chmod -R 755 postgres_data/", "info")
+                return False
+            except Exception as e:
+                self.printer.print_status(f"기존 DB 제거 실패: {e}", "error")
+                return False
+
+        # 5. 디렉토리 복사 (shutil.copytree)
+        # 보안 설정 적용: symlinks=False, copy_function=shutil.copy2
+        # - symlinks=False: 심볼릭 링크 따라가지 않음 (경로 탈출 공격 방지)
+        # - copy_function=shutil.copy2: 메타데이터(권한, 타임스탬프) 보존
+        # - ignore_dangling_symlinks=True: 깨진 심볼릭 링크 무시
+        try:
+            self.printer.print_status(
+                f"메인 DB 복사 중... ({source_db} → {target_db})",
+                "info"
+            )
+            shutil.copytree(
+                source_db,
+                target_db,
+                copy_function=shutil.copy2,  # 메타데이터 보존
+                symlinks=False,  # 심볼릭 링크 따라가지 않음 (보안)
+                ignore_dangling_symlinks=True
+            )
+            self.printer.print_status("DB 복사 완료!", "success")
+            return True
+
+        except PermissionError as e:
+            self.printer.print_status(f"권한 오류: {e}", "error")
+            self.printer.print_status("해결 방법: sudo chmod -R 755 postgres_data/", "info")
             return False
         except Exception as e:
-            self.printer.print_status(f"DB 볼륨 복사 중 오류: {e}", "error")
+            self.printer.print_status(f"DB 복사 실패: {e}", "error")
             return False
+
+    def get_container_ports(self, project_name: str) -> Optional[Dict[str, Optional[str]]]:
+        """프로젝트의 Docker 컨테이너 포트 조회
+
+        Docker ps 명령으로 nginx, app, postgres 컨테이너의
+        호스트 포트 매핑을 조회합니다.
+
+        @FEAT:dynamic-port-allocation @COMP:util @TYPE:helper
+        @CHANGE: Docker API 전용 포트 조회 (단일 소스 원칙)
+
+        Args:
+            project_name (str): Docker Compose 프로젝트명
+                - "webserver" → 메인 프로젝트
+                - "webserver_feature-name" → 워크트리
+
+        Returns:
+            dict: 포트 정보 또는 None (https/app/postgres 키)
+                - 성공: {"https": "5087", "app": "5059", "postgres": "5490"}
+                - 일부 실패: {"https": None, "app": "5059", "postgres": "5490"}
+                - 완전 실패: None
+
+        Security:
+            - 컨테이너명 화이트리스트 검증 (webserver* 패턴만)
+            - subprocess.run with list args (shell=False)
+            - Timeout 5초
+            - JSON 파싱 안전성
+
+        Example:
+            >>> helper.get_container_ports("webserver")
+            {"https": "8443", "app": "8001", "postgres": "5490"}
+
+            >>> helper.get_container_ports("webserver_feature-test")
+            {"https": "5087", "app": "5059", "postgres": "5490"}
+        """
+        # 1. 컨테이너명 화이트리스트 검증
+        if not project_name.startswith("webserver"):
+            return None
+
+        # 2. 컨테이너 베이스명: Docker Compose는 프로젝트명을 그대로 사용
+        container_base = project_name
+
+        containers = {
+            "nginx": f"{container_base}-nginx-1",
+            "app": f"{container_base}-app-1",
+            "postgres": f"{container_base}-postgres-1"
+        }
+
+        # 3. 각 컨테이너 포트 조회
+        ports = {}
+        for service, container_name in containers.items():
+            try:
+                # docker ps --format json --filter name={container_name}
+                result = subprocess.run(
+                    ['docker', 'ps', '--format', 'json', '--filter', f'name={container_name}'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False  # Graceful degradation 허용 (컨테이너 미실행)
+                )
+
+                if not result.stdout.strip():
+                    # 컨테이너가 실행 중이 아님
+                    ports[service] = None
+                    continue
+
+                # JSON 파싱
+                container_info = json.loads(result.stdout.strip())
+
+                # 4. 포트 매핑 파싱
+                # nginx: 443/tcp 포트의 호스트 매핑
+                # app: 5001/tcp 포트의 호스트 매핑
+                # postgres: 5432/tcp 포트의 호스트 매핑
+                port_mappings = container_info.get('Ports', '')
+
+                if service == "nginx":
+                    host_port = self._extract_host_port(port_mappings, '443/tcp')
+                elif service == "app":
+                    host_port = self._extract_host_port(port_mappings, '5001/tcp')
+                elif service == "postgres":
+                    host_port = self._extract_host_port(port_mappings, '5432/tcp')
+                else:
+                    host_port = None
+
+                ports[service] = host_port
+
+            except subprocess.TimeoutExpired:
+                ports[service] = None
+            except json.JSONDecodeError:
+                ports[service] = None
+            except subprocess.CalledProcessError:
+                ports[service] = None
+            except Exception:
+                ports[service] = None
+
+        # 5. 모든 포트가 None이면 None 반환
+        if all(v is None for v in ports.values()):
+            return None
+
+        # 6. nginx → https 키 변환 (계획서 line 204-211 참조)
+        if "nginx" not in ports or ports["nginx"] is None:
+            https_port = None
+        else:
+            https_port = ports["nginx"]
+
+        return {
+            "https": https_port,
+            "app": ports.get("app"),
+            "postgres": ports.get("postgres")
+        }
+
+    def _extract_host_port(self, port_mappings: str, container_port: str) -> Optional[str]:
+        """포트 매핑 문자열에서 호스트 포트 추출
+
+        Args:
+            port_mappings (str): Docker ps의 Ports 필드
+                예: "0.0.0.0:5059->5001/tcp, 0.0.0.0:5087->443/tcp"
+            container_port (str): 찾을 컨테이너 포트
+                예: "5001/tcp", "443/tcp", "5432/tcp"
+
+        Returns:
+            str: 호스트 포트 (예: "5059") 또는 None
+        """
+        if not port_mappings:
+            return None
+
+        # 포트 매핑은 쉼표로 구분됨
+        mappings = port_mappings.split(', ')
+
+        for mapping in mappings:
+            # 형식: "0.0.0.0:5059->5001/tcp"
+            if f'->{container_port}' in mapping:
+                # "0.0.0.0:5059" 추출
+                try:
+                    host_part = mapping.split('->')[0].strip()
+                    # "5059" 추출
+                    host_port = host_part.split(':')[-1]
+                    return host_port
+                except (IndexError, ValueError):
+                    return None
+
+        return None
 
     def get_services_to_start(self) -> List[str]:
         """환경 모드에 따라 시작할 서비스 목록 반환

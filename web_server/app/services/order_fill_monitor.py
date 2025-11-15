@@ -3,7 +3,7 @@
 
 WebSocket 이벤트 수신 → REST API 확인 → DB 업데이트 → 재정렬 트리거
 
-@FEAT:order-tracking @FEAT:trade-execution @COMP:service @TYPE:integration
+@FEAT:order-tracking @FEAT:trade-execution @FEAT:event-sse @COMP:service @TYPE:integration
 """
 
 import asyncio
@@ -33,7 +33,7 @@ class OrderFillMonitor:
     1. WebSocket 이벤트 수신 (from BinanceWebSocket/BybitWebSocket)
     2. REST API로 주문 상태 확인 (신뢰도 확보)
     3. DB 업데이트 (OpenOrder 삭제 또는 수정)
-    4. 재정렬 트리거 (OrderQueueManager.rebalance_symbol)
+    4. OpenOrder 상태 동기화 (Phase 4+)
     """
 
     def __init__(self, app: Flask):
@@ -129,28 +129,9 @@ class OrderFillMonitor:
                     # DB 업데이트 (커밋하지 않음)
                     self._update_order_in_db(confirmed_order, commit=False)
 
-                    # 재정렬 트리거 (주문이 완료되었을 때만)
-                    if confirmed_status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
-                        from app.services.trading import trading_service
-                        queue_manager = trading_service.order_queue_manager
-
-                        result = queue_manager.rebalance_symbol(
-                            account_id=account_id,
-                            symbol=normalized_symbol,  # 정규화된 심볼 사용
-                            commit=False  # 커밋하지 않음
-                        )
-
-                        if not result.get('success'):
-                            raise Exception(f"재정렬 실패: {result.get('error')}")
-
+                    # Phase 5: 재정렬 로직 완전 제거됨 (Queue 인프라 제거)
                     # 모든 작업 성공 시 한 번에 커밋
                     db.session.commit()
-
-                    if confirmed_status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
-                        logger.info(
-                            f"🔄 WebSocket 트리거 재정렬 완료 - {normalized_symbol}: "
-                            f"취소 {result.get('cancelled', 0)}개, 실행 {result.get('executed', 0)}개"
-                        )
 
                 except Exception as e:
                     db.session.rollback()
@@ -318,8 +299,22 @@ class OrderFillMonitor:
     # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:helper
     def _convert_order_info_to_result(self, order_info: dict, open_order: OpenOrder) -> dict:
         """
-        공통 로직: order_info → order_result 포맷 변환
-        Phase 1, 2에서 공유
+        order_info → order_result 포맷 변환 (공통 로직, Phase 1-2 공유)
+
+        Exchange API 응답을 표준 order_result 형식으로 변환합니다.
+
+        Returns:
+            dict: {
+                'order_id': 거래소 주문 ID,
+                'status': 주문 상태,
+                'filled_quantity': 체결 수량,
+                'average_price': 평균 체결가,
+                'side': 매수/매도,
+                'order_type': 주문 유형,
+                'account_id': 계정 ID (Issue #37)
+            }
+
+        Note: account_id는 SSE 이벤트 발송을 위한 필수 필드입니다.
         """
         return {
             'order_id': order_info.get('exchange_order_id'),
@@ -327,24 +322,72 @@ class OrderFillMonitor:
             'filled_quantity': order_info.get('filled_quantity'),
             'average_price': order_info.get('average_price'),
             'side': order_info.get('side') or open_order.side,
-            'order_type': order_info.get('order_type') or open_order.order_type
+            'order_type': order_info.get('order_type') or open_order.order_type,
+            'account_id': open_order.strategy_account.account_id  # Issue #37: SSE 이벤트 발송을 위한 필수 필드
         }
 
-    # @FEAT:order-tracking @FEAT:limit-order @COMP:service @TYPE:core
+    # @FEAT:order-tracking @FEAT:limit-order @FEAT:event-sse @COMP:service @TYPE:core
     def _finalize_order_update(self, open_order: OpenOrder, status: str, order_info: dict):
-        """
-        Step 3: OpenOrder 업데이트 또는 삭제
+        """Step 3: OpenOrder 업데이트 또는 삭제
 
-        - PARTIALLY_FILLED: 업데이트 후 계속 모니터링
-        - FILLED/CANCELED/EXPIRED: 삭제
+        주문 상태에 따라 OpenOrder를 업데이트하거나 삭제합니다.
+        CANCELED/CANCELLED/EXPIRED 상태의 경우 삭제 전 SSE 이벤트를 발송합니다.
+
+        Args:
+            open_order: 처리할 OpenOrder 객체
+            status: 주문 상태 ('PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED')
+            order_info: 거래소 API 응답 데이터
+
+        처리 로직:
+            - PARTIALLY_FILLED: 수량 업데이트 후 계속 모니터링
+            - CANCELED/CANCELLED/EXPIRED: SSE 이벤트 발송 → DB 삭제
+            - FILLED: DB 삭제 (이벤트는 다른 경로에서 발송)
+            - 기타: 방어적 로깅 후 삭제
+
+        SSE 이벤트:
+            - 이벤트 발송은 db.session.delete() **전**에 수행 (타이밍 critical)
+            - 이벤트 실패 시에도 DB 삭제는 정상 진행 (에러 격리)
+            - Phase 1의 EventEmitter.emit_order_cancelled_or_expired_event() 사용
         """
         if status == 'PARTIALLY_FILLED':
             open_order.status = status
             open_order.filled_quantity = float(order_info.get('filled_quantity', 0))
             open_order.is_processing = False  # 계속 모니터링
             db.session.flush()
-        elif status in ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED']:
+        elif status in ['CANCELED', 'CANCELLED', 'EXPIRED']:
+            # ⚠️ CRITICAL: SSE 이벤트 발송은 db.session.delete() **전**에 수행
+            # 이유: 삭제 후에는 open_order 데이터 접근 불가능 (Phase 1 EventEmitter 제약사항)
+            try:
+                # Lazy import (순환 참조 방지, Line 134-135 패턴 재사용)
+                from app.services.trading import trading_service
+                event_emitter = trading_service.event_emitter
+
+                # SSE 이벤트 발송 (삭제 전이므로 OpenOrder 데이터 접근 가능)
+                event_emitter.emit_order_cancelled_or_expired_event(open_order, status)
+            except Exception as e:
+                # 이벤트 발송 실패는 로그만 남기고 계속 진행 (DB 트랜잭션 보호)
+                logger.error(
+                    f"❌ {status} 이벤트 발송 실패 - order_id={open_order.exchange_order_id}, error={e}",
+                    exc_info=True
+                )
+
+            # OpenOrder 삭제
             db.session.delete(open_order)
+            logger.info(f"🗑️ OpenOrder 삭제 완료 - order_id={open_order.exchange_order_id}, status={status}")
+        elif status == 'FILLED':
+            # FILLED는 기존 로직 유지 (다른 경로에서 이미 이벤트 발송됨)
+            db.session.delete(open_order)
+            logger.info(f"🗑️ OpenOrder 삭제 완료 - order_id={open_order.exchange_order_id}, status={status}")
+        elif status == 'NEW':
+            # NEW 상태: 주문 생성 직후의 정상 상태, 추가 처리 불필요
+            # WebSocket이 주문 생성을 감지했지만 상태 변경은 없음
+            open_order.is_processing = False
+            logger.debug(f"📝 NEW 상태 확인 - order_id={open_order.exchange_order_id} (처리 플래그 해제)")
+        else:
+            # 예상치 못한 상태 (OPEN, PENDING_NEW 등)
+            logger.warning(f"⚠️ 처리되지 않은 주문 상태 - status={status}, order_id={open_order.exchange_order_id}")
+            # ⚠️ 삭제하지 않고 플래그만 해제 (다음 주기에 재처리)
+            open_order.is_processing = False
 
     # @FEAT:order-tracking @COMP:service @TYPE:core
     def _update_order_in_db(self, order_info: Dict[str, Any], commit: bool = True):

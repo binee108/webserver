@@ -140,13 +140,6 @@ class RealtimeOpenOrdersManager {
         this.sseManager.on('order_batch_update', (data) => {
             this.handleBatchOrderUpdate(data);
         });
-
-        // Listen to event bus events
-        if (this.eventBus) {
-            this.eventBus.on('sse:order_update', (data) => {
-                this.handleOrderUpdate(data);
-            });
-        }
     }
     
     /**
@@ -176,10 +169,12 @@ class RealtimeOpenOrdersManager {
             this.showOpenOrdersError('열린 주문을 불러오는 중 오류가 발생했습니다.');
         }
     }
-    
+
     /**
+     * @FEAT:individual-toast @COMP:integration @TYPE:core
      * Handle order update from SSE
-     * Note: Toasts are only shown by Batch SSE (CLAUDE.md SSE 정책)
+     * Shows individual toast notification for each order event (order_created, order_filled, order_cancelled)
+     * Filters PendingOrder events to show only OpenOrder notifications
      */
     handleOrderUpdate(data) {
         try {
@@ -219,11 +214,23 @@ class RealtimeOpenOrdersManager {
             switch (eventType) {
                 case 'order_created':
                     this.upsertOrder(data);
+                    // Check suppress_toast flag before showing toast
+                    // Show toast only for OpenOrder (exchange orders), not PendingOrder (queue)
+                    // PendingOrder is internal queue state - no user notification needed
+                    if (data.source === 'open_order' && !data.suppress_toast) {
+                        this.showOrderNotification(eventType, data);
+                    }
                     break;
 
                 case 'order_filled':
                 case 'order_cancelled':
                     this.removeOrder(data.order_id);
+                    // Check suppress_toast flag before showing toast
+                    // Show toast only for OpenOrder completion/cancellation
+                    // PendingOrder removal is not a user-relevant action
+                    if (data.source === 'open_order' && !data.suppress_toast) {
+                        this.showOrderNotification(eventType, data);
+                    }
                     break;
 
                 case 'order_updated':
@@ -957,46 +964,40 @@ class RealtimeOpenOrdersManager {
             countElement.className = count > 0 ? 'ml-2 badge badge-warning' : 'ml-2 badge badge-secondary';
         }
     }
-    
+
     /**
+     * @FEAT:individual-toast @COMP:integration @TYPE:core
      * Show order notification
-     * Note: NOT used for Order List SSE (use Batch SSE instead)
-     * Used for: WebSocket exchange events, manual triggers
+     * Used for: Individual order events (order_created, order_filled, order_cancelled) and WebSocket exchange events
      */
     showOrderNotification(eventType, data) {
         const eventTypeMap = {
-            'order_created': '새 주문',
-            'order_filled': '주문 체결',
-            'order_cancelled': '주문 취소',
-            'order_updated': '주문 업데이트'
+            'order_created': '생성',
+            'order_filled': '체결',
+            'order_cancelled': '취소',
+            'order_updated': '업데이트'
         };
 
-        const eventTypeText = eventTypeMap[eventType] || '주문 업데이트';
-        const side = (data.side || '').toUpperCase();
+        const actionText = eventTypeMap[eventType] || '업데이트';
 
-        // PendingOrder 여부 판단
-        const isPendingOrder = data.source === 'pending_order';
+        // 주문 타입 결정 (LIMIT, MARKET, STOP 등)
+        const orderType = (data.order_type || 'LIMIT').toUpperCase();
 
         // 색상 타입 결정
         let toastType;
         if (eventType === 'order_filled') {
-            // 체결: 매수면 buy(초록), 매도면 sell(빨강)
-            toastType = side === 'BUY' ? 'buy' : 'sell';
+            // 체결: info 타입 (배치와 통일)
+            toastType = 'info';
         } else if (eventType === 'order_cancelled') {
             toastType = 'warning';
         } else if (eventType === 'order_created') {
-            // PendingOrder는 info, 일반 주문은 success
-            toastType = isPendingOrder ? 'info' : 'success';
+            toastType = 'info';
         } else {
             toastType = 'info';
         }
 
-        const quantity = Math.abs(data.quantity || 0);
-
-        // PendingOrder인 경우 메시지에 "(대기열)" 추가
-        const message = isPendingOrder
-            ? `${eventTypeText} (대기열): ${data.symbol} ${side} ${quantity}`
-            : `${eventTypeText}: ${data.symbol} ${side} ${quantity}`;
+        // 배치 주문과 동일한 포맷: "📦 LIMIT 주문 생성 1건"
+        const message = `📦 ${orderType} 주문 ${actionText} 1건`;
 
         // Phase 1: FIFO removal before showing new toast
         this._removeFIFOToast();
@@ -1122,12 +1123,8 @@ class RealtimeOpenOrdersManager {
             const data = await response.json();
             
             if (data.success) {
-                const successCount = data.cancelled_orders ? data.cancelled_orders.length : 0;
-                const failedCount = data.failed_orders ? data.failed_orders.length : 0;
-                
-                if (window.showToast) {
-                    window.showToast(`일괄 취소 완료: ${successCount}개 성공, ${failedCount}개 실패`, 'success');
-                }
+                // @FEAT:toast-ux-improvement @COMP:route @TYPE:integration
+                // 토스트 제거: SSE 이벤트에서 자동으로 표시됨
                 // Orders will be removed via SSE events
             } else {
                 if (window.showToast) {

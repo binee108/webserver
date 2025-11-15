@@ -21,8 +21,22 @@ def upgrade(engine):
     주의사항:
     - 이 변경은 기존 데이터에 영향을 주지 않습니다
     - 계좌 연결 해제 시 strategy_account_id가 NULL로 설정됩니다
+    - 테이블이 없으면 건너뜁니다 (초기 설치 시 db.create_all()이 처리)
     """
     with engine.connect() as conn:
+        # 테이블 존재 여부 확인
+        result = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'trade_executions'
+            );
+        """))
+        table_exists = result.scalar()
+
+        if not table_exists:
+            print('ℹ️  trade_executions 테이블이 없습니다. 건너뜁니다 (초기 설치).')
+            return
+
         # PostgreSQL: ALTER COLUMN DROP NOT NULL
         conn.execute(text(
             'ALTER TABLE trade_executions ALTER COLUMN strategy_account_id DROP NOT NULL;'

@@ -233,6 +233,11 @@ class Order:
     fee: Optional[Decimal] = None
     last_trade_timestamp: Optional[datetime] = None
 
+    # STOP 주문 활성화 감지 (Exchange-Agnostic)
+    # @FEAT:stop-limit-activation @ISSUE:45 @COMP:model
+    is_stop_order_activated: Optional[bool] = None
+    activation_detected_at: Optional[datetime] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """CCXT 호환 딕셔너리로 변환"""
         return {
@@ -259,7 +264,9 @@ class Order:
             },
             'info': {},
             'status': self.status.lower(),
-            'side': self.side.lower()
+            'side': self.side.lower(),
+            'isStopOrderActivated': self.is_stop_order_activated,
+            'activationDetectedAt': self.activation_detected_at.isoformat() if self.activation_detected_at else None
         }
 
     @classmethod

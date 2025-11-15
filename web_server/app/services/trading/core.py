@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -14,8 +16,8 @@ from typing import Any, Dict, List, Optional
 from flask import current_app
 
 from app import db
-from app.models import Account, Strategy, StrategyAccount
-from app.constants import Exchange, MarketType, OrderType
+from app.models import Account, Strategy, StrategyAccount, OpenOrder
+from app.constants import Exchange, MarketType, OrderType, OrderStatus
 from app.services.exchange import exchange_service
 from app.services.security import security_service
 from app.services.utils import to_decimal
@@ -67,6 +69,83 @@ def _parse_retry_delays(env_value: str, default: str = '125,250,500,1000,2000') 
             return [0.125, 0.25, 0.5, 1.0, 2.0]
 
 
+def sanitize_error_message(error_msg: str, max_length: int = 500) -> str:
+    """
+    Remove sensitive information from error messages before DB storage.
+
+    Security patterns to remove:
+    - API keys: Remove patterns like "key=ABC123", "apikey: XYZ"
+    - Account numbers: Remove digit sequences >8 chars
+    - Tokens: Remove "token=...", "bearer ..."
+    - Email addresses: Redact to "***@***.***"
+    - IP addresses: Partial redaction (e.g., "192.168.*.*")
+
+    @FEAT:webhook-order @COMP:service @TYPE:core
+    @DATA:error_message - 에러 메시지 보안 처리 (Phase 1: 2025-10-30)
+
+    Args:
+        error_msg: Raw error message from exchange API
+        max_length: Maximum length of sanitized message (default: 500)
+
+    Returns:
+        str: Sanitized error message (max 500 characters)
+
+    Examples:
+        >>> sanitize_error_message("API key abc123 invalid")
+        "API key [REDACTED] invalid"
+
+        >>> sanitize_error_message("Account 123456789 insufficient balance")
+        "Account [REDACTED] insufficient balance"
+    """
+    if not error_msg:
+        return ""
+
+    sanitized = error_msg
+
+    # 1. API key pattern: API_KEY, API-KEY, SECRET, TOKEN 뒤에 오는 문자열 마스킹
+    # 예: "API-KEY: abc123def456ghi789..." → "API-KEY: abc123***"
+    sanitized = re.sub(
+        r'(API[_-]?KEY|SECRET|TOKEN)["\s:=]+([a-zA-Z0-9]{8})[a-zA-Z0-9]+',
+        r'\1: \2***',
+        sanitized,
+        flags=re.IGNORECASE
+    )
+
+    # 2. Account number pattern: 9자리 이상의 연속된 숫자 제거
+    # 예: "Account 123456789 insufficient balance" → "Account [REDACTED]"
+    sanitized = re.sub(r'\b\d{9,}\b', '[REDACTED]', sanitized)
+
+    # 3. Bearer token pattern: "bearer abc123..." 형태
+    # 예: "bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." → "bearer [REDACTED]"
+    sanitized = re.sub(
+        r'(bearer|authorization)\s+[a-zA-Z0-9\-._~+/]+=*',
+        r'\1 [REDACTED]',
+        sanitized,
+        flags=re.IGNORECASE
+    )
+
+    # 4. Email pattern: "user@example.com" → "***@***.***"
+    # 예: "invalid user@example.com" → "invalid ***@***.***"
+    sanitized = re.sub(
+        r'\b[\w\.-]+@[\w\.-]+\.\w+\b',
+        '***@***.***',
+        sanitized
+    )
+
+    # 5. IP address pattern: Partial redaction "192.168.*.*"
+    # 예: "Connection refused from 192.168.1.100" → "Connection refused from 192.168.*.*"
+    sanitized = re.sub(
+        r'(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}',
+        r'\1.*.*',
+        sanitized
+    )
+
+    # 6. Truncate to max_length
+    return sanitized[:max_length]
+
+
+
+
 # @FEAT:framework @FEAT:webhook-order @FEAT:order-tracking @COMP:service @TYPE:core
 class TradingCore:
     """Encapsulates trading execution, signal processing, and exchange coordination."""
@@ -84,12 +163,12 @@ class TradingCore:
                      timing_context: Optional[Dict[str, float]] = None,
                      from_pending_queue: bool = False) -> Dict[str, Any]:
         """
-        거래 실행 (Phase 3: 즉시 대기열 진입)
+        거래 실행 (Phase 4: 즉시 실행)
 
-        Phase 3 변경사항:
+        Phase 4 변경사항:
+        - 모든 주문 타입: 검증 후 즉시 거래소 실행
         - MARKET 주문: 기존대로 즉시 거래소 제출
-        - LIMIT/STOP 주문: 검증 없이 즉시 PendingOrder에 추가
-        - 재정렬 트리거: enqueue 후 즉시 rebalance_symbol() 호출
+        - LIMIT/STOP 주문: 검증 후 즉시 거래소 실행 (Phase 4+)
 
         Args:
             strategy: 전략 객체
@@ -100,6 +179,7 @@ class TradingCore:
             price: 가격 (지정가 주문시)
             stop_price: 스탑 가격 (스탑 주문시)
             strategy_account_override: 특정 전략 계좌로 거래를 강제할 때 사용
+            timing_context: 타이밍 측정 딕셔너리 (webhook_received_at: Unix timestamp)
 
         Returns:
             거래 실행 결과
@@ -128,9 +208,10 @@ class TradingCore:
 
             logger.info(f"📊 전략 마켓타입: {strategy_market_type} → 거래소 마켓타입: {market_type}")
 
-            # @FEAT:order-queue @COMP:service @TYPE:core
-            # Phase 3: LIMIT/STOP 주문 → 즉시 대기열 진입
-            from app.constants import ORDER_TYPE_GROUPS
+            # @FEAT:immediate-execution @COMP:service @TYPE:core
+            # Phase 4: Queue 제거 및 즉시 실행 전환 (모든 주문 타입)
+            # 모든 주문 타입을 즉시 거래소에 제출합니다.
+            from app.constants import ORDER_TYPE_GROUPS, OrderStatus
 
             type_group = None
             for group_name, types in ORDER_TYPE_GROUPS.items():
@@ -138,84 +219,274 @@ class TradingCore:
                     type_group = group_name
                     break
 
-            # LIMIT/STOP 그룹: 재정렬 경로가 아니면 대기열 진입
-            if type_group in ['LIMIT', 'STOP']:
-                # 재정렬 경로에서는 거래소 직접 제출
-                if from_pending_queue:
-                    logger.info(
-                        f"🔄 재정렬 실행 (PendingOrder → 거래소) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}"
-                    )
-                    # 거래소 직접 제출 (아래 MARKET 로직으로 fall-through)
-                else:
-                    # 웹훅 경로: 대기열 진입
-                    logger.info(
-                        f"📥 대기열 진입 (웹훅) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
-                        f"수량: {quantity}, price: {price}, stop_price: {stop_price}"
-                    )
+            # MARKET/CANCEL/LIMIT/STOP 주문: 모두 즉시 거래소 제출
+            # (Phase 4: Queue 시스템 제거 완료)
+            # 🆕 Phase 5: 주문 실행 직전 is_active 재확인 (Race Condition 방지)
+            if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+                logger.warning(
+                    f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
+                    f"MARKET 주문 스킵 (전략: {strategy.group_name}, 계좌: {account.name}, "
+                    f"심볼: {symbol}, 방향: {side})"
+                )
+                return {
+                    'success': False,
+                    'error': 'StrategyAccount가 비활성 상태입니다',
+                    'error_type': 'account_inactive',
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'strategy_account_id': strategy_account.id,
+                    'skipped': True,
+                    'skip_reason': 'strategy_account_inactive'
+                }
 
-                    enqueue_result = self.service.order_queue_manager.enqueue(
-                        strategy_account_id=strategy_account.id,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        quantity=quantity,
-                        price=price,
-                        stop_price=stop_price,
-                        market_type=strategy_market_type,
-                        reason='WEBHOOK_ORDER',
-                        commit=True
-                    )
-
-                    if not enqueue_result.get('success'):
-                        logger.error(f"대기열 추가 실패: {enqueue_result.get('error')}")
-                        return {
-                            'success': False,
-                            'error': enqueue_result.get('error'),
-                            'error_type': 'queue_error',
-                            'strategy': strategy.group_name,
-                            'account_id': account.id
-                        }
-
-                    # NOTE: 재정렬은 백그라운드 작업(queue_rebalancer)이 자동 처리
-                    # 즉시 재정렬 호출 시 웹훅 응답이 지연되어 nginx 504 timeout 발생
-
-                    logger.info(
-                        f"✅ 대기열 추가 완료 - "
-                        f"pending_id: {enqueue_result.get('pending_order_id')}, "
-                        f"우선순위: {enqueue_result.get('priority')}"
-                    )
-
-                    return {
-                        'success': True,
-                        'queued': True,
-                        'pending_order_id': enqueue_result.get('pending_order_id'),
-                        'priority': enqueue_result.get('priority'),
-                        'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
-                        'strategy': strategy.group_name,
-                        'account_id': account.id,
-                        'action': 'queued',  # SSE 이벤트용
-                        'summary': f'{order_type} {side} 주문 대기열 진입'
-                    }
-
-            # MARKET/CANCEL 주문: 기존대로 즉시 거래소 제출
-            order_result = self._execute_exchange_order(
-                account=account,
+            # ============================================================
+            # STEP 1: Create PENDING order (before exchange API)
+            # ============================================================
+            # @FEAT:webhook-order @COMP:service @TYPE:core
+            # @DATA:OrderStatus.PENDING - DB-first 패턴 (Phase 2: 2025-10-30)
+            pending_order = OpenOrder(
+                strategy_account_id=strategy_account.id,
+                exchange_order_id=f"PENDING-{uuid.uuid4().hex}",  # Full UUID (Fixed Issue #3)
                 symbol=symbol,
                 side=side,
-                quantity=quantity,
                 order_type=order_type,
+                quantity=float(quantity) if quantity else 0.0,
+                filled_quantity=0.0,
+                status=OrderStatus.PENDING,
                 market_type=market_type,
-                price=price,
-                stop_price=stop_price,
-                timing_context=timing_context
+                price=float(price) if price else None,
+                stop_price=float(stop_price) if stop_price else None,
+                created_at=datetime.utcnow()
             )
 
-            order_result['account_id'] = account.id
+            db.session.add(pending_order)
+            db.session.commit()
+            pending_order_id = pending_order.id
 
-            if not order_result['success']:
-                return order_result
+            logger.debug(
+                f"✅ PENDING 주문 생성: id={pending_order_id}, "
+                f"symbol={symbol}, side={side}, qty={quantity}"
+            )
+
+            try:
+                # ============================================================
+                # STEP 2: Exchange API call
+                # ============================================================
+                order_result = self._execute_exchange_order(
+                    account=account,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    order_type=order_type,
+                    market_type=market_type,
+                    price=price,
+                    stop_price=stop_price,
+                    timing_context=timing_context
+                )
+
+                order_result['account_id'] = account.id
+
+                # ============================================================
+                # STEP 3: Update PENDING → OPEN (on success)
+                # ============================================================
+                if order_result.get('success'):
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    order.status = OrderStatus.OPEN
+
+                    # Update with exchange data
+                    exchange_order = {
+                        'id': order_result.get('order_id'),
+                        'price': float(price) if price else None,
+                        'filled': float(order_result.get('filled_quantity', 0)) if order_result.get('filled_quantity') else 0.0
+                    }
+                    order.exchange_order_id = exchange_order.get('id', order.exchange_order_id)
+                    if exchange_order.get('price'):
+                        order.price = exchange_order['price']
+                    if exchange_order.get('filled'):
+                        order.filled_quantity = exchange_order['filled']
+
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
+
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→OPEN 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, symbol={symbol}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"🔄 주문 상태 전환: {old_status} → {OrderStatus.OPEN} "
+                                    f"(exchange_order_id={exchange_order.get('id')})"
+                                )
+                            break
+                        except Exception as e:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→OPEN 재시도 {attempt+1}/3: {e} - "
+                                f"order_id={pending_order_id}, symbol={symbol}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→OPEN 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, symbol={symbol}, "
+                            f"exchange_order_id={exchange_order.get('id')}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
+
+                else:
+                    # ============================================================
+                    # STEP 5: Update PENDING → FAILED (on exchange API failure)
+                    # ============================================================
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    error_msg = sanitize_error_message(order_result.get('error', 'Exchange order failed'))
+                    order.status = OrderStatus.FAILED
+                    order.error_message = error_msg
+
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
+
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→FAILED 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, error={error_msg}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"⚠️ 주문 실패: {old_status} → {OrderStatus.FAILED} "
+                                    f"(error: {error_msg[:50]}...)"
+                                )
+                            break
+                        except Exception as e:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→FAILED 재시도 {attempt+1}/3: {e} - "
+                                f"order_id={pending_order_id}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→FAILED 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, error={error_msg}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
+
+                    # Phase 4: FailedOrder 생성 (재시도 메커니즘)
+                    from app.services.trading.failed_order_manager import failed_order_manager
+
+                    failed_order_manager.create_failed_order(
+                        strategy_account_id=strategy_account.id,
+                        order_params={
+                            'symbol': symbol,
+                            'side': side,
+                            'order_type': order_type,
+                            'quantity': quantity,
+                            'price': price,
+                            'stop_price': stop_price,
+                            'market_type': market_type
+                        },
+                        reason=order_result.get('error', 'Exchange order failed'),
+                        exchange_error=order_result.get('exchange_error')
+                    )
+
+                    logger.warning(
+                        f"⚠️ 주문 실패 → FailedOrder 생성 - "
+                        f"심볼: {symbol}, 타입: {order_type}, side: {side}, "
+                        f"오류: {order_result.get('error')}"
+                    )
+
+                    return order_result
+
+            except Exception as e:
+                # ============================================================
+                # STEP 5b: Update PENDING → FAILED (on exception)
+                # ============================================================
+                try:
+                    order = OpenOrder.query.get(pending_order_id)
+                    if not order:
+                        raise ValueError(
+                            f"PENDING order not found: id={pending_order_id}. "
+                            f"This should never happen - indicates data corruption."
+                        )  # Fixed Issue #2
+
+                    old_status = order.status
+                    error_msg = sanitize_error_message(str(e))
+                    order.status = OrderStatus.FAILED
+                    order.error_message = error_msg
+
+                    # @FEAT:orphan-order-prevention @COMP:service @TYPE:core @DEPS:db-connection-pool
+                    # 🆕 Phase 1: DB commit with 3 retries (50ms/100ms/150ms)
+                    # 목적: stale connection으로 인한 커밋 실패 시 재시도 (고아 주문 방지)
+                    retry_delays = [0.05, 0.10, 0.15]
+                    db_update_success = False
+
+                    for attempt in range(3):
+                        try:
+                            db.session.commit()
+                            db_update_success = True
+                            if attempt > 0:
+                                logger.info(
+                                    f"✅ PENDING→FAILED (exception) 성공 (재시도 {attempt}회 후) - "
+                                    f"order_id={pending_order_id}, exception={str(e)[:50]}"
+                                )
+                            break
+                        except Exception as commit_error:
+                            db.session.rollback()
+                            logger.warning(
+                                f"⚠️ PENDING→FAILED (exception) 재시도 {attempt+1}/3: {commit_error} - "
+                                f"order_id={pending_order_id}"
+                            )
+                            if attempt < 2:
+                                time.sleep(retry_delays[attempt])
+
+                    if not db_update_success:
+                        logger.critical(
+                            f"🚨 ORPHAN ORDER - PENDING→FAILED (exception) 실패 (3회 재시도) - "
+                            f"order_id={pending_order_id}, exception={str(e)[:50]}"
+                        )
+                        # PENDING 상태 유지 → Phase 4 백그라운드 정리 대상
+                    else:
+                        logger.error(
+                            f"❌ 주문 실패 (exception): {old_status} → {OrderStatus.FAILED} "
+                            f"(error: {error_msg[:50]}...)"
+                        )
+                except Exception as inner_e:
+                    logger.error(f"❌ PENDING → FAILED 전환 실패: {inner_e}")
+
+                # 예외를 상위로 재전달
+                raise
 
             # 조정된 수량/가격 보관 (거래소 제한 반영)
             adjusted_quantity = order_result.get('adjusted_quantity', quantity)
@@ -269,6 +540,14 @@ class TradingCore:
             filled_decimal = fill_summary.get('filled_quantity', Decimal('0'))
             average_decimal = fill_summary.get('average_price', Decimal('0'))
 
+            # @FEAT:webhook-order @COMP:service @TYPE:core
+            # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
+            # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+            # UTC 변환: 전체 시스템이 UTC 기반이므로 utcfromtimestamp 사용
+            webhook_received_at_dt = None
+            if timing_context and 'webhook_received_at' in timing_context:
+                webhook_received_at_dt = datetime.utcfromtimestamp(timing_context['webhook_received_at'])
+
             # OpenOrder 레코드 생성 (미체결 주문인 경우)
             open_order_result = self.service.order_manager.create_open_order_record(
                 strategy_account=strategy_account,
@@ -278,7 +557,8 @@ class TradingCore:
                 order_type=order_type,
                 quantity=adjusted_quantity,
                 price=adjusted_price,
-                stop_price=adjusted_stop_price
+                stop_price=adjusted_stop_price,
+                webhook_received_at=webhook_received_at_dt  # ✅ Added for Snapshot query
             )
             if open_order_result['success']:
                 logger.info(f"📝 미체결 주문 OpenOrder 저장: {order_result.get('order_id')}")
@@ -658,7 +938,15 @@ class TradingCore:
         side = webhook_data.get('side')  # CANCEL_ALL_ORDER는 side 없음
         price = to_decimal(webhook_data.get('price')) if webhook_data.get('price') else None
         stop_price = to_decimal(webhook_data.get('stop_price')) if webhook_data.get('stop_price') else None
-        qty_per = to_decimal(webhook_data.get('qty_per', 100))
+
+        # qty와 qty_per 추출 (Phase 3: 절대 수량 지원)
+        qty_per = to_decimal(webhook_data.get('qty_per')) if webhook_data.get('qty_per') else None
+        qty = to_decimal(webhook_data.get('qty')) if webhook_data.get('qty') else None
+
+        # qty 또는 qty_per 검증 (CANCEL_ALL_ORDER/CANCEL 제외)
+        if order_type not in ['CANCEL_ALL_ORDER', 'CANCEL']:
+            if qty_per is None and qty is None:
+                raise Exception("qty 또는 qty_per 중 하나는 필수입니다")
 
         # STOP_LIMIT 주문 필수 필드 검증
         if order_type == 'STOP_LIMIT':
@@ -667,8 +955,11 @@ class TradingCore:
             if not price:
                 raise Exception("STOP_LIMIT 주문: price가 필수입니다")
 
-        logger.info(f"거래 신호 처리 시작 - 전략: {group_name}, 심볼: {symbol}, "
-                   f"사이드: {side}, 주문타입: {order_type}, 수량비율: {qty_per}%")
+        logger.info(
+            f"거래 신호 처리 시작 - 전략: {group_name}, 심볼: {symbol}, "
+            f"사이드: {side}, 주문타입: {order_type}, "
+            f"수량: qty={qty}, qty_per={qty_per}%"
+        )
 
         # 전략 조회
         strategy = Strategy.query.filter_by(group_name=group_name, is_active=True).first()
@@ -715,7 +1006,7 @@ class TradingCore:
         results = []
         if filtered_accounts:
             results = self._execute_trades_parallel(
-                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, market_type, timing_context
+                filtered_accounts, symbol, side, order_type, price, stop_price, qty_per, qty, market_type, timing_context
             )
 
         successful_trades = [r for r in results if r.get('success', False)]
@@ -723,6 +1014,27 @@ class TradingCore:
 
         logger.info(f"거래 신호 처리 완료 - 성공: {len(successful_trades)}, 실패: {len(failed_trades)}")
 
+        # 🆕 Phase 2: 단일 주문도 배치 SSE 발송 (배치 주문과 통일)
+        # @FEAT:toast-ux-improvement @COMP:service @TYPE:integration @DEPS:webhook-order
+        if len(successful_trades) > 0 and self.service.event_emitter:
+            # results에서 order_type, event_type 메타데이터가 있는 항목만 필터링
+            # LIMIT/STOP 주문은 _execute_trades_parallel()에서 메타데이터 포함
+            # MARKET 주문은 메타데이터 없음 (자연스럽게 제외)
+            batch_results = [
+                result for result in results
+                if result.get('success') and result.get('order_type') and result.get('event_type')
+            ]
+
+            # 배치 SSE 발송 (메타데이터가 있는 경우만)
+            if batch_results:
+                self.service.event_emitter.emit_order_batch_update(
+                    user_id=strategy.user_id,
+                    strategy_id=strategy.id,
+                    batch_results=batch_results
+                )
+
+        # @FEAT:webhook-order @COMP:service @TYPE:core
+        # @DATA:successful_orders,failed_orders - 통계 필드명 (2025-10-30 통일)
         # 표준 응답 포맷 (process_cancel_all_orders와 동일한 구조)
         return {
             'action': side.lower(),  # 'buy' or 'sell'
@@ -733,25 +1045,74 @@ class TradingCore:
             'summary': {
                 'total_accounts': len(filtered_accounts),
                 'executed_accounts': len(results),
-                'successful_trades': len(successful_trades),
-                'failed_trades': len(failed_trades),
+                'successful_orders': len(successful_trades),
+                'failed_orders': len(failed_trades),
                 'inactive_accounts': len(strategy_accounts) - len(filtered_accounts)
             }
         }
 
-    # @FEAT:webhook-order @FEAT:order-queue @COMP:service @TYPE:helper
+    # @FEAT:batch-order-race-condition @FEAT:order-queue @COMP:service @TYPE:core @DEPS:order-tracking,exchange-integration
     def _execute_trades_parallel(self, filtered_accounts: List[tuple], symbol: str,
                                  side: str, order_type: str, price: Optional[Decimal],
-                                 stop_price: Optional[Decimal], qty_per: Decimal,
-                                 market_type: str,
+                                 stop_price: Optional[Decimal], qty_per: Optional[Decimal],
+                                 qty: Optional[Decimal], market_type: str,
                                  timing_context: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
         """
-        병렬 거래 실행 (Phase 4: 배치 처리 통합)
+        배치 주문 병렬 실행 (타입 그룹별 분리)
 
-        Phase 4 변경사항:
-        - MARKET 주문: 즉시 거래소 제출
-        - LIMIT/STOP 주문: 즉시 PendingOrder에 추가 (검증 없음)
-        - 배치 커밋: commit=False로 개별 커밋 방지, 마지막 한 번만 커밋
+        Issue #10: Lock 기반 Race Condition 방지
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        배치 주문 생성 시 동시 접근을 Lock으로 차단합니다.
+
+        Lock 획득 전략:
+        - 대상: LIMIT/STOP 주문 (거래소 즉시 실행)
+        - 제외: MARKET 주문 (즉시 거래소 실행, Lock 불필요)
+        - Deadlock 방지: (account_id, symbol) 튜플 정렬 순서로 Lock 획득
+        - Lock 범위: 거래소 주문 실행 + 배치 커밋 + SSE 발송
+        - 자동 해제: contextlib.ExitStack으로 예외 시에도 Lock 해제 보장
+
+        처리 흐름:
+        1. 타입 그룹 확인 (LIMIT/STOP/MARKET)
+        2. LIMIT/STOP: Lock 획득 → 배치 주문 생성 → Lock 해제
+        3. MARKET: Lock 없이 즉시 실행
+
+        Args:
+            filtered_accounts (List[tuple]): (strategy, account, strategy_account) 튜플 리스트
+            symbol (str): 거래 심볼
+            side (str): 주문 방향 ('BUY' 또는 'SELL')
+            order_type (str): 주문 타입 ('MARKET', 'LIMIT', 'STOP' 등)
+            price (Optional[Decimal]): LIMIT 주문 가격
+            stop_price (Optional[Decimal]): STOP 주문 트리거 가격
+            qty_per (Decimal): 계좌별 주문 수량 (%)
+            market_type (str): 마켓 유형
+            timing_context (Optional[Dict[str, float]]): 웹훅 타이밍 정보
+
+        Returns:
+            List[Dict[str, Any]]: [
+                {
+                    'success': bool,
+                    'account_id': int,
+                    'account_name': str,
+                    'message': str,
+                    'pending_order_id': Optional[int],  # LIMIT/STOP만
+                    'priority': Optional[int],
+                    'order_type': str,
+                    'event_type': str,
+                    'queued': Optional[bool],  # LIMIT/STOP만
+                    'error': Optional[str]
+                },
+                ...
+            ]
+
+        Side Effects:
+        - db.session.commit() 호출 (배치 커밋)
+        - PendingOrder SSE 이벤트 발송
+        - 재정렬 알고리즘 Lock 획득/해제
+
+        Performance:
+        - ThreadPoolExecutor: max(min(10, account_count)) 병렬 처리
+        - Lock 보유 시간: ThreadPoolExecutor 완료까지 (개별 함수 선택)
+        - Lock 정렬: (account_id, symbol) 조합 정렬으로 Deadlock 방지
         """
         results = []
         max_workers = min(10, len(filtered_accounts))
@@ -768,180 +1129,107 @@ class TradingCore:
                 type_group = group_name
                 break
 
-        # 📡 배치 PendingOrder SSE 발송 대상 수집
-        pending_orders_to_emit_sse = []
+        # ✅ Issue #10: 배치 주문 실행 로직 (enqueue 내부에서 자동 Lock 보호)
+        def _execute_batch_logic():
+            """
+            배치 주문 실행 로직 (모든 주문 타입 공통)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {}
-            for strategy, account, sa in filtered_accounts:
-                # qty_per를 실제 주문 수량으로 변환
-                try:
-                    calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
-                        strategy_account=sa,
-                        qty_per=qty_per,
-                        symbol=symbol,
-                        order_type=order_type,
-                        market_type=market_type,
-                        price=price,
-                        stop_price=stop_price,
-                        side=side
-                    )
+            Issue #10: enqueue 내부에서 심볼별 Lock 자동 획득
+            - 단일 주문: enqueue(commit=True) → 자동 Lock 보호
+            - 배치 주문: enqueue(commit=False) × N → 자동 Lock 보호
+            - 리밸런서: _move_to_pending() → 자동 Lock 보호
 
-                    if calculated_quantity == Decimal('0'):
-                        logger.warning(f"계좌 {account.id}: 수량 계산 결과 0, 주문 스킵")
-                        results.append({
-                            'success': False,
-                            'error': '계산된 주문 수량이 0입니다',
-                            'account_id': account.id,
-                            'skipped': True
-                        })
-                        continue
+            처리 단계:
+            1. ThreadPoolExecutor로 병렬 enqueue (commit=False)
+            2. 배치 커밋 (db.session.commit())
+            3. SSE 일괄 발송
 
-                    logger.debug(f"계좌 {account.id}: qty_per {qty_per}% → quantity {calculated_quantity}")
+            Returns:
+                None (results는 외부 스코프 변수에 추가)
 
-                except Exception as calc_error:
-                    logger.error(f"계좌 {account.id}: 수량 계산 실패 - {calc_error}")
-                    results.append({
-                        'success': False,
-                        'error': f'수량 계산 실패: {calc_error}',
-                        'account_id': account.id
-                    })
-                    continue
-
-                # Phase 4: LIMIT/STOP 주문 → 즉시 대기열 진입 (검증 없음)
-                if type_group in ['LIMIT', 'STOP']:
-                    logger.info(
-                        f"📥 대기열 진입 (배치) - "
-                        f"타입: {order_type}, 심볼: {symbol}, side: {side}, "
-                        f"수량: {calculated_quantity}, 계좌: {account.name}"
-                    )
-
-                    enqueue_result = self.service.order_queue_manager.enqueue(
-                        strategy_account_id=sa.id,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        quantity=calculated_quantity,
-                        price=price,
-                        stop_price=stop_price,
-                        market_type=market_type,
-                        reason='BATCH_ORDER',
-                        commit=False  # 배치는 마지막에 한 번만 커밋
-                    )
-
-                    if enqueue_result.get('success'):
-                        results.append({
-                            'success': True,
-                            'queued': True,
-                            'pending_order_id': enqueue_result.get('pending_order_id'),
-                            'priority': enqueue_result.get('priority'),
-                            'message': f'대기열에 추가되었습니다 (우선순위: {enqueue_result.get("priority")})',
-                            'account_id': account.id,
-                            'account_name': account.name,
-                            'order_type': order_type,        # SSE 집계용 (emit_order_batch_update)
-                            'event_type': 'order_created'    # SSE 집계용 (emit_order_batch_update)
-                        })
-
-                        # SSE 발송 대상 수집 (배치 커밋 후 발송)
-                        pending_orders_to_emit_sse.append({
-                            'pending_order_id': enqueue_result.get('pending_order_id'),
-                            'strategy_account': sa,
-                            'symbol': symbol
-                        })
-                    else:
-                        logger.error(
-                            f"❌ 대기열 추가 실패 - 계좌: {account.id}, "
-                            f"error: {enqueue_result.get('error')}"
-                        )
-                        results.append({
-                            'success': False,
-                            'error': f"대기열 추가 실패: {enqueue_result.get('error')}",
-                            'account_id': account.id
-                        })
-                    continue  # 거래소 실행 건너뛰기
-
-                # MARKET/CANCEL 주문: 즉시 거래소 제출 (기존 로직)
-                def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
-                    with app.app_context():
-                        return self.execute_trade(
-                            strategy=strategy,
+            Side Effects:
+            - db.session.commit()
+            - PendingOrder SSE 이벤트 발송
+            - results 리스트 업데이트 (외부 스코프)
+            """
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for strategy, account, sa in filtered_accounts:
+                    # qty_per 또는 qty를 실제 주문 수량으로 변환
+                    try:
+                        calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
+                            strategy_account=sa,
                             symbol=symbol,
-                            side=side,
-                            quantity=calculated_quantity,  # ✅ 변환된 수량 사용
                             order_type=order_type,
+                            qty_per=qty_per,
+                            qty=qty,
+                            market_type=market_type,
                             price=price,
                             stop_price=stop_price,
-                            strategy_account_override=sa,
-                            timing_context=timing_context
+                            side=side
                         )
 
-                future = executor.submit(
-                    execute_in_context,
-                    app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context
-                )
-                futures[future] = (strategy, account, sa)
+                        if calculated_quantity == Decimal('0'):
+                            logger.warning(f"계좌 {account.id}: 수량 계산 결과 0, 주문 스킵")
+                            results.append({
+                                'success': False,
+                                'error': '계산된 주문 수량이 0입니다',
+                                'account_id': account.id,
+                                'skipped': True
+                            })
+                            continue
 
-            for future in as_completed(futures):
-                strategy, account, sa = futures[future]
-                try:
-                    result = future.result(timeout=30)
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"거래 실행 실패 (계좌 {account.id}): {e}")
-                    results.append({
-                        'success': False,
-                        'error': str(e),
-                        'account_id': account.id
-                    })
+                        logger.debug(f"계좌 {account.id}: qty_per {qty_per}% → quantity {calculated_quantity}")
 
-        # 배치 커밋 (대기열 추가 + 거래소 주문)
-        db.session.commit()
-
-        # 📡 배치 커밋 후 PendingOrder SSE 일괄 발송
-        if pending_orders_to_emit_sse and self.service.event_emitter:
-            logger.debug(f"📡 [SSE] 배치 PendingOrder SSE 발송 시작: {len(pending_orders_to_emit_sse)}개")
-
-            for pending_info in pending_orders_to_emit_sse:
-                try:
-                    # DB에서 커밋된 PendingOrder 조회 (ID가 할당됨)
-                    from app.models import PendingOrder
-                    pending_order = PendingOrder.query.get(pending_info['pending_order_id'])
-                    if not pending_order:
-                        logger.warning(
-                            f"⚠️ PendingOrder SSE 발송 스킵: DB에서 찾을 수 없음 "
-                            f"(ID: {pending_info['pending_order_id']})"
-                        )
+                    except Exception as calc_error:
+                        logger.error(f"계좌 {account.id}: 수량 계산 실패 - {calc_error}")
+                        results.append({
+                            'success': False,
+                            'error': f'수량 계산 실패: {calc_error}',
+                            'account_id': account.id
+                        })
                         continue
 
-                    # user_id 추출
-                    strategy_account = pending_info['strategy_account']
-                    if not strategy_account.strategy:
-                        logger.warning(
-                            f"⚠️ PendingOrder SSE 발송 스킵: strategy 정보 없음 "
-                            f"(ID: {pending_order.id})"
-                        )
-                        continue
+                    # Phase 4: 모든 주문 타입을 즉시 거래소에 제출 (Queue 제거)
+                    # LIMIT/STOP/MARKET/CANCEL 주문: 모두 즉시 거래소 제출
+                    def execute_in_context(app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context):
+                        with app.app_context():
+                            return self.execute_trade(
+                                strategy=strategy,
+                                symbol=symbol,
+                                side=side,
+                                quantity=calculated_quantity,  # ✅ 변환된 수량 사용
+                                order_type=order_type,
+                                price=price,
+                                stop_price=stop_price,
+                                strategy_account_override=sa,
+                                timing_context=timing_context
+                            )
 
-                    user_id = strategy_account.strategy.user_id
-
-                    # SSE 발송
-                    self.service.event_emitter.emit_pending_order_event(
-                        event_type='order_created',
-                        pending_order=pending_order,
-                        user_id=user_id
+                    future = executor.submit(
+                        execute_in_context,
+                        app, strategy, account, sa, symbol, side, calculated_quantity, order_type, price, stop_price, timing_context
                     )
+                    futures[future] = (strategy, account, sa)
 
-                    logger.debug(
-                        f"📡 [SSE] PendingOrder 생성 → Order List 업데이트: "
-                        f"ID={pending_order.id}, user_id={user_id}, symbol={pending_info['symbol']}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ PendingOrder Order List SSE 발송 실패 (비치명적): "
-                        f"ID={pending_info.get('pending_order_id')}, error={e}"
-                    )
+                for future in as_completed(futures):
+                    strategy, account, sa = futures[future]
+                    try:
+                        result = future.result(timeout=30)
+                        results.append(result)
+                    except Exception as e:
+                        logger.error(f"거래 실행 실패 (계좌 {account.id}): {e}")
+                        results.append({
+                            'success': False,
+                            'error': str(e),
+                            'account_id': account.id
+                        })
 
-            logger.debug(f"✅ [SSE] 배치 PendingOrder SSE 발송 완료: {len(pending_orders_to_emit_sse)}개")
+            # Phase 4: 배치 커밋 (거래소 주문만)
+            db.session.commit()
+
+        # ✅ Issue #10: enqueue 내부에서 자동으로 Lock 획득하므로 여기서는 불필요
+        _execute_batch_logic()
 
         return results
 
@@ -977,7 +1265,10 @@ class TradingCore:
                             'params': {'stopPrice': Decimal('...')}
                         },
                         ...
-                    ]
+                    ],
+                    'timing_context': {  # Snapshot 쿼리용 webhook_received_at 포함
+                        'webhook_received_at': float (Unix timestamp)
+                    }
                 },
                 ...
             }
@@ -1010,17 +1301,26 @@ class TradingCore:
                     symbol = order.get('symbol')
                     side = order.get('side')
                     order_type = order.get('order_type')
-                    qty_per = to_decimal(order.get('qty_per', 100))
+                    qty_per = to_decimal(order.get('qty_per')) if order.get('qty_per') else None
+                    qty = to_decimal(order.get('qty')) if order.get('qty') else None
                     price = to_decimal(order.get('price')) if order.get('price') else None
                     stop_price = to_decimal(order.get('stop_price')) if order.get('stop_price') else None
                     original_index = order.get('original_index')  # ✅ 인덱스 추출
 
-                    # qty_per를 실제 수량으로 변환
+                    # qty 또는 qty_per 검증 (CANCEL_ALL_ORDER/CANCEL 제외)
+                    order_type_inner = order.get('order_type')
+                    if order_type_inner not in ['CANCEL_ALL_ORDER', 'CANCEL']:
+                        if qty_per is None and qty is None:
+                            logger.error(f"배치 주문 {original_index}번째: qty 또는 qty_per 필수")
+                            continue  # 이 주문 스킵
+
+                    # qty_per 또는 qty를 실제 수량으로 변환
                     calculated_quantity = self.service.quantity_calculator.calculate_order_quantity(
                         strategy_account=sa,
-                        qty_per=qty_per,
                         symbol=symbol,
                         order_type=order_type,
+                        qty_per=qty_per,
+                        qty=qty,
                         market_type=market_type.lower(),  # 'FUTURES' → 'futures'
                         price=price,
                         stop_price=stop_price,
@@ -1071,10 +1371,13 @@ class TradingCore:
 
             # 계좌별 그룹화 저장 (주문이 있는 경우만)
             if account_orders:
+                # @FEAT:webhook-order @COMP:service @TYPE:helper
+                # timing_context 배치 플로우 전달: webhook_received_at 추출용
                 orders_by_account[account.id] = {
                     'account': account,
                     'strategy_account': sa,
-                    'orders': account_orders
+                    'orders': account_orders,
+                    'timing_context': timing_context  # ✅ Pass timing_context through batch flow
                 }
 
         logger.info(
@@ -1218,9 +1521,19 @@ class TradingCore:
 
                 # Phase 2: Calculate total cancelled orders for batch SSE
                 # @FEAT:webhook-order @COMP:service @TYPE:core
-                total_cancelled = sum(
-                    len(r.get('cancelled_orders', [])) for r in successful_cancels
-                )
+                # Bug Fix: Type-safe handling of cancelled_orders (can be List[Dict] or int)
+                total_cancelled = 0
+                for r in successful_cancels:
+                    cancelled = r.get('cancelled_orders', [])
+                    if isinstance(cancelled, list):
+                        total_cancelled += len(cancelled)
+                    elif isinstance(cancelled, int):
+                        total_cancelled += cancelled
+                    else:
+                        logger.warning(
+                            f"Unexpected type for cancelled_orders: {type(cancelled)}, "
+                            f"account_id={r.get('account_id')}"
+                        )
 
                 results.append({
                     'order_index': original_idx,
@@ -1245,8 +1558,29 @@ class TradingCore:
                 strategy, trading_order_list, market_type, timing_context
             )
 
+            # 빈 계좌 체크 (strategy.strategy_accounts가 비었을 경우 방어)
+            if not orders_by_account:
+                logger.warning(
+                    f"⚠️ Strategy '{group_name}'에 활성 계좌가 없습니다. "
+                    f"strategy_id={strategy.id}, user_id={strategy.user_id}"
+                )
+                return {
+                    'action': 'batch_order',
+                    'strategy': group_name,
+                    'success': False,
+                    'error': '활성 계좌가 없습니다. 전략 설정을 확인하세요.',
+                    'results': [],
+                    'summary': {
+                        'total_orders': len(orders),
+                        'executed_orders': 0,
+                        'successful_orders': 0,
+                        'failed_orders': 0
+                    }
+                }
+
             # 3. 계좌별 배치 주문 병렬 실행 (Phase 2: ThreadPoolExecutor)
-            max_workers = min(10, len(orders_by_account))  # Upper limit 10
+            # max_workers 방어: 최소 1 보장 (len(orders_by_account) == 0 방지)
+            max_workers = max(1, min(10, len(orders_by_account)))
             app = current_app._get_current_object()  # Flask app context 캡처
             batch_start = time.time()  # 성능 측정 시작
 
@@ -1328,7 +1662,7 @@ class TradingCore:
             }
         }
 
-    # @FEAT:batch-parallel-processing @COMP:service @TYPE:helper
+    # @FEAT:batch-parallel-processing @FEAT:webhook-batch-queue @COMP:service @TYPE:helper
     def _execute_account_batch(
         self,
         account_data: Dict[str, Any],
@@ -1339,33 +1673,100 @@ class TradingCore:
         """
         단일 계좌의 배치 주문 처리 (병렬 실행용 헬퍼)
 
-        Phase 2 구현:
-        - DRY 원칙 준수: 기존 로직 재사용 (순차 처리 코드 107줄 제거)
-        - 병렬 실행 목적: ThreadPoolExecutor에서 계좌별 독립 처리
-        - Phase 0 통합: account_id 파라미터로 Rate Limiting 활성화
+        @FEAT:webhook-batch-queue @COMP:service @TYPE:core Individual commit routing pattern
+
+        Phase 1 Implementation: Intelligent Order Routing with Individual Commits
+
+        Core Pattern:
+        - QUEUED_TYPES (LIMIT/STOP_LIMIT/STOP_MARKET) → PendingOrder table (queue)
+        - DIRECT_TYPES (MARKET/CANCEL_ALL_ORDER) → Exchange batch API (immediate)
+
+        Individual Commit Strategy (Binance Batch API alignment):
+        - Each queue order commits independently (commit=True)
+        - Failures don't block subsequent orders (error recovery via continue)
+        - Partial success is supported: 5 orders → 3 success, 2 failed is valid
+          (vs. all-or-nothing: 1 error = entire batch rollback, 5 orders lost)
+        - Reflects real Binance behavior: [success, success, error, success, error]
+
+        Transaction Guarantees:
+        - Individual commit: Each order commits independently
+        - Error recovery: Failures don't stop processing (continue)
+        - Partial success: 5 orders → 3 success, 2 failed is valid
+        - SSE emission: After each successful commit
+
+        Error Handling (Individual Commit Pattern):
+        - DB commit failure: Order skipped, error logged, next order continues
+        - SSE emission failure: Non-blocking warning (order processing unaffected)
+        - No batch rollback: Successfully committed orders persist in PendingOrder table
+        - Example: Order 1 success → Order 2 commit fails → Order 3 continues
+
+        Phase 2 enhancements:
+        - DRY: Reuses existing enqueue/direct execution logic (no code duplication)
+        - Parallel execution: ThreadPoolExecutor for multi-account batches
+        - Rate limiting: account_id passed to exchange_service for Phase 0 integration
 
         Args:
-            account_data: {'account': Account, 'strategy_account': StrategyAccount, 'orders': List[Dict]}
+            account_data: {'account': Account, 'strategy_account': StrategyAccount, 'orders': List[Dict], 'timing_context': Optional[Dict] - 타이밍 정보 (webhook_received_at 포함)}
             market_type: 'SPOT' or 'FUTURES'
             strategy: Strategy 객체
             trading_orders: [(original_idx, order), ...] 원본 인덱스 매핑용
 
         Returns:
-            List[Dict]: 주문 결과 리스트 (성공/실패 포함)
+            List[Dict]: Combined success and failed results
+            - success=True: Order queued, includes pending_order_id
+            - success=False: Order failed, includes error message
         """
         account = account_data['account']
+        strategy_account = account_data['strategy_account']
         exchange_orders = account_data['orders']
+        # @FEAT:webhook-order @COMP:service @TYPE:helper
+        # timing_context 배치 실행 단계 추출: webhook_received_at을 OpenOrder에 저장
+        timing_context = account_data.get('timing_context')  # ✅ Extract timing_context
         results = []
 
         logger.info(
             f"📦 계좌 {account.name} 배치 주문 실행: {len(exchange_orders)}건"
         )
 
+        # 🆕 Phase 5: 배치 실행 직전 is_active 재확인 (Race Condition 방지)
+        if hasattr(strategy_account, 'is_active') and not strategy_account.is_active:
+            logger.warning(
+                f"⚠️ [Phase 5] StrategyAccount {strategy_account.id} 비활성 상태 - "
+                f"배치 주문 실행 스킵 (전략: {strategy.group_name}, 계좌: {account.name})"
+            )
+            # 배치 전체 스킵 (원본 인덱스 매핑)
+            for order in exchange_orders:
+                original_idx = order.get('original_index', 0)
+                results.append({
+                    'order_index': original_idx,
+                    'success': False,
+                    'error': 'StrategyAccount가 비활성 상태입니다',
+                    'error_type': 'account_inactive',
+                    'account_id': account.id,
+                    'account_name': account.name,
+                    'strategy_account_id': strategy_account.id,
+                    'skipped': True,
+                    'skip_reason': 'strategy_account_inactive',
+                    'batch_skipped': True
+                })
+            return results
+
+        # @FEAT:webhook-order @COMP:service @TYPE:core
+        # Phase 4: 모든 주문 타입을 즉시 거래소에 제출 (Queue 시스템 제거)
+        # LIMIT/STOP/MARKET/CANCEL 모두 direct_orders로 처리
+        direct_orders = exchange_orders  # 모든 주문을 즉시 실행
+
+        logger.info(f"Phase 4: All orders immediate execution - Total: {len(direct_orders)}")
+
+        # Phase 4: 모든 주문을 즉시 거래소에 제출
+        if not direct_orders:
+            return results
+
         try:
             # CRITICAL FIX: account_id 전달 (Phase 0 Rate Limiting 활성화)
             batch_result = exchange_service.create_batch_orders(
                 account=account,
-                orders=exchange_orders,
+                orders=direct_orders,  # Only MARKET/CANCEL
                 market_type=market_type.lower(),
                 account_id=account.id  # ✅ 필수 파라미터
             )
@@ -1384,29 +1785,25 @@ class TradingCore:
                     f"❌ 계좌 {account.name} 배치 실패: {batch_result.get('error')}"
                 )
 
-            # 결과 처리 (기존 로직 유지)
+            # 결과 처리 (direct_orders 기준으로 수정)
             batch_results = batch_result.get('results', [])
             for result_item in batch_results:
                 batch_order_idx = result_item.get('order_index', 0)
 
-                if batch_order_idx >= len(exchange_orders):
+                if batch_order_idx >= len(direct_orders):
                     logger.warning(f"⚠️ 잘못된 order_index: {batch_order_idx}")
                     continue
 
-                exchange_order = exchange_orders[batch_order_idx]
+                direct_order = direct_orders[batch_order_idx]
 
-                # trading_orders에서 원본 인덱스 찾기
-                if batch_order_idx < len(trading_orders):
-                    original_idx, _ = trading_orders[batch_order_idx]
-                else:
-                    logger.warning(f"⚠️ trading_orders 범위 초과: {batch_order_idx}")
-                    original_idx = batch_order_idx
+                # exchange_orders에서 원본 인덱스 찾기
+                original_idx = exchange_orders.index(direct_order)
 
                 if result_item.get('success'):
                     order_data = result_item.get('order', {})
 
                     logger.info(
-                        f"✅ 배치 주문 성공 - 계좌: {account.name}, 심볼: {exchange_order['symbol']}, "
+                        f"✅ 배치 주문 성공 - 계좌: {account.name}, 심볼: {direct_order['symbol']}, "
                         f"주문ID: {order_data.get('id')}"
                     )
 
@@ -1417,14 +1814,14 @@ class TradingCore:
                         order_data['account_id'] = account.id
 
                     # MARKET 주문 즉시 체결 확인
-                    if exchange_order['type'].upper() == 'MARKET':
+                    if direct_order['type'].upper() == 'MARKET':
                         immediate_fill_result = self._handle_market_order_immediate_fill(
                             account=account,
                             strategy_account=account_data['strategy_account'],
                             order_id=order_data.get('order_id'),
-                            symbol=exchange_order['symbol'],
-                            side=exchange_order['side'],
-                            order_type=exchange_order['type'],
+                            symbol=direct_order['symbol'],
+                            side=direct_order['side'],
+                            order_type=direct_order['type'],
                             market_type=market_type.lower()
                         )
 
@@ -1445,16 +1842,24 @@ class TradingCore:
                             })
                             continue
 
-                    # OpenOrder 저장
+                    # @FEAT:webhook-order @COMP:service @TYPE:core
+                    # OpenOrder 저장 (webhook_received_at 추출 및 전달 - Snapshot 쿼리용)
+                    # Note: timing_context은 선택적 (None이면 webhook_received_at = None)
+                    # UTC 변환: 전체 시스템이 UTC 기반이므로 utcfromtimestamp 사용
+                    webhook_received_at_dt = None
+                    if timing_context and 'webhook_received_at' in timing_context:
+                        webhook_received_at_dt = datetime.utcfromtimestamp(timing_context['webhook_received_at'])
+
                     open_order_result = self.service.order_manager.create_open_order_record(
                         strategy_account=account_data['strategy_account'],
                         order_result=order_data,
-                        symbol=exchange_order['symbol'],
-                        side=exchange_order['side'],
-                        order_type=exchange_order['type'],
-                        quantity=exchange_order['amount'],
-                        price=exchange_order.get('price'),
-                        stop_price=exchange_order.get('params', {}).get('stopPrice')
+                        symbol=direct_order['symbol'],
+                        side=direct_order['side'],
+                        order_type=direct_order['type'],
+                        quantity=direct_order['amount'],
+                        price=direct_order.get('price'),
+                        stop_price=direct_order.get('params', {}).get('stopPrice'),
+                        webhook_received_at=webhook_received_at_dt  # ✅ Added for Snapshot query
                     )
 
                     if open_order_result['success']:
@@ -1462,11 +1867,11 @@ class TradingCore:
 
                         # 심볼 구독
                         try:
-                            self.service.subscribe_symbol(account.id, exchange_order['symbol'])
+                            self.service.subscribe_symbol(account.id, direct_order['symbol'])
                         except Exception as e:
                             logger.warning(
                                 f"⚠️ 심볼 구독 실패 (WebSocket health check에서 재시도): "
-                                f"계정: {account.id}, 심볼: {exchange_order['symbol']}, 오류: {e}"
+                                f"계정: {account.id}, 심볼: {direct_order['symbol']}, 오류: {e}"
                             )
                     else:
                         logger.debug(f"OpenOrder 저장 스킵: {open_order_result.get('reason', 'unknown')}")
@@ -1474,10 +1879,11 @@ class TradingCore:
                     # SSE 이벤트 발송
                     self.service.event_emitter.emit_order_events_smart(
                         strategy,
-                        exchange_order['symbol'],
-                        exchange_order['side'],
-                        exchange_order['amount'],
-                        order_data
+                        direct_order['symbol'],
+                        direct_order['side'],
+                        direct_order['amount'],
+                        order_data,
+                        suppress_toast=True  # 배치 주문: 개별 토스트 억제, 배치 요약만 표시
                     )
 
                     # Phase 2: Track event metadata for batch SSE aggregation
@@ -1492,7 +1898,7 @@ class TradingCore:
                             'account_id': account.id,
                             'account_name': account.name
                         },
-                        'order_type': exchange_order['type'],
+                        'order_type': direct_order['type'],
                         'event_type': 'order_created'
                     }
                     results.append(result_entry)

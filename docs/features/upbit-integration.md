@@ -11,17 +11,18 @@ Upbit(업비트)는 대한민국 최대 암호화폐 거래소로, 본 시스템
 - KRW 마켓 전용
 - LIMIT(지정가) 주문
 - MARKET(시장가) 주문
-- 배치 주문 (순차 처리)
+- 배치 주문 (순차 처리 - `create_batch_orders_async`)
 - 미체결 주문 조회/취소
 - 잔액 조회
-- WebSocket 실시간 가격
+- 마켓 정보 조회 (215개 심볼)
+- 현재가 정보 조회
 
 ❌ **미지원 기능**:
 - Testnet (실서버 API만 사용 가능)
 - 선물(Futures) 거래
 - STOP_LIMIT, STOP_MARKET 주문
-- 배치 API (순차 폴백 방식 사용)
-- BTC, USDT 마켓
+- 공식 배치 API (순차 폴백 방식으로 구현)
+- BTC, USDT 마켓 (KRW 마켓만 지원)
 
 ### 제약사항
 
@@ -842,6 +843,80 @@ tail -f /Users/binee/Desktop/quant/webserver/web_server/logs/app.log | grep "배
 
 ---
 
+## 구현 세부사항
+
+### 클래스 및 메서드 (코드 기반)
+
+**파일**: `web_server/app/exchanges/crypto/upbit.py` (799줄)
+**태그**: `@FEAT:exchange-integration @COMP:exchange @TYPE:crypto-implementation` (라인 1)
+
+#### 핵심 메서드
+| 메서드 | 기능 | 라인 |
+|-------|------|-----|
+| `__init__()` | 초기화 (Testnet 검증) | 67 |
+| `load_markets_impl()` | 마켓 정보 로드 (215 심볼) | 228 |
+| `fetch_price_quotes()` | 현재가 정보 조회 | 282 |
+| `fetch_balance_impl()` | 잔액 조회 | 348 |
+| `create_order_impl()` | 단일 주문 생성 | 377 |
+| `cancel_order_impl()` | 주문 취소 | 421 |
+| `fetch_open_orders_impl()` | 미체결 주문 조회 | 437 |
+| `_to_order_dict()` | Order 필드명 정규화 | 525 |
+| `create_batch_orders_async()` | 배치 주문 (순차 폴백, 초당 8회) | 649 |
+
+### 배치 주문 상세
+
+**구현**: `create_batch_orders_async()` (line 649-799, 151줄)
+
+**특징**:
+- **Rate Limiting**: asyncio.Lock()으로 완전 순차 실행
+- **딜레이**: 각 주문 간 0.125초 (1/8초 = 초당 8회 제한 준수)
+- **실패 처리**: 개별 실패는 결과 포함, 전체 중단 없음
+- **반환 형식**:
+  ```json
+  {
+    "success": true,
+    "results": [
+      {"order_index": 0, "success": true, "order_id": "...", "order": {...}},
+      {"order_index": 1, "success": false, "error": "..."}
+    ],
+    "summary": {"total": 2, "successful": 1, "failed": 1},
+    "implementation": "SEQUENTIAL_FALLBACK"
+  }
+  ```
+
+**성능**:
+```
+16개 주문 ≈ 2.0초 (16 × 0.125초 + 오버헤드)
+평균: 0.125초/주문
+```
+
+**주요 코드 (line 713-717)**:
+```python
+async def execute_with_limit(idx: int, order: Dict[str, Any]) -> Dict[str, Any]:
+    """Rate limit 제어와 함께 단일 주문 실행 (완전 순차)"""
+    async with _order_lock:
+        # ⭐ CRITICAL: Rate Limiting - 초당 8회로 제한
+        await asyncio.sleep(0.125)  # 1/8초 = 125ms
+        await self.create_order_async(...)
+```
+
+### 심볼 변환 (단일 소스 원칙)
+
+**전환 함수**: `symbol_utils.py` (line 27 import)
+- **웹훅 입력**: `BTC/KRW` (표준 형식)
+- **Upbit API**: `KRW-BTC` (Upbit 형식)
+- **변환 함수**: `to_upbit_format()`, `from_upbit_format()` (symbol_utils.py)
+
+**필드명 정규화**: `_to_order_dict()` (line 525-575, 50줄)
+- 기능: Order 객체를 API 응답 형식으로 정규화
+- **필드 변환**:
+  - `Order.type` (소문자) → `order_dict['order_type']` (대문자)
+  - `Order.status` → `order_dict['state']` (Upbit API명)
+- **하위 호환성**: 원본 필드 유지 (Order.type도 포함)
+- **이상 케이스 감지**: stop_price가 있는 비스탑 주문 감지 및 경고 로그
+
+---
+
 ## 참고 자료
 
 ### 공식 문서
@@ -851,17 +926,19 @@ tail -f /Users/binee/Desktop/quant/webserver/web_server/logs/app.log | grep "배
 - [주문하기 API](https://docs.upbit.com/reference/order-주문하기)
 
 ### 프로젝트 내부
-- **구현 파일**: `/Users/binee/Desktop/quant/webserver/web_server/app/exchanges/crypto/upbit.py`
-- **팩토리**: `/Users/binee/Desktop/quant/webserver/web_server/app/exchanges/crypto/factory.py`
-- **메타데이터**: `/Users/binee/Desktop/quant/webserver/web_server/app/exchanges/metadata.py`
+- **구현**: `web_server/app/exchanges/crypto/upbit.py` (800줄, 215 심볼)
+- **심볼 변환**: `web_server/app/utils/symbol_utils.py`
+- **팩토리**: `web_server/app/exchanges/crypto/factory.py`
+- **기본 클래스**: `web_server/app/exchanges/crypto/base.py`
 
 ### 관련 문서
-- [웹훅 메시지 포맷 가이드](/Users/binee/Desktop/quant/webserver/docs/webhook_message_format.md)
-- [거래소 통합 가이드](/Users/binee/Desktop/quant/webserver/docs/features/exchange-integration.md)
-- [FEATURE CATALOG](/Users/binee/Desktop/quant/webserver/docs/FEATURE_CATALOG.md)
+- [웹훅 메시지 포맷 가이드](../webhook_message_format.md)
+- [거래소 통합 가이드](./exchange-integration.md)
+- [FEATURE CATALOG](../FEATURE_CATALOG.md)
 
 ---
 
-**최종 업데이트**: 2025-10-12
-**작성자**: documentation-manager agent
-**버전**: 1.0
+**최종 업데이트**: 2025-10-30
+**코드 기준**: upbit.py (799줄, 215 심볼, 100% 정렬)
+**구현 상태**: ✅ Spot LIMIT/MARKET, 배치 주문 (순차 폴백, asyncio.Lock)
+**버전**: 2.1

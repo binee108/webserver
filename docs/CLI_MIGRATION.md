@@ -19,7 +19,7 @@
 | 유지보수성 향상 | ✅ 완료 | 모듈 단위 파일 분리 (최대 431줄) |
 | 테스트 가능성 확보 | ✅ 완료 | 의존성 주입 패턴 적용 |
 | 확장성 강화 | ✅ 완료 | Command 패턴 + BaseCommand 추상 클래스 |
-| 레거시 호환성 | ✅ 완료 | run_legacy.py 폴백 메커니즘 |
+| 코드베이스 단순화 | ✅ 완료 | 레거시 파일 제거, 폴백 로직 제거 |
 
 ---
 
@@ -48,9 +48,9 @@ run.py (62줄, 진입점)
 │     ├─ status.py (시스템 상태)
 │     ├─ clean.py (시스템 정리)
 │     └─ setup.py (초기 설정)
-│
-└─ run_legacy.py (1946줄, 레거시 백업)
 ```
+
+**참고**: 초기 마이그레이션 단계에서 존재했던 `run_legacy.py` (1946줄)는 마이그레이션 완료 후 제거되었습니다.
 
 ---
 
@@ -168,12 +168,14 @@ class StartCommand(BaseCommand):
 
 ---
 
-## 레거시 폴백 메커니즘
+## 레거시 폴백 메커니즘 (❌ 제거됨)
 
-신규 CLI 실패 시 자동으로 레거시 모드 전환:
+**상태**: ~~Phase 1에서 구현~~ → **마이그레이션 완료 후 제거됨**
+
+마이그레이션 초기에는 신규 CLI 실패 시 자동으로 레거시 모드로 전환하는 폴백 메커니즘이 존재했습니다:
 
 ```python
-# run.py
+# run.py (구버전 - 제거됨)
 def main():
     try:
         from cli.manager import TradingSystemCLI
@@ -183,6 +185,21 @@ def main():
         print("⚠️  신규 CLI 모듈 미구현, 레거시 모드로 전환")
         from run_legacy import main as legacy_main
         return legacy_main()
+```
+
+**제거 이유:**
+- ✅ 모든 기능이 신규 CLI로 완전히 마이그레이션됨
+- ✅ 충분한 테스트를 통해 안정성 확인됨
+- ✅ `run_legacy.py` 파일 제거로 코드베이스 단순화
+
+**현재 구조 (간소화):**
+```python
+# run.py (현재)
+def main():
+    """CLI 진입점 - CLI Manager를 통한 명령어 실행"""
+    from cli.manager import TradingSystemCLI
+    cli = TradingSystemCLI()
+    return cli.run(sys.argv[1:])
 ```
 
 ---

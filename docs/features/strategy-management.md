@@ -86,6 +86,9 @@ Webhook Request
 
 ### StrategyService 주요 메서드
 
+**권한 검증**:
+- `verify_strategy_access(strategy_id, user_id)`: 소유자 또는 구독자 여부 확인 (보안: 전략 미존재 시 403)
+
 **조회**:
 - `get_strategies_by_user(user_id)`: 소유 전략 목록
 - `get_accessible_strategies(user_id)`: 소유 + 구독 전략
@@ -97,8 +100,11 @@ Webhook Request
 
 **계좌 연결**:
 - `connect_account_to_strategy()`: 계좌 연결
+- `update_strategy_account()`: 전략-계좌 설정 업데이트 (is_active, weight, leverage, max_symbols)
 - `subscribe_to_strategy()`: 공개 전략 구독
-- `unsubscribe_from_strategy()`: 구독 해제 (제약: 활성 포지션 없음)
+- `unsubscribe_from_strategy(force=False)`: 구독 해제
+  - `force=False` (기본): 활성 포지션 없을 때만 해제
+  - `force=True` (Phase 4): 활성 포지션/주문 강제 청산 후 해제
 
 **검증** (`@TYPE:validation`):
 - `_validate_strategy_data()`: RCE 예방 (타입/길이/정규식/위험문자 검증)
@@ -108,14 +114,20 @@ Webhook Request
 
 | Method | Endpoint | 설명 | 권한 |
 |--------|----------|------|------|
-| GET | `/api/strategies` | 소유 전략 목록 | 소유자 |
-| GET | `/api/strategies/public` | 공개 전략 목록 | 모든 사용자 |
+| GET | `/api/strategies` | 소유 전략 목록 | 인증 사용자 |
+| GET | `/api/strategies/accessibles` | 소유 + 구독 전략 | 인증 사용자 |
+| GET | `/api/strategies/public` | 공개 전략 목록 (기본정보) | 인증 사용자 |
+| GET | `/api/strategies/public/{id}` | 공개 전략 상세 조회 | 인증 사용자 |
 | POST | `/api/strategies` | 전략 생성 | 인증 사용자 |
 | PUT | `/api/strategies/{id}` | 전략 수정 | 소유자 |
 | DELETE | `/api/strategies/{id}` | 전략 삭제 | 소유자 |
 | POST | `/api/strategies/{id}/subscribe` | 공개 전략 구독 | 인증 사용자 |
-| DELETE | `/api/strategies/{id}/subscribe/{account_id}` | 구독 해제 | 구독자 |
+| DELETE | `/api/strategies/{id}/subscribe/{account_id}` | 구독 해제 (force 파라미터 지원) | 구독자 |
+| GET | `/api/strategies/{id}/subscribe/{account_id}/status` | 구독 상태 조회 (활성 포지션/주문 확인) | 구독자 |
+| POST | `/api/strategies/{id}/toggle` | 전략 활성화/비활성화 토글 | 소유자 |
 | POST | `/api/strategies/{id}/accounts` | 계좌 연결 | 소유자 |
+| GET | `/api/strategies/{id}/accounts` | 연결된 계좌 목록 조회 | 소유자 |
+| PUT | `/api/strategies/{id}/accounts/{account_id}` | 계좌 설정 업데이트 | 소유자 |
 | DELETE | `/api/strategies/{id}/accounts/{account_id}` | 계좌 연결 해제 | 소유자 |
 
 ### 데이터 모델
@@ -215,12 +227,17 @@ if token not in valid_tokens: raise WebhookError()
 
 ### 주의사항
 
-1. **전략 삭제 제약**: 계좌 연결 및 활성 포지션이 없어야 삭제 가능
+1. **권한 검증 (verify_strategy_access)**: 모든 전략 조회/수정에서 사용 필수
+   - 소유자 또는 활성 구독자(StrategyAccount) 확인
+   - 보안상 전략 미존재 시 403 응답 (404 아님)
+   - 구독자 여부: `StrategyAccount.is_active=True && Account.user_id=user_id`
+
+2. **전략 삭제 제약**: 계좌 연결 및 활성 포지션이 없어야 삭제 가능
    - 해결: 포지션 청산 → 계좌 연결 해제 → 전략 삭제 순서
 
-2. **is_public 전환**: True → False 전환 시 구독자 연결 자동 비활성화 (데이터 삭제 없음)
+3. **is_public 전환**: True → False 전환 시 구독자 연결 자동 비활성화 (데이터 삭제 없음)
 
-3. **전략 격리**: DB 쿼리에서 `strategy_account_id` 필터링 필수
+4. **전략 격리**: DB 쿼리에서 `strategy_account_id` 필터링 필수
    ```python
    # 특정 전략의 주문만 조회
    OpenOrder.query.join(StrategyAccount).filter(
@@ -228,15 +245,95 @@ if token not in valid_tokens: raise WebhookError()
    ).all()
    ```
 
-4. **CASCADE 삭제**: StrategyAccount 삭제 시 하위 데이터 자동 삭제
+5. **CASCADE 삭제**: StrategyAccount 삭제 시 하위 데이터 자동 삭제
    - StrategyCapital, StrategyPosition, Trade, OpenOrder
+
+### Phase 4: 안전한 구독 해제 (force 청산)
+
+**구독 해제 플로우** (`unsubscribe_from_strategy(force=False)`):
+1. **비활성화**: `is_active = False` (웹훅 차단)
+2. **주문 취소**: `cancel_all_orders_by_user()` 호출
+3. **포지션 청산**: `close_position_by_id()` 호출
+4. **SSE 연결**: `disconnect_client()` 강제 종료
+5. **DB 삭제**: StrategyAccount 제거
+6. **자본 재배분**: 남은 전략들에 대해 자동 할당
+
+**구현** (`strategy_service.py:778-961`):
+```python
+# force=True: 3-stage verification + cleanup tracking
+1️⃣ is_active=False → flush (DB 즉시 반영, race condition 방지)
+2️⃣ order_manager.cancel_all_orders_by_user() → failed_orders 추적
+3️⃣ Defensive verification → OpenOrder 남은 항목 확인
+4️⃣ position_manager.close_position_by_id() → 예외 처리
+5️⃣ event_service.disconnect_client() → SSE 강제 종료
+6️⃣ Failed cleanup 로깅 (TODO: 텔레그램 알림)
+7️⃣ DB 삭제 + 자본 재배분
+```
+
+### 전략 비공개 전환 (is_public 제어)
+
+**True → False 전환 시** (`routes/strategies.py:279-431`):
+- **N+1 최적화**: `joinedload` 사용 모든 데이터 미리 로드
+- **배타적 비활성화**: 구독자 계좌만 비활성화 (`sa.account.user_id != current_user.id && is_active=True`)
+- **주문 취소 + 포지션 청산**: 각 구독자별로 cleanup 수행
+- **SSE 강제 종료**: 모든 구독자 연결 해제
+- **실패 추적**: `failed_cleanups` 리스트로 모든 오류 기록
+- **로깅**: 완료 상황(성공/실패) 기록
+
+**예시**:
+```
+전략: BTC-Signal (is_public=True → False로 전환)
+구독자 1: Alice (sa.is_active=True) → 비활성화 + 청산
+구독자 2: Bob (sa.is_active=True) → 비활성화 + 청산
+결과: 구독 연결은 유지(데이터 삭제 없음), 단 비활성 상태
+```
+
+### 구독 상태 조회 API
+
+**엔드포인트**: `GET /api/strategies/{id}/subscribe/{account_id}/status`
+
+**응답 데이터**:
+```json
+{
+  "success": true,
+  "data": {
+    "active_positions": 2,          # quantity != 0인 포지션
+    "open_orders": 3,               # OPEN/PARTIALLY_FILLED/NEW 주문
+    "symbols": ["BTC/USDT", "ETH/USDT"],  # 영향받는 심볼 (정렬)
+    "is_active": true               # 구독 활성 상태
+  }
+}
+```
+
+**구현 로직** (`routes/strategies.py:495-602`):
+1. 계좌 소유권 확인 (보안: 가벼운 쿼리로 권한 먼저 검증)
+2. StrategyAccount 조회 (joinedload 최적화)
+3. 활성 포지션 필터링 (quantity != 0만)
+4. 미체결 주문 조회 (OPEN/PARTIALLY_FILLED/NEW)
+5. 심볼 추출 및 정렬
+
+### 전략 성과 분석 API
+
+**ROI 조회**: `GET /api/strategies/{id}/performance/roi`
+- Query: `days` (일 단위, 생략 시 전체 기간)
+- 응답: ROI(%), total_pnl, invested_capital, profit_factor, avg_win/loss
+
+**성과 요약**: `GET /api/strategies/{id}/performance/summary`
+- Query: `days` (기본값: 30)
+- 응답: total_return, daily_pnl, total_trades, win_rate, max_drawdown 등
+
+**일일 성과**: `GET /api/strategies/{id}/performance/daily`
+- Query: `date` (YYYY-MM-DD, 생략 시 오늘)
+- 응답: daily_pnl, sharpe_ratio, sortino_ratio, volatility 등
+
+**의존성**: `performance_tracking_service` (`services/performance_tracking.py`)
 
 ### 확장 포인트
 
 1. **전략 타입 추가**: `market_type` enum 확장 (예: OPTIONS)
-2. **전략 성과 분석**: `routes/strategies.py:GET /api/strategies/{id}/performance/*`
-3. **구독 제한**: `max_subscribers` 필드 추가 (유료 전략 구현)
-4. **자본 할당 알고리즘**: `analytics_service.auto_allocate_capital_for_account()` 커스터마이징
+2. **구독 제한**: `max_subscribers` 필드 추가 (유료 전략 구현)
+3. **자본 할당 알고리즘**: `analytics_service.auto_allocate_capital_for_account()` 커스터마이징
+4. **텔레그램 알림**: `unsubscribe_from_strategy(force=True)` 실패 시 (TODO 참고)
 
 ### Grep 검색 예시
 
@@ -269,7 +366,15 @@ grep -n "_validate_strategy_token" web_server/app/services/webhook_service.py
 
 ---
 
-*Last Updated: 2025-10-10*
-*Lines: ~250 (간결화: 853줄 → 250줄, 70% 축소)*
-*Feature Tags: `@FEAT:strategy-management`*
-*Dependencies: webhook-order, capital-management, order-tracking, position-tracking*
+*Last Updated: 2025-10-30*
+*Lines: ~330 (최신화: 코드 기준)*
+*Feature Tags: `@FEAT:strategy-management`, `@FEAT:strategy-subscription-safety`*
+*Dependencies: webhook-order, capital-management, order-tracking, position-tracking, performance-tracking*
+
+**변경 사항** (2025-10-30):
+- Phase 4 안전한 구독 해제 (force 청산) 메커니즘 추가 → unsubscribe_from_strategy(force=True)
+- 전략 비공개 전환 시 구독자 청산 로직 상세화 (is_public: True→False)
+- 구독 상태 조회 API 문서화 → GET /strategies/{id}/subscribe/{account_id}/status
+- 전략-계좌 업데이트 메서드 추가 → update_strategy_account()
+- 전략 성과 분석 API 문서화 (ROI, 성과 요약, 일일 성과)
+- 전략 토글 API 추가 → POST /strategies/{id}/toggle
