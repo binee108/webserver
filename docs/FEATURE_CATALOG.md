@@ -105,6 +105,13 @@
   - 성능 최적화를 위한 캐시 시스템 (24h TTL 시간대 정보, 5m TTL 포맷팅 결과)
   - IE11부터 최신 브라우지까지 완벽 호환성
   - 50+ 주요 시간대 및 DST 지원
+- **timezone-kst-display** - Backend timezone awareness enhancement for Phase 1 [`@COMP:util,route @TYPE:core @DEPS:log-reader,admin-panel`]
+  - Enhanced `parse_log_line()` function with timezone metadata (timestamp_kst, timezone, timezone_offset)
+  - Admin API endpoints timezone context support (`get_job_logs`, `get_errors_warnings_logs`)
+  - New timezone info endpoint (`/admin/system/timezone/info`) for frontend integration
+  - KST timestamp calculation with proper timezone handling (UTC+9 conversion)
+  - Backward compatibility maintained for existing API consumers
+  - ISO 8601 timestamp formatting with timezone offsets
 - **admin-timezone-display** - Admin System 페이지 시간대 변환 및 KST 표시 (실시간 업데이트, 로그 시간 변환) [`@COMP:route,util,ui`] → [docs](TIMEZONE_USAGE.md#admin-system-페이지-적용-2025-11-14)
   - 한국 관리자를 위한 KST 시간 표시
   - 백그라운드 작업 로그 시간대 변환
@@ -130,6 +137,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-15 | Timezone KST Display (Phase 1) | ✅ Phase 1 | utils/log_reader.py, routes/admin.py | Backend timezone awareness enhancement: parse_log_line()에 timezone 메타데이터 추가, Admin API endpoint KST 지원, 새로운 timezone info endpoint, 하위 호환성 유지 |
 | 2025-11-14 | Exchange Warmup Methods | ✅ Phase 1 | services/exchange.py | 거래소 웜업 메서드 완전한 문서화 (get_supported_exchanges, warm_up_precision_cache, warm_up_all_market_info, get_precision_cache_stats, 헬퍼 메서드들) 및 FEATURE_CATALOG 추가 |
 | 2025-11-14 | Admin System Log Sorting | ✅ Phase 1 | routes/admin.py, core.py | 시스템 로그 시간순 정렬 및 백그라운드 작업 로그 상세화 |
 | 2025-11-14 | Crypto Exchange Standardization | ✅ Phase 1 | exchange.py | 암호화폐 거래소 잔고 표준화, MarketTypeEnum 타입 안전성 추가 |
