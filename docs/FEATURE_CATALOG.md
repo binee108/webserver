@@ -40,6 +40,7 @@
 ### 🔌 Exchange Integration
 - **crypto-exchange-standardization** - 암호화폐 거래소 표준화 (BalanceObject 통합, MarketTypeEnum 타입 안전성) [`@COMP:service`] → [docs](docs/CRYPTO_EXCHANGE_STANDARD.md)
 - **exchange-integration** - 거래소 통합 레이어 (Binance, Upbit, Bybit, Bithumb, KIS) [`@COMP:exchange`] → [docs](features/exchange-integration.md)
+- **exchange-warmup** - 거래소 웜업 메서드 (정밀도 캐시, 마켓 정보, 지원 거래소 목록) [`@COMP:service,route`] → [docs](features/exchange-warmup.md)
 - **upbit-integration** - 업비트 SPOT 통합 (215개 심볼) [`@COMP:exchange`] → [docs](features/upbit-integration.md)
 - **price-cache** - 가격 캐싱 및 USDT/KRW 환율 조회 [`@COMP:service`] → [docs](features/price-cache.md)
 - **symbol-validation** - 심볼 검증 및 정규화 [`@COMP:validation`] → [docs](features/symbol-validation.md)
@@ -127,6 +128,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-14 | Exchange Warmup Methods | ✅ Phase 1 | services/exchange.py | 거래소 웜업 메서드 완전한 문서화 (get_supported_exchanges, warm_up_precision_cache, warm_up_all_market_info, get_precision_cache_stats, 헬퍼 메서드들) 및 FEATURE_CATALOG 추가 |
 | 2025-11-14 | Admin System Log Sorting | ✅ Phase 1 | routes/admin.py, core.py | 시스템 로그 시간순 정렬 및 백그라운드 작업 로그 상세화 |
 | 2025-11-14 | Crypto Exchange Standardization | ✅ Phase 1 | exchange.py | 암호화폐 거래소 잔고 표준화, MarketTypeEnum 타입 안전성 추가 |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |
