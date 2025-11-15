@@ -1,4 +1,4 @@
-# @FEAT:log-reading-helpers @COMP:util @TYPE:core
+# @FEAT:log-reading-helpers @FEAT:timezone-kst-display @COMP:util @TYPE:core
 """
 Log reading and parsing utilities.
 
@@ -20,6 +20,7 @@ import os
 import re
 from typing import Optional, List
 from flask import Flask
+from datetime import datetime, timezone, timedelta
 
 # Shared log pattern constant
 # Format: YYYY-MM-DD HH:MM:SS,milliseconds LEVEL: [TAG] message [in file.py:123]
@@ -201,10 +202,11 @@ def read_log_tail_utf8_safe(
 
 def parse_log_line(line: str) -> Optional[dict]:
     """
-    Parse structured log line into dictionary.
+    Parse structured log line into dictionary with timezone metadata.
 
     Extracts timestamp, level, tag, message, file, and line number from
     a log entry formatted according to the app's logging configuration.
+    Enhanced for Phase 1 timezone awareness with backward compatibility.
 
     Expected log format (from app/__init__.py line 169):
         %(asctime)s %(levelname)s: [TAG] %(message)s [in %(pathname)s:%(lineno)d]
@@ -218,15 +220,23 @@ def parse_log_line(line: str) -> Optional[dict]:
     Returns:
         dict | None: Parsed log entry or None if line doesn't match pattern
 
-        Parsed dict structure:
+        Parsed dict structure (Phase 1 Enhanced):
         {
-            'timestamp': str     # "2025-11-13T14:08:29Z" (ISO 8601 UTC format, without milliseconds)
-            'level': str        # "INFO" | "ERROR" | "WARNING" | "DEBUG" | etc.
-            'tag': str | None   # "QUEUE_REBAL" (None if no [TAG] in log)
-            'message': str      # Log message content (stripped)
-            'file': str         # Filename only, e.g., "queue_rebalancer.py"
-            'line': int         # Line number where log was called
+            'timestamp': str           # "2025-11-13T14:08:29Z" (ISO 8601 UTC format, without milliseconds)
+            'timestamp_kst': str       # "2025-11-13T23:08:29+09:00" (ISO 8601 KST format)
+            'level': str              # "INFO" | "ERROR" | "WARNING" | "DEBUG" | etc.
+            'tag': str | None         # "QUEUE_REBAL" (None if no [TAG] in log)
+            'message': str            # Log message content (stripped)
+            'file': str               # Filename only, e.g., "queue_rebalancer.py"
+            'line': int               # Line number where log was called
+            'timezone': str           # "UTC" (timezone identifier for frontend conversion)
+            'timezone_offset': str    # "+00:00" (UTC offset for display)
         }
+
+        Backward Compatibility:
+            - All existing fields preserved
+            - New timezone fields added without breaking existing API consumers
+            - ISO 8601 timestamp format maintained
 
     Behavior on Unmatched Lines:
         - Returns None (non-exceptional flow)
@@ -237,14 +247,16 @@ def parse_log_line(line: str) -> Optional[dict]:
         >>> line1 = '2025-11-13 10:00:00,000 ERROR: [ORDER] Failed [in order.py:123]'
         >>> result1 = parse_log_line(line1)
         >>> result1
-        {'timestamp': '2025-11-13T10:00:00Z', 'level': 'ERROR', 'tag': 'ORDER',
-         'message': 'Failed', 'file': 'order.py', 'line': 123}
+        {'timestamp': '2025-11-13T10:00:00Z', 'timestamp_kst': '2025-11-13T19:00:00+09:00',
+         'level': 'ERROR', 'tag': 'ORDER', 'message': 'Failed', 'file': 'order.py', 'line': 123,
+         'timezone': 'UTC', 'timezone_offset': '+00:00'}
 
         >>> line2 = '2025-11-13 10:05:00,100 INFO: Background task running [in app.py:456]'
         >>> result2 = parse_log_line(line2)
         >>> result2
-        {'timestamp': '2025-11-13T10:05:00Z', 'level': 'INFO', 'tag': None,
-         'message': 'Background task running', 'file': 'app.py', 'line': 456}
+        {'timestamp': '2025-11-13T10:05:00Z', 'timestamp_kst': '2025-11-13T19:05:00+09:00',
+         'level': 'INFO', 'tag': None, 'message': 'Background task running', 'file': 'app.py', 'line': 456,
+         'timezone': 'UTC', 'timezone_offset': '+00:00'}
 
         >>> invalid_line = 'This is not a log line'
         >>> result3 = parse_log_line(invalid_line)
@@ -261,16 +273,42 @@ def parse_log_line(line: str) -> Optional[dict]:
     # Extract filename from full path
     file_name = os.path.basename(file_path)
 
-    # Convert timestamp to ISO 8601 format with UTC timezone indicator
-    # Input format: 'YYYY-MM-DD HH:MM:SS'
-    # Output format: 'YYYY-MM-DDTHH:MM:SSZ' (ISO 8601 UTC)
-    iso_timestamp = timestamp.replace(' ', 'T') + 'Z'
+    try:
+        # Parse timestamp using timezone-aware datetime objects
+        # Input format: 'YYYY-MM-DD HH:MM:SS'
+        utc_time = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
 
+        # Convert to KST (UTC+9)
+        kst_timezone = timezone(timedelta(hours=9))
+        kst_time = utc_time.astimezone(kst_timezone)
+
+        # Format timestamps as ISO 8601
+        timestamp_utc = utc_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Format KST timestamp with proper offset (e.g., "+09:00")
+        kst_offset = kst_time.strftime("%z")
+        kst_offset_formatted = f"{kst_offset[:3]}:{kst_offset[3:]}"
+        timestamp_kst = kst_time.strftime("%Y-%m-%dT%H:%M:%S") + kst_offset_formatted
+
+    except ValueError as e:
+        # Fallback to string manipulation if datetime parsing fails
+        # This maintains backward compatibility for malformed timestamps
+        timestamp_utc = timestamp.replace(' ', 'T') + 'Z'
+        timestamp_kst = timestamp_utc  # Fallback: same as UTC
+        kst_offset_formatted = "+00:00"  # Fallback: UTC offset
+
+    # Phase 1 Enhancement: Add timezone metadata for frontend conversion
+    # Log timestamps are in UTC by default, enabling KST conversion in frontend
     return {
-        'timestamp': iso_timestamp,
+        'timestamp': timestamp_utc,
+        'timestamp_kst': timestamp_kst,  # Phase 1: KST timestamp for direct display
         'level': log_level,
         'tag': tag,  # None if no [TAG] in log
         'message': message.strip(),
         'file': file_name,
-        'line': int(line_num)
+        'line': int(line_num),
+        'timezone': 'UTC',           # Timezone identifier for frontend timezone.js
+        'timezone_offset': '+00:00'   # UTC offset for display (Phase 1: always UTC)
     }

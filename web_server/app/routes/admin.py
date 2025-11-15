@@ -1255,10 +1255,107 @@ def get_metrics():
 
 
 # ============================================
+# Timezone Support API (Phase 1)
+# ============================================
+
+# @FEAT:timezone-kst-display @COMP:route @TYPE:core
+@bp.route('/system/timezone/info', methods=['GET'])
+@login_required
+@admin_required
+def get_timezone_info():
+    """
+    Timezone 정보 조회 API (Phase 1)
+
+    프론트엔드 KST 변환을 위한 timezone 정보를 제공합니다.
+    기존 timezone.js 유틸리티와 연동하여 한국 관리자를 위한
+    시간대 변환 기능을 지원합니다.
+
+    Returns:
+        JSON (200):
+            {
+                "success": true,
+                "timezone_info": {
+                    "server_timezone": "UTC",
+                    "server_offset": "+00:00",
+                    "supported_timezones": [
+                        "UTC",
+                        "Asia/Seoul",
+                        "America/New_York",
+                        "Europe/London"
+                    ],
+                    "kst_conversion_available": true,
+                    "timezone_utility_available": true,
+                    "current_time_utc": "2025-11-15T10:30:00Z",
+                    "current_time_kst": "2025-11-15T19:30:00+09:00"
+                }
+            }
+
+    Usage:
+        // Frontend JavaScript
+        fetch('/admin/system/timezone/info')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.timezone_info.kst_conversion_available) {
+                // timezone.js 유틸리티로 KST 변환
+                const kstTime = timeZoneUtils.formatToLocalTime(timestamp, {
+                    timezone: 'Asia/Seoul'
+                });
+            }
+        });
+
+    Security:
+        - 관리자 권한 필수
+        - 읽기 전용 정보 제공
+
+    Feature Tags:
+        @FEAT:timezone-kst-display @COMP:route @TYPE:core
+    """
+    try:
+        from datetime import datetime, timezone
+        import pytz
+
+        # Get current times
+        utc_now = datetime.now(timezone.utc)
+        kst_timezone = pytz.timezone('Asia/Seoul')
+        kst_now = utc_now.astimezone(kst_timezone)
+
+        timezone_info = {
+            'server_timezone': 'UTC',
+            'server_offset': '+00:00',
+            'supported_timezones': [
+                'UTC',
+                'Asia/Seoul',
+                'America/New_York',
+                'Europe/London',
+                'Asia/Tokyo',
+                'Asia/Shanghai'
+            ],
+            'kst_conversion_available': True,
+            'timezone_utility_available': True,
+            'current_time_utc': utc_now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'current_time_kst': kst_now.strftime('%Y-%m-%dT%H:%M:%S+09:00'),
+            'kst_offset': '+09:00'
+        }
+
+        return jsonify({
+            'success': True,
+            'timezone_info': timezone_info
+        })
+
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f'Timezone info 조회 중 오류 발생: {str(e)}', exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': 'Timezone 정보 조회 중 오류가 발생했습니다.'
+        }), 500
+
+
+# ============================================
 # 백그라운드 작업 로그 조회
 # ============================================
 
-# @FEAT:background-job-logs @COMP:route @TYPE:core
+# @FEAT:background-job-logs @FEAT:timezone-kst-display @COMP:route @TYPE:core
 @bp.route('/system/background-jobs/<job_id>/logs', methods=['GET'])
 @login_required
 @admin_required
@@ -1268,6 +1365,10 @@ def get_job_logs(job_id):
 
     **태그 기반 필터링**: JOB_TAG_MAP을 통해 job_id를 BackgroundJobTag로 변환하여
     해당 작업의 로그만 정확하게 필터링합니다. (Phase 4 개선)
+
+    **Phase 1 Timezone Enhancement**: 로그 파싱 결과에 timezone 메타데이터 포함
+    - 'timezone': "UTC" - 프론트엔드 KST 변환을 위한 timezone 식별자
+    - 'timezone_offset': "+00:00" - 표시용 UTC 오프셋
 
     Args:
         job_id (str): 백그라운드 작업 ID (예: queue_rebalancer, update_open_orders)
@@ -1288,12 +1389,19 @@ def get_job_logs(job_id):
                         "tag": "QUEUE_REBAL",  # 🆕 추가됨 (Phase 4)
                         "message": "재정렬 대상 조합: 3개",
                         "file": "queue_rebalancer.py",
-                        "line": 123
+                        "line": 123,
+                        "timezone": "UTC",           # 🆕 Phase 1: Timezone identifier
+                        "timezone_offset": "+00:00"   # 🆕 Phase 1: UTC offset
                     }
                 ],
                 "total": 1000,
                 "filtered": 45,
-                "job_id": "queue_rebalancer"
+                "job_id": "queue_rebalancer",
+                "timezone_context": {           # 🆕 Phase 1: Timezone context
+                    "server_timezone": "UTC",
+                    "supported_timezones": ["UTC", "Asia/Seoul"],
+                    "kst_conversion_available": true
+                }
             }
 
         JSON (404):
@@ -1309,16 +1417,17 @@ def get_job_logs(job_id):
         - 태그 없는 로그도 파싱 가능 (하위 호환성)
         - job_id가 JOB_TAG_MAP에 없으면 WARNING 로그 출력 후 모든 로그 반환
         - API 응답의 'tag' 필드는 Optional (null 가능)
+        - 🆕 Phase 1: timezone 메타데이터로 KST 변환 지원 (하위 호환성 유지)
 
-    Implementation (GitHub Issue #2 해결):
+    Implementation (GitHub Issue #2 해결 + Phase 1 Timezone Enhancement):
         헬퍼 함수를 활용한 안전한 로그 읽기 및 파싱:
 
         1. validate_log_file_path(): Path Traversal 방어 및 파일 검증
         2. read_log_tail_utf8_safe(): UTF-8 안전 tail 읽기 (200KB 최적화)
            - 바이너리 모드, 라인 경계 탐색, errors='replace'
            - 폴백: 최적화 실패 시 전체 파일 읽기
-        3. parse_log_line(): 정규식 기반 구조화 파싱
-           - timestamp, level, tag, message, file, line 추출
+        3. parse_log_line(): 정규식 기반 구조화 파싱 (+ Phase 1 timezone 메타데이터)
+           - timestamp, level, tag, message, file, line, timezone, timezone_offset 추출
 
         상세 구현은 app/utils/log_reader.py 참조
 
@@ -1327,7 +1436,7 @@ def get_job_logs(job_id):
         - Job ID 화이트리스트 검증: scheduler.get_jobs()에 등록된 작업만 접근 허용
 
     Feature Tags:
-        @FEAT:background-job-logs @COMP:route @TYPE:core
+        @FEAT:background-job-logs @FEAT:timezone-kst-display @COMP:route @TYPE:core
     """
     try:
         from flask import current_app
@@ -1455,12 +1564,21 @@ def get_job_logs(job_id):
         # limit 적용
         filtered_logs = parsed_logs[-limit:]
 
+        # Phase 1 Enhancement: Add timezone context for frontend conversion
+        timezone_context = {
+            'server_timezone': 'UTC',
+            'supported_timezones': ['UTC', 'Asia/Seoul'],
+            'kst_conversion_available': True,
+            'timezone_utility_available': True
+        }
+
         return jsonify({
             'success': True,
             'logs': filtered_logs,
             'total': total_count,
             'filtered': len(filtered_logs),
-            'job_id': job_id
+            'job_id': job_id,
+            'timezone_context': timezone_context  # Phase 1: Timezone context
         })
 
     except Exception as e:
@@ -1474,8 +1592,7 @@ def get_job_logs(job_id):
         }), 500
 
 
-# @FEAT:error-warning-logs @COMP:route @TYPE:core
-# @FEAT:admin-system @COMP:route @TYPE:core
+# @FEAT:error-warning-logs @FEAT:timezone-kst-display @COMP:route @TYPE:core
 @bp.route('/system/logs/errors-warnings', methods=['GET'])
 @conditional_admin_required
 def get_errors_warnings_logs():
@@ -1710,6 +1827,14 @@ def get_errors_warnings_logs():
         # @FEAT:admin-system @TYPE:core - 로그 순서 개선: 최신 로그가 상단에 표시되도록 내림차순 정렬
         filtered_logs = sorted(logs_with_limit, key=lambda x: x['timestamp'], reverse=True)
 
+        # Phase 1 Enhancement: Add timezone context for frontend conversion
+        timezone_context = {
+            'server_timezone': 'UTC',
+            'supported_timezones': ['UTC', 'Asia/Seoul'],
+            'kst_conversion_available': True,
+            'timezone_utility_available': True
+        }
+
         return jsonify({
             'success': True,
             'logs': filtered_logs,
@@ -1717,7 +1842,8 @@ def get_errors_warnings_logs():
             'filtered': len(filtered_logs),
             'level_filter': level,
             'environment': 'development' if _is_development_mode() else 'production',
-            'log_file': os.path.basename(log_path)
+            'log_file': os.path.basename(log_path),
+            'timezone_context': timezone_context  # Phase 1: Timezone context
         })
 
     except Exception as e:

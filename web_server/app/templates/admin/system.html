@@ -1816,39 +1816,271 @@ document.addEventListener('DOMContentLoaded', function() {
 // ============================================================================
 
 /**
- * KST 시간대 변환 초기화 함수
- * @FEAT:timezone-conversion @COMP:ui @TYPE:integration
- * Improved error handling with graceful fallbacks and validation
+ * @FEAT:timezone-kst-display @COMP:ui @TYPE:integration
+ *
+ * Phase 2: Enhanced KST conversion with Phase 1 backend integration
+ * Smart Conversion Strategy: Backend data → Client-side → Fallback
+ *
+ * Initializes the KST (Korea Standard Time) conversion system by:
+ * 1. Fetching timezone information from Phase 1 backend API
+ * 2. Storing global timezone context for cross-component access
+ * 3. Validating TimeZoneUtils dependency availability
+ * 4. Setting up conversion for scheduler timestamps and system logs
+ * 5. Displaying visual status indicators for Korean administrators
+ *
+ * Async/await pattern used for Phase 1 API integration with graceful fallbacks.
+ *
+ * @async
+ * @returns {Promise<void>} Resolves when KST conversion is initialized
+ * @throws {Error} When initialization fails, falls back to basic time display
+ *
+ * @example
+ * // Usage on page load:
+ * document.addEventListener('DOMContentLoaded', async () => {
+ *     await initializeKSTConversion();
+ * });
+ *
+ * @since Phase 2
+ * @see fetchTimezoneInfo() - Backend API data fetching
+ * @see displayTimezoneStatus() - Visual status management
+ * @see convertSchedulerTimesToKST() - Timestamp conversion logic
+ *
+ * Global Context:
+ * - window.timezoneContext: Stores timezone information from backend
+ * - window.timeZoneUtils: Reference to TimeZoneUtils utility class
+ *
+ * Error Handling:
+ * - API failure: Falls back to client-side timezone detection
+ * - Missing TimeZoneUtils: Uses backend data only with warning status
+ * - Critical errors: Falls back to basic time display without conversion
  */
-function initializeKSTConversion() {
+async function initializeKSTConversion() {
     try {
+        // Phase 1: Fetch timezone information from backend
+        const timezoneInfo = await fetchTimezoneInfo();
+
+        // Store timezone context for global access
+        window.timezoneContext = timezoneInfo;
+
         // TimeZoneUtils dependency validation
         if (typeof window.timeZoneUtils === 'undefined') {
-            console.warn('TimeZoneUtils not available, skipping KST conversion initialization');
+            console.warn('TimeZoneUtils not available, using backend data only');
+            displayTimezoneStatus('warning', '클라이언트 변환 불가');
             return;
         }
 
         // Validate timezone utility functionality
         if (typeof window.timeZoneUtils.formatToLocalTime !== 'function') {
-            console.warn('TimeZoneUtils.formatToLocalTime not available, using fallback');
-            setupFallbackTimeConversion();
+            console.warn('TimeZoneUtils.formatToLocalTime not available, using backend data');
+            displayTimezoneStatus('success', '백엔드 데이터 사용');
+            setupBackendTimeConversion();
             return;
         }
 
-        // 스케줄러 다음 실행 시간 변환 (with error recovery)
+        // Phase 1+2: Enhanced conversion with backend data priority
         const schedulerElements = document.querySelectorAll('.kst-time[data-utc]');
         if (schedulerElements.length > 0) {
-            convertSchedulerTimesToKST();
+            convertSchedulerTimesToKST(timezoneInfo);
         }
 
-        // 시스템 로그 타임스탬프 변환 (동적 로그용)
-        setupLogTimestampConversion();
+        // 시스템 로그 타임스탬프 변환 (Phase 1 데이터 우선)
+        setupLogTimestampConversion(timezoneInfo);
 
-        console.log('KST 변환 기능이 초기화되었습니다.');
+        // Display timezone status
+        displayTimezoneStatus('success', 'KST 변환 활성화 (백엔드 연동)');
+
+        console.log('Phase 2 KST 변환 기능이 초기화되었습니다 (백엔드 연동):', timezoneInfo);
     } catch (error) {
         console.error('KST 변환 초기화 실패:', error);
+        displayTimezoneStatus('error', 'KST 변환 오류');
         // Graceful fallback - basic time display without conversion
         setupFallbackTimeConversion();
+    }
+}
+
+/**
+ * @FEAT:timezone-kst-display @COMP:ui @TYPE:integration
+ *
+ * Phase 1: Fetch timezone information from backend API
+ *
+ * Retrieves timezone configuration from the backend API endpoint `/admin/system/timezone/info`.
+ * This function implements the Smart Conversion Strategy by attempting to fetch
+ * server-side timezone data first, then gracefully falling back to client-side detection.
+ *
+ * API Integration Pattern:
+ * - Primary: Fetch from Phase 1 backend endpoint
+ * - Fallback: Client-side timezone detection with minimal data structure
+ * - Error handling: Comprehensive logging and graceful degradation
+ *
+ * @async
+ * @returns {Promise<Object>} Timezone information object with the following structure:
+ *   @returns {string} returns.server_timezone - Server timezone identifier (e.g., 'UTC')
+ *   @returns {string[]} returns.supported_timezones - Array of supported timezone identifiers
+ *   @returns {boolean} returns.kst_conversion_available - Whether KST conversion is enabled
+ *   @returns {boolean} returns.timezone_utility_available - Whether TimeZoneUtils is loaded
+ *   @returns {string} returns.current_utc - Current UTC time in ISO format
+ *   @returns {string} returns.current_kst - Current KST time formatted for Korean users
+ *
+ * @throws {Error} When network request fails, triggers fallback to client-side detection
+ *
+ * @example
+ * try {
+ *     const tzInfo = await fetchTimezoneInfo();
+ *     console.log('Server timezone:', tzInfo.server_timezone);
+ *     console.log('KST available:', tzInfo.kst_conversion_available);
+ * } catch (error) {
+ *     console.error('Timezone fetch failed:', error);
+ * }
+ *
+ * @since Phase 1
+ * @see initializeKSTConversion() - Function that calls this
+ * @see /admin/system/timezone/info - Backend API endpoint
+ *
+ * Security Considerations:
+ * - Requires admin authentication via @admin_required decorator
+ * - Read-only operation, no data modification
+ * - Safe for client-side consumption
+ *
+ * Performance Notes:
+ * - Network request with timeout handled by browser
+ * - Fallback executes immediately on network failure
+ * - Minimal data structure to reduce transfer size
+ */
+async function fetchTimezoneInfo() {
+    try {
+        const response = await fetch('/admin/system/timezone/info');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log('Phase 1 timezone data received:', data);
+        return data;
+    } catch (error) {
+        console.warn('Phase 1 timezone API unavailable, using client-side:', error);
+        // Fallback to client-side timezone detection
+        return {
+            server_timezone: 'UTC',
+            supported_timezones: ['UTC', 'Asia/Seoul'],
+            kst_conversion_available: true,
+            timezone_utility_available: typeof window.timeZoneUtils !== 'undefined',
+            current_utc: new Date().toISOString(),
+            current_kst: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })
+        };
+    }
+}
+
+/**
+ * @FEAT:timezone-kst-display @COMP:ui @TYPE:integration
+ *
+ * Display timezone conversion status with visual indicators
+ *
+ * Creates and manages visual status indicators for KST conversion functionality.
+ * Designed specifically for Korean administrators with color-coded feedback
+ * and real-time KST time display. Provides immediate visual feedback about
+ * the timezone conversion system state.
+ *
+ * Visual Status System:
+ * - Success (Green): Full KST conversion active with backend integration
+ * - Warning (Yellow): Partial functionality, client-side only
+ * - Error (Red): System failure, basic time display only
+ *
+ * UI Components Created:
+ * - Status container with responsive layout
+ * - Color-coded indicator dot
+ * - Korean status message
+ * - Real-time KST time display
+ *
+ * @param {string} status - Status level: 'success', 'warning', or 'error'
+ * @param {string} message - Korean message describing current state
+ *
+ * @returns {void} Creates/updates DOM elements for status display
+ *
+ * @example
+ * // Show successful KST conversion
+ * displayTimezoneStatus('success', 'KST 변환 활성화 (백엔드 연동)');
+ *
+ * // Show warning for client-side only
+ * displayTimezoneStatus('warning', '클라이언트 변환 불가');
+ *
+ * // Show error state
+ * displayTimezoneStatus('error', 'KST 변환 오류');
+ *
+ * @since Phase 2
+ * @see initializeKSTConversion() - Function that calls this
+ * @see window.timezoneContext - Global context used for KST time display
+ *
+ * DOM Structure Created:
+ * ```html
+ * <div id="timezone-status" class="timezone-status mb-3 p-2 rounded">
+ *     <div class="d-flex align-items-center gap-2">
+ *         <span class="timezone-status-indicator"></span>
+ *         <span class="timezone-status-message"></span>
+ *         <small class="timezone-current-time ms-auto"></small>
+ *     </div>
+ * </div>
+ * ```
+ *
+ * CSS Classes Applied:
+ * - `.timezone-status`: Base container styling
+ * - `.bg-success`, `.bg-warning`, `.bg-danger`: Status-specific colors
+ * - `.timezone-status-indicator`: Visual indicator dot
+ * - `.timezone-status-message`: Message text styling
+ *
+ * Accessibility Features:
+ * - Color-coded visual indicators
+ * - Clear Korean text descriptions
+ * - Real-time clock for time verification
+ *
+ * Performance Notes:
+ * - Creates DOM elements only once, then updates content
+ * - Efficient DOM queries with caching
+ * - Minimal reflows and repaints
+ */
+function displayTimezoneStatus(status, message) {
+    const statusElement = document.getElementById('timezone-status');
+    if (!statusElement) {
+        // Create status element if it doesn't exist
+        const statusContainer = document.createElement('div');
+        statusContainer.id = 'timezone-status';
+        statusContainer.className = 'timezone-status mb-3 p-2 rounded';
+        statusContainer.innerHTML = `
+            <div class="d-flex align-items-center gap-2">
+                <span class="timezone-status-indicator"></span>
+                <span class="timezone-status-message"></span>
+                <small class="timezone-current-time ms-auto"></small>
+            </div>
+        `;
+
+        // Insert at the top of the main content
+        const mainContent = document.querySelector('.container-fluid');
+        if (mainContent) {
+            mainContent.insertBefore(statusContainer, mainContent.firstChild);
+        }
+    }
+
+    const indicator = document.querySelector('.timezone-status-indicator');
+    const messageEl = document.querySelector('.timezone-status-message');
+    const currentTimeEl = document.querySelector('.timezone-current-time');
+
+    // Set status-specific styling
+    const statusConfig = {
+        success: { bg: 'bg-success', text: 'KST 활성화', icon: '⚡' },
+        warning: { bg: 'bg-warning', text: '제한적 기능', icon: '⚠️' },
+        error: { bg: 'bg-danger', text: '변환 오류', icon: '❌' }
+    };
+
+    const config = statusConfig[status] || statusConfig.warning;
+
+    if (indicator && messageEl) {
+        statusElement.className = `timezone-status mb-3 p-2 rounded ${config.bg} text-white`;
+        indicator.textContent = config.icon;
+        messageEl.textContent = message;
+    }
+
+    // Display current KST time if available
+    if (currentTimeEl && window.timezoneContext) {
+        currentTimeEl.textContent = `현재 KST: ${window.timezoneContext.current_kst || new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
     }
 }
 
@@ -1878,10 +2110,70 @@ function setupFallbackTimeConversion() {
 }
 
 /**
- * 스케줄러 다음 실행 시간을 KST로 변환
- * Enhanced with robust error handling, input validation, and performance optimization
+ * @FEAT:timezone-kst-display @COMP:ui @TYPE:core
+ *
+ * Phase 2: Enhanced scheduler KST conversion with Phase 1 backend integration
+ * Smart Conversion: Backend timestamp_kst → TimeZoneUtils → Manual UTC+9
+ *
+ * Converts UTC timestamps to Korea Standard Time (KST) for scheduler elements.
+ * Implements a three-tier conversion strategy to ensure maximum compatibility:
+ * 1. Backend pre-converted KST timestamps (if available from Phase 1)
+ * 2. TimeZoneUtils utility for client-side conversion
+ * 3. Manual UTC+9 offset calculation as final fallback
+ *
+ * Target Elements:
+ * - Elements with class `.kst-time` and `data-utc` attribute
+ * - System scheduler timestamps, task execution times
+ * - Background job timestamps and interval displays
+ *
+ * @param {Object|null} timezoneInfo - Timezone information from Phase 1 backend API
+ *   @param {string} [timezoneInfo.current_kst] - Pre-converted KST time from backend
+ *   @param {boolean} [timezoneInfo.kst_conversion_available] - Backend conversion status
+ *
+ * @returns {void} Updates DOM elements with KST-formatted timestamps
+ *
+ * @example
+ * // With backend timezone information
+ * const tzInfo = await fetchTimezoneInfo();
+ * convertSchedulerTimesToKST(tzInfo);
+ *
+ * // Without backend information (fallback mode)
+ * convertSchedulerTimesToKST();
+ *
+ * HTML Target Example:
+ * ```html
+ * <span class="kst-time" data-utc="2025-11-15T10:30:00Z">
+ *     <!-- Will be converted to KST time -->
+ * </span>
+ * ```
+ *
+ * @since Phase 2 (Enhanced from Phase 1)
+ * @see initializeKSTConversion() - Function that calls this
+ * @see TimeZoneUtils.formatToLocalTime() - Client-side conversion utility
+ *
+ * Conversion Strategy Priority:
+ * 1. Backend timestamp_kst field (if available)
+ * 2. TimeZoneUtils.formatToLocalTime with 'Asia/Seoul' timezone
+ * 3. Manual UTC+9 calculation using Date.toLocaleString()
+ *
+ * Performance Optimizations:
+ * - Batch processing of DOM elements
+ * - Early return when no target elements found
+ * - Input validation and sanitization
+ * - Error tracking with detailed reporting
+ *
+ * Input Validation:
+ * - Year range validation (2000 - current_year + 10)
+ * - UTC string format validation
+ * - Null/undefined/empty string handling
+ *
+ * Error Handling:
+ * - Individual element conversion failures don't affect others
+ * - Comprehensive error logging with element details
+ * - Graceful fallback to next conversion method
+ * - Performance metrics tracking
  */
-function convertSchedulerTimesToKST() {
+function convertSchedulerTimesToKST(timezoneInfo = null) {
     // Performance: Cache DOM elements and validate early
     const kstTimeElements = document.querySelectorAll('.kst-time[data-utc]');
     if (kstTimeElements.length === 0) return;
