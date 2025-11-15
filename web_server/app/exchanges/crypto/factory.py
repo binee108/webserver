@@ -121,6 +121,36 @@ class CryptoExchangeFactory:
         """지원되는 거래소 목록 반환"""
         return cls.SUPPORTED_EXCHANGES.copy()
 
+    @classmethod
+    def create_default_client(cls, exchange_name: str) -> Optional['BaseCryptoExchange']:
+        """
+        API 키 없이 기본 클라이언트를 생성합니다.
+
+        Args:
+            exchange_name: 거래소 이름 (소문자)
+
+        Returns:
+            BaseCryptoExchange: 기본 클라이언트 또는 None
+        """
+        try:
+            exchange_name = exchange_name.lower()
+
+            # 지원 거래소 검증
+            if exchange_name not in cls._EXCHANGE_CLASSES:
+                logger.warning(f"지원되지 않는 거래소: {exchange_name}")
+                return None
+
+            # 빈 문자열로 기본 클라이언트 생성
+            exchange_class = cls._EXCHANGE_CLASSES[exchange_name]
+            client = exchange_class(api_key="", secret="", testnet=False)
+
+            logger.debug(f"✅ {exchange_name} 기본 클라이언트 생성 성공")
+            return client
+
+        except Exception as e:
+            logger.warning(f"기본 클라이언트 생성 실패 ({exchange_name}): {e}")
+            return None
+
 
 # 전역 팩토리 (클래스 - 모든 메서드가 @classmethod)
 crypto_factory = CryptoExchangeFactory

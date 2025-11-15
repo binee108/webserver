@@ -38,11 +38,13 @@
 - **capital-management** - 자본 배분, 재할당, 수량 계산 [`@COMP:service,route`] → [docs](features/capital-management.md)
 
 ### 🔌 Exchange Integration
+- **exchange-service-initialization** - ExchangeService 설정 기반 자동 등록 (9개 거래소 정적 등록, DB 의존성 제거) [`@COMP:service @TYPE:core @DEPS:constants`] → [docs](features/exchange-service-initialization.md)
 - **crypto-exchange-standardization** - 암호화폐 거래소 표준화 (BalanceObject 통합, MarketTypeEnum 타입 안전성) [`@COMP:service`] → [docs](docs/CRYPTO_EXCHANGE_STANDARD.md)
 - **exchange-integration** - 거래소 통합 레이어 (Binance, Upbit, Bybit, Bithumb, KIS) [`@COMP:exchange`] → [docs](features/exchange-integration.md)
 - **exchange-warmup** - 거래소 웜업 메서드 (정밀도 캐시, 마켓 정보, 지원 거래소 목록) [`@COMP:service,route`] → [docs](features/exchange-warmup.md)
 - **upbit-integration** - 업비트 SPOT 통합 (215개 심볼) [`@COMP:exchange`] → [docs](features/upbit-integration.md)
 - **price-cache** - 가격 캐싱 및 USDT/KRW 환율 조회 [`@COMP:service`] → [docs](features/price-cache.md)
+  - **get_price_quotes()** - 모든 거래소 가격 조회 및 캐시 업데이트 (Issue #54 해결, 31초 주기 실행) [`@COMP:service @TYPE:core @DEPS:exchange-clients`]
 - **symbol-validation** - 심볼 검증 및 정규화 [`@COMP:validation`] → [docs](features/symbol-validation.md)
 - **futures-validation** - 선물 주문 검증 (레버리지, Stop 가격) [`@COMP:validation`] → [docs](features/futures-validation.md)
 

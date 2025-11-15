@@ -220,7 +220,7 @@ def parse_log_line(line: str) -> Optional[dict]:
 
         Parsed dict structure:
         {
-            'timestamp': str     # "2025-11-13 14:08:29" (without milliseconds)
+            'timestamp': str     # "2025-11-13T14:08:29Z" (ISO 8601 UTC format, without milliseconds)
             'level': str        # "INFO" | "ERROR" | "WARNING" | "DEBUG" | etc.
             'tag': str | None   # "QUEUE_REBAL" (None if no [TAG] in log)
             'message': str      # Log message content (stripped)
@@ -237,13 +237,13 @@ def parse_log_line(line: str) -> Optional[dict]:
         >>> line1 = '2025-11-13 10:00:00,000 ERROR: [ORDER] Failed [in order.py:123]'
         >>> result1 = parse_log_line(line1)
         >>> result1
-        {'timestamp': '2025-11-13 10:00:00', 'level': 'ERROR', 'tag': 'ORDER',
+        {'timestamp': '2025-11-13T10:00:00Z', 'level': 'ERROR', 'tag': 'ORDER',
          'message': 'Failed', 'file': 'order.py', 'line': 123}
 
         >>> line2 = '2025-11-13 10:05:00,100 INFO: Background task running [in app.py:456]'
         >>> result2 = parse_log_line(line2)
         >>> result2
-        {'timestamp': '2025-11-13 10:05:00', 'level': 'INFO', 'tag': None,
+        {'timestamp': '2025-11-13T10:05:00Z', 'level': 'INFO', 'tag': None,
          'message': 'Background task running', 'file': 'app.py', 'line': 456}
 
         >>> invalid_line = 'This is not a log line'
@@ -261,8 +261,13 @@ def parse_log_line(line: str) -> Optional[dict]:
     # Extract filename from full path
     file_name = os.path.basename(file_path)
 
+    # Convert timestamp to ISO 8601 format with UTC timezone indicator
+    # Input format: 'YYYY-MM-DD HH:MM:SS'
+    # Output format: 'YYYY-MM-DDTHH:MM:SSZ' (ISO 8601 UTC)
+    iso_timestamp = timestamp.replace(' ', 'T') + 'Z'
+
     return {
-        'timestamp': timestamp,
+        'timestamp': iso_timestamp,
         'level': log_level,
         'tag': tag,  # None if no [TAG] in log
         'message': message.strip(),
