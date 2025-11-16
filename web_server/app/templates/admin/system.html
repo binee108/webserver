@@ -1269,7 +1269,10 @@ function renderLogs(jobId, logs, total, filtered) {
         return `
             <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
                 <div class="flex items-start">
-                    <span class="text-muted text-xs mr-2 flex-shrink-0">[${escapeHtml(log.timestamp)}]</span>
+                        <!-- @FEAT:timezone-kst-display-bug-fix @COMP:template @TYPE:core - Phase 1 KST 표시 수정 -->
+                    <span class="text-muted text-xs mr-2 flex-shrink-0" data-utc="${escapeHtml(log.timestamp)}">
+                        [${escapeHtml(log.timestamp_kst || log.timestamp)}] ${log.timestamp_kst ? '<span aria-label="Korea Standard Time">🇰🇷</span>' : ''}
+                    </span>
                     <span class="badge ${badgeClass} mr-2 flex-shrink-0">
                         ${levelIcon} ${escapeHtml(log.level)}
                     </span>
@@ -1453,19 +1456,26 @@ function loadErrorWarningLogs(level = null, search = null, limit = null) {
 }
 
 /**
- * @FEAT:error-warning-logs-ui @COMP:template @TYPE:core - 로그 렌더링 및 통계 업데이트
+ * @FEAT:error-warning-logs-ui @FEAT:timezone-kst-display-bug-fix @COMP:template @TYPE:core - 로그 렌더링 및 통계 업데이트
  *
- * WHY: 동적 로그 렌더링으로 실시간 모니터링 UI 제공
- * - XSS 방어: 모든 동적 콘텐츠(log.message, log.tag, log.timestamp)에 escapeHtml() 적용
+ * WHY: 동적 로그 렌더링으로 실시간 모니터링 UI 제공 및 KST 타임존 표시 버그 수정
+ * ISSUE #60: KST(한국 표준시) 타임스탬프가 UTC로 표시되는 문제 해결
+ * - XSS 방어: 모든 동적 콘텐츠(log.message, log.tag, log.timestamp, log.timestamp_kst)에 escapeHtml() 적용
  * - 레벨별 색상 매핑: ERROR(빨강), WARNING(주황), INFO(파랑), DEBUG(회색)
  * - 태그 뱃지: 존재 시만 렌더링 (조건부)
+ * - Phase 1 KST Fix: template-level 우선순위 부여 (timestamp_kst → timestamp fallback)
+ *
+ * Phase 1 Template Fix (Emergency):
+ * 기존: <span>[${escapeHtml(log.timestamp)}]</span>
+ * 수정: <span data-utc="${escapeHtml(log.timestamp)}">[${escapeHtml(log.timestamp_kst || log.timestamp)}] 🇰🇷</span>
  *
  * Edge Cases:
  * - logs=[] → 빈 로그 메시지 표시
  * - total !== filtered → 필터링 통계 표시
  * - log.file 또는 log.line 없음 → 조건부 생략
+ * - log.timestamp_kst 없음 → UTC timestamp fallback으로 안전한 표시
  *
- * @param {Array} logs - 로그 객체 배열 [{timestamp, level, tag, message, file, line}, ...]
+ * @param {Array} logs - 로그 객체 배열 [{timestamp, level, tag, message, file, line, timestamp_kst}, ...]
  * @param {number} total - 전체 로그 개수 (필터링 전, 통계용)
  * @param {number} filtered - 필터링된 로그 개수 (현재 표시 개수)
  * @returns {void}
@@ -1473,6 +1483,15 @@ function loadErrorWarningLogs(level = null, search = null, limit = null) {
  * @sideEffect
  * - errorWarningLogContainer innerHTML 업데이트 (로그 테이블 렌더링)
  * - updateErrorWarningStats(logs) 호출 → 통계 카드 업데이트
+ * - KST 표시 개선: 한국 사용자를 위한 🇰🇷 비주얼 인디케이터 및 aria-label
+ *
+ * @accessibility
+ * - 🇰🇷 아이콘에 aria-label="Korea Standard Time" 제공으로 스크린 리더 지원
+ * - data-utc 속성으로 원본 UTC 타임스탬프 보존 (개발자 도구용)
+ *
+ * @knownIssues
+ * - Phase 1은 template-level 임시 해결책. Phase 2에서 JavaScript 레벨 정규식 변환 예정
+ * - 일부 레거시 로그는 timestamp_kst 필드가 없을 수 있음 (fallback 처리됨)
  */
 function renderErrorWarningLogs(logs, total, filtered) {
     const container = document.getElementById('errorWarningLogContainer');
@@ -1543,10 +1562,14 @@ function renderErrorWarningLogs(logs, total, filtered) {
             </span>
         ` : '';
 
+        // @FEAT:timezone-kst-display-bug-fix @COMP:template @TYPE:core - Phase 1 KST 표시 수정
+        // ISSUE #60: KST 타임스탬프 우선 표시 및 UTC fallback 보장
         return `
             <div class="py-1 hover:bg-secondary-hover border-b border-color last:border-b-0">
                 <div class="flex items-start">
-                    <span class="text-secondary text-xs mr-2 flex-shrink-0">[${escapeHtml(log.timestamp)}]</span>
+                    <span class="text-secondary text-xs mr-2 flex-shrink-0" data-utc="${escapeHtml(log.timestamp)}">
+                        [${escapeHtml(log.timestamp_kst || log.timestamp)}] ${log.timestamp_kst ? '<span aria-label="Korea Standard Time">🇰🇷</span>' : ''}
+                    </span>
                     <span class="badge ${badgeClass} mr-2 flex-shrink-0">
                         ${levelIcon} ${escapeHtml(log.level)}
                     </span>
