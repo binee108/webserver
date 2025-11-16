@@ -6,6 +6,7 @@
 """
 
 import logging
+import inspect
 from typing import List, Optional
 
 from .binance import BinanceExchange
@@ -140,15 +141,40 @@ class CryptoExchangeFactory:
                 logger.warning(f"지원되지 않는 거래소: {exchange_name}")
                 return None
 
-            # 빈 문자열로 기본 클라이언트 생성
             exchange_class = cls._EXCHANGE_CLASSES[exchange_name]
-            client = exchange_class(api_key="", secret="", testnet=False)
 
-            logger.debug(f"✅ {exchange_name} 기본 클라이언트 생성 성공")
+            # Constructor 시그니처를 기반으로 안전한 기본 인자 구성
+            init_signature = inspect.signature(exchange_class.__init__)
+            kwargs = {}
+
+            if 'api_key' in init_signature.parameters:
+                kwargs['api_key'] = ""
+
+            # FIXED: Check 'secret' FIRST (base class parameter)
+            if 'secret' in init_signature.parameters:
+                kwargs['secret'] = ""
+            elif 'api_secret' in init_signature.parameters:  # THEN fallback to api_secret
+                kwargs['api_secret'] = ""
+
+            # FIXED: Add explicit return for missing parameters
+            if not kwargs.get('secret') and not kwargs.get('api_secret'):
+                logger.error(f"❌ Both 'secret' and 'api_secret' missing for {exchange_name}")
+                return None
+
+            if 'testnet' in init_signature.parameters:
+                kwargs['testnet'] = False
+
+            # Log parameter detection for debugging
+            logger.debug(f"🔍 {exchange_name} constructor signature: {init_signature}")
+            logger.debug(f"🔧 {exchange_name} final kwargs: {list(kwargs.keys())}")
+
+            client = exchange_class(**kwargs)
+
+            logger.info(f"✅ {exchange_name} client created successfully with parameters: {list(kwargs.keys())}")
             return client
 
         except Exception as e:
-            logger.warning(f"기본 클라이언트 생성 실패 ({exchange_name}): {e}")
+            logger.warning(f"❌ {exchange_name} client creation failed: {e}")
             return None
 
 
