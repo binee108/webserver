@@ -350,19 +350,76 @@ class ExchangeService:
             logger.debug(f"기본 증권 클라이언트 생성 실패 ({exchange_name}): {e}")
             return None
 
+    # @FEAT:exchange-integration @COMP:service @TYPE:core
     def _get_client(self, account: Account) -> Union['BaseCryptoExchange', 'BaseSecuritiesExchange']:
-        """계정에 해당하는 거래소 클라이언트 획득"""
-        client = None
+        """
+        계정별 인증된 클라이언트를 동적으로 생성하여 반환합니다.
 
-        if account.exchange in self._crypto_exchanges:
-            client = self._crypto_exchanges[account.exchange]
-        elif account.exchange in self._securities_exchanges:
-            client = self._securities_exchanges[account.exchange]
+        Issue #63 해결: 기존 빈 API 키("") 클라이언트 재사용 문제를 Account.api_key
+        property 활용으로 해결하여 Binance API 형식 오류 [-2014]를 수정합니다.
 
-        if not client:
-            raise ExchangeError(f"Unsupported exchange: {account.exchange}")
+        Args:
+            account (Account): 거래소 계정 정보 (암호화된 API 키 포함)
 
-        return client
+        Returns:
+            BaseCryptoExchange: 계정별 인증된 거래소 클라이언트
+
+        Note:
+            - Account.api_key/api_secret property로 복호화된 키 사용
+            - crypto_factory를 통한 동적 클라이언트 생성
+            - 성능 고려로 fallback 메커니즘 유지
+
+        Raises:
+            ExchangeError: 지원되지 않는 거래소이거나 클라이언트 생성 실패 시
+
+        Performance:
+            - 클라이언트 생성은 비용이 크므로 캐싱 고려 필요
+            - 실패 시 기존 클라이언트로 fallback하여 안정성 확보
+        """
+        try:
+            # 계정별 클라이언트 동적 생성
+            # crypto_factory import는 런타임에 필요시에만 로드하여 성능 최적화
+            from app.exchanges.crypto.factory import crypto_factory
+
+            logger.debug(f"Creating account-specific client for account_id={account.id}, exchange={account.exchange}")
+
+            # 크립토 거래소인 경우 - Issue #63 해결 핵심 로직
+            if account.exchange in self._crypto_exchanges:
+                # 실제 복호화된 API 키로 클라이언트 생성
+                # Account.api_key property는 암호화된 키를 자동 복호화하여 반환
+                client = crypto_factory.create(
+                    exchange_name=account.exchange.lower(),
+                    api_key=account.api_key,      # ✅ Account property에서 복호화된 실제 API 키 사용
+                    secret=account.api_secret,    # ✅ Account property에서 복호화된 실제 시크릿 사용
+                    testnet=account.is_testnet
+                )
+                logger.debug(f"Created crypto client for {account.exchange} (account_id={account.id})")
+                return client
+
+            # 증권 거래소인 경우
+            elif account.exchange in self._securities_exchanges:
+                # 증권 거래소는 기존 방식 유지 (별도 API 키 처리 방식)
+                # 추후 동적 생성으로 개선 가능하지만 현재는 기존 방식 유지
+                client = self._securities_exchanges[account.exchange]
+                logger.debug(f"Using existing securities client for {account.exchange} (account_id={account.id})")
+                return client
+
+            else:
+                raise ExchangeError(f"Unsupported exchange: {account.exchange}")
+
+        except Exception as e:
+            logger.error(f"Failed to create client for account_id={account.id}, exchange={account.exchange}: {e}")
+            # 실패 시 기존 방식으로 fallback - 서비스 안정성 확보를 위한 안전장치
+            # 동적 생성 실패 시에도 서비스가 중단되지 않도록 기본 클라이언트 반환
+            if account.exchange in self._crypto_exchanges:
+                logger.warning(f"Falling back to default crypto client for {account.exchange}")
+                return self._crypto_exchanges[account.exchange]
+            elif account.exchange in self._securities_exchanges:
+                logger.warning(f"Falling back to default securities client for {account.exchange}")
+                return self._securities_exchanges[account.exchange]
+            else:
+                # 지원되지 않는 거래소인 경우 예외를 다시 발생시켜 문제를 노출
+                raise ExchangeError(f"Unsupported exchange: {account.exchange}")
 
     # @FEAT:exchange-integration @COMP:service @TYPE:core
     def create_order(self, account: Account, order_data: Dict[str, Any],
