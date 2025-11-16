@@ -141,6 +141,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-16 | Crypto Exchange Parameter Fix | ✅ Phase 1 | exchanges/crypto/factory.py | CRITICAL FIX: create_default_client() 파라미터 불일치 문제 해결. 'api_secret' 파라미터 우선 확인, None vs 빈 문자열 처리 개선으로 거래소 초기화 안정화. |
 | 2025-11-16 | ExchangeService Constructor Fix | ✅ Phase 1 | services/exchange.py | CRITICAL FIX: ExchangeService 생성자에서 register_active_exchanges() 자동 호출 추가. 빈 _crypto_exchanges 딕셔너리 문제 해결로 "Unsupported exchange: binance" 오류 방지. 결정론적 초기화 보장. |
 | 2025-11-16 | Timezone KST Display Bug Fix (Issue #60) | ✅ Phase 1B | templates/admin/system.html | CRITICAL FIX: Issue #60 KST display bug resolved. Template-level emergency fix: timestamp_kst 우선 표시, 🇰🇷 badges with aria-label, UTC fallback safety, data-utc attributes for debugging. Enhanced JSDoc documentation. |
 | 2025-11-15 | Timezone KST Display (Phase 1) | ✅ Phase 1 | utils/log_reader.py, routes/admin.py | Backend timezone awareness enhancement: parse_log_line()에 timezone 메타데이터 추가, Admin API endpoint KST 지원, 새로운 timezone info endpoint, 하위 호환성 유지 |

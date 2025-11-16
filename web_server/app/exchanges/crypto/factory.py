@@ -123,15 +123,36 @@ class CryptoExchangeFactory:
         return cls.SUPPORTED_EXCHANGES.copy()
 
     @classmethod
+    # @FEAT:crypto-exchange-bug-fix @COMP:exchange @TYPE:core @DEPS:exchange-integration
     def create_default_client(cls, exchange_name: str) -> Optional['BaseCryptoExchange']:
         """
         API 키 없이 기본 클라이언트를 생성합니다.
+
+        WHY: 거래소 초기화 및 메타데이터 조회 등 API 인증이 필요 없는 작업을 위해
+        빈 문자열("")을 인자로 전달하여 클라이언트 인스턴스를 생성합니다.
+
+        FIXED: 파라미터 불일치 문제 해결 (Issue: crypto-exchange-bug-fix)
+        - 'api_secret' 파라미터를 우선 확인하고, 없을 경우에만 'secret' 파라미터 확인
+        - None vs 빈 문자열 처리를 명확히 구분하여 파라미터 누락 감지 개선
 
         Args:
             exchange_name: 거래소 이름 (소문자)
 
         Returns:
             BaseCryptoExchange: 기본 클라이언트 또는 None
+
+        Edge Cases:
+            - 지원되지 않는 거래소: None 반환 및 로깅
+            - 파라미터 누락: None 반환 및 에러 로깅
+
+        Side Effects:
+            - None (데이터베이스나 외부 API 호출 없음)
+
+        Performance:
+            - 인스턴스 생성 시간만 소요 (< 10ms)
+
+        Debugging Tips:
+            - DEBUG 로그 레벨에서 constructor signature와 최종 kwargs 확인 가능
         """
         try:
             exchange_name = exchange_name.lower()
@@ -150,14 +171,14 @@ class CryptoExchangeFactory:
             if 'api_key' in init_signature.parameters:
                 kwargs['api_key'] = ""
 
-            # FIXED: Check 'secret' FIRST (base class parameter)
-            if 'secret' in init_signature.parameters:
-                kwargs['secret'] = ""
-            elif 'api_secret' in init_signature.parameters:  # THEN fallback to api_secret
+            # FIXED: Check 'api_secret' FIRST (all exchanges use api_secret)
+            if 'api_secret' in init_signature.parameters:
                 kwargs['api_secret'] = ""
+            elif 'secret' in init_signature.parameters:  # THEN fallback to secret
+                kwargs['secret'] = ""
 
-            # FIXED: Add explicit return for missing parameters
-            if not kwargs.get('secret') and not kwargs.get('api_secret'):
+            # FIXED: Use explicit None check instead of falsy check to handle empty strings properly
+            if kwargs.get('secret') is None and kwargs.get('api_secret') is None:
                 logger.error(f"❌ Both 'secret' and 'api_secret' missing for {exchange_name}")
                 return None
 
