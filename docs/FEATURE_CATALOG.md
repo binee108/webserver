@@ -137,6 +137,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-16 | ExchangeService Constructor Fix | ✅ Phase 1 | services/exchange.py | CRITICAL FIX: ExchangeService 생성자에서 register_active_exchanges() 자동 호출 추가. 빈 _crypto_exchanges 딕셔너리 문제 해결로 "Unsupported exchange: binance" 오류 방지. 결정론적 초기화 보장. |
 | 2025-11-15 | Timezone KST Display (Phase 1) | ✅ Phase 1 | utils/log_reader.py, routes/admin.py | Backend timezone awareness enhancement: parse_log_line()에 timezone 메타데이터 추가, Admin API endpoint KST 지원, 새로운 timezone info endpoint, 하위 호환성 유지 |
 | 2025-11-14 | Exchange Warmup Methods | ✅ Phase 1 | services/exchange.py | 거래소 웜업 메서드 완전한 문서화 (get_supported_exchanges, warm_up_precision_cache, warm_up_all_market_info, get_precision_cache_stats, 헬퍼 메서드들) 및 FEATURE_CATALOG 추가 |
 | 2025-11-14 | Admin System Log Sorting | ✅ Phase 1 | routes/admin.py, core.py | 시스템 로그 시간순 정렬 및 백그라운드 작업 로그 상세화 |
@@ -289,6 +290,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-09*
+*Last Updated: 2025-11-16*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
 *Total Lines: ~215 (목표 범위 내)*

@@ -148,6 +148,11 @@ class ExchangeService:
         self._securities_exchanges: Dict[str, 'BaseSecuritiesExchange'] = {}
         self.rate_limiter = RateLimiter()
 
+        # CRITICAL FIX: Initialize exchanges to prevent "Unsupported exchange" errors
+        # This prevents the empty _crypto_exchanges dictionary issue that caused
+        # "Unsupported exchange: binance" errors when the service was used
+        self.register_active_exchanges()
+
     # @FEAT:exchange-service-initialization @COMP:service @TYPE:core @DEPS:constants
     def register_active_exchanges(self) -> Dict[str, Any]:
         """

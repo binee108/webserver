@@ -119,22 +119,49 @@ else:
 - **Critical Errors**: `success=False` 반환 및 에러 상세 정보 포함
 - **Graceful Degradation**: 부분 실패도 서비스 시작 허용
 
-## Phase 2 Preparation
+## Constructor Fix (Phase 1 Complete)
 
-### Ready for Next Phase
+### Critical Implementation
+The ExchangeService constructor has been updated to automatically call `register_active_exchanges()`:
+
+```python
+def __init__(self):
+    self._crypto_exchanges: Dict[str, 'BaseCryptoExchange'] = {}
+    self._securities_exchanges: Dict[str, 'BaseSecuritiesExchange'] = {}
+    self.rate_limiter = RateLimiter()
+
+    # CRITICAL FIX: Initialize exchanges to prevent "Unsupported exchange" errors
+    # This prevents the empty _crypto_exchanges dictionary issue that caused
+    # "Unsupported exchange: binance" errors when the service was used
+    self.register_active_exchanges()
+```
+
+### Problem Solved
+- **Before**: `ExchangeService()` → empty `_crypto_exchanges` → "Unsupported exchange: binance" error
+- **After**: `ExchangeService()` → automatic registration → all exchanges available immediately
+
+### Benefits of Constructor Fix
+1. **Zero Configuration**: No manual initialization required
+2. **Immediate Availability**: All exchanges ready upon instantiation
+3. **Error Prevention**: Eliminates "Unsupported exchange" runtime errors
+4. **Backward Compatibility**: Existing code works without changes
+
+## Phase Status Update
+
+### Completed Features
 1. ✅ **Static Registration**: 설정 기반 거래소 등록 완료
 2. ✅ **DB Independence**: DB 쿼리 없이 초기화 가능
 3. ✅ **Error Handling**: 견고한 에러 처리 및 로깅
-4. 🔄 **Service Integration**: Phase 2에서 서비스 시작 시 호출 필요
+4. ✅ **Constructor Integration**: 생성자에서 자동 호출 구현 완료
 
-### Integration Points
-- `app/services/__init__.py`에서 애플리케이션 시작 시 호출
-- 거래소 기능 복원: balance_query(), get_price_quotes(), WebSocket 연결
-- 모니터링: 등록 결과 로깅 및 성능 측정
+### Integration Status
+- ✅ **Service Instantiation**: ExchangeService 생성 시 자동 등록
+- ✅ **Feature Restoration**: balance_query(), get_price_quotes(), WebSocket 연결 모두 정상 동작
+- ✅ **Production Ready**: 결정론적 초기화로 안정적인 서비스 시작 보장
 
 ---
 
-**Phase 1 Status**: ✅ 완료 (구현 및 테스트 통과)
-**Next Phase**: Phase 2 - 서비스 시작 시 자동 호출 통합
+**Phase 1 Status**: ✅ 완료 (생성자 자동 호출 포함)
 **Dependencies**: `app/constants.py`의 CRYPTO_EXCHANGES, SECURITIES_EXCHANGES
 **Tags**: `@FEAT:exchange-service-initialization @COMP:service @TYPE:core @DEPS:constants`
+**Updated**: 2025-11-16 - Constructor auto-initialization fix implemented
