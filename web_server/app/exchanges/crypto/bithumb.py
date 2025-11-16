@@ -616,6 +616,18 @@ class BithumbExchange(BaseCryptoExchange):
         """미체결 주문 조회 (비동기)"""
         return self.fetch_open_orders_impl(symbol, market_type)
 
+    def get_exchange_info(self, market_type: str = 'spot') -> Dict[str, MarketInfo]:
+        """
+        거래소 전체 마켓 정보 조회
+
+        Args:
+            market_type: 'spot'만 지원 (bithumb은 spot만 지원)
+
+        Returns:
+            Dict[str, MarketInfo]: 마켓 정보 딕셔너리
+        """
+        return self.load_markets_impl(market_type=market_type, reload=False)
+
     # ===== BaseExchange 필수 메서드 구현 (동기) =====
 
     def load_markets(self, market_type: str = 'spot', reload: bool = False):

@@ -613,6 +613,18 @@ class UpbitExchange(BaseCryptoExchange):
 
         return order_dict
 
+    def get_exchange_info(self, market_type: str = 'spot') -> Dict[str, MarketInfo]:
+        """
+        거래소 전체 마켓 정보 조회
+
+        Args:
+            market_type: 'spot'만 지원 (upbit은 spot만 지원)
+
+        Returns:
+            Dict[str, MarketInfo]: 마켓 정보 딕셔너리
+        """
+        return self.load_markets_impl(market_type=market_type, reload=False)
+
     # 비동기 메서드들 (동기 구현을 래핑)
     async def load_markets_async(self, market_type: str = 'spot', reload: bool = False) -> Dict[str, MarketInfo]:
         """마켓 정보 로드 (비동기)"""

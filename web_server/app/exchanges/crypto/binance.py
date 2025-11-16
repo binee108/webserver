@@ -1265,6 +1265,18 @@ class BinanceExchange(BaseCryptoExchange):
 
         return None
 
+    def get_exchange_info(self, market_type: str = 'spot') -> Dict[str, MarketInfo]:
+        """
+        거래소 전체 마켓 정보 조회
+
+        Args:
+            market_type: 'spot' 또는 'futures'
+
+        Returns:
+            Dict[str, MarketInfo]: 마켓 정보 딕셔너리
+        """
+        return self.load_markets_impl(market_type=market_type, reload=False)
+
     # ===== 배치 주문 기능 =====
 
     async def create_batch_orders(self, orders: List[Dict[str, Any]], market_type: str = 'spot') -> Dict[str, Any]:
