@@ -242,8 +242,8 @@ class Exchange:
     VALID_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, BITHUMB, KIS, KIWOOM, LS, EBEST]
     VALID_EXCHANGES_LOWER = [x.lower() for x in VALID_EXCHANGES]
 
-    CRYPTO_EXCHANGES = [BINANCE, BYBIT, OKX, UPBIT, BITHUMB]
-    SECURITIES_EXCHANGES = [KIS, KIWOOM, LS, EBEST]
+    CRYPTO_EXCHANGES = [BINANCE, UPBIT, BITHUMB]  # BYBIT, OKX 제외 (개발 미완료)
+    SECURITIES_EXCHANGES = []  # KIS, KIWOOM, LS, EBEST 제외 (개발 미완료)
 
     # @FEAT:account-management @FEAT:exchange-integration @COMP:config @TYPE:core
     DOMESTIC_EXCHANGES = [UPBIT, BITHUMB]  # KRW 기준 국내 거래소 (잔고 USDT 변환 시 사용)

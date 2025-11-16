@@ -1425,7 +1425,7 @@ class ExchangeService:
             return []
 
     # @FEAT:exchange-warmup @COMP:service @TYPE:core
-    def warm_up_precision_cache(self, account: Account) -> Dict[str, Any]:
+    def warm_up_precision_cache(self, account: Optional[Account] = None) -> Dict[str, Any]:
         """
         주요 거래 쌍의 정밀도 정보를 미리 로드하여 캐시를 웜업합니다.
 
@@ -1477,6 +1477,14 @@ class ExchangeService:
             - Rate Limit: 10 req/min (거래소 제한 내에서 안전)
         """
         try:
+            # account가 None인 경우 DB에서 첫 번째 활성 계좌를 찾음
+            if account is None:
+                from app.models import Account
+                account = Account.query.filter_by(is_active=True).first()
+                if account is None:
+                    logger.warning("활성 계좌를 찾을 수 없어 precision 캐시 웜업을 건너뜁니다")
+                    return {'success': False, 'error': 'No active account found'}
+
             # Rate limit 체크
             self.rate_limiter.acquire_slot(account.exchange)
 
@@ -1523,7 +1531,7 @@ class ExchangeService:
             return {'success': False, 'error': str(e)}
 
     # @FEAT:exchange-warmup @COMP:service @TYPE:core
-    def warm_up_all_market_info(self, account: Account) -> Dict[str, Any]:
+    def warm_up_all_market_info(self, account: Optional[Account] = None) -> Dict[str, Any]:
         """
         거래소의 전체 마켓 정보를 미리 로드하여 캐시를 웜업합니다.
 
@@ -1583,6 +1591,14 @@ class ExchangeService:
             - 거래소 점검 시 빈 응답 또는 에러 반환
         """
         try:
+            # account가 None인 경우 DB에서 첫 번째 활성 계좌를 찾음
+            if account is None:
+                from app.models import Account
+                account = Account.query.filter_by(is_active=True).first()
+                if account is None:
+                    logger.warning("활성 계좌를 찾을 수 없어 market info 웜업을 건너뜁니다")
+                    return {'success': False, 'error': 'No active account found'}
+
             # Rate limit 체크
             self.rate_limiter.acquire_slot(account.exchange)
 
