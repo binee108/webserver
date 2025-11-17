@@ -37,133 +37,185 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
+# @FEAT:exchange-service-initialization @COMP:service @TYPE:core
 def initialize_services() -> Dict[str, Any]:
     """
     통합 서비스 초기화
 
+    WHY 서비스 초기화 순서 재구성 (Issue #64 해결):
+    - ExchangeService를 SymbolValidator보다 먼저 초기화
+    - ExchangeService 초기화 실패 시 서비스 시작 중단
+    - 의존성 관계 명확화 및 안정성 확보
+
     기존 복잡한 DI 시스템을 제거하고 단순한 직접 import 방식 사용
     """
     try:
-        logger.info("✅ 통합 서비스 시스템 초기화 시작")
+        logger.info("Initializing integrated service system")
 
         services = {}
         initialized_services = []
         failed_services = []
 
-        # === 5개 통합 서비스 초기화 ===
+        # Phase 1: ExchangeService 먼저 완전 초기화 (SymbolValidator 의존성 보장)
 
-        # 1. Exchange Service
+        # 1. Exchange Service (CRITICAL - 먼저 초기화해야 함)
+        # WHY ExchangeService를 먼저 초기화해야 하는가:
+        # - SymbolValidator는 거래소 클라이언트를 통해 심볼 정보를 로드
+        # - ExchangeService 초기화 실패 시 모든 거래 관련 기능 동작 불가
+        # - 안정적인 서비스 운영을 위해 필수 선행 조건
         try:
+            logger.info("Initializing Exchange Service...")
             from app.services.exchange import exchange_service
             services['exchange_service'] = exchange_service
+
+            # ExchangeService 완전 초기화 검증
+            # Issue #64: _crypto_exchanges 비어있는 문제 방지
+            if not hasattr(exchange_service, '_crypto_exchanges') or not exchange_service._crypto_exchanges:
+                logger.error("ExchangeService._crypto_exchanges is empty")
+                raise Exception("ExchangeService initialization failed: _crypto_exchanges dictionary is empty")
+
+            # register_active_exchanges() 결과 검증
+            # centronex4를 포함한 모든 지원 거래소 등록 확인
+            registration_result = exchange_service.register_active_exchanges()
+            if not registration_result['success']:
+                logger.error(f"Exchange registration failed: {registration_result.get('errors', [])}")
+                raise Exception(f"Exchange registration failed: {registration_result.get('errors', [])}")
+
+            registered_count = len(registration_result['registered_exchanges'])
+            logger.info(f"Exchange Service initialized: {registered_count} exchanges registered")
+            logger.debug(f"Registered exchanges: {registration_result['registered_exchanges']}")
             initialized_services.append('exchange_service')
-            logger.info("✅ Exchange Service 초기화 완료")
+
         except Exception as e:
             failed_services.append(('exchange_service', str(e)))
-            logger.error(f"❌ Exchange Service 초기화 실패: {e}")
+            logger.error(f"Exchange Service initialization failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # ExchangeService 실패 시 전체 서비스 시작 중단
+            # WHY: 거래소 연결 없이는 모든 핵심 기능이 동작 불가
+            return {
+                'success': False,
+                'error': f'Service startup failed due to ExchangeService initialization failure: {str(e)}',
+                'services': {},
+                'initialized_services': [],
+                'failed_services': [('exchange_service', str(e))],
+                'mode': 'critical_failure'
+            }
+
+        # 나머지 서비스들 초기화 (ExchangeService 후)
 
         # 2. Security Service
         try:
             from app.services.security import security_service
             services['security_service'] = security_service
             initialized_services.append('security_service')
-            logger.info("✅ Security Service 초기화 완료")
+            logger.info("Security Service initialized")
         except Exception as e:
             failed_services.append(('security_service', str(e)))
-            logger.error(f"❌ Security Service 초기화 실패: {e}")
+            logger.error(f"Security Service initialization failed: {e}")
 
         # 3. Analytics Service
         try:
             from app.services.analytics import analytics_service
             services['analytics_service'] = analytics_service
             initialized_services.append('analytics_service')
-            logger.info("✅ Analytics Service 초기화 완료")
+            logger.info("Analytics Service initialized")
         except Exception as e:
             failed_services.append(('analytics_service', str(e)))
-            logger.error(f"❌ Analytics Service 초기화 실패: {e}")
+            logger.error(f"Analytics Service initialization failed: {e}")
 
         # 4. Trading Service
         try:
             from app.services.trading import trading_service
             services['trading_service'] = trading_service
             initialized_services.append('trading_service')
-            logger.info("✅ Trading Service 초기화 완료")
+            logger.info("Trading Service initialized")
         except Exception as e:
             failed_services.append(('trading_service', str(e)))
-            logger.error(f"❌ Trading Service 초기화 실패: {e}")
+            logger.error(f"Trading Service initialization failed: {e}")
 
         # 5. Telegram Service
         try:
             from app.services.telegram import telegram_service
             services['telegram_service'] = telegram_service
             initialized_services.append('telegram_service')
-            logger.info("✅ Telegram Service 초기화 완료")
+            logger.info("Telegram Service initialized")
         except Exception as e:
             failed_services.append(('telegram_service', str(e)))
-            logger.error(f"❌ Telegram Service 초기화 실패: {e}")
+            logger.error(f"Telegram Service initialization failed: {e}")
 
-        # === 필수 보조 서비스들 ===
+        # 필수 보조 서비스들
 
         # Event Service
         try:
             from app.services.event_service import event_service
             services['event_service'] = event_service
             initialized_services.append('event_service')
-            logger.info("✅ Event Service 초기화 완료")
+            logger.info("Event Service initialized")
         except Exception as e:
             failed_services.append(('event_service', str(e)))
-            logger.warning(f"⚠️ Event Service 초기화 실패 (선택적): {e}")
+            logger.warning(f"Event Service initialization failed (optional): {e}")
 
         # Strategy Service
         try:
             from app.services.strategy_service import strategy_service
             services['strategy_service'] = strategy_service
             initialized_services.append('strategy_service')
-            logger.info("✅ Strategy Service 초기화 완료")
+            logger.info("Strategy Service initialized")
         except Exception as e:
             failed_services.append(('strategy_service', str(e)))
-            logger.error(f"❌ Strategy Service 초기화 실패: {e}")
+            logger.error(f"Strategy Service initialization failed: {e}")
 
         # Webhook Service
         try:
             from app.services.webhook_service import webhook_service
             services['webhook_service'] = webhook_service
             initialized_services.append('webhook_service')
-            logger.info("✅ Webhook Service 초기화 완료")
+            logger.info("Webhook Service initialized")
         except Exception as e:
             failed_services.append(('webhook_service', str(e)))
-            logger.error(f"❌ Webhook Service 초기화 실패: {e}")
+            logger.error(f"Webhook Service initialization failed: {e}")
 
-        # Symbol Validator (새로 추가) - 필수 서비스
+        # Symbol Validator (ExchangeService 후 초기화 - 의존성 해결)
+        # WHY SymbolValidator를 나중에 초기화해야 하는가:
+        # - ExchangeService가 제공하는 거래소 클라이언트 필요
+        # - 심볼 정보 로드를 위한 API 연결 의존성
+        # - 순환 의존성 방지를 위한 명확한 초기화 순서
         try:
-            logger.info("🔄 Symbol Validator 초기화 시작...")
+            logger.info("Initializing Symbol Validator (checking ExchangeService dependency)...")
             from app.services.symbol_validator import symbol_validator
             services['symbol_validator'] = symbol_validator
 
+            # ExchangeService 의존성 확인
+            # WHY: SymbolValidator는 거래소 클라이언트를 통해 심볼 정보 로드
+            if 'exchange_service' not in services:
+                raise Exception("SymbolValidator initialization failed: ExchangeService must be initialized first")
+
             # Symbol Validator 초기화 (거래소 심볼 정보 필수 로드)
-            logger.info("🔄 Symbol 심볼 정보 로드 시작...")
+            # 모든 거래소의 심볼 정보를 Public API로 로드하여 거래 준비
+            logger.info("Loading symbol information...")
             symbol_validator.load_initial_symbols()
 
             initialized_services.append('symbol_validator')
-            logger.info("✅ Symbol Validator 초기화 완료 (거래소 심볼 정보 로드 완료)")
+            logger.info("Symbol Validator initialized (symbol information loaded)")
         except Exception as e:
             # Symbol Validator 실패 시 전체 서비스 시작 중단
-            logger.error(f"❌ Symbol Validator 초기화 실패: {e}")
-            logger.error("거래소 심볼 정보가 없으면 거래 서비스를 제공할 수 없습니다")
+            # WHY: 심볼 정보 없이는 주문 검증 및 거래 실행 불가
+            logger.error(f"Symbol Validator initialization failed: {e}")
+            logger.error("Trading services cannot be provided without exchange symbol information")
             import traceback
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             failed_services.append(('symbol_validator', str(e)))
-            # 다른 서비스들도 실패로 처리
             return {
                 'success': False,
-                'error': f'Symbol Validator 초기화 실패로 서비스 시작 불가: {str(e)}',
+                'error': f'Service startup failed due to Symbol Validator initialization failure: {str(e)}',
                 'services': {},
                 'initialized_services': [],
                 'failed_services': [('symbol_validator', str(e))],
                 'mode': 'critical_failure'
             }
 
-        # === 결과 정리 ===
+        # 결과 정리
 
         success = len(failed_services) == 0
 
@@ -178,18 +230,18 @@ def initialize_services() -> Dict[str, Any]:
 
         # 최종 로깅
         if success:
-            logger.info(f"🎉 통합 서비스 시스템 초기화 완료")
-            logger.info(f"  - 성공: {len(initialized_services)}/{len(initialized_services) + len(failed_services)} 서비스")
+            logger.info(f"Integrated service system initialization complete")
+            logger.info(f"Successfully initialized: {len(initialized_services)}/{len(initialized_services) + len(failed_services)} services")
         else:
-            logger.warning(f"⚠️ 통합 서비스 시스템 부분 초기화")
-            logger.warning(f"  - 성공: {len(initialized_services)}, 실패: {len(failed_services)}")
+            logger.warning(f"Integrated service system partially initialized")
+            logger.warning(f"Success: {len(initialized_services)}, Failed: {len(failed_services)}")
             for service_name, error in failed_services:
                 logger.warning(f"    - {service_name}: {error}")
 
         return result
 
     except Exception as e:
-        logger.error(f"❌ 통합 서비스 시스템 초기화 중 치명적 오류: {e}")
+        logger.error(f"Critical error during integrated service system initialization: {e}")
         return {
             'success': False,
             'error': str(e),

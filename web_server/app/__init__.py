@@ -345,7 +345,7 @@ def create_app(config_name=None):
             if os.environ.get('WERKZEUG_RUN_MAIN'):
                 init_scheduler(app)
             else:
-                app.logger.info('🔄 Flask reloader 메인 프로세스 - 스케줄러 건너뜀')
+                app.logger.info('Flask reloader main process - skipping scheduler')
 
             # 서비스 의존성 초기화 (순환 의존성 해결)
             try:
@@ -359,17 +359,17 @@ def create_app(config_name=None):
             try:
                 from app.services.order_fill_monitor import init_order_fill_monitor
                 init_order_fill_monitor(app)
-                app.logger.info('✅ OrderFillMonitor 초기화 완료')
+                app.logger.info('OrderFillMonitor initialized successfully')
             except Exception as e:
-                app.logger.error(f'❌ OrderFillMonitor 초기화 실패: {str(e)}')
+                app.logger.error(f'OrderFillMonitor initialization failed: {str(e)}')
 
             # WebSocket 관리자 초기화
             try:
                 from app.services.trading import trading_service
                 trading_service.init_websocket_manager(app)
-                app.logger.info('✅ WebSocket 관리자 초기화 완료')
+                app.logger.info('WebSocket manager initialized successfully')
             except Exception as e:
-                app.logger.error(f'❌ WebSocket 관리자 초기화 실패: {str(e)}')
+                app.logger.error(f'WebSocket manager initialization failed: {str(e)}')
     else:
         app.logger.info('Flask CLI 명령어 실행 중 - 데이터베이스 초기화 및 스케줄러 건너뜀')
 

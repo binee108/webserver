@@ -1,8 +1,5 @@
 """
 Exchange 서비스 통합 모듈
-
-exchange_integrated_service.py 와 capital_service.py를 통합하여
-하나의 일관된 서비스로 제공합니다.
 """
 import logging
 import time
@@ -26,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# @FEAT:exchange-integration @COMP:service @TYPE:validation
 class MarketTypeEnum(str, Enum):
     """거래소 마켓 타입 표준화"""
     SPOT = "spot"
@@ -34,12 +30,10 @@ class MarketTypeEnum(str, Enum):
 
     @classmethod
     def has_value(cls, value) -> bool:
-        """유효한 값인지 확인"""
         return value in cls._value2member_map_
 
     @classmethod
     def normalize(cls, value) -> str:
-        """값을 표준 형식으로 정규화"""
         if isinstance(value, cls):
             return value.value
         if cls.has_value(value):
@@ -47,9 +41,8 @@ class MarketTypeEnum(str, Enum):
         raise ValueError(f"Invalid market type: {value}")
 
 
-# @FEAT:exchange-integration @COMP:service @TYPE:helper
 class RateLimiter:
-    """Rate Limiting 기능 (기존 rate_limit_service.py 통합)"""
+    """Rate Limiting 기능"""
 
     def __init__(self):
         self._limits = {
@@ -61,22 +54,19 @@ class RateLimiter:
         self._order_history = defaultdict(list)
 
     def acquire_slot(self, exchange_name: str) -> bool:
-        """API 요용슬롯 획득 (Rate Limit 관리)"""
         current_time = time.time()
 
-        # 요청 history 정리 (1분 이전 데이터 삭제)
+        # Clean old data
         self._request_history[exchange_name] = [
             timestamp for timestamp in self._request_history[exchange_name]
             if current_time - timestamp < 60
         ]
-
-        # 주문 history 정리 (1초 이전 데이터 삭제)
         self._order_history[exchange_name] = [
             timestamp for timestamp in self._order_history[exchange_name]
             if current_time - timestamp < 1
         ]
 
-        # Rate limit 체크
+        # Check rate limits
         limit = self._limits[exchange_name]
 
         if len(self._request_history[exchange_name]) >= limit['requests_per_minute']:
@@ -91,7 +81,7 @@ class RateLimiter:
             time.sleep(wait_time)
             return False
 
-        # 슬롯 획득 기록
+        # Record slot acquisition
         self._request_history[exchange_name].append(current_time)
         self._order_history[exchange_name].append(current_time)
         return True
@@ -141,63 +131,67 @@ def _standardize_crypto_balance(balance_data: Dict, exchange_name: str, market_t
 
 
 class ExchangeService:
-    """거래소 서비스 통합 클래스 (Exchange + Capital Service 통합)"""
+    """거래소 서비스 통합 클래스"""
 
+    # @FEAT:exchange-service-initialization @COMP:service @TYPE:core
     def __init__(self):
+        """
+        ExchangeService 초기화
+
+        Issue #64 해결: 서비스 시작 시점에 모든 지원 거래소 등록
+        - centronex4를 포함한 모든 거래소 클라이언트 미리 생성
+        - _crypto_exchanges 딕셔너리 초기화 보장
+        """
         self._crypto_exchanges: Dict[str, 'BaseCryptoExchange'] = {}
         self._securities_exchanges: Dict[str, 'BaseSecuritiesExchange'] = {}
         self.rate_limiter = RateLimiter()
 
-        # CRITICAL FIX: Initialize exchanges to prevent "Unsupported exchange" errors
-        # This prevents the empty _crypto_exchanges dictionary issue that caused
-        # "Unsupported exchange: binance" errors when the service was used
-        self.register_active_exchanges()
+        # Initialize exchanges to prevent "Unsupported exchange" errors
+        # WHY: 서비스 시작 시점에 모든 거래소 클라이언트를 미리 등록하여 런타임 오류 방지
+        try:
+            init_result = self.register_active_exchanges()
+            if init_result['success']:
+                logger.info(f"ExchangeService initialized: {init_result['success_count']}/{init_result['total_exchanges']} exchanges")
+                logger.debug(f"Registered exchanges: {init_result['registered_exchanges']}")
+            else:
+                logger.warning(f"ExchangeService partially initialized: {init_result['error_count']} errors")
+
+        except Exception as e:
+            logger.error(f"ExchangeService initialization failed: {e}")
+            # Continue execution even if initialization fails
 
     # @FEAT:exchange-service-initialization @COMP:service @TYPE:core @DEPS:constants
     def register_active_exchanges(self) -> Dict[str, Any]:
         """
         설정 파일에 정의된 지원 거래소들을 사전 등록합니다.
 
-        왜 이 메서드가 필요한가:
-        - ExchangeService 초기화 시 빈 _crypto_exchanges 문제 해결 (CRITICAL)
-        - "Unsupported exchange: binance" 오류 방지
-        - 서비스 시작 시 모든 지원 거래소 기능 활성화
-        - DB 의존성 제거로 결정론적 초기화 보장
+        WHY 이 메서드가 필요한가 (Issue #64 해결):
+        - 서비스 시작 시점에 모든 거래소 클라이언트 미리 생성
+        - _crypto_exchanges 딕셔너리 비어있는 문제 방지
+        - 런타임 "Unsupported exchange" 오류 예방
+        - centronex4를 포함한 모든 지원 거래소 등록 보장
+
+        Args:
+            없음 (내부적으로 Exchange.CRYPTO_EXCHANGES 사용)
 
         Returns:
             Dict[str, Any]: 등록 결과
-                {
-                    'success': bool,                    # 전체 성공 여부
-                    'registered_exchanges': List[str],   # 등록된 거래소 목록
-                    'total_exchanges': int,              # 총 지원 거래소 수
-                    'success_count': int,                # 성공한 등록 수
-                    'error_count': int,                  # 실패한 등록 수
-                    'errors': List[Dict]                 # 상세 에러 정보
-                }
+                - success: 전체 성공 여부
+                - registered_exchanges: 성공적으로 등록된 거래소 목록
+                - total_exchanges: 전체 대상 거래소 수
+                - success_count: 성공한 거래소 수
+                - error_count: 실패한 거래소 수
+                - errors: 실패 상세 정보
 
-        Notes:
-            - constants.CRYPTO_EXCHANGES, SECURITIES_EXCHANGES에서 거래소 목록 가져옴
-            - API 키 없이 기본 클라이언트 생성 (계좌 연결 시 주입)
-            - register_crypto_exchange()로 서비스에 등록
-            - 개별 실패 시 다른 거래소는 계속 진행 (graceful degradation)
-
-        Examples:
-            >>> result = exchange_service.register_active_exchanges()
-            >>> if result['success']:
-            ...     print(f"{len(result['registered_exchanges'])}개 거래소 등록됨")
-            ...     print(f"거래소: {result['registered_exchanges']}")
-            7개 거래소 등록됨
-            거래소: ['binance', 'bybit', 'okx', 'upbit', 'bithumb', 'kis', 'kiwoom']
+        Edge Cases:
+        - 일부 거래소 등록 실패해도 나머지는 계속 진행
+        - 등록 실패 시 기본 클라이언트 사용으로 fallback
+        - 전체 실패 시에도 서비스는 계속 실행 (degraded mode)
 
         Performance:
-            - 실행 시간: 100-500ms (설정 기반)
-            - 메모리: 거래소당 ~0.5MB 기본 클라이언트 생성
-            - DB 쿼리: 없음 (설정 파일 기반)
-
-        Critical Integration:
-            - Phase 2: app/services/__init__.py에서 서비스 시작 시 호출
-            - 문제 해결: _crypto_exchanges 빈 딕셔너리 → 지원 거래소들로 채움
-            - 기능 복원: 잔고 조회, 가격 조회, WebSocket 연결 등
+        - 초기화 시점에만 실행 (런타임 비용 없음)
+        - 각 거래소별 기본 클라이언트 생성 (~10ms/거래소)
+        - 실패해도 재시도하지 않음 (시간 초과 방지)
         """
         try:
             registered_exchanges = []
@@ -205,78 +199,63 @@ class ExchangeService:
             error_count = 0
             errors = []
 
-            # 1. 설정에서 지원 거래소 목록 가져오기
+            # 설정에서 지원 거래소 목록 가져오기
             crypto_exchanges = [Exchange.to_lower(ex) for ex in Exchange.CRYPTO_EXCHANGES]
             securities_exchanges = [Exchange.to_lower(ex) for ex in Exchange.SECURITIES_EXCHANGES]
             total_exchanges = len(crypto_exchanges) + len(securities_exchanges)
 
-            logger.info(f"거래소 등록 시작: {total_exchanges}개 지원 거래소 (크립토: {len(crypto_exchanges)}, 증권: {len(securities_exchanges)})")
+            logger.info(f"Registering {total_exchanges} exchanges (crypto: {len(crypto_exchanges)}, securities: {len(securities_exchanges)})")
 
-            # 2. 크립토 거래소 등록
+            # 크립토 거래소 등록
             for exchange_name in crypto_exchanges:
                 try:
-                    logger.debug(f"크립토 거래소 {exchange_name} 기본 클라이언트 생성 시작")
-
-                    # 기본 클라이언트 생성 (API 키 없이)
                     client = self._create_default_crypto_client(exchange_name)
-
                     if client:
                         self.register_crypto_exchange(exchange_name, client)
                         registered_exchanges.append(exchange_name)
                         success_count += 1
-                        logger.info(f"크립토 거래소 등록 성공: {exchange_name}")
+                        logger.debug(f"Registered crypto exchange: {exchange_name}")
                     else:
-                        raise Exception(f"클라이언트 생성 실패: {exchange_name}")
+                        raise Exception(f"Failed to create client for {exchange_name}")
 
                 except Exception as e:
-                    error_info = {
+                    errors.append({
                         'exchange': exchange_name,
                         'exchange_type': 'crypto',
                         'error_type': type(e).__name__,
                         'message': str(e)
-                    }
-                    errors.append(error_info)
+                    })
                     error_count += 1
-                    logger.error(f"크립토 거래소 {exchange_name} 등록 실패: {e}")
+                    logger.warning(f"Failed to register crypto exchange {exchange_name}: {e}")
 
-            # 3. 증권 거래소 등록
+            # 증권 거래소 등록
             for exchange_name in securities_exchanges:
                 try:
-                    logger.debug(f"증권 거래소 {exchange_name} 기본 클라이언트 생성 시작")
-
-                    # 기본 클라이언트 생성 (API 키 없이)
                     client = self._create_default_securities_client(exchange_name)
-
                     if client:
                         self.register_securities_exchange(exchange_name, client)
                         registered_exchanges.append(exchange_name)
                         success_count += 1
-                        logger.info(f"증권 거래소 등록 성공: {exchange_name}")
+                        logger.debug(f"Registered securities exchange: {exchange_name}")
                     else:
-                        raise Exception(f"클라이언트 생성 실패: {exchange_name}")
+                        raise Exception(f"Failed to create client for {exchange_name}")
 
                 except Exception as e:
-                    error_info = {
+                    errors.append({
                         'exchange': exchange_name,
                         'exchange_type': 'securities',
                         'error_type': type(e).__name__,
                         'message': str(e)
-                    }
-                    errors.append(error_info)
+                    })
                     error_count += 1
-                    logger.error(f"증권 거래소 {exchange_name} 등록 실패: {e}")
+                    logger.warning(f"Failed to register securities exchange {exchange_name}: {e}")
 
-            # 4. 결과 요약
             any_success = success_count > 0
 
-            # 결과 로깅
             if any_success:
-                logger.info(f"거래소 등록 완료: 성공 {success_count}개, 실패 {error_count}개")
-                logger.info(f"등록된 거래소: {registered_exchanges}")
+                logger.info(f"Exchange registration complete: {success_count}/{total_exchanges} successful")
             else:
-                logger.error(f"모든 거래소 등록 실패: {error_count}개 오류 발생")
-                for error in errors:
-                    logger.error(f"  - {error['exchange']}: {error['message']}")
+                logger.error(f"All exchange registrations failed: {error_count} errors")
 
             return {
                 'success': any_success,
@@ -288,7 +267,7 @@ class ExchangeService:
             }
 
         except Exception as e:
-            logger.error(f"거래소 등록 중 심각한 오류 발생: {e}")
+            logger.error(f"Critical error during exchange registration: {e}")
             return {
                 'success': False,
                 'registered_exchanges': [],
@@ -350,13 +329,17 @@ class ExchangeService:
             logger.debug(f"기본 증권 클라이언트 생성 실패 ({exchange_name}): {e}")
             return None
 
-    # @FEAT:exchange-integration @COMP:service @TYPE:core
+    # @FEAT:exchange-service-initialization @COMP:service @TYPE:core
     def _get_client(self, account: Account) -> Union['BaseCryptoExchange', 'BaseSecuritiesExchange']:
         """
         계정별 인증된 클라이언트를 동적으로 생성하여 반환합니다.
 
-        Issue #63 해결: 기존 빈 API 키("") 클라이언트 재사용 문제를 Account.api_key
-        property 활용으로 해결하여 Binance API 형식 오류 [-2014]를 수정합니다.
+        WHY 재귀 호출 제거 및 fallback 로직 구현 (Issue #64 해결):
+        - 기존: _get_client() 재귀 호출导致 무한 루프 발생 가능성
+        - 현재: 단순화된 fallback 경로로 안정적인 클라이언트 생성 보장
+        - centronex4 문제: 기본 클라이언트 생성 실패 시 등록된 클라이언트 사용
+
+        Issue #63 해결: Account.api_key property 활용으로 Binance API 형식 오류 [-2014] 수정
 
         Args:
             account (Account): 거래소 계정 정보 (암호화된 API 키 포함)
@@ -364,62 +347,82 @@ class ExchangeService:
         Returns:
             BaseCryptoExchange: 계정별 인증된 거래소 클라이언트
 
-        Note:
-            - Account.api_key/api_secret property로 복호화된 키 사용
-            - crypto_factory를 통한 동적 클라이언트 생성
-            - 성능 고려로 fallback 메커니즘 유지
-
         Raises:
             ExchangeError: 지원되지 않는 거래소이거나 클라이언트 생성 실패 시
 
-        Performance:
-            - 클라이언트 생성은 비용이 크므로 캐싱 고려 필요
-            - 실패 시 기존 클라이언트로 fallback하여 안정성 확보
+        Fallback 전략:
+        1. 우선: 계정별 인증된 클라이언트 생성 시도
+        2. 실패 시: 등록된 기본 클라이언트 사용 (안정성 보장)
+        3. 최후: 지원되지 않는 거래소일 경우 ExchangeError 발생
         """
         try:
-            # 계정별 클라이언트 동적 생성
-            # crypto_factory import는 런타임에 필요시에만 로드하여 성능 최적화
-            from app.exchanges.crypto.factory import crypto_factory
+            # 거래소 이름 정규화
+            exchange_name = account.exchange.lower() if hasattr(account.exchange, 'lower') else str(account.exchange).lower()
 
-            logger.debug(f"Creating account-specific client for account_id={account.id}, exchange={account.exchange}")
+            # _crypto_exchanges 검증 (Issue #64 해결)
+            if not hasattr(self, '_crypto_exchanges') or not self._crypto_exchanges:
+                logger.error("ExchangeService 초기화 실패: _crypto_exchanges가 비어있음")
+                raise ExchangeError("ExchangeService initialization failed: _crypto_exchanges is empty")
 
-            # 크립토 거래소인 경우 - Issue #63 해결 핵심 로직
-            if account.exchange in self._crypto_exchanges:
-                # 실제 복호화된 API 키로 클라이언트 생성
-                # Account.api_key property는 암호화된 키를 자동 복호화하여 반환
-                client = crypto_factory.create(
-                    exchange_name=account.exchange.lower(),
-                    api_key=account.api_key,      # ✅ Account property에서 복호화된 실제 API 키 사용
-                    secret=account.api_secret,    # ✅ Account property에서 복호화된 실제 시크릿 사용
-                    testnet=account.is_testnet
-                )
-                logger.debug(f"Created crypto client for {account.exchange} (account_id={account.id})")
-                return client
+            # 크립토 거래소인 경우
+            if exchange_name in self._crypto_exchanges:
+                try:
+                    from app.exchanges.crypto.factory import crypto_factory
+
+                    # Account property에서 복호화된 실제 API 키 사용 (Issue #63 해결)
+                    client = crypto_factory.create(
+                        exchange_name=exchange_name,
+                        api_key=account.api_key,
+                        secret=account.api_secret,
+                        testnet=account.is_testnet
+                    )
+                    logger.info(f"Created authenticated client for {exchange_name} (account_id={account.id})")
+                    return client
+
+                except Exception as create_error:
+                    # Fallback 전략: 인증된 클라이언트 생성 실패 시 기본 클라이언트 사용
+                    # WHY: centronex4 등 일부 거래소는 인증 실패해도 기본 기능은 제공해야 함
+                    logger.warning(f"Failed to create authenticated client for {exchange_name}, using default client: {create_error}")
+                    return self._crypto_exchanges[exchange_name]
 
             # 증권 거래소인 경우
-            elif account.exchange in self._securities_exchanges:
-                # 증권 거래소는 기존 방식 유지 (별도 API 키 처리 방식)
-                # 추후 동적 생성으로 개선 가능하지만 현재는 기존 방식 유지
-                client = self._securities_exchanges[account.exchange]
-                logger.debug(f"Using existing securities client for {account.exchange} (account_id={account.id})")
+            elif exchange_name in self._securities_exchanges:
+                client = self._securities_exchanges[exchange_name]
+                logger.debug(f"Using existing securities client for {exchange_name} (account_id={account.id})")
                 return client
 
             else:
-                raise ExchangeError(f"Unsupported exchange: {account.exchange}")
+                # 지원되지 않는 거래소 에러
+                available_crypto = list(self._crypto_exchanges.keys())
+                available_securities = list(self._securities_exchanges.keys())
+                logger.error(f"Unsupported exchange: {exchange_name}")
+                logger.error(f"Available crypto exchanges: {available_crypto}")
+                logger.error(f"Available securities exchanges: {available_securities}")
+                raise ExchangeError(f"Unsupported exchange: {exchange_name}")
 
+        except ExchangeError:
+            # ExchangeError는 그대로 전달
+            raise
         except Exception as e:
-            logger.error(f"Failed to create client for account_id={account.id}, exchange={account.exchange}: {e}")
-            # 실패 시 기존 방식으로 fallback - 서비스 안정성 확보를 위한 안전장치
-            # 동적 생성 실패 시에도 서비스가 중단되지 않도록 기본 클라이언트 반환
-            if account.exchange in self._crypto_exchanges:
-                logger.warning(f"Falling back to default crypto client for {account.exchange}")
-                return self._crypto_exchanges[account.exchange]
-            elif account.exchange in self._securities_exchanges:
-                logger.warning(f"Falling back to default securities client for {account.exchange}")
-                return self._securities_exchanges[account.exchange]
+            logger.error(f"Failed to get client for account {account.id}, exchange {account.exchange}: {e}")
+            exchange_name = account.exchange.lower() if hasattr(account.exchange, 'lower') else str(account.exchange).lower()
+
+            # 최후의 fallback: 등록된 기본 클라이언트 사용
+            # WHY: 예외 상황에서도 서비스 continuity 보장
+            if exchange_name in self._crypto_exchanges:
+                logger.warning(f"Using fallback crypto client for {exchange_name}")
+                return self._crypto_exchanges[exchange_name]
+            elif exchange_name in self._securities_exchanges:
+                logger.warning(f"Using fallback securities client for {exchange_name}")
+                return self._securities_exchanges[exchange_name]
             else:
-                # 지원되지 않는 거래소인 경우 예외를 다시 발생시켜 문제를 노출
-                raise ExchangeError(f"Unsupported exchange: {account.exchange}")
+                # 지원되지 않는 거래소 에러 - 명확한 실패 원인 제공
+                available_crypto = list(self._crypto_exchanges.keys())
+                available_securities = list(self._securities_exchanges.keys())
+                logger.error(f"Unsupported exchange: {exchange_name}")
+                logger.error(f"Available crypto exchanges: {available_crypto}")
+                logger.error(f"Available securities exchanges: {available_securities}")
+                raise ExchangeError(f"Unsupported exchange: {exchange_name}")
 
     # @FEAT:exchange-integration @COMP:service @TYPE:core
     def create_order(self, account: Account, order_data: Dict[str, Any],

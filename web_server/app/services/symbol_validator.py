@@ -33,7 +33,7 @@ class SymbolValidationError(Exception):
     pass
 
 
-# @FEAT:symbol-validation @COMP:service @TYPE:core
+# @FEAT:exchange-service-initialization @FEAT:symbol-validation @COMP:service @TYPE:core
 class SymbolValidator:
     """
     Symbol 제한사항 검증 서비스
@@ -51,7 +51,7 @@ class SymbolValidator:
         self.cache_lock = threading.RLock()
         self.is_initialized = False
 
-        logger.info("✅ Symbol Validator 초기화 완료")
+        logger.info("Symbol Validator initialized successfully")
 
     # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:integration
     def refresh_symbols(self):
@@ -79,10 +79,10 @@ class SymbolValidator:
             from app.exchanges.crypto.factory import crypto_factory
             from app.exchanges.metadata import ExchangeMetadata
 
-            logger.info("🔄 거래소 심볼 정보 로드 시작 (Public API)")
+            logger.info("Loading exchange symbol information (Public API)")
 
             # 로드 전 캐시 상태 확인
-            logger.info(f"📊 로드 전 캐시 상태: {len(self.market_info_cache)}개 심볼")
+            logger.info(f"Pre-load cache status: {len(self.market_info_cache)} symbols")
 
             success_count = 0
 
@@ -92,7 +92,7 @@ class SymbolValidator:
                 supported_markets = metadata.get('supported_markets', [])
 
                 if not supported_markets:
-                    logger.warning(f"⚠️ {exchange_name}: 지원하는 market_type 없음 (스킵)")
+                    logger.warning(f"{exchange_name}: No supported market types (skipping)")
                     continue
 
                 try:
@@ -101,7 +101,7 @@ class SymbolValidator:
 
                     for market_type in supported_markets:
                         try:
-                            logger.info(f"🔄 {exchange_name.upper()} {market_type.value.upper()} 심볼 정보 로드 중...")
+                            logger.info(f"Loading {exchange_name.upper()} {market_type.value.upper()} symbol information...")
                             markets = exchange.load_markets_impl(market_type.value, reload=True)
 
                             with self.cache_lock:
@@ -111,29 +111,29 @@ class SymbolValidator:
                                     self.cache_last_updated[cache_key] = time.time()
                                     success_count += 1
 
-                            logger.info(f"✅ {exchange_name.upper()} {market_type.value.upper()} 심볼 로드: {len(markets)}개")
+                            logger.info(f"Loaded {exchange_name.upper()} {market_type.value.upper()} symbols: {len(markets)}")
 
                         except Exception as e:
-                            logger.error(f"❌ {exchange_name.upper()} {market_type.value.upper()} 심볼 로드 실패: {e}")
+                            logger.error(f"Failed to load {exchange_name.upper()} {market_type.value.upper()} symbols: {e}")
 
                 except Exception as e:
-                    logger.error(f"❌ {exchange_name} 거래소 인스턴스 생성 실패: {e}")
+                    logger.error(f"Failed to create {exchange_name} exchange instance: {e}")
 
             # 로드 후 캐시 상태 확인
-            logger.info(f"📊 로드 후 캐시 상태: {len(self.market_info_cache)}개 심볼")
+            logger.info(f"Post-load cache status: {len(self.market_info_cache)} symbols")
 
             if not self.market_info_cache:
-                error_msg = "심볼 정보를 로드할 수 없습니다 - 거래 불가"
-                logger.error(f"❌ {error_msg}")
+                error_msg = "Unable to load symbol information - trading disabled"
+                logger.error(error_msg)
                 raise Exception(error_msg)
 
             # 초기화 완료 플래그 설정
             self.is_initialized = True
-            logger.info(f"✅ 거래소 심볼 정보 로드 완료: {success_count}개 (초기화 플래그 설정됨)")
+            logger.info(f"Exchange symbol information loaded: {success_count} symbols (initialization flag set)")
 
         except Exception as e:
-            logger.error(f"❌ 거래소 심볼 로드 실패: {e}")
-            raise Exception(f"거래소 심볼 정보를 로드할 수 없어 서비스를 시작할 수 없습니다: {e}")
+            logger.error(f"Failed to load exchange symbols: {e}")
+            raise Exception(f"Cannot start service due to failure loading exchange symbol information: {e}")
 
     # @FEAT:symbol-validation @FEAT:background-scheduler @COMP:service @TYPE:helper
     def _refresh_all_symbols(self):
@@ -154,7 +154,7 @@ class SymbolValidator:
             from app.exchanges.metadata import ExchangeMetadata
             from app.models import Account
 
-            logger.info("🔄 백그라운드 Symbol 정보 갱신 시작")
+            logger.info("Starting background symbol information refresh")
             refresh_start_time = time.time()
 
             accounts = Account.query.filter_by(is_active=True).all()
@@ -202,11 +202,11 @@ class SymbolValidator:
 
             refresh_duration = time.time() - refresh_start_time
 
-            logger.info(f"✅ 백그라운드 Symbol 갱신 완료: {total_refreshed}개, "
-                       f"소요시간: {refresh_duration:.2f}초")
+            logger.info(f"Background symbol refresh completed: {total_refreshed} symbols, "
+                       f"duration: {refresh_duration:.2f}s")
 
         except Exception as e:
-            logger.error(f"백그라운드 Symbol 갱신 실패: {e}")
+            logger.error(f"Background symbol refresh failed: {e}")
 
     # @FEAT:symbol-validation @COMP:service @TYPE:helper
     def get_market_info(self, exchange: str, symbol: str, market_type: str) -> Optional[MarketInfo]:
@@ -232,19 +232,19 @@ class SymbolValidator:
         """
         try:
             cache_key = f"{exchange.upper()}_{symbol.upper()}_{market_type.upper()}"
-            logger.debug(f"🔍 주문 파라미터 검증 시작: {cache_key}, 수량={quantity}, 가격={price}")
+            logger.debug(f"Starting order parameter validation: {cache_key}, quantity={quantity}, price={price}")
 
             market_info = self.get_market_info(exchange, symbol, market_type)
 
             if not market_info:
                 # 심볼 정보가 없으면 거래 불가
-                error_msg = f'심볼 정보를 찾을 수 없습니다: {cache_key}'
-                logger.error(f"❌ {error_msg}")
+                error_msg = f'Symbol information not found: {cache_key}'
+                logger.error(error_msg)
 
                 # 디버그: 현재 캐시 상태 출력
-                logger.error(f"📊 현재 캐시 상태: 총 {len(self.market_info_cache)}개 심볼")
-                logger.error(f"📊 캐시 키 샘플 (처음 5개): {list(self.market_info_cache.keys())[:5]}")
-                logger.error(f"📊 초기화 상태: {self.is_initialized}")
+                logger.error(f"Current cache status: total {len(self.market_info_cache)} symbols")
+                logger.error(f"Cache key samples (first 5): {list(self.market_info_cache.keys())[:5]}")
+                logger.error(f"Initialization status: {self.is_initialized}")
 
                 return {
                     'success': False,
