@@ -42,6 +42,7 @@
 - **upbit-integration** - 업비트 SPOT 통합 (215개 심볼) [`@COMP:exchange`] → [docs](features/upbit-integration.md)
 - **price-cache** - 가격 캐싱 및 USDT/KRW 환율 조회 [`@COMP:service`] → [docs](features/price-cache.md)
 - **symbol-validation** - 심볼 검증 및 정규화 [`@COMP:validation`] → [docs](features/symbol-validation.md)
+- **symbol-validation-fix** - 캐시 키 형식 통합으로 경고 로그 제거 [`@COMP:service`] → [docs](features/symbol-validation-fix.md)
 - **futures-validation** - 선물 주문 검증 (레버리지, Stop 가격) [`@COMP:validation`] → [docs](features/futures-validation.md)
 
 ### 🎨 UI & Real-time Updates
