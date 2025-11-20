@@ -106,7 +106,9 @@ class SymbolValidator:
 
                             with self.cache_lock:
                                 for symbol, market_info in markets.items():
-                                    cache_key = f"{exchange_name.upper()}_{symbol}_{market_type.value.upper()}"
+                                    # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+                                    # 표준화된 캐시 키 생성 - _build_cache_key() 사용
+                                    cache_key = self._build_cache_key(exchange_name, symbol, market_type.value)
                                     self.market_info_cache[cache_key] = market_info
                                     self.cache_last_updated[cache_key] = time.time()
                                     success_count += 1
@@ -122,9 +124,10 @@ class SymbolValidator:
             # 로드 후 캐시 상태 확인
             logger.info(f"📊 로드 후 캐시 상태: {len(self.market_info_cache)}개 심볼")
 
-            # 중요한 심볼 확인 (BTCUSDT FUTURES, BTC/KRW SPOT)
-            btc_futures_key = "BINANCE_BTCUSDT_FUTURES"
-            btc_krw_spot_key = "UPBIT_BTC/KRW_SPOT"
+            # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+            # 표준화된 캐시 키 생성 - 중요 심볼 확인
+            btc_futures_key = self._build_cache_key("BINANCE", "BTC/USDT", "FUTURES")
+            btc_krw_spot_key = self._build_cache_key("UPBIT", "BTC/KRW", "SPOT")
 
             if btc_futures_key in self.market_info_cache:
                 market_info = self.market_info_cache[btc_futures_key]
@@ -203,7 +206,9 @@ class SymbolValidator:
 
                             with self.cache_lock:
                                 for symbol, market_info in markets.items():
-                                    cache_key = f"{exchange_name.upper()}_{symbol}_{market_type.value.upper()}"
+                                    # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+                                    # 표준화된 캐시 키 생성 - _build_cache_key() 사용
+                                    cache_key = self._build_cache_key(exchange_name, symbol, market_type.value)
                                     self.market_info_cache[cache_key] = market_info
                                     self.cache_last_updated[cache_key] = time.time()
                                     total_refreshed += 1
@@ -225,14 +230,18 @@ class SymbolValidator:
             logger.error(f"백그라운드 Symbol 갱신 실패: {e}")
 
     # @FEAT:symbol-validation @COMP:service @TYPE:helper
+    # @FEAT:symbol-validation-fix @COMP:service @TYPE:core
     def get_market_info(self, exchange: str, symbol: str, market_type: str) -> Optional[MarketInfo]:
         """메모리에서 MarketInfo 조회 (네트워크 요청 없음)"""
-        cache_key = f"{exchange.upper()}_{symbol.upper()}_{market_type.upper()}"
+        # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+        # 표준화된 캐시 키 생성 - _build_cache_key() 사용
+        cache_key = self._build_cache_key(exchange, symbol, market_type)
 
         with self.cache_lock:
             return self.market_info_cache.get(cache_key)
 
     # @FEAT:symbol-validation @COMP:service @TYPE:validation
+    # @FEAT:symbol-validation-fix @COMP:service @TYPE:core
     def validate_order_params(self, exchange: str, symbol: str, market_type: str,
                             quantity: Decimal, price: Optional[Decimal] = None) -> Dict[str, Any]:
         """
@@ -247,7 +256,9 @@ class SymbolValidator:
             }
         """
         try:
-            cache_key = f"{exchange.upper()}_{symbol.upper()}_{market_type.upper()}"
+            # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+        # 표준화된 캐시 키 생성 - _build_cache_key() 사용
+        cache_key = self._build_cache_key(exchange, symbol, market_type)
             logger.debug(f"🔍 주문 파라미터 검증 시작: {cache_key}, 수량={quantity}, 가격={price}")
 
             market_info = self.get_market_info(exchange, symbol, market_type)
@@ -424,6 +435,24 @@ class SymbolValidator:
                 'is_initialized': self.is_initialized,
                 'cache_keys': list(self.market_info_cache.keys())[:10]  # 처음 10개만
             }
+
+    # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
+    def _build_cache_key(self, exchange_name: str, symbol: str, market_type: str) -> str:
+        """
+        표준화된 캐시 키 생성
+
+        get_market_info()에서 사용하는 키 생성 방식과 일치시켜
+        캐시 미스 문제를 해결하기 위한 헬퍼 함수
+
+        Args:
+            exchange_name: 거래소 이름 (예: "BINANCE", "UPBIT")
+            symbol: 심볼 (예: "BTC/USDT", "BTC/KRW")
+            market_type: 시장 유형 (예: "FUTURES", "SPOT")
+
+        Returns:
+            표준화된 캐시 키 문자열 (get_market_info와 일치)
+        """
+        return f"{exchange_name.upper()}_{symbol.upper()}_{market_type.upper()}"
 
 
 # 전역 인스턴스
