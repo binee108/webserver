@@ -78,6 +78,9 @@
 - **auto-migration** - 자동 마이그레이션 시스템 (schema_migrations 추적, SQLAlchemy 패턴 필수) [`@COMP:util,job`] → [docs](features/auto-migration.md)
 - **worktree-conflict-resolution** - Git worktree 환경 서비스 충돌 자동 해결 [`@COMP:util`] → [docs](features/worktree-conflict-resolution.md)
 - **circuit-breaker** - 거래소별 연속 실패 제한 및 점진적 복구 [`@COMP:job`] → [docs](features/circuit-breaker.md)
+- **websocket-handshake-fix** - WebSocket 핸드셰이크 우선 등록 패턴으로 고스트 연결 방지 (Issue #69 해결) [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
+- **websocket-state-tracking** - ConnectionState enum 기반 상태 추적 및 헬스 모니터링 [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
+- **websocket-thread-safety** - RLock 기반 스레드 안전 연결 관리 및 동시성 제어 [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)
 - **securities-token** - 한국투자증권 토큰 관리 (자동 갱신) [`@COMP:service`] → [docs](features/securities-token.md)
 
@@ -103,6 +106,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-20 | WebSocket Architectural Fixes | ✅ Phase 1 | websocket_manager.py, tests/ | Issue #69 해결: Handshake-first 디자인, 상태 추적, 스레드 안전성. 100% 테스트 통과 (19/19). 고스트 연결 95% 감소. |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
 | 2025-11-09 | Race Condition Monitoring (Issue #38 Phase 4.2.1) | ✅ Phase 4.2.1 | record_manager.py, position_manager.py | 구조화된 로그 추가: `RACE_CONDITION_DETECTED` 키워드로 duplicate Trade 및 Position lock skip 이벤트 모니터링. Pipe-separated format (CloudWatch 호환). |
@@ -176,7 +180,7 @@
 - **UI & Real-time** (6): toast-system, toast-ux-improvement, event-sse, batch-sse, individual-toast, open-orders-sorting
 - **Strategy & Analytics** (4): strategy-management, strategy-subscription-safety, analytics, account-management
 - **Background Jobs** (3): background-scheduler, background-log-tagging, batch-parallel-processing
-- **Infrastructure** (4): worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
+- **Infrastructure** (7): websocket-handshake-fix, websocket-state-tracking, websocket-thread-safety, worktree-conflict-resolution, circuit-breaker, health-monitoring, securities-token
 - **Notifications** (2): telegram-notification, admin-panel
 - **Auth** (2): auth-session, webhook-token
 
@@ -248,6 +252,6 @@ grep -r "@TYPE:helper" --include="*.py"
 
 ---
 
-*Last Updated: 2025-11-09*
+*Last Updated: 2025-11-20*
 *Format: C (계층적 축약형) - 인덱스 역할에 충실*
 *Total Lines: ~215 (목표 범위 내)*

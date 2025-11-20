@@ -239,11 +239,6 @@ certs/
 *.crt
 *.key
 
-# Test and debug files
-test_*.py
-*_test.py
-*_debug*.py
-
 # Git worktrees
 .worktree/
 
