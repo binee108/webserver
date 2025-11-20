@@ -257,8 +257,8 @@ class SymbolValidator:
         """
         try:
             # @FEAT:symbol-validation-fix @COMP:service @TYPE:helper
-        # 표준화된 캐시 키 생성 - _build_cache_key() 사용
-        cache_key = self._build_cache_key(exchange, symbol, market_type)
+            # 표준화된 캐시 키 생성 - _build_cache_key() 사용
+            cache_key = self._build_cache_key(exchange, symbol, market_type)
             logger.debug(f"🔍 주문 파라미터 검증 시작: {cache_key}, 수량={quantity}, 가격={price}")
 
             market_info = self.get_market_info(exchange, symbol, market_type)
