@@ -1,4 +1,4 @@
-# @FEAT:framework @COMP:util @TYPE:helper
+# @FEAT:usd-quote-currency-support @COMP:symbol-parser @TYPE:core
 """
 심볼 형식 변환 유틸리티
 
@@ -144,11 +144,14 @@ def from_binance_format(binance_symbol: str, default_currency: str = 'USDT') -> 
         'ETH/EUR'
         >>> from_binance_format("BTCFDUSD")
         'BTC/FDUSD'
+        >>> from_binance_format("USDCUSD")  # USD quote currency
+        'USDC/USD'
         >>> from_binance_format("BTCUSDT_251226")  # Futures
         'BTC/USDT'
 
-    Last Updated: 2025-11-14
-    Changes: USD1 스테이블코인 지원 추가 (WLFIUSD1 → WLFI/USD1 변환 지원)
+    Last Updated: 2025-11-20
+    Changes: USD quote currency 지원 추가 (USDCUSD → USDC/USD, BTCUSD → BTC/USD 변환 지원)
+             이전 변경: USD1 스테이블코인 지원 추가 (WLFIUSD1 → WLFI/USD1 변환 지원)
     """
     binance_symbol = binance_symbol.upper()
 
@@ -173,7 +176,7 @@ def from_binance_format(binance_symbol: str, default_currency: str = 'USDT') -> 
         'BKRW', 'BVND', 'IDRT', 'BIDR',
 
         # 법정화폐 (3자리)
-        'EUR', 'GBP', 'JPY', 'TRY', 'RUB', 'NGN', 'ZAR', 'UAH',
+        'USD', 'EUR', 'GBP', 'JPY', 'TRY', 'RUB', 'NGN', 'ZAR', 'UAH',
         'AUD', 'BRL', 'PLN', 'RON', 'ARS', 'MXN', 'COP', 'CZK',
 
         # 암호화폐
