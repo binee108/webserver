@@ -65,6 +65,7 @@
 - **batch-parallel-processing** - ThreadPoolExecutor 병렬 처리 (MARKET 전용) [`@COMP:service`] → [docs](features/trade-execution.md)
 
 ### 🛡️ Infrastructure & Resilience
+- **log-ordering-fix** - Admin 패널 ERROR/WARNING 로그 역순 정렬 (newest-first) [`@COMP:route`] → [docs](features/log-ordering-fix.md)
 - **db-first-orphan-prevention** - DB-first 패턴으로 orphan order 방지 (PENDING 상태 + cleanup job) [`@COMP:service,job`] → [docs](features/webhook-order-processing.md#5-phase-32-db-first-orphan-prevention-2025-10-30)
 - **error-message-sanitization** - API 에러 메시지 보안 처리 (민감정보 마스킹, 500자 제한) [`@COMP:service`] → [docs](features/webhook-order-processing.md#phase-31-database--security-enhancements-2025-10-30)
 - **cancel-order-db-first-orphan-prevention** - 주문 취소 시 고아 주문 방지 (DB-First 패턴, Phase 1-4 완료) [`@FEAT:cancel-order-db-first`] [`@COMP:constant,model,migration,service`] → [docs](features/webhook-order-processing.md#phase-33-database-schema-for-cancel-orphan-prevention-2025-10-30)
@@ -107,6 +108,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-21 | Log Ordering Fix | ✅ Complete | admin.py, tests/ | Admin 패널 ERROR/WARNING 로그 역순 정렬 (newest-first). parsed_logs[-limit:][::-1] 배열 역순 정렬로 최신 오류 즉시 확인 가능. 100% 테스트 커버리지. |
 | 2025-11-20 | WebSocket Architectural Fixes | ✅ Phase 1 | websocket_manager.py, tests/ | Issue #69 해결: Handshake-first 디자인, 상태 추적, 스레드 안전성. 100% 테스트 통과 (19/19). 고스트 연결 95% 감소. |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |
