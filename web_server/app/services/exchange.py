@@ -24,6 +24,7 @@ from app.exchanges.exceptions import (
     NetworkError,
     OrderNotFound
 )
+from app.services.order_mapping_cache import order_mapping_cache
 
 if TYPE_CHECKING:
     from app.exchanges.crypto.base import BaseCryptoExchange
@@ -573,7 +574,7 @@ class ExchangeService:
             # - average_price: Binance's 'price' field (limit price or avg execution price)
             # - limit_price: Explicit limit price for LIMIT/STOP_LIMIT orders (None for MARKET)
             # - stop_price: Trigger price for STOP_MARKET/STOP_LIMIT orders (None for LIMIT/MARKET)
-            return {
+            payload = {
                 'success': True,
                 'order_id': order_result.id,
                 'order_type': order_type,  # 원본 파라미터 유지 (단일 진실 소스)
@@ -591,6 +592,20 @@ class ExchangeService:
                 'adjusted_average_price': processed_params.get('price') or order_result.price,
                 'raw_response': order_result
             }
+
+            # WebSocket 선행 도착 시 market_type을 복원하기 위한 캐시 등록
+            try:
+                order_mapping_cache.register(
+                    exchange_order_id=order_result.id,
+                    account_id=account.id,
+                    exchange=account.exchange,
+                    market_type=market_type,
+                    symbol=symbol
+                )
+            except Exception as cache_error:
+                logger.warning(f"order_mapping_cache 등록 실패: {cache_error}")
+
+            return payload
 
         except Exception as e:
             logger.error(f"주문 생성 실패: {e}")
