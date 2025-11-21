@@ -1244,7 +1244,7 @@ def get_metrics():
 # 백그라운드 작업 로그 조회
 # ============================================
 
-# @FEAT:background-job-logs @COMP:route @TYPE:core
+# @FEAT:background-job-logs @FEAT:log-ordering-fix @COMP:route @TYPE:core
 @bp.route('/system/background-jobs/<job_id>/logs', methods=['GET'])
 @login_required
 @admin_required
@@ -1438,8 +1438,10 @@ def get_job_logs(job_id):
                     'line': 0
                 })
 
-        # limit 적용
-        filtered_logs = parsed_logs[-limit:]
+        # limit 적용: 최신 N개 로그를 역순(최신순)으로 반환
+        # parsed_logs[-limit:]: 마지막 N개 항목 선택 (chronological order 유지)
+        # [::-1]: 배열 역순 정렬하여 newest-first 순서로 변환
+        filtered_logs = parsed_logs[-limit:][::-1]
 
         return jsonify({
             'success': True,
@@ -1460,7 +1462,7 @@ def get_job_logs(job_id):
         }), 500
 
 
-# @FEAT:error-warning-logs @COMP:route @TYPE:core
+# @FEAT:error-warning-logs @FEAT:log-ordering-fix @COMP:route @TYPE:core
 @bp.route('/system/logs/errors-warnings', methods=['GET'])
 @conditional_admin_required
 def get_errors_warnings_logs():
@@ -1475,6 +1477,13 @@ def get_errors_warnings_logs():
     - 개발 모드 (ENV != 'production'): 인증 완전 우회 (로그인 불필요)
     - 프로덕션 모드 (ENV = 'production'): 로그인 + 관리자 권한 필수
 
+    **로그 정렬 (역순 정렬):**
+    - 최신 로그가 먼저 표시됩니다 (newest-first 순서)
+    - 가장 최근 오류/경고를 즉시 확인 가능
+    - 기술적 구현: parsed_logs[-limit:][::-1]
+      * [-limit:]: 최신 N개 항목 선택 (chronological order 유지)
+      * [::-1]: 배열 역순 정렬로 newest-first 순서로 변환
+
     **사용 사례:**
     - 실시간 오류 모니터링
     - 경고 메시지 빠른 확인
@@ -1482,7 +1491,7 @@ def get_errors_warnings_logs():
 
     Query Parameters:
         limit (int): 최대 로그 줄 수 (기본: 100, 최대: 500)
-            설명: 최근 N개 로그 반환 (가장 오래된 순서)
+            설명: 최근 N개 로그 반환 (가장 최신 순서, 역순 정렬)
         level (str): 로그 레벨 필터 (기본: 'ERROR')
             옵션: 'ERROR' (오류만), 'WARNING' (경고만), 'ALL' (둘 다)
         search (str): 텍스트 검색어 (대소문자 무시, 선택사항)
@@ -1679,8 +1688,10 @@ def get_errors_warnings_logs():
                     'line': 0
                 })
 
-        # limit 적용 (최근 N개 반환)
-        filtered_logs = parsed_logs[-limit:]
+        # limit 적용: 최신 N개 로그를 역순(최신순)으로 반환
+        # parsed_logs[-limit:]: 마지막 N개 항목 선택 (chronological order 유지)
+        # [::-1]: 배열 역순 정렬하여 newest-first 순서로 변환
+        filtered_logs = parsed_logs[-limit:][::-1]
 
         return jsonify({
             'success': True,
