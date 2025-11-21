@@ -46,7 +46,8 @@ class OrderFillMonitor:
         account_id: int,
         exchange_order_id: str,
         symbol: str,
-        status: str
+        status: str,
+        market_type: Optional[str] = None
     ):
         """WebSocket 이벤트 수신 시 호출됨
 
@@ -112,7 +113,10 @@ class OrderFillMonitor:
 
             # Step 1: REST API로 주문 상태 확인 (정규화된 심볼 사용)
             confirmed_order = await self._confirm_order_status(
-                account_id, exchange_order_id, normalized_symbol
+                account_id,
+                exchange_order_id,
+                normalized_symbol,
+                market_type_hint=market_type
             )
 
             if not confirmed_order:
@@ -149,7 +153,8 @@ class OrderFillMonitor:
         self,
         account_id: int,
         exchange_order_id: str,
-        symbol: str
+        symbol: str,
+        market_type_hint: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """REST API로 주문 상태 확인
 
@@ -176,6 +181,8 @@ class OrderFillMonitor:
                     exchange_order_id=exchange_order_id
                 ).first()
 
+                market_type = None
+
                 if open_order:
                     market_type = open_order.market_type or 'SPOT'
                 else:
@@ -188,13 +195,19 @@ class OrderFillMonitor:
                             f"🧭 OrderMappingCache 히트 - order_id: {exchange_order_id}, "
                             f"market_type: {market_type}, symbol: {symbol}"
                         )
-                    else:
-                        # OpenOrder와 캐시 모두 없으면 기본값 사용
-                        logger.warning(
-                            f"⚠️ OpenOrder를 찾을 수 없음 - order_id: {exchange_order_id}, "
-                            f"SPOT 기본값 사용"
+                    elif market_type_hint:
+                        market_type = market_type_hint.upper()
+                        logger.info(
+                            f"🧭 WebSocket 마켓타입 힌트 사용 - order_id: {exchange_order_id}, "
+                            f"market_type: {market_type}"
                         )
-                        market_type = 'SPOT'
+
+                if not market_type:
+                    logger.error(
+                        f"❌ market_type를 결정할 수 없어 주문 조회를 스킵합니다 - "
+                        f"order_id: {exchange_order_id}, symbol: {symbol}"
+                    )
+                    return None
 
                 account = Account.query.get(account_id)
                 if not account:

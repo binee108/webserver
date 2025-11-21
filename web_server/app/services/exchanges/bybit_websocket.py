@@ -260,6 +260,15 @@ class BybitWebSocket:
             symbol = order_data.get('symbol')  # BTCUSDT
             order_id = str(order_data.get('orderId'))  # 주문 ID
             status = order_data.get('orderStatus')  # New, Filled, Cancelled, etc.
+            category = (order_data.get('category') or '').lower()
+
+            if category == 'spot':
+                market_type = 'SPOT'
+            elif category:
+                market_type = 'FUTURES'
+            else:
+                # Bybit v5 private 기본은 선물/선물옵션이므로 futures로 설정, 필요 시 추가 필드로 보완
+                market_type = 'FUTURES'
 
             logger.info(
                 f"📦 주문 업데이트 수신 - 계정: {self.account.id}, "
@@ -272,7 +281,8 @@ class BybitWebSocket:
                 account_id=self.account.id,
                 exchange_order_id=order_id,
                 symbol=symbol,
-                status=status
+                status=status,
+                market_type=market_type
             )
 
         except Exception as e:
