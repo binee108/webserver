@@ -362,6 +362,22 @@ def create_app(config_name=None):
                 app.logger.info('✅ OrderFillMonitor 초기화 완료')
             except Exception as e:
                 app.logger.error(f'❌ OrderFillMonitor 초기화 실패: {str(e)}')
+            finally:
+                # 부트스트랩 시점에서 초기화 상태 재검증 (미초기화 시 조기 탐지)
+                try:
+                    from app.services import order_fill_monitor as order_fill_monitor_module
+                    if getattr(order_fill_monitor_module, 'order_fill_monitor', None) is None:
+                        try:
+                            init_order_fill_monitor(app)
+                        except Exception as reinit_error:
+                            app.logger.error(f'❌ OrderFillMonitor 재시도 초기화 실패: {reinit_error}')
+
+                    if getattr(order_fill_monitor_module, 'order_fill_monitor', None) is None:
+                        app.logger.error('❌ OrderFillMonitor가 여전히 None입니다. 서비스 설정을 점검하세요.')
+                    else:
+                        app.logger.debug('✅ OrderFillMonitor health check 완료')
+                except Exception as check_error:
+                    app.logger.error(f'OrderFillMonitor 상태 확인 실패: {check_error}', exc_info=True)
 
             # WebSocket 관리자 초기화
             try:

@@ -16,6 +16,8 @@ from typing import Optional, TYPE_CHECKING
 import websockets
 
 from app.models import Account
+from app.services import websocket_context_helper
+from app.services import order_fill_monitor as order_fill_monitor_module
 
 if TYPE_CHECKING:
     from app.services.websocket_manager import WebSocketManager
@@ -186,6 +188,13 @@ class BybitWebSocket:
     # @FEAT:order-tracking @FEAT:exchange-integration @COMP:service @TYPE:core
     async def _receive_messages(self):
         """WebSocket 메시지 수신 루프"""
+        helper = None
+        try:
+            helper = websocket_context_helper.WebSocketContextHelper(getattr(self.manager, 'app', None))
+        except Exception as e:
+            logger.error(f"WebSocketContextHelper 초기화 실패: {e}", exc_info=True)
+            helper = None
+
         try:
             async for message in self.ws:
                 if not self._running:
@@ -193,7 +202,10 @@ class BybitWebSocket:
 
                 try:
                     data = json.loads(message)
-                    await self.on_message(data)
+                    if helper:
+                        await helper.execute_with_db_context(self.on_message, data)
+                    else:
+                        await self.on_message(data)
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ JSON 파싱 실패: {e}, 메시지: {message[:200]}...")
 
@@ -275,9 +287,21 @@ class BybitWebSocket:
                 f"심볼: {symbol}, 주문 ID: {order_id}, 상태: {status}"
             )
 
+            monitor = getattr(order_fill_monitor_module, 'order_fill_monitor', None)
+            if monitor is None and getattr(self.manager, 'app', None):
+                try:
+                    order_fill_monitor_module.init_order_fill_monitor(self.manager.app)
+                    monitor = getattr(order_fill_monitor_module, 'order_fill_monitor', None)
+                except Exception as init_error:
+                    logger.error(f"OrderFillMonitor 초기화 실패: {init_error}", exc_info=True)
+                    monitor = None
+
+            if not monitor:
+                logger.warning("OrderFillMonitor 미초기화 상태로 주문 업데이트를 건너뜁니다.")
+                return
+
             # OrderFillMonitor에 전달
-            from app.services.order_fill_monitor import order_fill_monitor
-            await order_fill_monitor.on_order_update(
+            await monitor.on_order_update(
                 account_id=self.account.id,
                 exchange_order_id=order_id,
                 symbol=symbol,
