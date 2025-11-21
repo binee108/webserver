@@ -306,7 +306,10 @@ class TradingCore:
                         'price': float(price) if price else None,
                         'filled': float(order_result.get('filled_quantity', 0)) if order_result.get('filled_quantity') else 0.0
                     }
-                    order.exchange_order_id = exchange_order.get('id', order.exchange_order_id)
+
+                    # ⚠️ SSOT: 거래소 주문 ID를 우선적으로 DB에 반영하여 WebSocket 선행 도착 시 ID 매칭이 가능하게 함
+                    if exchange_order.get('id'):
+                        order.exchange_order_id = exchange_order['id']
                     if exchange_order.get('price'):
                         order.price = exchange_order['price']
                     if exchange_order.get('filled'):
