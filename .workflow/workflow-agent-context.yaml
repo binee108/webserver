@@ -1,0 +1,5 @@
+language_conventions:
+  user_communication: "korean"
+  commit_messages: "korean"
+  documentation: "korean"
+  code_comments: "english"
