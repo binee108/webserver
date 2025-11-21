@@ -108,7 +108,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
-| 2025-11-21 | Log Ordering Fix | ✅ Complete | admin.py, tests/ | Admin 패널 ERROR/WARNING 로그 역순 정렬 (newest-first). parsed_logs[-limit:][::-1] 배열 역순 정렬로 최신 오류 즉시 확인 가능. 100% 테스트 커버리지. |
+| 2025-11-21 | Log Ordering Fix (Phase 2) | ✅ Complete | admin.py, docs/ | Background Job Logs 역순 정렬 확장 적용. get_job_logs() 함수에도 newest-first 순서 적용으로 일관된 사용자 경험 제공. Phase 1과 동일한 배열 슬라이싱 패턴 활용. |
 | 2025-11-20 | WebSocket Architectural Fixes | ✅ Phase 1 | websocket_manager.py, tests/ | Issue #69 해결: Handshake-first 디자인, 상태 추적, 스레드 안전성. 100% 테스트 통과 (19/19). 고스트 연결 95% 감소. |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |
 | 2025-11-09 | Duplicate OpenOrder Prevention | ✅ Phase 1 | order_manager.py | Issue #42: Optimistic INSERT 패턴으로 WebSocket/Webhook 이중 경로 중복 제거, 성능 25% 개선 (DB 왕복 2회→1.5회) |

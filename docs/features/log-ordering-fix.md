@@ -159,10 +159,38 @@ def test_array_ordering_chronological_vs_reverse_chronological(self):
 - 최대 500개 로그로 제한
 - 대용량 로그 파일도 안전한 처리
 
+## Phase 2 구현 (Background Job Logs)
+
+### 개요
+Phase 1에서 Error/Warning 로그 정렬을 수정한 후, 동일한 문제가 Background Job Logs에도 존재하여 Phase 2에서 확장 적용하였습니다.
+
+### Phase 2 변경사항
+
+**대상 함수**: `get_job_logs()` (라인 ~1444)
+**파일**: `/web_server/app/routes/admin.py`
+
+```python
+# Phase 2 변경: Background Job Logs도 역순 정렬 적용
+# limit 적용: 최신 N개 로그를 역순(최신순)으로 반환
+# parsed_logs[-limit:]: 마지막 N개 항목 선택 (chronological order 유지)
+# [::-1]: 배열 역순 정렬하여 newest-first 순서로 변환
+filtered_logs = parsed_logs[-limit:][::-1]
+```
+
+### Phase 2 상세 내용
+
+1. **일관된 사용자 경험**: Error/Warning 로그와 동일한 newest-first 순서
+2. **태그 기반 검색**: 특정 태그를 가진 로그 필터링 기능 유지
+3. **Job ID별 조회**: 특정 백그라운드 작업의 로그만 조회 기능
+4. **동일한 퍼포먼스**: Phase 1과 동일한 효율적인 배열 슬라이싱 사용
+
+### Phase 2 테스트
+Phase 2 구현은 Phase 1의 테스트 패턴을 활용하여 검증되었으며, 실제 Admin 패널에서 Job 로그 클릭 시 최신 로그가 먼저 표시되는 것을 확인했습니다.
+
 ## 관련 기능
 
 ### Background Job Logs
-- `get_job_logs()` 함수도 유사한 패턴 사용
+- `get_job_logs()` 함수에 Phase 2에서 역순 정렬 적용 완료
 - 태그 기반 필터링 추가 기능
 - Job ID별 로그 조회
 

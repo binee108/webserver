@@ -1244,7 +1244,7 @@ def get_metrics():
 # 백그라운드 작업 로그 조회
 # ============================================
 
-# @FEAT:background-job-logs @COMP:route @TYPE:core
+# @FEAT:background-job-logs @FEAT:log-ordering-fix @COMP:route @TYPE:core
 @bp.route('/system/background-jobs/<job_id>/logs', methods=['GET'])
 @login_required
 @admin_required
@@ -1438,8 +1438,10 @@ def get_job_logs(job_id):
                     'line': 0
                 })
 
-        # limit 적용
-        filtered_logs = parsed_logs[-limit:]
+        # limit 적용: 최신 N개 로그를 역순(최신순)으로 반환
+        # parsed_logs[-limit:]: 마지막 N개 항목 선택 (chronological order 유지)
+        # [::-1]: 배열 역순 정렬하여 newest-first 순서로 변환
+        filtered_logs = parsed_logs[-limit:][::-1]
 
         return jsonify({
             'success': True,
