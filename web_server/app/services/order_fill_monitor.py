@@ -15,6 +15,7 @@ from flask import Flask
 from app import db
 from app.models import OpenOrder, Account
 from app.services.exchange import exchange_service
+from app.services.order_mapping_cache import order_mapping_cache
 from app.utils.symbol_utils import (
     from_binance_format,
     from_upbit_format,
@@ -178,12 +179,22 @@ class OrderFillMonitor:
                 if open_order:
                     market_type = open_order.market_type or 'SPOT'
                 else:
-                    # OpenOrder가 없으면 기본값 사용 (경고 로그)
-                    logger.warning(
-                        f"⚠️ OpenOrder를 찾을 수 없음 - order_id: {exchange_order_id}, "
-                        f"SPOT 기본값 사용"
-                    )
-                    market_type = 'SPOT'
+                    cache_hit = order_mapping_cache.get(exchange_order_id)
+                    if cache_hit:
+                        market_type = cache_hit.get('market_type', 'spot').upper()
+                        # 캐시에 심볼이 있으면 보정(정규화된 심볼이 우선)
+                        symbol = cache_hit.get('symbol', symbol)
+                        logger.info(
+                            f"🧭 OrderMappingCache 히트 - order_id: {exchange_order_id}, "
+                            f"market_type: {market_type}, symbol: {symbol}"
+                        )
+                    else:
+                        # OpenOrder와 캐시 모두 없으면 기본값 사용
+                        logger.warning(
+                            f"⚠️ OpenOrder를 찾을 수 없음 - order_id: {exchange_order_id}, "
+                            f"SPOT 기본값 사용"
+                        )
+                        market_type = 'SPOT'
 
                 account = Account.query.get(account_id)
                 if not account:
