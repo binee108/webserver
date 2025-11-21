@@ -88,6 +88,8 @@
 ### 📢 Notifications & Admin
 - **telegram-notification** - 사용자별/전역 텔레그램 봇 알림 (우선순위 기반 선택, 9가지 알림 타입) [`@COMP:service`] → [docs](features/telegram-notification.md)
 - **admin-panel** - Admin 대시보드, 시스템 모니터링, 백그라운드 작업 로그 조회 [`@COMP:route,ui`] → [docs](features/admin-panel.md)
+- **error-warning-logs** - ERROR/Warning 로그 조회 API (디버깅용, newest-first 정렬) [`@COMP:route`] → [admin.py](../web_server/app/routes/admin.py)
+- **log-ordering-fix** - ERROR/Warning 로그 최신 순서 표시 개선 (사용자 경험 향상) [`@COMP:route,enhancement`] → [docs](features/log-ordering-fix.md)
 
 ### 🔐 Authentication & Security
 - **auth-session** - 세션 기반 인증 시스템 [`@COMP:service,route`] → [docs](features/auth-session.md)
@@ -139,6 +141,7 @@
 | 2025-10-23 | Circuit Breaker | ✅ Phase 2 | order_manager.py | 거래소별 Gradual Recovery |
 | 2025-10-23 | Worktree Conflict Resolution | ✅ Complete | run.py | 서비스 충돌 자동 해결 |
 | 2025-10-21 | Capital Management | ✅ Phase 4-5 | capital.py, strategies.html | Force 파라미터, UI 이동 |
+| 2025-11-21 | Log Ordering Fix | ✅ Phase 1 | admin.py | ERROR/Warning 로그 최신 순서 표시 (newest-first), 사용자 경험 개선 |
 | 2025-11-13 | Binance WebSocket Listen Key Renewal Fix | ✅ Phase 1 | binance_websocket.py | Issue #48: AttributeError 수정 (self.account.api_url → self.BASE_URL), 30분 주기 Listen Key 갱신 안정화 |
 | 2025-11-13 | Order Quantity Restriction Removal | ✅ Completed | quantity_calculator.py, webhook_message_format.md, capital-management.md | Issue #46: qty_per > 100% validation 제거, Futures 레버리지 거래 지원 (양수 qty_per 무제한, 청산 -100% 상한 유지) |
 
