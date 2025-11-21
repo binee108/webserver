@@ -78,3 +78,66 @@ async def test_confirm_order_uses_cache_when_open_order_missing(monkeypatch):
     assert fetched_call["market_type"] == 'futures'
     assert fetched_call["symbol"] == "BTC/USDT"
     assert result['status'] == 'FILLED'
+
+
+@pytest.mark.asyncio
+async def test_confirm_order_uses_hint_when_no_cache(monkeypatch):
+    """캐시/DB 모두 없을 때 market_type_hint로 futures를 사용한다."""
+    mock_app = MagicMock()
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__.return_value = None
+    mock_ctx.__exit__.return_value = None
+    mock_app.app_context.return_value = mock_ctx
+
+    class DummyAccount:
+        exchange = 'BINANCE'
+        id = 1
+
+    class DummyAccountModel:
+        class query:  # noqa: D401
+            @staticmethod
+            def get(_id):
+                return DummyAccount
+
+    class DummyOpenOrderFilter:
+        def first(self):
+            return None
+
+    class DummyOpenOrderModel:
+        class query:
+            @staticmethod
+            def filter_by(**kwargs):
+                return DummyOpenOrderFilter()
+
+    monkeypatch.setattr(ofm_module, "Account", DummyAccountModel)
+    monkeypatch.setattr(ofm_module, "OpenOrder", DummyOpenOrderModel)
+
+    order_mapping_cache._cache.clear()
+
+    fetched_call = {}
+
+    def fake_fetch_order(account, symbol, order_id, market_type):
+        fetched_call["account"] = account
+        fetched_call["symbol"] = symbol
+        fetched_call["order_id"] = order_id
+        fetched_call["market_type"] = market_type
+        return {
+            'success': True,
+            'status': 'FILLED',
+            'filled_quantity': Decimal('0.01'),
+            'average_price': Decimal('100'),
+            'side': 'BUY',
+            'order_type': 'MARKET',
+        }
+
+    monkeypatch.setattr(ofm_module.exchange_service, "fetch_order", fake_fetch_order)
+
+    monitor = OrderFillMonitor(mock_app)
+    result = await monitor._confirm_order_status(
+        1, "ex456", "BTC/USDT", market_type_hint="FUTURES"
+    )
+
+    assert result is not None
+    assert fetched_call["market_type"] == 'futures'
+    assert fetched_call["symbol"] == "BTC/USDT"
+    assert result['status'] == 'FILLED'

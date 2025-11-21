@@ -250,7 +250,8 @@ class BinanceWebSocket:
                 account_id=self.account.id,
                 exchange_order_id=order_id,
                 symbol=symbol,
-                status=status
+                status=status,
+                market_type='FUTURES'
             )
 
         except Exception as e:
