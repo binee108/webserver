@@ -469,6 +469,107 @@ Strategy (전략)
 - 동일 거래소 계좌 중복 연동 시 WARNING 로그 발행
 - 로그 확인하여 중복 제거 권장
 
+### 🏷️ 주문 상태 표준화
+
+거래소별 상이한 주문 상태를 표준 형식으로 통합하여 일관된 처리를 제공합니다.
+
+#### 지원 거래소 및 상태 매핑
+| 거래소 | 원본 상태 | 표준 상태 |
+|--------|----------|----------|
+| **BINANCE** | NEW, PARTIALLY_FILLED, FILLED, CANCELED | NEW, PARTIALLY_FILLED, FILLED, CANCELLED |
+| **UPBIT** | wait, done, cancel | OPEN, FILLED, CANCELLED |
+| **BITHUMB** | bid, fill, cancel | OPEN, FILLED, CANCELLED |
+| **BYBIT** | Created, PartiallyFilled, Filled | NEW, PARTIALLY_FILLED, FILLED |
+
+#### 사용 방법
+```python
+from web_server.app.exchanges.transformers.order_status_transformer import OrderStatusTransformer
+from web_server.app.constants import StandardOrderStatus
+
+# 거래소별 상태를 표준 상태로 변환
+transformer = OrderStatusTransformer()
+standard_status = transformer.transform('wait', 'UPBIT')  # 'OPEN' 반환
+
+# 상태 유효성 및 분류 확인
+is_valid = StandardOrderStatus.is_valid(standard_status)
+is_terminal = StandardOrderStatus.is_terminal(standard_status)
+```
+
+#### 장점
+- **일관성**: 모든 거래소의 상태를 통합된 형식으로 관리
+- **확장성**: 새로운 거래소 추가 시 상태 매핑만 등록
+- **하위 호환성**: 기존 시스템과의 호환성 유지
+- **검증 기능**: 상태 유효성, 활성/최종 상태 분류 지원
+
+자세한 내용은 [거래소 주문 상태 표준화 문서](docs/features/exchange-order-status-standardization.md)를 참조하세요.
+
+### 🌐 WebSocket 통합 강화
+
+거래소 중립적 통합 WebSocket 관리 시스템으로 실시간 데이터 처리를 강화합니다.
+
+#### 핵심 기능
+- **UnifiedWebSocketManager**: Public/Private WebSocket 연결 통합 관리
+- **WebSocketConnectorFactory**: 팩토리 패턴으로 거래소별 커넥터 생성
+- **PublicWebSocketHandler**: 실시간 가격 데이터 정규화 및 캐싱
+- **연결 풀링**: 리소스 효율화를 위한 커넥터 재사용
+- **자동 재연결**: 연결 끊김 시 자동 복구
+
+#### 지원 거래소
+- **Binance**: Public/Private WebSocket 지원
+- **Bybit**: Public/Private WebSocket 지원
+- **Upbit**: Public WebSocket 지원 (향후 Private 확장 예정)
+- **Bithumb**: Public WebSocket 지원 (향후 Private 확장 예정)
+
+#### 사용 방법
+```python
+from app.services.unified_websocket_manager import UnifiedWebSocketManager
+
+# 매니저 초기화
+ws_manager = UnifiedWebSocketManager(app)
+
+# Public 연결 생성 (실시간 가격 데이터)
+connection = await ws_manager.create_public_connection(
+    exchange="binance",
+    symbols=["BTCUSDT", "ETHUSDT"],
+    connection_type=ConnectionType.PUBLIC_PRICE_FEED
+)
+
+# Private 연결 생성 (주문 실행 알림)
+private_connection = await ws_manager.create_private_connection(
+    account=trading_account,
+    connection_type=ConnectionType.PRIVATE_ORDER_EXECUTION
+)
+```
+
+#### 연결 유형
+- `PUBLIC_PRICE_FEED`: 실시간 가격 데이터 구독
+- `PRIVATE_ORDER_EXECUTION`: 주문 실행 상태 실시간 알림
+- `PUBLIC_ORDER_BOOK`: 실시간 오더북 데이터 (향후 지원)
+- `PRIVATE_POSITION_UPDATE`: 포지션 변경 실시간 알림 (향후 지원)
+
+#### 데이터 정규화
+거래소별 다양한 가격 데이터 형식을 표준 `PriceQuote`로 통합:
+```python
+# Binance/Bybit 데이터 → PriceQuote
+PriceQuote(
+    exchange="binance",
+    symbol="BTCUSDT",
+    price=50000.00,
+    timestamp=1640995200000,
+    volume=1000.0,
+    change_24h=2.5
+)
+```
+
+#### 장점
+- **통합 관리**: 단일 인터페이스로 모든 WebSocket 연결 관리
+- **거래소 중립성**: 새로운 거래소 쉽게 추가 가능
+- **성능 최적화**: 연결 풀링과 캐싱으로 효율적인 리소스 사용
+- **안정성**: 자동 재연결과 에러 처리로 높은 안정성
+- **표준화**: 일관된 데이터 형식으로 애플리케이션 단순화
+
+자세한 내용은 [WebSocket 통합 강화 문서](docs/features/websocket-integration-enhancement.md)를 참조하세요.
+
 ---
 
 ## 🐳 Docker 환경
