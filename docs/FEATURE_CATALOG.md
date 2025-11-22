@@ -44,6 +44,7 @@
 - **symbol-validation** - 심볼 검증 및 정규화 [`@COMP:validation`] → [docs](features/symbol-validation.md)
 - **symbol-validation-fix** - 캐시 키 형식 통합으로 경고 로그 제거 [`@COMP:service`] → [docs](features/symbol-validation-fix.md)
 - **futures-validation** - 선물 주문 검증 (레버리지, Stop 가격) [`@COMP:validation`] → [docs](features/futures-validation.md)
+- **order-status-standardization** - 거래소 주문 상태 표준화 (StandardOrderStatus + OrderStatusTransformer) [`@COMP:transformer @TYPE:standardization`] → [docs](features/exchange-order-status-standardization.md)
 
 ### 🎨 UI & Real-time Updates
 - **toast-system** - 토스트 알림 시스템 (FIFO 큐, DEBUG 로깅) [`@COMP:util`] → [docs](features/toast-ui.md)
@@ -83,6 +84,7 @@
 - **websocket-handshake-fix** - WebSocket 핸드셰이크 우선 등록 패턴으로 고스트 연결 방지 (Issue #69 해결) [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
 - **websocket-state-tracking** - ConnectionState enum 기반 상태 추적 및 헬스 모니터링 [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
 - **websocket-thread-safety** - RLock 기반 스레드 안전 연결 관리 및 동시성 제어 [`@COMP:service`] → [docs](features/websocket-architectural-fixes.md)
+- **websocket-integration** - WebSocket 통합 강화 (UnifiedWebSocketManager, 팩토리 패턴, Public/Private 연결 통합) [`@COMP:websocket-infrastructure @TYPE:integration`] → [docs](features/websocket-integration-enhancement.md)
 - **health-monitoring** - WebSocket 연결 상태 감시 및 자동 재연결 [`@COMP:service`] → [docs](features/health-monitoring.md)
 - **securities-token** - 한국투자증권 토큰 관리 (자동 갱신) [`@COMP:service`] → [docs](features/securities-token.md)
 
@@ -110,6 +112,7 @@
 
 | Date | Feature | Status | Files Changed | Summary |
 |------|---------|--------|---------------|---------|
+| 2025-11-22 | WebSocket Integration Enhancement | ✅ Phase 2 | unified_websocket_manager.py, websocket_connector_factory.py, public_websocket_handler.py, tests/ | Phase 2: 통합 WebSocket 관리자 구현. UnifiedWebSocketManager로 Public/Private 연결 통합 관리. WebSocketConnectorFactory 팩토리 패턴으로 거래소별 커넥터 생성. PublicWebSocketHandler로 가격 데이터 정규화 및 캐싱. 100% 테스트 통과. |
 | 2025-11-21 | Log Ordering Fix (Phase 2) | ✅ Complete | admin.py, docs/ | Background Job Logs 역순 정렬 확장 적용. get_job_logs() 함수에도 newest-first 순서 적용으로 일관된 사용자 경험 제공. Phase 1과 동일한 배열 슬라이싱 패턴 활용. |
 | 2025-11-20 | WebSocket Architectural Fixes | ✅ Phase 1 | websocket_manager.py, tests/ | Issue #69 해결: Handshake-first 디자인, 상태 추적, 스레드 안전성. 100% 테스트 통과 (19/19). 고스트 연결 95% 감소. |
 | 2025-11-14 | USD1 Stablecoin Support | ✅ Phase 1 | symbol_utils.py | USD1 quote currency 추가 (WLFIUSD1 → WLFI/USD1 변환 지원, 456+ 경고 로그 제거) |

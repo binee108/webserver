@@ -1304,3 +1304,164 @@ class KISOrderType:
             cls.FUTURES_CONDITION: OrderType.CONDITIONAL_LIMIT,
         }
         return reverse_mapping.get(code, OrderType.LIMIT)  # 기본값: LIMIT
+
+
+# @FEAT:order-status-standardization @COMP:transformer @TYPE:standardization
+class StandardOrderStatus:
+    """거래소 중립적 표준 주문 상태 상수
+
+    모든 거래소에서 공통으로 사용하는 표준 주문 상태를 정의합니다.
+    각 거래소별 상태는 OrderStatusTransformer를 통해 표준 상태로 변환됩니다.
+
+    상태 분류:
+    - 활성 상태: PENDING, NEW, OPEN, PARTIALLY_FILLED
+    - 최종 상태: FILLED, CANCELLED, REJECTED, EXPIRED, FAILED
+    """
+
+    # 활성 상태 (Active Statuses)
+    PENDING = 'PENDING'              # 거래소 전송 대기 중
+    NEW = 'NEW'                      # 새 주문 (거래소 수신 완료)
+    OPEN = 'OPEN'                    # 미체결 상태
+    PARTIALLY_FILLED = 'PARTIALLY_FILLED'  # 부분 체결
+
+    # 최종 상태 (Terminal Statuses)
+    FILLED = 'FILLED'                # 완전 체결
+    CANCELLED = 'CANCELLED'          # 취소됨
+    CANCELED = 'CANCELLED'           # 호환성용 (CANCELLED와 동일)
+    REJECTED = 'REJECTED'            # 거부됨
+    EXPIRED = 'EXPIRED'              # 만료됨
+    FAILED = 'FAILED'                # 실패
+
+    # 유효한 모든 상태 목록
+    VALID_STATUSES = [
+        PENDING, NEW, OPEN, PARTIALLY_FILLED,
+        FILLED, CANCELLED, CANCELED, REJECTED, EXPIRED, FAILED
+    ]
+
+    # 최종 상태 목록 (더 이상 변하지 않는 상태)
+    TERMINAL_STATUSES = [
+        FILLED, CANCELLED, REJECTED, EXPIRED, FAILED
+    ]
+
+    # 활성 상태 목록 (변경 가능한 상태)
+    ACTIVE_STATUSES = [
+        PENDING, NEW, OPEN, PARTIALLY_FILLED
+    ]
+
+    @classmethod
+    def get_all_valid_statuses(cls):
+        """유효한 모든 상태 목록 반환
+
+        Returns:
+            list: 유효한 상태 문자열 목록
+        """
+        return cls.VALID_STATUSES.copy()
+
+    @classmethod
+    def is_valid(cls, status):
+        """유효한 상태인지 확인
+
+        Args:
+            status (str): 확인할 상태
+
+        Returns:
+            bool: 유효한 상태이면 True
+
+        Examples:
+            >>> StandardOrderStatus.is_valid('CANCELLED')
+            True
+            >>> StandardOrderStatus.is_valid('CANCELED')  # 호환성
+            True
+            >>> StandardOrderStatus.is_valid('INVALID')
+            False
+        """
+        if not status:
+            return False
+
+        # normalize 메서드를 재사용하여 유효성 확인
+        return cls.normalize(status) is not None
+
+    @classmethod
+    def normalize(cls, status):
+        """상태 값을 표준 형식으로 정규화
+
+        Args:
+            status (str): 정규화할 상태 값
+
+        Returns:
+            str or None: 표준 상태 값, 유효하지 않으면 None
+
+        Examples:
+            >>> StandardOrderStatus.normalize('canceled')
+            'CANCELLED'
+            >>> StandardOrderStatus.normalize('partially-filled')
+            'PARTIALLY_FILLED'
+            >>> StandardOrderStatus.normalize('INVALID')
+            None
+        """
+        if not status:
+            return None
+
+        # 대소문자 정규화 및 공백 제거
+        normalized = status.upper().strip()
+
+        # 호환성 매핑 (CANCELED -> CANCELLED)
+        compatibility_mapping = {
+            'CANCELED': cls.CANCELLED
+        }
+
+        # 호환성 처리
+        if normalized in compatibility_mapping:
+            return compatibility_mapping[normalized]
+
+        # 구분자 정규화 (하이픈 -> 언더스코어)
+        normalized = normalized.replace('-', '_')
+
+        # 유효한 상태인지 확인
+        return normalized if normalized in cls.VALID_STATUSES else None
+
+    @classmethod
+    def get_terminal_statuses(cls):
+        """최종 상태 목록 반환
+
+        Returns:
+            list: 최종 상태 문자열 목록
+        """
+        return cls.TERMINAL_STATUSES.copy()
+
+    @classmethod
+    def is_terminal(cls, status):
+        """최종 상태인지 확인
+
+        Args:
+            status (str): 확인할 상태
+
+        Returns:
+            bool: 최종 상태이면 True
+        """
+        if not status:
+            return False
+        return status in cls.TERMINAL_STATUSES
+
+    @classmethod
+    def get_active_statuses(cls):
+        """활성 상태 목록 반환
+
+        Returns:
+            list: 활성 상태 문자열 목록
+        """
+        return cls.ACTIVE_STATUSES.copy()
+
+    @classmethod
+    def is_active(cls, status):
+        """활성 상태인지 확인
+
+        Args:
+            status (str): 확인할 상태
+
+        Returns:
+            bool: 활성 상태이면 True
+        """
+        if not status:
+            return False
+        return status in cls.ACTIVE_STATUSES
